@@ -50,10 +50,14 @@ section: Added
   written. A settings write also adds or changes only the top-level keys of `brain.floor.SETTINGS_ALLOWED` (the
   command-line keys such as `apiKeyHelper`, `otelHeadersHelper` and `statusLine` refused), its path is read with its
   NTFS stream dropped (a write to a stream is refused), frontmatter is read as YAML, and `git apply`/`git am` from
-  standard input are refused. A write is judged by the file it reaches (a hard link by its identity), a link onto a
-  settings or kept file or a `.claude` folder is refused, `git apply`/`git am` write nothing under the floor but their
-  read-only forms and am's session options, and `claude plugin install|enable|update|marketplace add|update` are
-  refused under `floor.only` too. The managed settings also set `strictPluginOnlyCustomization: ["hooks", "mcp"]` and
+  standard input are refused. A write is judged by the file it reaches (a hard link by its identity), and
+  `claude plugin install|enable|update|marketplace add|update` are refused under `floor.only` too. Four classes are
+  refused as classes, not spellings (`brain.floorpwsh`): a link in any spelling, tool or interpreter whose paths reach
+  what the floor keeps, a `.claude` or `.git` folder, or that the floor cannot resolve, and a call that makes a link
+  and writes; any write, copy or extraction into a `.git` folder by anything but git; `git am`, `rebase`,
+  `cherry-pick` and `revert` resuming a queue (`--continue`, `--skip`, any prefix), `git apply` unless its options,
+  read as git reads them, are read-only, and `git clone`/`init` given a template or configuration; a glob or a brace
+  read as the shell expands it, a write or a copy whose path the floor cannot resolve where it may reach what it keeps. The managed settings also set `strictPluginOnlyCustomization: ["hooks", "mcp"]` and
   `strictKnownMarketplaces` (the brain's marketplace only); the guard's copy carries the
   rendered rules and hook contract, and on Windows its hooks run the copy's own engine.
 - Under a lock, the guard's refusal names the elevated `brain floor lock --lower` and `brain floor unlock` instead of

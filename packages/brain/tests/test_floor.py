@@ -762,7 +762,7 @@ def test_git_options_that_write_or_run(repo, tmp_path, monkeypatch, command):
 @pytest.mark.parametrize("command", [
     "git log -1", "git diff --text", "git clean -fdx", "git push -u origin feat/x", "git config user.name x",
     "git config -f .git/config user.name x", "git commit -m \"export GIT_DIR=x is documented\"",
-    "GIT_EDITOR=true git rebase --continue", "export GIT_EDITOR=true", "GIT_TRACE=1 git status", "ENV=prod make",
+    "GIT_EDITOR=true git rebase --abort", "export GIT_EDITOR=true", "GIT_TRACE=1 git status", "ENV=prod make",
     "export CLAUDE_CODE_MAX_OUTPUT_TOKENS=1", "ls | xargs git add", "eval \"$(ssh-agent -s)\"",
     "reg add HKCU\\Software\\MyApp /v x /d 1 /f",
 ])

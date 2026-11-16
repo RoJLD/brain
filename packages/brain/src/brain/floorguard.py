@@ -35,7 +35,8 @@ REMOVERS = {"rm", "rmdir", "unlink", "shred", "remove-item", "ri", "rd", "del", 
 MOVERS = {"mv", "move", "mi", "move-item", "rename-item", "ren", "rni", "rename"}
 COPIERS = {"cp", "copy", "copy-item", "cpi", "xcopy", "rsync", "robocopy", "install"}
 EXTRACTORS = {"tar", "bsdtar", "unzip", "expand-archive", "7z", "7za"}
-OPAQUE_XARGS = {"git", "claude", "reg", "setx", *REMOVERS, *MOVERS, *COPIERS, *EXTRACTORS}
+OPAQUE_XARGS = {"git", "claude", "reg", "setx", *REMOVERS, *MOVERS, *COPIERS, *EXTRACTORS, *floorpwsh.LINK_PROGS,
+                "new-item", "ni", "fsutil", "cpio", "pax"}
 SHELLS = {"bash", "sh", "zsh", "dash", "ksh", "pwsh", "powershell", "cmd"}
 PLAIN = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
 ROBOCOPY_OPT = re.compile(r"/[A-Za-z]+(?::\S*)?")
@@ -168,12 +169,16 @@ def _plugin_off(text: str) -> bool:
 
 def _shell(cmds, sub: str, command: str, kept: Kept) -> str | None:
     """What a shell call would lift or stop the floor by (check_files), else None."""
-    acts = [(words, d) for words, d, _, _ in g.actions(cmds, sub, command=command)]
+    full = list(g.actions(cmds, sub, command=command))
+    acts = [(words, d) for words, d, _, _ in full]
+    shells = ["bash" if s == "ssh" else s for _, _, s, _ in full]
     plain = floor.unspelled(_code(command))
     checks = (lambda: _opaque(cmds, acts, command), lambda: _env(plain), lambda: _registry(plain),
               lambda: _removals(acts, kept), lambda: _acl(acts, kept), lambda: _writes(cmds, sub, kept),
-              lambda: _copies(acts, kept), lambda: _extractions(acts, kept), lambda: _archived_settings(acts),
-              lambda: _links(acts, kept), lambda: _git_settings(acts), lambda: _checkout(acts, kept),
+              lambda: _copies(acts, kept, shells), lambda: _extractions(acts, kept, shells),
+              lambda: _archived_settings(acts), lambda: floorpwsh.links(full, cmds, sub, command, kept),
+              lambda: floorpwsh.braced(command, sub),
+              lambda: _git_settings(acts), lambda: _checkout(acts, kept),
               lambda: _named(acts, command), lambda: _plugin_cmd(acts), lambda: floorpwsh.piped(command, acts, kept),
               lambda: floorpwsh.methods(command, acts, kept), lambda: floorpwsh.typed(plain))
     what = next((w for check in checks if (w := check())), None)
@@ -332,17 +337,39 @@ def _removed(prog: str, words: list[str]) -> list[str]:
 
 
 def _writes(cmds, sub: str, kept: Kept) -> str | None:
-    """A shell write (a redirection, a program that writes) of a kept file, into a kept folder, or of git's
-    configuration files."""
+    """A shell write (a redirection, a program that writes) of a kept file, into a kept folder, of git's configuration
+    files, or (round 14) into any .git folder but a removal; a write whose target the floor cannot resolve that may
+    reach a .git or .claude folder or a settings file; a glob or a brace read as its shell expands it."""
     for what, target in g.shell_writes(cmds, sub):
-        real = g._resolved(target)
-        real = floorpwsh.alias(real, kept, os.getcwd()) if real else real   # round 11 #1: a hard link's file
-        if real and kept.inside(real):
-            return f"{what} into {target} refused: it sets the floor or runs the guard"
-        if real and (floor.GIT_CONFIG_FILES.search(real) or floorpwsh.REBASE_STATE.search(real)):
-            return f"{what} into {target} refused: it is git's configuration or its rebase and am state"
-        if kept.settings(real) or isinstance(target, g.Unresolved) and kept.settings(target.what):
-            return f"{what} into {target} refused: Claude Code's settings change by Write or Edit only"
+        if isinstance(target, g.Unresolved):
+            if floorpwsh.unresolved_reach(target):
+                return (f"{what} into {target.what} refused: a path the floor cannot resolve, which may be a .git or "
+                        ".claude folder or Claude Code's settings")
+            spelled = [target]
+        else:
+            spelled = floorpwsh.expand(str(target), os.getcwd(), sub)
+            if spelled is None:
+                return f"{what} into {target} refused: a path the floor cannot resolve (a brace, too many matches)"
+        for t in spelled:
+            why = _write_of(what, t, target, kept)
+            if why:
+                return why
+    return None
+
+
+def _write_of(what: str, t, target, kept: Kept) -> str | None:
+    """Why one write's path (``t``, one spelling of ``target``) moves or stops the floor, else None."""
+    real = g._resolved(t)
+    real = floorpwsh.alias(real, kept, os.getcwd()) if real else real   # round 11 #1: a hard link's file
+    if real and kept.inside(real):
+        return f"{what} into {t} refused: it sets the floor or runs the guard"
+    if real and floor.GIT_CONFIG_FILES.search(real):
+        return f"{what} into {t} refused: it is git's configuration"
+    removal = floorpwsh._program(what) in REMOVERS or what.startswith("find -delete")
+    if not removal and (floorpwsh.GIT_DIR.search(real or "") or floorpwsh.GIT_DIR.search(str(t))):
+        return f"{what} into {t} refused: a .git folder changes by git alone (its state, hooks and pointer)"
+    if kept.settings(real) or isinstance(target, g.Unresolved) and kept.settings(target.what):
+        return f"{what} into {t} refused: Claude Code's settings change by Write or Edit only"
     return None
 
 
@@ -373,25 +400,50 @@ def _recursive(prog: str, words: list[str]) -> bool:
                for a in args)
 
 
-def _copies(acts, kept: Kept) -> str | None:
+def _copies(acts, kept: Kept, shells=()) -> str | None:
     """A copy whose written path is a kept file or in a kept folder (the destination, or the destination plus the
     source's name when the destination is a folder), or a recursive copy into a kept file's folder or onto a folder
-    above a kept path; robocopy's FILE arguments are written into DST."""
-    for words, d in acts:
+    above a kept path; robocopy's FILE arguments are written into DST. Round 14: a copy or a move into any .git
+    folder, one whose destination the floor cannot resolve, and one that merges a folder's contents (., *, robocopy,
+    a source it cannot resolve) bringing a .git or .claude folder; globs and braces read as the shell expands them."""
+    for (words, d), shell in zip(acts, list(shells) or ["bash"] * len(acts), strict=True):
         prog = g._prog(words[0])
         if prog not in COPIERS | MOVERS | {"patch"}:
             continue
-        for real, whole in _copied(prog, words, d):
+        landed = _copied(prog, words, d, shell)
+        if landed is None:
+            return (f"{prog} refused: a destination the floor cannot resolve (a substitution, a variable, a splat), "
+                    "which may be a .git folder or Claude Code's settings")
+        for real, whole, contents in landed:
             if kept.inside(real) or (whole and (real in kept.folders or kept.holds(real))):
                 return f"{prog} into {real} refused: it writes what sets the floor or runs the guard"
             if kept.settings(real) or whole and os.path.basename(real).lower() == ".claude":
                 return f"{prog} into {real} refused: Claude Code's settings change by Write or Edit only"
+            if floorpwsh.GIT_DIR.search(real):
+                return f"{prog} into {real} refused: a .git folder changes by git alone (its state, hooks and pointer)"
+            brought = _brought(real, contents) if whole else ""
+            if brought:
+                return (f"{prog} into {real} refused: it may bring {brought} there (a .git folder changes by git alone, "
+                        "Claude Code's settings by Write or Edit)")
     return None
 
 
-def _copied(prog: str, words: list[str], d: str) -> list[tuple[str, bool]]:
-    """(the path a copy, a move or a patch writes, whether a whole folder lands there) for each source: a move lands
-    as a copy does (folder plus the source's name); patch writes its first file (or -o's)."""
+def _brought(dst: str, contents: str) -> str:
+    """The .git or .claude folder a merge of a folder's contents brings into ``dst``: a .claude folder the source holds
+    (its path in ``contents``), a .git folder it holds when ``dst`` holds one too (a repo's state and hooks
+    overwritten; a copy of a repo into a new folder passes), or, for a source the floor cannot resolve ("?"), either
+    one ``dst`` holds; '' for none."""
+    if not contents:
+        return ""
+    where = dst if contents == "?" else contents
+    return next((n for n in (".claude", ".git") if os.path.lexists(os.path.join(where, n))
+                 and (n == ".claude" or os.path.lexists(os.path.join(dst, n)))), "")
+
+
+def _copied(prog: str, words: list[str], d: str, shell: str = "bash") -> list[tuple[str, bool, str]] | None:
+    """(the path a copy, a move or a patch writes, whether a whole folder lands there, the folder whose contents land
+    there: its path, "?" when it cannot be resolved, '' else) for each source: a move lands as a copy does (folder
+    plus the source's name); patch writes its first file (or -o's). None when the destination cannot be resolved."""
     if prog == "robocopy":
         return _robocopied(words, d)
     if prog == "patch":
@@ -400,48 +452,62 @@ def _copied(prog: str, words: list[str], d: str) -> list[tuple[str, bool]]:
     dest, sources = (target, pos) if target else (pos[-1] if pos else "", pos[:-1])
     if not dest:
         return []
-    dst = g._real(g._path(dest, d))
+    dests = floorpwsh.expand(dest, d, shell)
+    if not dests or len(dests) > 1:
+        return None
+    dst = g._real(g._path(dests[0], d))
+    sources = [x for s in sources for x in (floorpwsh.expand(s, d, shell) or [s])]
     into = bool(target) or len(sources) > 1 or os.path.isdir(dst) or dest.endswith(("/", "\\"))
     whole = prog in MOVERS or _recursive(prog, words)   # a move takes a folder whole
-    return [_lands(src, dst, into, whole) for src in sources]
+    return [_lands(src, dst, into, whole, d) for src in sources]
 
 
-def _patched(words: list[str], d: str) -> list[tuple[str, bool]]:
+def _patched(words: list[str], d: str) -> list[tuple[str, bool, str]]:
     """The file patch writes: -o's, else its first file argument."""
     out = next((words[i + 1] for i, w in enumerate(words[:-1]) if w in ("-o", "--output")), "")
     first = next((w for w in words[1:] if not w.startswith("-")), "")
-    return [(g._real(g._path(out or first, d)), False)] if (out or first) else []
+    return [(g._real(g._path(out or first, d)), False, "")] if (out or first) else []
 
 
-def _lands(src: str, dst: str, into: bool, whole: bool) -> tuple[str, bool]:
-    """(the path one source of a copy writes, whether a whole folder lands there): the folder's contents or names
-    the guard cannot know (., *, $x) land as a whole in ``dst``."""
+def _lands(src: str, dst: str, into: bool, whole: bool, d: str = ".") -> tuple[str, bool, str]:
+    """(the path one source of a copy writes, whether a whole folder lands there, the folder whose contents land:
+    _copied): the folder's contents or names the guard cannot know (., *, $x) land as a whole in ``dst``."""
     name = os.path.basename(src.rstrip("/\\"))
-    if name in (".", "..", "") or any(c in name for c in "*?[$"):
-        return dst, True
-    return (os.path.join(dst, name) if into else dst), whole
+    if name in (".", "..", "") or any(c in name for c in "*?[$`{"):
+        known = name in (".", "..", "") and not floorpwsh.UNREAD.search(src)
+        return dst, True, g._real(g._path(src, d)) if known else "?"
+    return (os.path.join(dst, name) if into else dst), whole, ""
 
 
-def _robocopied(words: list[str], d: str) -> list[tuple[str, bool]]:
+def _robocopied(words: list[str], d: str) -> list[tuple[str, bool, str]] | None:
     """robocopy SRC DST [FILE...]: each FILE written into DST, else SRC's files land in DST as a whole."""
     pos = [w for w in words[1:] if not ROBOCOPY_OPT.fullmatch(w)]
     if len(pos) < 2:
         return []
+    if floorpwsh.UNREAD.search(pos[1]):
+        return None
     dst = g._real(g._path(pos[1], d))
-    return [(os.path.join(dst, f), False) for f in pos[2:]] or [(dst, True)]
+    src = "?" if floorpwsh.UNREAD.search(pos[0]) else g._real(g._path(pos[0], d))
+    return [(os.path.join(dst, f), False, "") for f in pos[2:]] or [(dst, True, src)]
 
 
-def _extractions(acts, kept: Kept) -> str | None:
+def _extractions(acts, kept: Kept, shells=()) -> str | None:
     """An archive extracted into a kept file's folder or a kept folder (tar -x -C, unzip -d, Expand-Archive
-    -DestinationPath, 7z x -o; the current folder when none is named): its members are not read."""
-    for words, d in acts:
+    -DestinationPath, 7z x -o; the current folder when none is named): its members are not read. Round 14: into any
+    .git folder, or into a folder the floor cannot resolve."""
+    for (words, d), shell in zip(acts, list(shells) or ["bash"] * len(acts), strict=True):
         prog = g._prog(words[0])
         target = _extract_target(prog, words) if prog in EXTRACTORS else None
         if target is None:
             continue
-        real = g._real(g._path(target, d)) if target else g._real(d)
+        spelled = floorpwsh.expand(target, d, shell) if target else [""]
+        if not spelled or len(spelled) > 1:
+            return f"{prog} refused: it extracts into a folder the floor cannot resolve ({target})"
+        real = g._real(g._path(spelled[0], d)) if spelled[0] else g._real(d)
         if real in kept.folders or kept.inside(real):
             return f"{prog} into {real} refused: an archive there can hold what sets the floor or runs the guard"
+        if floorpwsh.GIT_DIR.search(real):
+            return f"{prog} into {real} refused: a .git folder changes by git alone (its state, hooks and pointer)"
     return None
 
 
@@ -511,6 +577,8 @@ def _git_settings(acts) -> str | None:
     update-index's --cacheinfo), update-index from its input, or a commit, the index, a stash or a patch it brings
     whose settings differ from the work tree's (git diff --name-only on the settings' pathspec)."""
     for _, folder, sub, args in _git(acts):
+        if sub in floorpwsh.RESUMERS and (why := floorpwsh.resumes(sub, args)):   # round 14: as a class
+            return why
         if sub not in GIT_TREE_WRITERS:
             continue
         named = next((a for a in args if any(SETTINGS.search(part) for part in re.split(r"[,=]", a))), "")
@@ -531,7 +599,7 @@ def _brings_settings(d: str, sub: str, args: list[str]) -> str:
     each commit it names or reads by default (the last stash, the upstream for pull) against HEAD, so a local edit
     the command carries over is no change; each patch file of apply or am read as text."""
     if sub in ("apply", "am"):
-        return floorpwsh.patched_settings(sub, args, d)
+        return floorpwsh.patched_settings(sub, args)
     if sub in INDEX_RESTORERS or (sub == "checkout" and ("--" in args or "." in args)):
         changed = g._git_out(d, "diff", "--name-only", "HEAD", "--", *SETTINGS_SPEC).split() or \
             g._git_out(d, "diff", "--name-only", "--", *SETTINGS_SPEC).split()
@@ -572,36 +640,6 @@ def _revs(sub: str, args: list[str]) -> list[str]:
     return list(dict.fromkeys(revs))
 
 
-LINK_TYPE = re.compile(r"(?i)^(?:symboliclink|hardlink|junction)$")
-
-
-def _links(acts, kept: Kept) -> str | None:
-    """A link made onto one of Claude Code's settings files or a kept path, in any shell's payload (cmd's mklink LINK
-    TARGET, ln's last argument or -t; New-Item -ItemType SymbolicLink, HardLink or Junction -Path)."""
-    for words, d in acts:
-        prog = g._prog(words[0])
-        link = _link_of(prog, words)
-        real = g._real(g._path(link, d)) if link else ""
-        hit = link if real and (kept.settings(real) or kept.inside(real)) else floorpwsh.link_refusal(prog, words, d, kept)
-        if hit:
-            return f"{prog} onto {hit} refused: Claude Code's settings and what sets the floor change by Write or Edit only"
-    return None
-
-
-def _link_of(prog: str, words: list[str]) -> str:
-    """The path a link command makes, '' for another command."""
-    args = words[1:]
-    if prog == "mklink":
-        return next((a for a in args if not a.startswith("/")), "")
-    if prog == "ln":
-        pos, target = _positional(words)
-        return target or (pos[-1] if len(pos) > 1 else "")
-    if prog in ("new-item", "ni") and any(LINK_TYPE.match(a) for a in args):
-        named = next((args[i + 1] for i, a in enumerate(args[:-1]) if re.match(r"(?i)^-(?:path|p)$", a)), "")
-        return named or next((a for a in args if not a.startswith("-")), "")
-    return ""
-
-
 def _archived_settings(acts) -> str | None:
     """An extraction whose archive holds one of Claude Code's settings files (its members listed: tar, zip), or one
     whose members the floor cannot list (from its input, 7z, a compression it does not read)."""
@@ -616,7 +654,28 @@ def _archived_settings(acts) -> str | None:
         hit = next((m for m in members if SETTINGS.search(m.replace("\\", "/"))), "")
         if hit:
             return f"{prog} refused: the archive holds {hit}, and Claude Code's settings change by Write or Edit only"
+        hit = next((m for m in members if floorpwsh.GIT_DIR.search(m) or floorpwsh.CLAUDE_DIR.search(m)), "")
+        if hit:   # round 14: git's state and hooks, a skill's frontmatter: never read once extracted
+            return f"{prog} refused: the archive holds {hit}, in a .git or .claude folder"
+        link = _linked_member(g._path(archive, d))
+        if link:
+            return f"{prog} refused: the archive holds a link ({link}), which an extraction makes onto any path"
     return None
+
+
+def _linked_member(path: str) -> str:
+    """The first member of a tar or zip archive that is a link (a tar hard or symbolic link, a zip entry whose mode
+    is a symbolic link's), '' for none (round 14: links as a class)."""
+    import tarfile
+    import zipfile
+    try:
+        if zipfile.is_zipfile(path):
+            with zipfile.ZipFile(path) as z:
+                return next((i.filename for i in z.infolist() if (i.external_attr >> 16) & 0o170000 == 0o120000), "")
+        with tarfile.open(path) as tf:
+            return next((m.name for m in tf.getmembers() if m.islnk() or m.issym()), "")
+    except (OSError, tarfile.TarError, zipfile.BadZipFile, ValueError, EOFError):
+        return ""
 
 
 def _archive_of(prog: str, args: list[str]) -> str:
@@ -841,6 +900,9 @@ def _runs(sub: str, args: list[str]) -> str:
         short = floor.GIT_RUNNING_SHORT.get(sub, ())
         if any(a == s or (a.startswith(s) and len(a) > len(s)) for s in short):
             return f"git {sub} {a[:2]} refused: it writes a file or runs a program"
+    made = floorpwsh.made_by_git(sub, args)
+    if made:
+        return f"git {sub} {made} refused: hooks or configuration it gives the new repo run out of the floor's reading"
     if sub in floor.GIT_RUNNERS and (not floor.GIT_RUNNERS[sub] or floor.GIT_RUNNERS[sub] in args):
         return f"git {sub} {floor.GIT_RUNNERS[sub]} refused: it runs what it is given or writes refs".replace("  ", " ")
     return ""

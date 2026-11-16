@@ -1,11 +1,14 @@
 """PowerShell's pipelines and .NET's writers under the floor, and the later rounds' write classes (wi-brain-unadopted-
-floor, review rounds 7-10; brain.floorguard calls them): a path piped into a cmdlet that writes is its -Path, a .NET
+floor, review rounds 7-14; brain.floorguard calls them): a path piped into a cmdlet that writes is its -Path, a .NET
 method that writes is refused on what the floor keeps, the environment written through COM or a RegistryKey is refused
 whatever the statement; a stream of a settings or customization file, a frontmatter that adds hooks, and a patch read
-from standard input are refused."""
+from standard input are refused. Round 14 refuses classes, not spellings: a link however it is made (links), any
+write into a .git folder (GIT_DIR), a queue resumed (resumes), git apply unless read-only as git parses it
+(apply_reads_only), a path the floor cannot resolve where it may reach what it keeps (expand, unresolved_reach)."""
 
 from __future__ import annotations
 
+import fnmatch
 import os
 import re
 from pathlib import Path
@@ -45,16 +48,13 @@ TYPE_CALL = re.compile(r"(?i)(?:\)|\}|\$[\w:]+)\s*::\s*\w|\]\s*\.\s*(?:GetMethod
                        # round 10 #6: a member named by an expression (::("Write"+"AllText")), a method group invoked
                        r"::\s*[(\"'$]|::\s*\w+\s*\.\s*Invoke\s*\(|"
                        r"\)\s*\.\s*Invoke\s*\(")   # round 11 #7: a method group reached through parentheses
-# Round 12 #2: git's rebase and am state, whose queued patches git am --continue and --skip apply, and what a queued
-# patch must not name; round 12 #1: a link made by inline code.
-REBASE_STATE = re.compile(r"(?i)[\\/]\.git[\\/](?:worktrees[\\/][^\\/]+[\\/])?rebase-(?:apply|merge)(?:[\\/]|$)")
-QUEUED = re.compile(r"(?i)\.claude[\\/](?:settings(?:\.local)?\.json|skills|commands|agents)\b|\.mcp\.json|"
-                    r"\.claude\.json")
-INLINE_LINK = re.compile(r"(?i)\bos\.(?:link|symlink)\s*\(|\.(?:hardlink_to|symlink_to|link_to)\s*\(|"
-                         r"\bfs\.(?:link|symlink)(?:Sync)?\s*\(|CreateHardLink|CreateSymbolicLink")
-# Round 11 #3: git apply's and git am's forms that write nothing.
-READ_ONLY = {"apply": {"--check", "--stat", "--numstat", "--summary"},
-             "am": {"--continue", "--abort", "--skip", "--quit", "--show-current-patch"}}
+# Round 14 (refused as classes, not spellings): any .git folder, written by anything but git itself (its rebase and
+# am state, its hooks, its gitdir pointer); a path the floor cannot resolve (a glob, a brace, a substitution, a
+# variable, a splat); the names a glob or a brace may reach that the floor keeps.
+GIT_DIR = re.compile(r"(?i)(?:^|[\\/])\.git(?:[\\/]|$)")
+UNREAD = re.compile(r"[*?\[\]{}$`]|^@|^~[^\\/]")
+GUARDED_NAMES = (".git", ".claude", "settings.json", "settings.local.json", ".mcp.json", ".claude.json")
+CLAUDE_DIR = re.compile(r"(?i)(?:^|[\\/])\.claude(?:[\\/]|$)")
 HOME_VARS = re.compile(r"(?i)^(?:\$env:(?:USERPROFILE|HOME)|\$\{env:(?:USERPROFILE|HOME)\}|\$HOME|~)(?=$|[\\/])")
 
 
@@ -91,10 +91,8 @@ def piped(command: str, acts, kept) -> str | None:
 
 def typed(plain: str) -> str | None:
     """A static member reached through anything but a literal [Type] (TYPE_CALL), or through a variable that holds a
-    .NET type (TYPE_VAR); a link made by inline code (INLINE_LINK: os.link, Path.hardlink_to, fs.linkSync...)."""
-    m = INLINE_LINK.search(plain)
-    if m:
-        return f"{m.group(0).strip()} refused: a link made by code, whose target the floor cannot read"
+    .NET type (TYPE_VAR). A link made by code is judged per command (links), not on the call's whole text (round 13:
+    a search that names a link function passes)."""
     m = TYPE_CALL.search(plain)
     if m:
         return (f"{m.group(0).strip()} refused: a .NET member reached through a type the floor cannot read (name the "
@@ -125,8 +123,8 @@ def customized(tool: str, inp: dict, target: str, real: str) -> str | None:
     to a skill, command or agent (round 9 #2): the refusal; '' for a customization file it lets through; None when
     the target is neither (the settings checks go on)."""
     custom = floor.CUSTOMIZATION.search(real) or floor.CUSTOMIZATION.search(target)
-    if REBASE_STATE.search(real) or REBASE_STATE.search(str(target)):   # round 12 #2: git am's queued patches
-        return f"{tool} refused: {target} is git's rebase or am state, which git am --continue or --skip applies"
+    if GIT_DIR.search(real) or GIT_DIR.search(str(target)):   # round 14: any .git folder, by anything but git
+        return f"{tool} refused: {target} is in a .git folder (its state, hooks and pointer change by git alone)"
     if g.STREAM.search(str(target)) and (custom or g._override_file(target)):
         return f"{tool} refused: {target} names a stream of a settings or customization file"
     if custom:
@@ -134,29 +132,109 @@ def customized(tool: str, inp: dict, target: str, real: str) -> str | None:
     return None
 
 
-def _queued(d: str) -> str:
-    """A patch git am's state queues (.git/rebase-apply) that names a settings or customization path, said; ''
-    when none does (round 12 #2: --continue and --skip apply the next ones)."""
-    state = g._git_out(d, "rev-parse", "--git-path", "rebase-apply").strip()
-    folder = Path(g._path(state, d)) if state else None
-    for f in sorted(folder.iterdir()) if folder and folder.is_dir() else []:
-        try:
-            if f.is_file() and QUEUED.search(f.read_text(encoding="utf-8", errors="replace")):
-                return f"the queued patch {f.name}, which names a settings or customization file"
-        except OSError:
-            return f"a queued patch it cannot read ({f.name})"
+# --- round 14: git's patch readers and resumers, their options read as git reads them --------------------------------
+
+# git apply's long options (git 2.46, apply -h): name -> (takes a value, harmless while the patch is only read).
+APPLY_LONG = {"exclude": (True, True), "include": (True, True), "no-add": (False, True), "add": (False, True),
+              "stat": (False, True), "numstat": (False, True), "summary": (False, True), "check": (False, True),
+              "index": (False, True), "intent-to-add": (False, True), "cached": (False, True),
+              "unsafe-paths": (False, False), "apply": (False, True), "3way": (False, True),
+              "build-fake-ancestor": (True, False), "whitespace": (True, True), "ignore-space-change": (False, True),
+              "ignore-whitespace": (False, True), "reverse": (False, True), "unidiff-zero": (False, True),
+              "reject": (False, False), "allow-overlap": (False, True), "verbose": (False, True),
+              "quiet": (False, True), "inaccurate-eof": (False, True), "recount": (False, True),
+              "directory": (True, True), "allow-empty": (False, True)}
+APPLY_NONEG = {"exclude", "include", "no-add", "add"}   # no --no- form (--no-add is its own option, --add its opposite)
+APPLY_SHORT = {"p": True, "C": True, "z": False, "R": False, "3": False, "N": False, "v": False, "q": False}
+APPLY_READERS = ("stat", "numstat", "summary", "check")
+# git am's forms that apply nothing, spelled whole (an abbreviation is refused: git am has --quiet, --quit and
+# --quoted-cr); what resumes a queue the floor does not read (its patches, its todo's exec lines).
+AM_READ = re.compile(r"^(?:--abort|--quit|--show-current-patch(?:=\w+)?|-h)$")
+RESUMERS = {"am", "rebase", "cherry-pick", "revert"}
+RESUME = ("--continue", "--skip", "--resolved")
+
+
+def _long(arg: str, names) -> tuple[str, bool] | None:
+    """(the option a long argument names, whether it is negated) as git's parse-options reads it: an exact name, else
+    the one name it is a unique prefix of, a --no- form included; None for no name or more than one (git refuses)."""
+    body = arg[2:].partition("=")[0]
+    cands = {n: (n, False) for n in names}
+    cands.update({f"no-{n}": (n, True) for n in names if n not in APPLY_NONEG})
+    if body in cands:
+        return cands[body]
+    hits = {v for k, v in cands.items() if body and k.startswith(body)}
+    return hits.pop() if len(hits) == 1 else None
+
+
+def apply_reads_only(args: list[str]) -> bool:
+    """Whether ``git apply ARGS`` only reads its patch (round 14: its options parsed as git parses them: unique
+    prefixes, --no- forms, short clusters and values, the last one winning): --stat, --numstat, --summary or --check
+    left on, --apply left off, and no option that writes beside the work tree (--build-fake-ancestor, --reject,
+    --unsafe-paths) nor one the floor does not know."""
+    state, i = {}, 0
+    while i < len(args):
+        a = args[i]
+        if a == "--":
+            break
+        if a.startswith("--"):
+            hit = _long(a, APPLY_LONG)
+            if hit is None:
+                return False
+            name, neg = hit
+            value, harmless = APPLY_LONG[name]
+            if not (harmless or neg):
+                return False
+            state[name] = not neg
+            i += 1 if value and not neg and "=" not in a else 0
+        elif a.startswith("-") and len(a) > 1:
+            for k, c in enumerate(a[1:], 1):
+                if c not in APPLY_SHORT:
+                    return False
+                if APPLY_SHORT[c]:
+                    i += 0 if a[k + 1:] else 1
+                    break
+        i += 1
+    return any(state.get(r) for r in APPLY_READERS) and not state.get("apply")
+
+
+def resumes(sub: str, args: list[str]) -> str:
+    """git am, rebase, cherry-pick or revert resuming a queue (round 14: --continue, --skip, am's --resolved and -r,
+    in any prefix git takes): the refusal; '' else."""
+    for a in args:
+        if a == "--":
+            break
+        name = a.partition("=")[0]
+        if (sub == "am" and a == "-r") or (len(name) > 2 and name.startswith("--") and
+                                          any(full.startswith(name) for full in RESUME)):
+            return (f"git {sub} {a} refused: it resumes a queue (its patches, its todo's exec lines) the floor does "
+                    "not read; finish or abort it in the owner's terminal")
     return ""
 
 
-def patched_settings(sub: str, args: list[str], d: str = ".") -> str:
+def patched_settings(sub: str, args: list[str]) -> str:
     """Why git apply or git am would write under the floor (round 11 #3: a patch names its files in more spellings
-    than a reader follows: case, renames, a patch the same command makes), '' for their read-only forms (apply
-    --check, --stat, --numstat, --summary without --apply) and am's session options (--continue, --abort, --skip,
-    --quit, --show-current-patch)."""
-    flags = {a.split("=", 1)[0] for a in args}
-    if flags & READ_ONLY.get(sub, set()) and "--apply" not in flags:
-        return _queued(d) if sub == "am" and flags & {"--continue", "--skip"} else ""
-    return f"the work tree through a patch (under the floor only {', '.join(sorted(READ_ONLY.get(sub, set())))})"
+    than a reader follows), '' for apply's read-only forms (apply_reads_only) and am's --abort, --quit and
+    --show-current-patch spelled whole (--continue and --skip resume a queue: resumes)."""
+    if sub == "apply" and apply_reads_only(args):
+        return ""
+    if sub == "am" and args and all(AM_READ.match(a) for a in args):
+        return ""
+    return ("the work tree through a patch (under the floor only apply --check, --stat, --numstat or --summary, and "
+            "am --abort, --quit or --show-current-patch)")
+
+
+def made_by_git(sub: str, args: list[str]) -> str:
+    """git clone or init given a template folder or configuration (round 14: its hooks run at the clone's checkout,
+    out of the floor's reading, and core.hooksPath points them anywhere), in any prefix git takes: the option; ''
+    else."""
+    if sub not in ("clone", "init"):
+        return ""
+    for a in args:
+        name = a.partition("=")[0]
+        if (sub == "clone" and (a == "-c" or a.startswith("-c") and not a.startswith("--"))) or (
+                len(name) > 3 and any(full.startswith(name) for full in ("--template", "--config"))):
+            return name
+    return ""
 
 
 def alias(real: str, kept, cwd: str) -> str:
@@ -199,33 +277,329 @@ def _settings_folders(cwd: str) -> list[Path]:
     return folders
 
 
-def link_refusal(prog: str, words: list[str], d: str, kept) -> str:
-    """A link command (LINKERS) any of whose paths is a settings or kept file, a folder above a kept path, a
-    .claude folder or a folder holding one (round 11 #1, #2): what it names; '' otherwise."""
-    args = words[1:]
-    if not _links_files(prog, args):
-        return ""
-    return next((a for a in args if (not a.startswith(("-", "/")) or os.path.isabs(a))
-                 and _settings_reach(g._real(g._path(a, d)), kept)), "")
+# --- round 14: a link, in any spelling, judged by every path it names ------------------------------------------------
+
+LINK_PROGS = {"ln", "link", "mklink", "junction", "junction64", "subst"}
+LINK_TYPES = ("symboliclink", "hardlink", "junction")
+# What runs another program the floor does not unwrap (docs/guards.md, Limits): a link program given to one is
+# refused, its paths unread.
+UNWRAPPED = {"find", "parallel", "watch", "flock", "chrt", "script", "entr", "fd"}
+# .NET's link makers in PowerShell code; a P/Invoke Add-Type (kernel32's CreateHardLinkW).
+NET_LINK = re.compile(r"(?i)::\s*Create(?:Symbolic|Hard)Link\w*|\.\s*CreateAsSymbolicLink\s*\(|\bCreateJunction\b")
+PS_PARAM = re.compile(r"^[-–—](\w+)(?::(.*))?$", re.S)
+TEXT_READERS = g.TEXT_TOOLS | {"get-content", "gc", "type", "more", "wc", "sort", "uniq", "cut", "diff", "jq"}
+# Inline code: the languages, how their programs are named, a reference to a link maker (a call, an attribute, an
+# import), what reaches a member by a name the floor cannot read, and what runs a program.
+LANGS = (("python", re.compile(r"^(?:python[\d.]*w?|pythonw|py|pypy[\d.]*)$")),
+         ("node", re.compile(r"^(?:node|nodejs|deno|bun)$")), ("perl", re.compile(r"^perl[\d.]*$")),
+         ("ruby", re.compile(r"^ruby[\d.]*$")), ("php", re.compile(r"^php[\d.]*$")))
+_NAMES = (r"(?:link|symlink|hardlink_to|symlink_to|link_to|linkSync|symlinkSync|ln|ln_s|ln_sf|make_link|"
+          r"CreateHardLink\w*|CreateSymbolicLink\w*|CreateJunction|CreateAsSymbolicLink|copy_function|mklink)")
+CODE_LINK = re.compile(r"(?:\.\s*|\bimport\b[^\n;]*?\b|\buse\b[^\n;]*?\b)" + _NAMES + r"\b|\b" + _NAMES + r"\s*\(")
+PERL_LINK = re.compile(r"(?<![$@%&\w])(?:link|symlink)\b\s*(?:\(|[$\w])")   # a call: link OLD, NEW (not /link/)
+DYNAMIC = {"python": re.compile(r"(?<![.\w])(?:getattr|__import__|eval|exec|compile|vars|globals|locals)\s*\(|"
+                                r"\b(?:import_module|ctypes|_winapi|__dict__|__builtins__|attrgetter|methodcaller)\b"),
+           "node": re.compile(r"\b(?:eval|Function|Reflect|binding|import)\s*[.(]|\[[^\]\n]*\+[^\]\n]*\]"),
+           "perl": re.compile(r"\beval\b|&\s*[{$]|->\s*can\b|\bCORE::"),
+           "ruby": re.compile(r"\b(?:send|public_send|__send__|method|instance_eval|eval|const_get)\b"),
+           "php": re.compile(r"\b(?:eval|call_user_func\w*|create_function)\b|\$\w+\s*\(")}
+SPAWN = re.compile(r"(?i)\b(?:subprocess|system|popen|spawn\w*|exec\w*|child_process|Open3|shell_exec|passthru|"
+                   r"proc_open|qx)\b|`")
+LINK_COMMAND = re.compile(r"(?i)(?:^|[\s'\"\[,(])(?:ln|link|mklink|fsutil|new-item|ni|junction|subst|cpio)"
+                          r"(?:\.exe)?(?=$|[\s'\",\])])|\bcp\s+-\w*[ls]|--link|--sym")
+COMMENT = {"python": r"#[^\n]*", "ruby": r"#[^\n]*", "perl": r"#[^\n]*", "node": r"//[^\n]*|/\*.*?\*/",
+           "php": r"//[^\n]*|#[^\n]*|/\*.*?\*/"}
 
 
-def _links_files(prog: str, args: list[str]) -> bool:
-    """Whether the command makes a link: mklink, ln, link, fsutil hardlink, cp -l/--link, New-Item -ItemType *Link (a
-    colon form -ItemType:Junction or -Type: too)."""
-    if prog in ("mklink", "ln", "link"):
-        return True
+def _lang(prog: str) -> str:
+    return next((name for name, rx in LANGS if rx.match(prog)), "")
+
+
+def _fed(cmds, command: str) -> str:
+    """What a call may feed a program's input: its heredocs, its here-strings, the words echo and printf print."""
+    fed = g._heredocs(command)
+    for words, _ in cmds:
+        if "<<<" in words[:-1]:
+            fed.append(words[words.index("<<<") + 1])
+        if g._prog(words[0]) in g.STDIN_FEEDERS:
+            fed.append(" ".join(a for a in words[1:] if not a.startswith("-")))
+    return "\n".join(fed)
+
+
+def _code_of(lang: str, args: list[str], fed: str) -> str:
+    """The code an interpreter runs from its arguments (python -c, node -e, perl -e, ruby -e, php -r, deno eval) or
+    from its input (no script named: what the call feeds, _fed); '' when it runs a script or a module."""
+    if lang in g.INLINE:
+        code = g._inline(args, *g.INLINE[lang][:2])
+        if code:
+            return code[0]
+    if lang == "php" and "-r" in args[:-1]:
+        return args[args.index("-r") + 1]
+    if args[:1] == ["eval"] and len(args) > 1:   # deno eval CODE
+        return args[1]
+    values = g.INLINE.get(lang, ("", "", []))[1]
+    i = 0
+    while i < len(args):
+        a = args[i]
+        if a == "-":
+            break
+        if not a.startswith("-") or a in ("-m", "-r") or a.startswith("--require"):
+            return ""   # a script, a module, a file it requires
+        i += 2 if len(a) == 2 and a[1] in values else 1
+    return fed
+
+
+def code_link(lang: str, code: str) -> str:
+    """Why inline code may make a link (round 14, whatever the interpreter): a link maker it names as a call, an
+    attribute or an import; a member or a module reached by a name the floor cannot read, a link name spelled in
+    pieces; a program it runs whose command line names a link maker. '' for code that only names one in a string or
+    a comment (round 13: ordinary code passes)."""
+    stripped = re.sub(COMMENT.get(lang, r"#[^\n]*"), " ", g.LITERAL.sub("S", code), flags=re.S)
+    if lang == "perl" and PERL_LINK.search(stripped):
+        return "link"
+    m = CODE_LINK.search(stripped)
+    if m:
+        return m.group(0).strip()
+    collapsed = re.sub(r"['\"\s+,.]", "", code).lower()
+    dyn = DYNAMIC.get(lang)
+    if dyn and dyn.search(stripped) and ("link" in collapsed or lang == "python" and re.search(
+            r"(?<![.\w])(?:eval|exec|compile|__import__)\s*\(|\bimport_module\b|"
+            r"(?<![.\w])getattr\s*\([^,()]*,\s*(?!S\s*[,)])", stripped)):
+        return dyn.search(stripped).group(0).strip()
+    strings = " ".join(m.group(2) for m in g.LITERAL.finditer(code))
+    if SPAWN.search(stripped) and LINK_COMMAND.search(strings):
+        return LINK_COMMAND.search(strings).group(0).strip(" '\"[,(")
+    return ""
+
+
+def link_words(prog: str, args: list[str]) -> list[str] | None:
+    """The path words of a command that makes a link, in any spelling it is given (round 14: GNU's unique prefixes,
+    PowerShell's parameter prefixes, colon forms and -ItemType read as a wildcard prefix, a splat, a type the floor
+    cannot read), or None when it makes none. A word the floor cannot read stays as written (UNREAD)."""
+    if prog in ("busybox", "toybox") and args:
+        return link_words(g._prog(args[0]), args[1:])
+    if prog in ("ln", "link"):
+        pos, opts = g._getopt(args, "St", ("suffix", "target-directory"))
+        return pos + [v for o, v in opts if v and not (o == "-S" or len(o) > 3 and "--suffix".startswith(o))]
+    if prog == "mklink":
+        return [a for a in args if not a.startswith("/")]
+    if prog in ("junction", "junction64", "subst"):
+        return [a for a in args if not a.startswith(("-", "/"))]
     if prog == "fsutil":
-        return "hardlink" in (a.lower() for a in args)
+        low = [a.lower() for a in args]
+        return args[low.index("create") + 1:] if "hardlink" in low and "create" in low else None
     if prog == "cp":
-        return any(a == "--link" or re.match(r"^-[a-zA-Z]*l", a) for a in args)
-    return prog in ("new-item", "ni") and any(
-        re.match(r"(?i)^(?:-(?:itemtype|type|it):)?['\"]?(?:symboliclink|hardlink|junction)['\"]?$", a) for a in args)
+        return _cp_link(args)
+    if prog in ("cpio", "pax"):
+        letters = "".join(a[1:] for a in args if re.match(r"^-[A-Za-z]+$", a))
+        longs = [a.partition("=")[0] for a in args if a.startswith("--")]
+        link = "l" in letters or any(len(x) > 3 and "--link".startswith(x) for x in longs)
+        return ["$(the names it reads from its input)", *(a for a in args if not a.startswith("-"))] if link else None
+    if prog == "rsync":
+        hits = [i for i, a in enumerate(args) if a.startswith("--link-d")]
+        return [args[i].partition("=")[2] or (args[i + 1] if i + 1 < len(args) else "$") for i in hits] + \
+            [a for a in args if not a.startswith("-")] if hits else None
+    if prog in ("new-item", "ni"):
+        return _new_item_link(args)
+    return None
 
 
-def _settings_reach(real: str, kept) -> bool:
-    """Whether a link onto ``real`` reaches a settings or kept file: it is one, a folder above a kept path, the home or
-    its .claude folder (round 12 #4: a project folder holding .claude passes; a write through it is judged on the
-    file it reaches)."""
+def _cp_link(args: list[str]) -> list[str] | None:
+    """cp's path words when it makes links (-l, -s, --link, --symbolic-link, any unique prefix GNU takes), else None."""
+    words, link, i = [], False, 0
+    while i < len(args):
+        a = args[i]
+        if a == "--":
+            words += args[i + 1:]
+            break
+        name = a.partition("=")[0]
+        if a.startswith("--"):
+            if len(name) > 2 and ("--link".startswith(name) or "--symbolic-link".startswith(name)):
+                link = True
+            elif len(name) > 3 and ("--target-directory".startswith(name) or "--suffix".startswith(name)):
+                val = a.partition("=")[2] if "=" in a else (args[i + 1] if i + 1 < len(args) else "")
+                i += 0 if "=" in a else 1
+                words += [val] if name.startswith("--t") else []
+        elif a.startswith("-") and len(a) > 1:
+            for k, c in enumerate(a[1:], 1):
+                link = link or c in "ls"
+                if c in "St":
+                    val = a[k + 1:] or (args[i + 1] if i + 1 < len(args) else "")
+                    i += 0 if a[k + 1:] else 1
+                    words += [val] if c == "t" else []
+                    break
+        else:
+            words.append(a)
+        i += 1
+    return words if link else None
+
+
+def _new_item_link(args: list[str]) -> list[str] | None:
+    """New-Item's path words when it may make a link: -ItemType (or -Type, any prefix PowerShell takes, a colon form)
+    whose value matches SymbolicLink, HardLink or Junction as PowerShell's wildcard prefix does (h, Hard*, j, Sym), or
+    a type or a splat the floor cannot read; None for another item."""
+    words, link, i = [], False, 0
+    while i < len(args):
+        a = args[i]
+        m = PS_PARAM.match(a)
+        if a.startswith("@"):
+            words.append(a)
+            link = True   # a splat: its -ItemType is not read
+        elif m:
+            name, val = m.group(1).lower(), m.group(2)
+            if val is None and i + 1 < len(args) and not PS_PARAM.match(args[i + 1]):
+                i, val = i + 1, args[i + 1]
+            if "itemtype".startswith(name) or "type".startswith(name):
+                v = _unq((val or "").strip()).lower()
+                if not v or UNREAD.search(v.replace("*", "").replace("?", "").replace("[", "").replace("]", "")):
+                    words.append("$(an -ItemType the floor cannot read)")
+                    link = True
+                elif any(fnmatch.fnmatchcase(t, v + "*") for t in LINK_TYPES):
+                    link = True
+            elif val is not None:
+                words.append(_unq(val))
+        else:
+            words.append(_unq(a))
+        i += 1
+    return words if link else None
+
+
+def _link_reach(word: str, real: str, kept) -> bool:
+    """Whether a link that names ``word`` (``real`` as resolved) reaches what the floor keeps: a settings or kept file,
+    a folder above a kept path, the home, any .claude or .git folder or what is in one (round 14: a symbolic link's
+    target is read from the link's folder, so the name as written counts too), .mcp.json or .claude.json."""
     home = os.path.normcase(os.path.abspath(Path.home()))
-    return kept.settings(real) or kept.inside(real) or kept.holds(real) or \
-        os.path.normcase(real) in (home, os.path.join(home, ".claude"))
+    return bool(kept.settings(real) or kept.inside(real) or kept.holds(real) or os.path.normcase(real) == home
+                or os.path.basename(real).lower() in (".mcp.json", ".claude.json")
+                or any(GIT_DIR.search(x) or CLAUDE_DIR.search(x) for x in (word, real)))
+
+
+def _program(what: str) -> str:
+    """The program a shell write names (``bash: ln`` -> ln, ``redirection >`` -> redirection)."""
+    tail = what.rsplit(": ", 1)[-1].split()
+    return g._prog(tail[0]) if tail else ""
+
+
+def links(acts, cmds, shell: str, command: str, kept) -> str | None:
+    """Round 14, links as a class whatever the tool, the spelling or the interpreter: inline code or .NET that makes
+    one (its paths unread); a link program run by a launcher the floor does not unwrap; a link program whose path
+    words the floor cannot resolve (a glob, a brace, a substitution, a variable, a splat, its input) or that reaches
+    what it keeps (_link_reach); and a call that makes a link and writes anything else (a write through the new link
+    is not known until the link exists)."""
+    makers, fed = set(), _fed(cmds, command)
+    for words, d, *_ in acts:
+        prog, args = g._prog(words[0]), words[1:]
+        lang = _lang(prog)
+        what = code_link(lang, _code_of(lang, args, fed)) if lang else ""
+        if what:
+            return f"{prog} refused: inline code that makes a link ({what}), whose paths the floor cannot read"
+        if prog not in TEXT_READERS and (any(NET_LINK.search(w) for w in words) or prog == "add-type" and any(
+                re.search(r"(?i)dllimport|link", w) for w in args)):
+            return f"{prog} refused: .NET code that makes a link, whose paths the floor cannot read"
+        if prog in UNWRAPPED and any(g._prog(w) in LINK_PROGS for w in args):
+            return f"{prog} refused: it runs a link program the floor does not read the paths of"
+        found = link_words(prog, args)
+        if found is None:
+            continue
+        makers.add(prog)
+        for w in found or ["$(its input)"]:
+            if UNREAD.search(w):
+                return f"{prog} refused: a link whose path ({w}) the floor cannot resolve"
+            if _link_reach(w, g._real(g._path(w, d)), kept):
+                return (f"{prog} onto {w} refused: a link onto Claude Code's settings or customization, a .git folder "
+                        "or what sets the floor (they change by Write or Edit only)")
+    if makers and shell != "ps" and BRACE_WORD.search(_unquoted(command)):
+        return "a link in a call with a brace expansion refused: the floor does not read the paths a brace makes"
+    for what, target in g.shell_writes(cmds, shell) if makers else ():
+        if _program(what) not in makers | NO_CONTENT:   # a folder made or a file removed writes nothing through one
+            return (f"a link and a write ({what} into {target}) in one call refused: the file a write reaches through "
+                    "a new link is not known until the link exists")
+    return None
+
+
+NO_CONTENT = {"mkdir", "md", "rm", "rmdir", "unlink", "remove-item", "ri", "rd", "del", "erase"}
+# A bash word with a brace expansion (a.{txt,bak}), which the parser reads as separate words: quotes taken out first.
+BRACE_WORD = re.compile(r"[^\s;&|()<>]*\{[^{}\s]*,[^{}\s]*\}[^\s;&|()<>]*")
+
+
+def _unquoted(command: str) -> str:
+    return re.sub(r"'[^']*'|\"(?:[^\"\\]|\\.)*\"", " Q ", command)
+
+
+def braced(command: str, shell: str) -> str | None:
+    """A bash brace expansion one of whose words names a .git or .claude folder or a settings file (round 14: the
+    parser reads a.{b,c} as separate words): the refusal; None else."""
+    if shell == "ps":
+        return None
+    for m in BRACE_WORD.finditer(_unquoted(command)):
+        hit = next((w for w in _braces(m.group(0)) if GUARDED_TEXT.search(w)), "")
+        if hit:
+            return f"{m.group(0)} refused: a brace that makes {hit}, which the floor does not read as a path"
+    return None
+
+
+# --- round 14: a path word as its shell expands it ------------------------------------------------------------------
+
+GLOB = re.compile(r"[*?\[]")
+GUARDED_TEXT = re.compile(r"(?i)\.git\b|\.claude\b|settings(?:\.local)?\.json|rebase-(?:apply|merge)|\.mcp\.json")
+
+
+def _braces(word: str) -> list[str]:
+    """bash's brace expansion of ``word`` (a{b,c}d: abd, acd), 64 words at most (the rest left as written)."""
+    out, todo = [], [word]
+    while todo and len(out) + len(todo) < 64:
+        w = todo.pop()
+        m = re.search(r"\{([^{}]*,[^{}]*)\}", w)
+        if not m:
+            out.append(w)
+            continue
+        todo += [w[:m.start()] + part + w[m.end():] for part in m.group(1).split(",")]
+    return out + todo
+
+
+def _glob(pattern: str, shell: str) -> list[str] | None:
+    """The existing paths a glob matches, folder by folder (bash: a name with a leading dot only by a pattern that
+    starts with one; PowerShell's wildcards: any name), case-insensitively; None past 256 matches."""
+    parts = re.split(r"[\\/]", pattern)
+    k = next(i for i, p in enumerate(parts) if GLOB.search(p))
+    paths = ["/".join(parts[:k]) + "/"]
+    for seg in parts[k:]:
+        nxt = []
+        for p in paths:
+            if not GLOB.search(seg):
+                nxt.append(os.path.join(p, seg))
+                continue
+            try:
+                names = os.listdir(p)
+            except OSError:
+                continue
+            nxt += [os.path.join(p, n) for n in names if fnmatch.fnmatchcase(n.lower(), seg.lower())
+                    and (shell == "ps" or not n.startswith(".") or seg.startswith("."))]
+        paths = nxt
+        if len(paths) > 256:
+            return None
+    return [p for p in paths if os.path.lexists(p)]
+
+
+def expand(word: str, d: str, shell: str) -> list[str] | None:
+    """The paths ``word`` names as its shell expands it: its braces (bash), then its glob against the file system
+    (_glob), the word as written when a glob matches nothing (bash keeps it); None when it holds what the floor cannot
+    resolve (a substitution, a variable, a splat, a brace left, too many matches)."""
+    out = []
+    for w in (_braces(word) if shell != "ps" else [word]):
+        if re.search(r"[{}$`]", w) or w.startswith("@"):
+            return None
+        if not GLOB.search(w):
+            out.append(w)
+            continue
+        hits = _glob(g._path(w, d), shell)
+        if hits is None:
+            return None
+        out += hits or [w]
+    return out
+
+
+def unresolved_reach(target) -> bool:
+    """Whether a write whose target the floor cannot resolve (brain.guards.Unresolved) may reach a .git or .claude
+    folder or a settings file: its text names one, or the folder it is read in is one or in one."""
+    return bool(GUARDED_TEXT.search(target.what) or GIT_DIR.search(str(target)) or CLAUDE_DIR.search(str(target)))

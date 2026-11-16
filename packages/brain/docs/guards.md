@@ -335,17 +335,43 @@ Round 7 (the same classes, new spellings; on any machine with the floor on):
   and a file with more than one name (a hard link) compared by identity (`st_dev`, `st_ino`: the volume serial and
   file index on Windows) with the kept files and the settings files of the home, the launch folder
   (`CLAUDE_PROJECT_DIR`), every folder of the working directory's parent chain and every
-  `permissions.additionalDirectories` entry; a write to a stream of a settings or customization file, or into git's
-  rebase and am state (`.git/rebase-apply`, `.git/rebase-merge`), is refused, and `git am --continue` or `--skip`
-  passes only when no queued patch names a settings or customization path; a link (`ln`, `link`, `cp -l`, `mklink`,
-  `fsutil hardlink`, `New-Item -ItemType` in any spelling, `os.link` and the like in inline code) whose path is a
-  settings or kept file, a folder above a kept path, the home or its `.claude` folder is refused (a link to a project
-  folder passes: a write through it is judged on the file it reaches); a
-  write that adds a `hooks` key, at any depth, to a skill's, command's or agent's frontmatter (read as YAML) is
-  refused; `git apply` and `git am` write nothing (only `apply --check`, `--stat`, `--numstat`, `--summary` and `am
-  --continue`, `--abort`, `--skip`, `--quit`, `--show-current-patch` pass), and `claude plugin install`, `enable`,
-  `update` and `marketplace add`/`update` are refused, under `floor.only` too. A hard link made before the floor was
-  on, to the settings file of a project outside those folders, is not found until a session works there. On an unlocked machine the
+  `permissions.additionalDirectories` entry; a write to a stream of a settings or customization file is refused.
+  Since review round 14 four classes are refused as classes, not spellings, under `floor.refuse` and `floor.only`:
+  1. **A link**, whatever makes it: `ln`, `link`, `mklink`, `junction`, `subst`, `fsutil hardlink`, `cp` with `-l`,
+     `-s` or any prefix GNU takes of `--link` and `--symbolic-link`, `cpio -pl`, `rsync --link-dest`, `busybox ln`,
+     `New-Item` whose `-ItemType` (any parameter prefix, a colon form) matches a link type as PowerShell's wildcard
+     prefix does (`h`, `Hard*`, `j`, `Sym`), an archive member that is a link. A link program run by `xargs`, `find
+     -exec` or another launcher the floor does not unwrap is refused, and so is one whose path words it cannot resolve
+     (a glob, a brace, a substitution, a variable, a splat, its input), one that names a settings or kept file, a
+     folder above a kept path, the home, any `.claude` or `.git` folder or what is in one (a symbolic link's target is
+     read from the link's folder, so the name as written counts too), and a call that makes a link and writes anything
+     else (a folder made or a file removed aside). Inline code that makes a link is refused whatever the interpreter
+     (Python, Node, Perl, Ruby, PHP, from `-c` or from its input), and so is code that reaches a member by a name the
+     floor cannot read (`getattr` of a computed name, `eval`, `__import__`, a name spelled in pieces) or runs a program
+     whose command line names a link maker; .NET's `CreateSymbolicLink`, `CreateHardLink`, `CreateAsSymbolicLink` and a
+     P/Invoke `Add-Type` are refused. A link between ordinary files, by a program whose paths the floor reads, passes; a
+     search or a text that only names a link function passes (only an interpreter's own code is read).
+  2. **A write into any `.git` folder** by anything but git: a redirection, a program that writes, Write or Edit, a copy
+     or a move whose destination is in one, an extraction into one, an archive that holds a `.git` or `.claude`
+     member, a merge of a folder's contents (`.`, `*`, robocopy) that brings a `.claude` folder or a `.git` folder
+     over an existing one; a removal passes (`rm .git/index.lock`), and git's own commands write there as they do.
+  3. **Resuming a queue**: `git am`, `rebase`, `cherry-pick` and `revert` with `--continue`, `--skip` (am's
+     `--resolved` and `-r`) in any prefix git takes; the owner finishes it in their terminal, and `--abort`, `--quit`
+     and `--show-current-patch` pass. `git apply` passes only when its options, parsed as git parses them (unique
+     prefixes, `--no-` forms, short clusters, the last one winning), leave `--stat`, `--numstat`, `--summary` or
+     `--check` on, `--apply` off and nothing else that writes (`--reject`, `--build-fake-ancestor`,
+     `--unsafe-paths`, an option the floor does not know); `git am` applies nothing; `git clone` and `git init` with
+     a template folder or configuration (`--template`, `-c`, `--config`) are refused: its hooks run at the checkout.
+  4. **A path the floor cannot resolve** where it may reach what it keeps: a glob or a brace is read as the shell
+     expands it against the file system (bash's leading dot; PowerShell's wildcards match any name); a write whose
+     target holds a substitution or a variable is refused when its text names a `.git` or `.claude` folder or a
+     settings file, or when the folder it is read in is one; a copy, a move or an extraction whose destination the
+     floor cannot resolve is refused.
+  A write that adds a `hooks` key, at any depth, to a skill's, command's or agent's frontmatter (read as YAML) is
+  refused, and `claude plugin install`, `enable`, `update` and `marketplace add`/`update` are refused, under
+  `floor.only` too. A hard link made before the floor was on, to the settings file of a project outside those folders,
+  is not found until a session works there; a write whose target is a variable alone (`> "$OUT"`), and a program an
+  interpreter runs from a name it computes, are not read. On an unlocked machine the
   MCP servers of `~/.claude.json` and `.mcp.json` are not judged (`claude mcp add` passes), and a shell write into a
   skill, a command or an agent file is not read; such a write through code the guard does not read is not either. Elsewhere it is the parser's alone, with no backstop (an edit that adds
   a settings file's PreToolUse or PermissionRequest hook is refused too), open through code the
@@ -355,7 +381,8 @@ Round 7 (the same classes, new spellings; on any machine with the floor on):
   `Invoke-WmiMethod` of `Win32_Process` `Create`, `powershell -EncodedCommand` (review rounds 5 and 6). Through them a
   session can write a project's or the user's `.claude/settings*.json` (`disableAllHooks`) or rename the plugin folder
   from its parent (the hook then fails, a non-blocking error). A repo's `.git/hooks` are code the guard does not read
-  either: a session that writes one runs it at the next `git commit`.
+  either: a write into them is refused (class 2 above), but one made through code the guard does not read runs at the
+  next `git commit`; the operating system's lock on these files (a later wave) is the answer to that class.
 - Also: a guard the hook never reaches (the core plugin removed from outside a session, on a machine that is not
   locked); a clone, which brings the cloned repo's own project settings, as any repo the owner opens does.
 

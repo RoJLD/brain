@@ -223,9 +223,11 @@ def test_git_apply_and_am_write_nothing_under_the_floor_but_their_read_only_form
     config(tmp_path, monkeypatch, refuse=True)
     for command in ("git apply p.diff", "git apply --index u.diff", "git am m.mbox", "git apply --stat --apply p.diff"):
         assert "work tree" in (bash(repo, command) or ""), command
-    for command in ("git apply --check p.diff", "git apply --stat p.diff", "git am --continue", "git am --abort",
-                    "git am --skip", "git am --quit", "git am --show-current-patch=diff"):
+    for command in ("git apply --check p.diff", "git apply --stat p.diff", "git am --abort", "git am --quit",
+                    "git am --show-current-patch=diff"):
         assert bash(repo, command) is None, command
+    for command in ("git am --continue", "git am --skip"):   # round 14: a queue the floor does not read
+        assert "resumes a queue" in (bash(repo, command) or ""), command
 
 
 def test_plugin_installs_are_refused_under_the_floor_and_a_paren_method_group(repo, tmp_path, monkeypatch):
@@ -265,15 +267,17 @@ def test_a_hard_link_from_a_deep_folder_and_every_link_maker_are_read(repo, tmp_
     assert bash(repo, f"cmd /c mklink /J proj {repo.as_posix()}") is None   # a project folder holding .claude
 
 
-def test_git_am_state_is_not_written_and_its_queued_patches_are_read(repo, tmp_path, monkeypatch):
-    """Review round 12 #2: a crafted .git/rebase-apply, then git am --skip, applied a patch naming settings."""
+def test_git_am_state_is_not_written_and_a_queue_is_not_resumed(repo, tmp_path, monkeypatch):
+    """Review round 12 #2, round 14: a crafted .git/rebase-apply, then git am --skip, applied a patch naming settings;
+    any write into .git is refused, and so is resuming any queue (an ordinary one too: round 13's low finding read
+    its applied patches as text)."""
     config(tmp_path, monkeypatch, refuse=True)
     state = repo / ".git" / "rebase-apply"
-    assert "refused" in (edit(repo, state / "0002", "diff --git a/x b/x") or "")
-    assert "rebase" in (bash(repo, "echo x > .git/rebase-apply/0002") or "")
-    assert bash(repo, "git am --skip") is None                                    # no state: nothing queued
+    assert ".git folder" in (edit(repo, state / "0002", "diff --git a/x b/x") or "")
+    assert ".git folder" in (bash(repo, "echo x > .git/rebase-apply/0002") or "")
     state.mkdir()
-    (state / "0002").write_text("diff --git a/.Claude/Settings.json b/.Claude/Settings.json\n", encoding="utf-8")
-    assert "queued patch" in (bash(repo, "git am --skip") or "")
-    assert "queued patch" in (bash(repo, "git am --continue") or "")
-    assert bash(repo, "git am --abort") is None
+    (state / "0001").write_text("diff --git a/.gitignore b/.gitignore\n+.claude/settings.local.json\n", encoding="utf-8")
+    for command in ("git am --skip", "git am --continue", "git am --resolved", "git am -r", "git am --cont"):
+        assert "resumes a queue" in (bash(repo, command) or ""), command
+    for command in ("git am --abort", "git am --quit", "git am --show-current-patch"):
+        assert bash(repo, command) is None, command
