@@ -69,7 +69,9 @@ GUARDED = {"production": re.compile(r"\bproduction checkouts?\b", re.I),
            "third-party": re.compile(r"\bthird-party (?:kits?|plugins?|skills?)\b|\bcurl\b[^.]*\|\s*(?:ba)?sh\b|"
                                      r"\bplugin install\b|/add-plugin\b", re.I),
            "markers": re.compile(r"\bconflict markers?\b", re.I),
-           "merges": re.compile(r"\bstale main\b|\bbrain merge-check\b", re.I)}
+           "merges": re.compile(r"\bstale main\b|\bbrain merge-check\b", re.I),
+           "floor": re.compile(r"\bforce-?push(?:es|ed|ing)?\b|\bpush(?:es|ed|ing)? to (?:main|master)\b|"
+                               r"\blocked floor\b", re.I)}
 
 
 def global_rules(cfg: config.Config | None = None) -> str:

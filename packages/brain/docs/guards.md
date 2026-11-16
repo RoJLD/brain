@@ -59,6 +59,363 @@ agent's session already (`vault open`, `drill`, `device init` and `forget-previo
 Without it, the guard refuses what 0.5.0 refused (`usage allow`, `handover root`, `schedule install --apply`, `ipc
 otel-headers`), now however brain is run, and each command keeps its own check.
 
+## The locked floor
+
+The few rules no level overrides (`brain.floor`, the owner's R21): a line of the owner's rules (config.json `rules`)
+that carries `<!-- lock -->` or `<!-- lock: ID -->` (the decision that locked it) is locked; Markdown shows nothing of
+the marker (the lock's ID is ASCII letters, digits, `_`, `.` and `-`). The guard holds them with three refusals,
+guard `floor`:
+
+- `main`: a `git push` that writes `main` or `master`, read as git reads it: a refspec's destination (`HEAD:main`,
+  `x:refs/heads/master`, `x:heads/main`), `HEAD` or `@` as the branch checked out, a deletion (`:main`, `--delete
+  main`), every branch (`--all`, `--branches`, or a prefix git accepts: `--al`), a matching push (`:`), a refspec with
+  `*` whose pattern takes main (`*`, `refs/heads/*:refs/heads/*`; not `refs/tags/*`); with no refspec, what git sends
+  then: the remote's `remote.<name>.push`, else `push.default` (`matching` every branch, `upstream` the current branch
+  to its `branch.<name>.merge`, `nothing` nothing, else the current branch), read from git's configuration and the
+  command's own `git -c`; `--tags` alone and a negative refspec (`^x`) send no branch;
+- `force`: a forced push: `--force`, `--force-with-lease`, `--force-if-includes`, `--mirror` or any prefix git takes
+  of them (`--force-w`, `--mirr`), `f` in a group of short options (`-uf`, `-4f`; not after `o`, whose value is
+  attached: `-oforce` is a push option), a refspec starting with `+`;
+- `config`: what would lift the floor: an edit or a shell write of the config.json the guard reads, or of the pointer
+  that finds it (`<BRAIN_HOME>/personal.json`), and a variable that chooses that file (`BRAIN_CONFIG`,
+  `CLAUDE_BRAIN_DIR`, `BRAIN_PERSONAL`, `BRAIN_HOME`) set for later sessions (`setx`, the registry, Claude Code's
+  settings, a shell profile). A worktree's own config.json is another file: a pull request still changes it.
+
+The third line of the floor, no secret in a commit, is the secrets guard's already. They run under config.json
+`floor.refuse: true` (off by default: refusals 0.5.1 adds) or `floor.only: true`; `BRAIN_GUARD_ALLOW=floor` (or
+`floor:main`, `floor:force`, `floor:config`) lifts them, the owner's. git is asked only what a push needs: the branch
+checked out for `HEAD`, `@` or no refspec, the configuration for no refspec; config.json is read once per call.
+
+**Where the floor is read** (`brain.floor.effective`, review rounds 6 and 7): with no lock, from config.json (a file
+that exists but cannot be read or parsed says on). On a locked machine, from the lock file's copy of the floor, the
+authority: config.json is only compared to it, and a config.json whose floor differs (or another config.json than
+the one the lock holds) refuses every call until the owner locks again. Round 5's committed reading (`HEAD`,
+`origin/main`, a cache) is gone: a guard that parses the shell cannot stop a session that runs as the same user, and
+round 7 showed any folder of the user's profile can be renamed through its parent, so the lock holds nothing there.
+
+### The lock: `brain floor lock` (the owner's, elevated)
+
+`brain floor lock` prints the plan: the floor it locks and the one locked now, what it writes, and the command line the
+owner runs. `brain floor lock --apply` refuses to run without elevation (a session never elevates), with config.json's
+floor off (a lock of no floor holds nothing), or lowering a locked floor without `--lower`. It writes three things,
+each in a folder whose parents only an administrator writes:
+
+- **the guard as a system component**, a new copy per lock under `<Program Files>/Brain/guard` (the folder HKLM names;
+  `/opt/brain/guard`), named by its time (`g20261116-120000`): a copy of the interpreter (Windows; on POSIX the
+  system's own Python, which root must own), of the guard's code and its dependencies with their metadata, the
+  plugin's hook scripts, two launchers (`hook.py` for the hooks, `floor.py` for the owner's next elevated step), the
+  bytecode of all of it (compiled by the copy's own interpreter during the apply: the hooks run as the user and cannot
+  write `__pycache__` there; a guarded call takes about 0.5 s with it, about 2 s without) and `manifest.json`, the hash
+  of every file, bytecode included;
+- **Claude Code's managed settings**, `C:\Program Files\ClaudeCode\managed-settings.d\brain-floor.json`
+  (`/etc/claude-code`, `/Library/Application Support/ClaudeCode`): `allowManagedHooksOnly: true`, so that no user,
+  project, local or plugin hook runs ("Your user, project, local, and plugin hooks are blocked", hooks reference): a
+  hook running beside the guard could otherwise return an `updatedInput` that replaces the call the guard judged. The
+  plugin's own hooks are declared again from the copy, in exec form (`command` an absolute program, `args` its
+  arguments: no shell, no PATH lookup). The PreToolUse ones (the guard, the governor, the read and wait hints) run the
+  copy's interpreter on `hook.py` with `-X utf8 -I`; the judging ones, the guard and the governor, carry `"onFailure":
+  "block"` (a hook that fails or times out then blocks the call; Claude Code v2.1.295 or later) and a deadline at 60 %
+  of their timeout past which they refuse the call themselves. A hint never judges: a failing one lets the call
+  through. The other events' hooks (the rules, the announcements, health, resume, memory, capture, budget) run the
+  copy's scripts with the administrators' bash (Git for Windows under Program Files, `/bin/bash`). On Windows those
+  scripts run the copy's interpreter and engine (`plugin/hooks/locked-python`, read first by `common.sh`, and a `.pth`
+  that puts the copy's `site` on its path), never `BRAIN_PYTHON` or the user's venv; on POSIX they still run the
+  user's engine. The copy carries the rendered plugin's `rules/` and `hooks/contract.txt`, so its `inject-rules.sh`
+  injects the same rules as the plugin. With no such bash they are left out, and the apply says so.
+  `"strictPluginOnlyCustomization": ["hooks", "mcp"]`: `hooks` stops the hooks in skills', custom commands' and agents'
+  frontmatter, which `allowManagedHooksOnly` does not name ("Frontmatter hooks in skills, custom commands, and agents",
+  settings reference); `mcp` stops loading MCP servers from `~/.claude.json` and `.mcp.json` (a stdio server's command
+  starts with no tool call), and keeps managed and plugin servers. The brain's own MCP server comes from the rendered
+  plugin's `.mcp.json` (`brain sync`), a plugin server, so it keeps working; servers the owner adds at user or project
+  scope stop on a locked machine (declare them in the plugin's pack, or in the managed settings).
+  `strictKnownMarketplaces` names the brain's own marketplace only (config.json `adapters.claude.source`, or the
+  brain's folder holding `.claude-plugin/marketplace.json`; an empty list when neither): Claude Code enforces it "on
+  marketplace add and on plugin install, update, refresh, and auto-update" (settings reference). "`disableAllHooks` set in user, project, or local settings can't disable those managed hooks"
+  (hooks reference, "Disable or remove hooks");
+- last, **the lock file**, `<ProgramData>/Brain/floor-lock.json` (the folder Windows names, not the environment's
+  `ProgramData`; `/etc/brain`): the floor's copy, the config.json and `<BRAIN_HOME>` the guard reads, the copy in use,
+  the paths it checks on each call, the manifest's hash, and the administrators' git (and bash) the guard runs.
+
+Each folder is given to Administrators (root): its own ACL reset, its inheritance cut with Administrators and SYSTEM
+full and the users read and run (from here no child gains the user's rights), the owner set on the whole tree, then
+every child's ACL reset to what it inherits (an entry a session added before the cut goes); POSIX `chown -R 0:0`,
+`chmod -R u=rwX,go=rX`. A session may create a folder in ProgramData: the apply empties `Brain` after the cut. It then
+checks every file it wrote (owner Administrators, SYSTEM or TrustedInstaller, no allow entry that grants a write right
+to anyone else, no link or junction) and keeps the lock file only when all hold. A step that fails puts the managed
+file and the lock file back as they were, together (the previous lock and its untouched copy; or no lock, and a
+floor-only machine then refuses every call until an apply completes), and removes the new copy. Once the new copy
+holds, the older ones are removed, except the one the apply's own interpreter runs from (the next lock removes it).
+
+The locked guard takes nothing from the environment a session sets: `hook.py` puts the copy's own folders first
+(`python -I`), takes `BRAIN_CONFIG` and `BRAIN_HOME` from the lock file, drops `BRAIN_PYTHON`, `CLAUDE_PLUGIN_ROOT`,
+`CLAUDE_BRAIN_DIR` and `BRAIN_PERSONAL`, sets `NoDefaultCurrentDirectoryInExePath` and runs the git the lock names (a
+`git.exe` in the hook's working directory never runs; `brain.floorhook`, `brain.floor.git`). A network or device path
+(`\\host\share`, `//host/share`, and every `\\?\`, `\\.\`, `//?/` path but a drive letter's: `GLOBALROOT`, a volume)
+is judged as written, without resolving it (an unreachable host took 21 s); a form the pattern misses still meets the
+deadline, then `onFailure: block`. Wherever a lock
+file exists, `BRAIN_GUARD_ALLOW` lifts none of the floor's checks (`floor`, `floor:*`, `all`), and the refusal says so:
+`brain floor lock --lower` and `brain floor unlock`, elevated, alone change a locked floor.
+
+Claude Code reads its managed sources first-wins: server-managed settings, then (Windows) an HKLM policy, then the
+managed files; when one of the first two holds a policy the files are skipped, and the lock's hooks with them. `brain
+floor status` says whether the managed hooks are in force (an HKLM `SOFTWARE\Policies\ClaudeCode` key on this machine:
+not in force). Where they are not, the plugin's own `guard.sh` still judges each call with the user's engine (it no
+longer steps aside for the managed file; where they are, `allowManagedHooksOnly` keeps it from running).
+
+What the guard checks on each call (`brain.floor.unlocked`), under `floor.only` and wherever a lock file exists: the
+lock file exists and reads; its folder and file, the guard's folder, manifest, launchers and interpreter, and the
+managed file exist and are out of the session's reach; the manifest is the one the lock hashed; config.json is the
+one the lock holds, with the floor it holds. "Out of reach" is the session token's effective access read from the
+path's security descriptor (AccessCheck: no write, append, delete, delete-child, ACL or owner right); POSIX: owned by
+root and not writable. Anything else, and a floor-only machine with no lock, refuses every call the guard judges:
+"the floor is not locked: ...; every call is refused until the owner runs brain floor lock". `brain floor status`
+also walks every file of the lock and compares the guard's files to the manifest; run it in a normal terminal (an
+elevated one reaches everything).
+
+- **The owner's elevated step** starts no shell: the plan prints one command line to paste in Win+R (Start > Run) and
+  run with Ctrl+Shift+Enter (as administrator): the interpreter by absolute path with `-I`, then, once the guard is
+  installed, the copy's `floor.py lock --apply --wait` (`--wait` keeps the window on its result until Enter). Not from
+  an elevated PowerShell window: the window loads the user's profile and modules (`PSReadLine` from
+  `Documents\WindowsPowerShell\Modules`), which a session can write, before any `-NoProfile` command runs. The first
+  lock runs the engine in `<BRAIN_HOME>/venv` (`python.exe -I -m brain floor lock --apply --wait`), which a session
+  can write: update it from your own terminal first, and close every Claude Code session before any apply (a process
+  keeps what it opened before the lock). POSIX: `/usr/bin/sudo` and the interpreter's absolute path.
+- **Changing a locked machine**: a change of config.json's floor refuses every call until the owner locks again from
+  the copy (`brain floor lock` prints its command line). That line is printed by the user's engine, which a session
+  can change: check that it starts with the `interpreter` the lock file names (`<ProgramData>/Brain/floor-lock.json`)
+  and runs that copy's `floor.py`. An engine update changes nothing the locked guard runs until
+  the owner locks again with the new engine, from its venv (the first lock's command line, the venv updated from the
+  owner's own terminal, sessions closed). The personal brain's checkout and its worktrees stay the user's: nothing
+  there is locked.
+- `brain floor unlock` prints its own command line (the copy's `floor.py unlock --apply --wait`). `--apply` (elevated)
+  removes the lock file and the managed file together (both put back if either fails), then the guard's copies, except
+  the one its own interpreter runs from (removed by hand once the window is closed, or by the next lock); the plugin's
+  guard then judges again.
+
+What else the floor holds (`brain.floorguard`; reviews 2 to 5 closed classes, not spellings). Every check reads each
+command a call runs, past a wrapper, a launcher, a nested shell or the shell's reserved words (`timeout`, `env`,
+`nohup`, `bash -c`, `cmd /c`, `pwsh -Command`, `eval`, `if ...; then`, `do`, `!`: `brain.guards.actions`); a payload
+the floor cannot read is refused (`eval` or `-c` of a variable, `Start-Process` of git or a shell with
+`-ArgumentList`, `xargs` running git but a read or what writes files, a shell function the call defines, a push
+whose remote or refspec holds `$(`, a backtick or a variable). git options and subcommands that write a file or run a
+program are refused (`--output`, `-O`, `--upload-pack`, `--receive-pack`, `--exec`, `--ext-diff`, `--textconv`,
+`rebase -x`, `bisect run`, `submodule foreach`, `difftool -x`, `filter-branch`, `apply --unsafe-paths`), and so is
+`git config` of `core.*`, `filter.*`, `diff.*`, `credential.*`, `gpg.*`, editors and pagers, or into another file
+than a repo's own (`-f`). A settings file of Claude Code changes by Write or Edit only (any copy, move, redirect or
+patch onto it is refused, and round 6: git that would write one, an archive that holds one, a link onto one); the
+interpreter that runs the guard is kept with its base installation (pyvenv.cfg's `home`, `sys.base_prefix`), the
+user site and any `sitecustomize.py`, `usercustomize.py` or `.pth`; an environment write through WMI or CIM
+(`Win32_Environment`, `wmic environment`) and an ACL, ownership or mode change of a kept path or of any folder above
+one (`icacls`, `cacls`, `takeown`, `attrib`, `Set-Acl`, `chmod`, `chown`, `setfacl`: a deny on `~/.claude` is
+inherited by `guard.sh`, whose hook then exits 126, a non-blocking error) are refused.
+
+Round 6 (the classes the lock does not cover, guard-lifts):
+
+- **Reserved words**: `time -p` and `time --` are read through (round 5 left `-p` as the program, which hid any
+  command from every guard, the power guard's too), and so are `coproc CMD` and `coproc NAME { ...; }`.
+- **Claude Code's settings written by git**: a git command that writes the work tree (`checkout`, `restore`,
+  `reset`, `merge`, `pull`, `switch`, `stash`, `cherry-pick`, `revert`, `rebase`, `am`, `apply`, `read-tree`,
+  `checkout-index`, `worktree add`, `update-index`...) is refused when it names a `.claude/settings*.json` (a
+  pathspec, `--cacheinfo`), when `update-index` reads its input, or when the index, a commit it names or reads by
+  default (`HEAD` for reset, the last stash, the upstream for pull), or a patch it applies holds a settings file that
+  differs from the work tree's (`git diff --name-only` on that pathspec). An extraction (`tar -x`, `unzip`,
+  `Expand-Archive`, `7z x`) is refused when its archive holds one, or when the floor cannot list its members (its
+  input, 7z, a compression it does not read). A link onto one (`mklink`, `ln`, `New-Item -ItemType SymbolicLink`) is
+  refused, in any shell's payload.
+- **Functions and aliases**: a function of any body form (`f() ( ... )`, `f() [[ ... ]]`, `f() if ...`) and an alias
+  the call defines or turns on (`alias`, `shopt -s expand_aliases`, `Set-Alias`, `New-Alias`) are refused.
+- **Assignments**: only git's `-m`/`--message` and gh's `-m`, `--body`, `--title`, `--notes` (`-b`, `-t`, `-n`) take
+  prose (`declare -x -t "NAME=..."` is read); `allexport` anywhere in a `set` or `shopt -o` list, `for NAME in`,
+  `select NAME in`, `getopts ... NAME`, `mapfile`/`readarray NAME`, and PowerShell's `Get-Item Env:X | Rename-Item
+  -NewName NAME`, `New-Item -Name NAME`, `$psi.EnvironmentVariables['NAME']` are assignments.
+- **git running a program**: `protocol.*`, `submodule.*`, `interactive.*`, `browser.*`, `web.*`, `man.*`,
+  `instaweb.*`, `sendemail.*`, `init.*`, `ssh.*`, `trailer.*` and `hook.*` join the refused keys, and so do an
+  `ext::` or `fd::` URL and `GIT_ALLOW_PROTOCOL`. An ordinary repo's keys pass (`core.autocrlf`, `core.longpaths`,
+  `core.filemode`, `core.ignorecase`, `core.eol`, `core.quotepath`, `core.safecrlf`, `diff.tool`, `merge.tool`,
+  `branch.<b>.description`, `credential.helper` set to `manager`, `store`, `cache` or another usual helper), so do
+  `git format-patch -o` and, the committed reading gone, `git fetch origin main:main` and `git branch -f`.
+
+Round 7 (the same classes, new spellings; on any machine with the floor on):
+
+- **Pipelines and .NET**: a path piped into a cmdlet that writes, moves or removes (`Get-Item X | Rename-Item`,
+  `Get-ChildItem X | ...`, `'X' | Remove-Item`, `Set-Content`, `Add-Content`, `Set-ItemProperty`...) is that cmdlet's
+  `-Path`; a call to `.MoveTo(`, `.CopyTo(`, `.Replace(`, `.Delete(` or `.SetAccessControl(` is refused when the call
+  names a kept path, a folder above one, a settings file or git's configuration (`$env:USERPROFILE`, `$HOME` and `~`
+  read as the home). `guard.sh`'s pre-filter starts Python for those methods.
+- **The environment through COM and .NET**: `WScript.Shell`'s `Environment(...)`, a `RegistryKey`'s `SetValue`,
+  `CreateSubKey`, `DeleteValue`, `OpenSubKey(..., $true)`, and the `Environment` key piped into a property cmdlet,
+  whatever the statement.
+- **Spellings**: the `Env:/` provider, PowerShell's `${function:f} =`, `Set-Item`/`New-Item` on the `function:` and
+  `alias:` drives, bash's `BASH_ALIASES[...]=` and `set -o posix` (POSIX mode expands aliases); `imap.*` joins the
+  refused git keys, and `credential.helper` passes only as a usual helper and its `--options` (git runs the value
+  through the shell).
+
+- **git configuration**: any git command given configuration by its command line (`-c`, `--config-env`) is refused
+  (check `config`), so is a global option outside `brain.floor.GIT_GLOBAL_OK` (`--git-dir`, `--work-tree`,
+  `--attr-source`...) and a subcommand that is neither git's, a `git-<name>` on PATH nor an alias; `git config`
+  setting `alias.*`, `include.path`, `includeIf.*.path`, `remote.*`, `push.*` or `url.*`, `git remote add --mirror`,
+  and a write of git's configuration files. An alias is read as what it runs, an alias of an alias too (ten levels);
+  a shell alias (`!`), or one that starts with an option, is refused.
+- **The environment**: a variable of `brain.floor.WATCHED_VARS` (git's that change its configuration, repository or
+  programs, `HOME`, `XDG_CONFIG_HOME`, `BASH_ENV`, `SHELLOPTS`, `BASHOPTS`, `PATH`, `BRAIN_*`, and Claude Code's that
+  choose its settings or plugin) assigned in any form (`NAME=`, `export`, `declare`, `printf -v`, `read`, `env`,
+  `${NAME:=}`, `(( NAME = ))`, `set -a`, `$env:`, `${env:}`, the `env:` provider, `SetEnvironmentVariable`), and any
+  assignment whose name the guard cannot read, are refused; only an `echo`'s or `printf`'s quoted words and the value
+  of `-m`, `--message`, `--body` or `--title` are prose, never an `export` or `env` argument. `GIT_EDITOR=true`,
+  `GIT_TRACE`, `ENV=` and `CLAUDE_CODE_*` pass. Any
+  write of the registry's `Environment` key is refused, whatever the value's name (`Set-ItemProperty`,
+  `New-ItemProperty`, .NET's `Registry`, `reg add` or `import`). `hooks.json` runs `guard.sh` under `bash -p`, which
+  reads no `BASH_ENV` nor `SHELLOPTS`.
+- **Copies and archives**: a copy is judged on the path it writes (the destination, or the destination plus the
+  source's name: `cp`, `rsync`, `robocopy` with files, `Copy-Item`, `xcopy`); a recursive copy into a kept file's
+  folder (the checkout, BRAIN_HOME) or onto a folder above a kept path, and an archive extracted into a kept file's
+  folder (`tar -x -C`, `unzip -d`, `Expand-Archive`, `7z x`), are refused.
+- **The plugin that runs the guard**: a write, a removal or a move under `~/.claude/plugins` or
+  `$CLAUDE_PLUGIN_ROOT`, and `claude plugin disable`, `uninstall` or `marketplace remove` of the core plugin, are
+  refused.
+- **What git pushes**: `remote.<name>.mirror` is a forced push, a symbolic branch is the branch it points at;
+  `git symbolic-ref` making a branch symbolic (`refs/heads/...`; pointing `HEAD` passes), `git send-pack`, and the
+  code host's API writes of main's ref (`gh api` on `git/refs` or `merges`, short options glued or not; a GraphQL
+  `updateRef`, `createRef`, `deleteRef`, `createCommitOnBranch` or `mergeBranch`) are refused.
+- **The checkout that holds config.json**: only reads run there (`brain.floor.CHECKOUT_SAFE`: reads, `fetch`,
+  `push` judged on its own, `worktree`, `branch`, `tag`; `git config` and `git remote` that only read; `git pull
+  --ff-only` with no remote nor refspec). A removal or a move of it, or of a folder that holds it or the guard's
+  interpreter (`rm`, `mv`, `Remove-Item`, `Move-Item`, `Rename-Item`, `robocopy /MIR` or `/PURGE` onto it), is
+  refused; a mover's target (`-t`, `-Destination`) is no source, and a write into such a folder (`cp x ~/`,
+  `tar -C ~`) is no removal and passes.
+- **What stops the guards**: `BRAIN_PYTHON`, `PYTEST_CURRENT_TEST`, `CLAUDE_CONFIG_DIR`, `BRAIN_CONFIG`,
+  `CLAUDE_BRAIN_DIR`, `BRAIN_PERSONAL`, `BRAIN_HOME`, and `HOME`, `USERPROFILE` and `PATH` where they are set (never
+  where they are read: `$HOME`, `${HOME}`), set for later sessions; Claude Code's `disableAllHooks` and an
+  `enabledPlugins` entry that turns the core plugin off; a write into `<BRAIN_HOME>/venv`. Names are read as the shell
+  and JSON read them (`brain.floor.unspelled`: quotes, carets, a concatenation and JSON's unicode escapes taken out),
+  and `setx`, a registry `Environment` value or `SetEnvironmentVariable` whose name is not a plain word is refused.
+  Paths are resolved first (an NTFS stream's name, a junction, a link).
+- **Failing closed**: while the floor is on, or config.json cannot be read, a guard that fails refuses the call.
+  `guard.sh` finds config.json as `inject-rules.sh` does (`common.sh`'s `brain_config` and `floor_setting`), and
+  reads the floor as on wherever a lock file exists (`<ProgramData>/Brain`, `C:/ProgramData/Brain`, `/etc/brain`;
+  round 6: the working file alone could be the session's); when Python cannot judge the call (no
+  `<BRAIN_HOME>/venv`, an import error, an exit other than 0) it refuses every call it would have sent to Python,
+  and it never runs PATH's Python while the floor is on, nor a `BRAIN_PYTHON` whose file name holds no python.
+- Under `guards.owner_strict` the owner guard refuses `BRAIN_PYTHON`, `PYTEST_CURRENT_TEST`, `CLAUDE_CONFIG_DIR` and
+  `disableAllHooks` on every machine; the override's own name is read the same way (quotes, carets, escapes) always.
+
+**Limits** (a guard of the command line cannot be complete). Three classes, three answers:
+
+- **Floor-lift** (a session changes the floor's own settings, or what the guard reads them from or runs): closed by
+  the lock on a locked machine, whatever runs the change, a launcher included: the floor's copy, the guard and its
+  hooks are in folders whose parents only an administrator writes, and config.json is only compared to the copy. On
+  a machine that is not locked (`floor.refuse` without `brain floor lock`), the floor is the parser's alone: a write
+  it does not read (a launcher below, code it does not read) lifts it, and so does `BRAIN_GUARD_ALLOW` set for later
+  sessions by such a write. A floor-only machine is never in that state: with no lock, every call is refused.
+- **PowerShell's .NET writers on an unlocked `floor.refuse` machine**: a literal `[IO.File]::...` onto a kept path is
+  read; a member reached through anything else (a parenthesised type, a variable, `$_`, `-as`, `GetMethod`,
+  `InvokeMember`, `UnderlyingSystemType`, a member named by an expression `::(...)`, a method group's `.Invoke(`) is
+  refused as a class whatever its path. It stays best-effort: PowerShell has
+  more ways to name a type than a parser reads, so a config.json rewritten floor-off is caught only by the lock (it
+  differs from the lock's floor and every call is refused) or by the backstop below.
+- **Push to main and force-push**: the code host's branch protection on main is the backstop (since 2026-11-14 on
+  the engine repo: no force-push, no deletion, a pull request and the required checks, for admins too) for what the
+  guard does not read: the code host's other writers (the contents API, other GraphQL mutations, `gh repo sync`, a
+  raw HTTP call), git's transports beyond `git push` and `git send-pack`, a symbolic branch made before the floor was
+  on and pushed by a refspec with a colon.
+- **Guard-lift** (a session stops the guard for itself or later sessions, without touching the floor's files): on a
+  locked machine the managed hooks hold while Claude Code reads the managed files (no server-managed settings or HKLM
+  policy first): `allowManagedHooksOnly` blocks every other hook, no `disableAllHooks` of the user's or a project's
+  turns them off, a hook that fails or times out blocks the call (Claude Code v2.1.295 or later; an older one lets it
+  through), and the plugin folder is not what runs them. A SessionStart hook can change every later Bash call of its
+  session (`CLAUDE_ENV_FILE`: "Each Bash command runs the file's contents as shell code before the command itself",
+  hooks reference): on Windows the managed ones run the copy's engine; on POSIX they run the user's, code a session may
+  have written. Settings `env` reaches every command after the guard judged it (`BASH_FUNC_git%%` redefines git in the
+  Bash tool's bash): while the floor is on, a settings write adds only the names of `brain.floor.ENV_ALLOWED`, and adds
+  or changes only the top-level keys of `brain.floor.SETTINGS_ALLOWED`, each with its reason (`apiKeyHelper`,
+  `otelHeadersHelper`, `awsAuthRefresh`, `awsCredentialExport`, `gcpAuthRefresh`, `statusLine`, `fileSuggestion`,
+  which Claude Code runs as shell command lines with no tool call, are refused, and so are the marketplaces and any
+  `enabledPlugins` change but turning a plugin off);
+  a write is judged by the file it reaches, not by its path: its NTFS stream dropped, links and junctions resolved,
+  and a file with more than one name (a hard link) compared by identity (`st_dev`, `st_ino`: the volume serial and
+  file index on Windows) with the kept files and the settings files of the home, the launch folder
+  (`CLAUDE_PROJECT_DIR`), every folder of the working directory's parent chain and every
+  `permissions.additionalDirectories` entry; a write to a stream of a settings or customization file is refused.
+  Since review round 14 four classes are refused as classes, not spellings, under `floor.refuse` and `floor.only`:
+  1. **A link**, whatever makes it: `ln`, `link`, `mklink`, `junction`, `subst`, `fsutil hardlink`, `cp` with `-l`,
+     `-s` or any prefix GNU takes of `--link` and `--symbolic-link`, `cpio -pl`, `rsync --link-dest`, a multicall
+     binary (`busybox`, `toybox`, `coreutils`, `uutils`, cmd's `call`) and GNU's `g` prefix (`gln`), `New-Item` whose
+     `-ItemType` (any parameter prefix, a colon form) matches a link type as PowerShell's wildcard prefix does (`h`,
+     `Hard*`, `j`, `Sym`), an archive member that is a link; in a `cmd /c` payload its carets are removed first
+     (`mk^link` is `mklink`) and a `%VAR%` is a word the floor cannot resolve. A link program run by `xargs`, `find
+     -exec` or another launcher the floor does not unwrap is refused, and so is one whose path words it cannot resolve
+     (a glob, a brace, a substitution, a variable, a splat, its input), one that names a settings or kept file, a
+     folder above a kept path, the home, any `.claude` or `.git` folder or what is in one (a symbolic link's target is
+     read from the link's folder, so the name as written counts too), and a call that makes a link and writes anything
+     else (a folder made or a file removed aside). Inline code (Python, Node, Perl, Ruby, PHP, from `-c` or from its
+     input) is read by a positive rule, after Unicode normalisation (NFKC, as Python reads identifiers): it is refused
+     when a link name is a token of its code (`link`, `symlink`, `linkSync`, `hardlink_to`, `ln_s`...; `islink`,
+     `readlink` and `unlink` are not), when one is spelled across strings (`'li'+'nk'`), when one is in a string while
+     the code reaches members by a name held in text (`getattr`, `__getattribute__`, an index in Node, `send` and
+     `public_method` in Ruby, any string in PHP), when it evaluates text (`eval`, `exec`, `compile`, `__import__`),
+     when it runs a program whose command line names a link maker, and when the floor cannot read it (code given by a
+     substitution or a variable, a file or a pipe on the interpreter's input). A link name in a print, a comment or a
+     regular expression passes; a search or a text outside an interpreter is not read as code. awk that runs a command
+     (`system()`, a pipe) and sed that runs one (its `e` command, `s///e`) are refused, and so are they when they write
+     into a `.git` or `.claude` folder; PowerShell's script blocks run from text (`InvokeScript`, `NewScriptBlock`,
+     `[scriptblock]::Create`) are refused; .NET's `CreateSymbolicLink`, `CreateHardLink`, `CreateAsSymbolicLink` and
+     a P/Invoke `Add-Type` are refused. A link between ordinary files, by a program whose paths the floor reads, passes.
+  2. **A write into any `.git` folder** by anything but git: a redirection, a program that writes, Write or Edit, a copy
+     or a move whose destination is in one, an extraction into one (tar, unzip, Expand-Archive, 7z, `python -m
+     zipfile -e` and `tarfile -e`; `cpio -i` and `pax -r` read their members from their input and are refused; tar's
+     member renames, `--transform` and `-s`, are refused), an archive that holds a `.git` or `.claude` member, a merge
+     of a folder's contents (`.`, `*`, a glob under `shopt -s dotglob`, robocopy, xcopy, `cp -T`, an rsync source
+     ending in `/`) that brings a `.claude` folder or a `.git` folder over an existing one, `patch` that names no file
+     (the files its diff names are not read), a `cd` or `Set-Location` into a glob that may be `.git` or `.claude` or
+     into git's own folder by a substitution (`$(git rev-parse --git-dir)`); a removal passes (`rm .git/index.lock`).
+     git's own commands write there as they do, but not when aimed into one: `checkout-index --prefix`,
+     `format-patch -o`, `archive -o`, `bundle create`, `worktree add`, clone's and init's folder.
+  3. **Resuming a queue**: `git am`, `rebase`, `cherry-pick` and `revert` with `--continue`, `--skip` (am's
+     `--resolved` and `-r`) in any prefix git takes; the owner finishes it in their terminal, and `--abort`, `--quit`
+     and `--show-current-patch` pass. `git apply` passes only when its options, parsed as git parses them (unique
+     prefixes, `--no-` forms, short clusters, the last one winning), leave `--stat`, `--numstat`, `--summary` or
+     `--check` on, `--apply` off and nothing else that writes (`--reject`, `--build-fake-ancestor`,
+     `--unsafe-paths`, an option the floor does not know); `git am` applies nothing; `git clone` and `git init` with
+     a template folder or configuration (`--template`, `-c`, `--config`) are refused: its hooks run at the checkout.
+  4. **A path the floor cannot resolve** where it may reach what it keeps: a glob or a brace is read as the shell
+     expands it against the file system (bash's leading dot unless `dotglob`; PowerShell's wildcards match any name);
+     a write, a copy, a move or an extraction whose target holds a substitution or a variable is refused when its text
+     names a `.git` or `.claude` folder, a settings file, a `hooks` folder or git's own folder (`--git-dir`,
+     `--git-path`, `GIT_DIR`), or when the folder it is read in is one; otherwise it passes, as a variable alone does.
+  Not read, and left to the operating system's lock (the next wave's ACL): a script file an interpreter runs
+  (`python p.py`), a write or a copy whose target is a variable alone (`> "$OUT"`, `cp x "$OUT"`), a program an
+  interpreter runs from a name it computes, and code that hides a link name from the rules above in a way they do not
+  read.
+  A write that adds a `hooks` key, at any depth, to a skill's, command's or agent's frontmatter (read as YAML) is
+  refused, and `claude plugin install`, `enable`, `update` and `marketplace add`/`update` are refused, under
+  `floor.only` too. A hard link made before the floor was on, to the settings file of a project outside those folders,
+  is not found until a session works there. On an unlocked machine the
+  MCP servers of `~/.claude.json` and `.mcp.json` are not judged (`claude mcp add` passes), and a shell write into a
+  skill, a command or an agent file is not read; such a write through code the guard does not read is not either. Elsewhere it is the parser's alone, with no backstop (an edit that adds
+  a settings file's PreToolUse or PermissionRequest hook is refused too), open through code the
+  guard does not read (a script, a program, a compiled tool, a Python wrapper named like a Python) and through a
+  launcher it does not unwrap: `flock`, `chrt`, `script -c`, `watch`, `parallel`, `find -exec`, `busybox`, a program
+  named by a variable, PowerShell's `[scriptblock]::Create`, bash's `. <(...)`, `Invoke-CimMethod` or
+  `Invoke-WmiMethod` of `Win32_Process` `Create`, `powershell -EncodedCommand` (review rounds 5 and 6). Through them a
+  session can write a project's or the user's `.claude/settings*.json` (`disableAllHooks`) or rename the plugin folder
+  from its parent (the hook then fails, a non-blocking error). A repo's `.git/hooks` are code the guard does not read
+  either: a write into them is refused (class 2 above), but one made through code the guard does not read runs at the
+  next `git commit`; the operating system's lock on these files (a later wave) is the answer to that class.
+- Also: a guard the hook never reaches (the core plugin removed from outside a session, on a machine that is not
+  locked); a clone, which brings the cloned repo's own project settings, as any repo the owner opens does.
+
+**Floor only** (config.json `floor.only: true`): the machine gets the floor and nothing else, until it is adopted:
+`inject-rules.sh` injects the locked lines alone, after one line that says why (`brain.floor.ONLY_LINE`, the same
+words in both); the guard runs the floor's refusals, the secrets and configuration checks, the override protection
+(`check_override`: the owner guard's override category, so that no session lifts its own floor: the guards' override
+set for later sessions, `brain usage allow`, `brain handover root`, a write of the usage allow file or the chain
+roots) and the session-settings and scheduled-task tool checks; no production, power or third-party guard, nor the
+owner guard's other categories (a project whose own work they would refuse). The memory notes are not synced, either
+way, whatever `BRAIN_MEMORY_SYNC` says. `floor` is read at config.json's top level alone, by the guard and by
+`inject-rules.sh` alike (a `floor` key inside another object is not the setting). The owner sets it; how a machine
+with no anchor in the owner's brain, or a project until its merge phase, enters it on its own is a decision still
+open.
+
 ## The Terminal panel
 
 A command a session types into the owner's Terminal panel (`mcp__*terminal__run_in_terminal`) runs in the owner's own
