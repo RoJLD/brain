@@ -58,11 +58,11 @@ needs_python() {
   [ -f "$cache" ] && { IFS= read -r clis; IFS= read -r form; } < "$cache"
   [[ -n $form && $form != '#brain.node-clis/v1' ]] && return 0
   local node_clis="$before($clis)([^A-Za-z0-9_-]|$)"
-  # plain: the text with its escaping backslashes, empty quotes and PowerShell backticks dropped (b\rain, ins''tall,
-  # us`age: a shell reads brain schedule install), made only when the text holds one
+  # plain: the text with its quotes (JSON's \" too), escaping backslashes and PowerShell backticks dropped (b\rain,
+  # ins''tall, "us"age, us`age: a shell reads brain usage), made only when the text holds one
   local plain=
-  if [[ $rest == *\\* || $rest == *"''"* || $rest == *'\"\"'* || $rest == *'`'* ]]; then
-    plain=${rest//\\\\/}; plain=${plain//"''"/}; plain=${plain//'\"\"'/}; plain=${plain//'`'/}
+  if [[ $rest == *\\* || $rest == *"'"* || $rest == *'`'* ]]; then
+    plain=${rest//'\"'/}; plain=${plain//\\\\/}; plain=${plain//"'"/}; plain=${plain//'`'/}
   fi
   shopt -s nocasematch
   [[ $rest =~ $writers || $rest =~ $owner_power || ( -n $plain && $plain =~ $owner_power ) || ( -n $clis && $rest =~ $node_clis ) ]] && found=0 || found=1

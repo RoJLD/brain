@@ -11,7 +11,7 @@ import yaml
 from research_graph import init
 from test_guards import _needs_python, bash, decide, payload, pwsh
 
-from brain import guards, permissions, projects, queue, records
+from brain import gestures, guards, permissions, projects, queue, records
 
 PERMISSIONS = Path(__file__).resolve().parent / "fixtures" / "permissions.yaml"  # an owner's hierarchy
 AT = "2026-11-02T20:00:00Z"
@@ -105,6 +105,7 @@ OWNER_REFUSED = [
     ("scheduled", "x=install; brain schedule $x --apply"),
     ("scheduled", "brain schedule ins''tall --apply"),   # the review (2026-11-17): empty quotes in a word
     ("scheduled", "brain sched\"\"ule install --apply"),
+    ("scheduled", "brain schedule \"ins\"tall --apply"), ("scheduled", "brain sch'e'dule install --apply"),
     ("scheduled", "bash -c 'python3 -m brain schedule install --apply'"),
     ("scheduled", "schtasks.exe /change /tn \\Demo\\cycle /tr x"),
     ("scheduled", "schtasks /delete /tn BrainDigest /f"),
@@ -210,6 +211,9 @@ MARKERS_CLEARED = [
     ("Bash", "python -c \"import os; os.environ.pop('CLAUDECODE'); import runpy\""),
     ("PowerShell", "$env:CLAUDECODE = ''; python run.py"), ("PowerShell", "Remove-Item Env:CLAUDECODE"),
     ("PowerShell", "[Environment]::SetEnvironmentVariable('BRAIN_AGENT_SESSION', $null)"),
+    # round 2: quoted names, every CLAUDE variable at once, export -n
+    ("Bash", "env -u 'CLAUDECODE' python run.py"), ("Bash", "unset ${!CLAUDE*}; python run.py"),
+    ("Bash", "export -n CLAUDECODE; python run.py"), ("PowerShell", "Remove-Item Env:CLAUDE*"),
 ]
 
 
@@ -249,6 +253,38 @@ def test_the_markers_named_start_python():
     assert not missed
 
 
+def test_reading_the_markers_passes_in_powershell(owner, tmp_path, monkeypatch):
+    _wide(tmp_path, monkeypatch, True)
+    for command in ("$env:CLAUDECODE", "if ($env:CLAUDECODE -eq '1') { 'session' }", "Get-ChildItem Env:CLAUDE*"):
+        assert pwsh(owner, command) is None, command
+
+
+def test_the_marker_check_costs_its_length(owner):
+    import time
+    t0 = time.monotonic()
+    gestures.clears_marker("unset " + "a " * 60_000 + " CLAUDECODE")   # bounded gaps: its length, no more
+    assert gestures.clears_marker("echo " + "x " * 60_000) == ""
+    assert time.monotonic() - t0 < 2
+
+
+def test_the_lock_reads_every_claude_code_variable():
+    from brain import detail, succession
+    assert gestures.agent_session({"CLAUDE_CODE_SSE_PORT": "1"}) == "CLAUDE_CODE_SSE_PORT"
+    assert "CLAUDE_CODE_SSE_PORT" in detail.refused({"CLAUDE_CODE_SSE_PORT": "1"})
+    assert "CLAUDE_CODE_SSE_PORT" in succession._refused({"CLAUDE_CODE_SSE_PORT": "1"})
+    assert gestures.agent_session({"CLAUDE_CONFIG_DIR": "x", "PATH": "y"}) == ""   # not a session's marker
+
+
+def test_usage_allow_refuses_itself_under_the_wide_guard(tmp_path, monkeypatch):
+    cfg = tmp_path / "w.json"
+    cfg.write_text(json.dumps({"v": 1, "identity": {"owner": "Ada", "kind": "person"},
+                               "guards": {"gestures_wide": True}}), encoding="utf-8")
+    assert "refused in an agent's session" in gestures.cli_refusal(
+        ["usage", "allow"], env={"CLAUDECODE": "1"}, data=json.loads(cfg.read_text(encoding="utf-8")))
+    assert gestures.cli_refusal(["usage", "allow"], env={"CLAUDECODE": "1"}, data={}) == ""   # off by default
+    assert gestures.cli_refusal(["usage", "allow"], env={}, data={"guards": {"gestures_wide": True}}) == ""
+
+
 def test_a_gesture_refuses_itself_whichever_agent_marker_is_set(monkeypatch):
     """The command's own check (brain.detail.refused, schedule install --apply, update, uninstall, queue apply,
     handover root): any of the agent markers, so that clearing one is not enough."""
@@ -279,6 +315,7 @@ def test_the_prefilter_starts_python_for_the_wide_shapes():
     "python -c \"from brain import schedule; print(schedule.install.__doc__)\"",
     "python -c \"print('schedule install --apply')\"", "python script.py brain schedule install --apply",
     "echo $CLAUDECODE", "test -n \"$CLAUDE_CODE_ENTRYPOINT\" && echo session", "brain --project $P status",
+    "CLAUDECODE=1 python -m pytest -q", "python -c \"import os; print(os.environ.get('CLAUDECODE'))\"",
 ])
 def test_wide_matching_passes_reads(owner, tmp_path, monkeypatch, command):
     _wide(tmp_path, monkeypatch, True)

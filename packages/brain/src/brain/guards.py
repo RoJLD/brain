@@ -2203,7 +2203,7 @@ def check_owner(tool: str, inp: dict, cmds, cwd: str, powershell: bool = False, 
     if what and gestures.strict():
         return ("override", f"{what} refused: it turns the guards off for later sessions; that is "
                             f"{config.owner_of()}'s", None)
-    cleared = gestures.clears_marker(command)
+    cleared = gestures.clears_marker(command)   # cheap: read only when the call names a marker
     if cleared and gestures.wide_matching():   # guards.gestures_wide: the gestures' own check reads these markers
         return ("override", f"{cleared!r} refused: it clears an agent session's marker "
                             f"({', '.join(gestures.AGENT_ENV)}), which the owner's gestures read to refuse themselves "

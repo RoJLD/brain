@@ -82,9 +82,12 @@ GESTURES: tuple[Gesture, ...] = (
 
 
 def agent_session(env=None) -> str:
-    """The variable that marks an agent's session ('' in the owner's own terminal)."""
+    """The variable that marks an agent's session ('' in the owner's own terminal): one of :data:`AGENT_ENV`, or any
+    other ``CLAUDE_CODE_*`` variable Claude Code sets in its sessions (about thirty: a session that would clear the
+    markers has them all to find)."""
     env = os.environ if env is None else env
-    return next((v for v in AGENT_ENV if env.get(v)), "")
+    return next((v for v in AGENT_ENV if env.get(v)), "") or \
+        next((v for v in sorted(env) if v.upper().startswith(("CLAUDE_CODE_", "CLAUDECODE")) and env.get(v)), "")
 
 
 def runs_brain(low: list[str]) -> int:
@@ -304,19 +307,30 @@ def strict(data: dict | None = None) -> bool:
     return isinstance(section, dict) and section.get("owner_strict") is True
 
 
-_MARKERS = "|".join(AGENT_ENV)
-# what clears an agent session's markers, so that a gesture's own check (CLAUDECODE...) would not see the session:
-# an assignment (CLAUDECODE= cmd, $env:CLAUDECODE = ''), unset, env -u or -i, PowerShell's Env: drive or .NET call,
-# inline code's environ
-CLEARS = re.compile(rf"(?i)(?<![\w$])(?:\$env:)?(?:{_MARKERS})\s*=|\bunset\b[^;&|\n]*\b(?:{_MARKERS})\b|"
-                    rf"(?:^|\s)(?:-u\s*|--unset[= ])(?:{_MARKERS})\b|\benv\s+(?:-[a-z]*i\b|--ignore-environment\b|-\s)|"
-                    rf"\benv:\\?(?:{_MARKERS})\b|SetEnvironmentVariable\s*\(\s*['\"](?:{_MARKERS})|"
-                    rf"\b(?:environ|unsetenv|putenv)\b[^\n]*\b(?:{_MARKERS})\b")
+_MARKERS = r"CLAUDECODE|CLAUDE_CODE_\w*|BRAIN_AGENT_SESSION|CLAUDE\w*\*"
+_EMPTY = r"\s*=\s*(?:$|[\s;&|)]|''|\"\"|\$null\b)"
+# what clears an agent session's markers, so that a gesture's own check (brain.detail.refused) would not see the
+# session: an empty assignment (CLAUDECODE= cmd, $env:CLAUDECODE = ''), unset, export -n, declare +x, env -u or -i, the
+# Env: drive's removal, .NET's SetEnvironmentVariable or an environment cleared, inline code's environ deletion; read
+# on the call's text with its quotes removed, each gap bounded (a long call costs no more than its length)
+CLEARS = re.compile(
+    rf"(?i)(?<![\w$])(?:\$env:)?(?:{_MARKERS}){_EMPTY}|"
+    rf"\b(?:unset|export\s+-n|declare\s+\+x|typeset\s+\+x)\b[^;&|\n]{{0,200}}?(?:{_MARKERS}|\$\{{!CLAUDE)|"
+    rf"(?:^|\s)(?:-u\s*|--unset[= ])(?:{_MARKERS})|\benv\s+(?:-[a-z]*i\b|--ignore-environment\b|-\s)|"
+    rf"\b(?:remove-item|ri|rm|del|erase|clear-item|cli)\s+(?:-path\s+|-literalpath\s+)?env:[\\/]?(?:{_MARKERS}|\*|$)|"
+    rf"SetEnvironmentVariable\s*\(|-UseNewEnvironment\b|\.Environment\.(?:Clear|Remove)\s*\(|"
+    rf"\b(?:del\s+os\.environ|environ\.(?:pop|clear)|unsetenv|putenv)\b")
 
 
 def clears_marker(command: str) -> str:
-    """The text of ``command`` that clears an agent session's markers (:data:`AGENT_ENV`), else ''."""
-    m = CLEARS.search(command or "")
+    """The text of ``command`` that clears an agent session's markers, else '': read only when the call names CLAUDE,
+    BRAIN_AGENT_SESSION or a way to clear a whole environment (env -i, -UseNewEnvironment, .Environment.Clear)."""
+    text = re.sub(r"['\"`]", "", command or "")
+    low = text.lower()
+    if not any(w in low for w in ("claude", "brain_agent_session", "env -i", "env --ignore", "env -", "usenewenv",
+                                  "environment.clear", "setenvironmentvariable")):
+        return ""
+    m = CLEARS.search(text)
     return m.group(0).strip() if m else ""
 
 
@@ -332,12 +346,12 @@ def wide_matching(data: dict | None = None) -> bool:
 
 def cli_refusal(argv: list[str], env=None, data: dict | None = None) -> str:
     """Why brain.cli refuses ``brain ARGV`` here ('' when it runs): a gesture the CLI gates, in an agent's session,
-    under ``guards.owner_strict``."""
+    under ``guards.owner_strict`` or ``guards.gestures_wide`` (the command's own lock under the wide guard)."""
     g = match(["brain", *argv])
     if g is None or g.cli != "gate":
         return ""
     var = agent_session(env)
-    if not var or not strict(data):
+    if not var or not (strict(data) or wide_matching(data)):
         return ""
     from . import config
     return (f"{g.name} is {config.name_of()}'s, in their own terminal: {g.why}; refused in an agent's session "
