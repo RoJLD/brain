@@ -442,7 +442,7 @@ def stop(payload: dict) -> None:
         except Exception as exc:  # noqa: BLE001 - the count never costs the turn its snapshot
             _log_error("stop contract", exc)
     ar_ids, ddr_ids = _session_ids("ar", sid), _session_ids("ddr", sid)
-    sr = stats.record(path, status="open", actions=ar_ids, ddrs=ddr_ids)
+    sr = stats.record(path, status="open", actions=ar_ids, ddrs=ddr_ids, provenance=_provenance(stats))
     tree = _tree_fields(sid)
     sr.update(tree)
     try:
@@ -451,6 +451,24 @@ def stop(payload: dict) -> None:
     except stateio.StateError:   # a newer brain wrote one since the load: its own
         return
     _child_report(sid, Path(path), sr, tree)
+
+
+def _provenance(stats: transcript.SessionStats) -> dict:
+    """Where the session runs (brain.provenance): the hook's environment is the session's own (its provider switch,
+    BRAIN_ACCOUNT), then config.json usage.accounts, then the model's id. An alias that is not one (an e-mail address,
+    an account id) is dropped, and said in errors.log without its value."""
+    from . import provenance
+
+    model = stats.models.most_common(1)[0][0] if stats.models else ""
+    try:
+        prov = provenance.for_session(model, (stats.first_ts or _now())[:10], env=os.environ)
+    except Exception as exc:  # noqa: BLE001 - never costs the turn its snapshot
+        _log_error("stop provenance", exc)
+        return {}
+    if os.environ.get(provenance.ACCOUNT_ENV) and not provenance.safe_alias(os.environ[provenance.ACCOUNT_ENV]):
+        _log_line("stop", f"{provenance.ACCOUNT_ENV} is not an alias (letters, digits, '.', '-', '_'; never an e-mail "
+                          "address or an account id): left out of the session record")
+    return prov
 
 
 def _tree_fields(sid: str) -> dict:
