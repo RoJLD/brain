@@ -34,7 +34,7 @@ TAIL = ("; that breaks the locked floor (no push to main or master, no force-pus
 REMOVERS = {"rm", "rmdir", "unlink", "shred", "remove-item", "ri", "rd", "del", "erase"}
 MOVERS = {"mv", "move", "mi", "move-item", "rename-item", "ren", "rni", "rename"}
 COPIERS = {"cp", "copy", "copy-item", "cpi", "xcopy", "rsync", "robocopy", "install"}
-EXTRACTORS = {"tar", "bsdtar", "unzip", "expand-archive", "7z", "7za"}
+EXTRACTORS = floorpwsh.EXTRACTORS
 OPAQUE_XARGS = {"git", "claude", "reg", "setx", *REMOVERS, *MOVERS, *COPIERS, *EXTRACTORS, *floorpwsh.LINK_PROGS,
                 "new-item", "ni", "fsutil", "cpio", "pax"}
 SHELLS = {"bash", "sh", "zsh", "dash", "ksh", "pwsh", "powershell", "cmd"}
@@ -175,8 +175,8 @@ def _shell(cmds, sub: str, command: str, kept: Kept) -> str | None:
     plain = floor.unspelled(_code(command))
     checks = (lambda: _opaque(cmds, acts, command), lambda: _env(plain), lambda: _registry(plain),
               lambda: _removals(acts, kept), lambda: _acl(acts, kept), lambda: _writes(cmds, sub, kept),
-              lambda: _copies(acts, kept, shells), lambda: _extractions(acts, kept, shells),
-              lambda: _archived_settings(acts), lambda: floorpwsh.links(full, cmds, sub, command, kept),
+              lambda: _copies(acts, kept, shells), lambda: floorpwsh.extractions(acts, kept, shells),
+              lambda: floorpwsh.archived_settings(acts, SETTINGS), lambda: floorpwsh.links(full, cmds, sub, command, kept),
               lambda: floorpwsh.braced(command, sub),
               lambda: _git_settings(acts), lambda: _checkout(acts, kept),
               lambda: _named(acts, command), lambda: _plugin_cmd(acts), lambda: floorpwsh.piped(command, acts, kept),
@@ -414,18 +414,23 @@ def _copies(acts, kept: Kept, shells=()) -> str | None:
         if landed is None:
             return (f"{prog} refused: a destination the floor cannot resolve (a substitution, a variable, a splat), "
                     "which may be a .git folder or Claude Code's settings")
-        for real, whole, contents in landed:
-            if kept.inside(real) or (whole and (real in kept.folders or kept.holds(real))):
-                return f"{prog} into {real} refused: it writes what sets the floor or runs the guard"
-            if kept.settings(real) or whole and os.path.basename(real).lower() == ".claude":
-                return f"{prog} into {real} refused: Claude Code's settings change by Write or Edit only"
-            if floorpwsh.GIT_DIR.search(real):
-                return f"{prog} into {real} refused: a .git folder changes by git alone (its state, hooks and pointer)"
-            brought = _brought(real, contents) if whole else ""
-            if brought:
-                return (f"{prog} into {real} refused: it may bring {brought} there (a .git folder changes by git alone, "
-                        "Claude Code's settings by Write or Edit)")
+        why = next((w for real, whole, contents in landed if (w := _landing(real, whole, contents, kept))), "")
+        if why:
+            return f"{prog} into {why}"
     return None
+
+
+def _landing(real: str, whole: bool, contents: str, kept: Kept) -> str:
+    """Why one path a copy writes (_copied) moves or stops the floor: '<path> refused: <why>'; '' else."""
+    if kept.inside(real) or (whole and (real in kept.folders or kept.holds(real))):
+        return f"{real} refused: it writes what sets the floor or runs the guard"
+    if kept.settings(real) or whole and os.path.basename(real).lower() == ".claude":
+        return f"{real} refused: Claude Code's settings change by Write or Edit only"
+    if floorpwsh.GIT_DIR.search(real):
+        return f"{real} refused: a .git folder changes by git alone (its state, hooks and pointer)"
+    brought = _brought(real, contents) if whole else ""
+    return (f"{real} refused: it may bring {brought} there (a .git folder changes by git alone, Claude Code's settings "
+            "by Write or Edit)") if brought else ""
 
 
 def _brought(dst: str, contents: str) -> str:
@@ -444,22 +449,26 @@ def _copied(prog: str, words: list[str], d: str, shell: str = "bash") -> list[tu
     """(the path a copy, a move or a patch writes, whether a whole folder lands there, the folder whose contents land
     there: its path, "?" when it cannot be resolved, '' else) for each source: a move lands as a copy does (folder
     plus the source's name); patch writes its first file (or -o's). None when the destination cannot be resolved."""
-    if prog == "robocopy":
-        return _robocopied(words, d)
-    if prog == "patch":
-        return _patched(words, d)
+    if prog in ("robocopy", "patch"):
+        return (_robocopied if prog == "robocopy" else _patched)(words, d)
     pos, target = _positional(words)
     dest, sources = (target, pos) if target else (pos[-1] if pos else "", pos[:-1])
     if not dest:
         return []
-    dests = floorpwsh.expand(dest, d, shell)
-    if not dests or len(dests) > 1:
+    dst = _destination(dest, d, shell)
+    if dst is None:
         return None
-    dst = g._real(g._path(dests[0], d))
     sources = [x for s in sources for x in (floorpwsh.expand(s, d, shell) or [s])]
     into = bool(target) or len(sources) > 1 or os.path.isdir(dst) or dest.endswith(("/", "\\"))
     whole = prog in MOVERS or _recursive(prog, words)   # a move takes a folder whole
     return [_lands(src, dst, into, whole, d) for src in sources]
+
+
+def _destination(dest: str, d: str, shell: str) -> str | None:
+    """A copy's destination as its shell expands it (a glob, a brace), resolved; None when the floor cannot resolve
+    it or it expands to more than one path."""
+    dests = floorpwsh.expand(dest, d, shell)
+    return g._real(g._path(dests[0], d)) if dests and len(dests) == 1 else None
 
 
 def _patched(words: list[str], d: str) -> list[tuple[str, bool, str]]:
@@ -489,77 +498,6 @@ def _robocopied(words: list[str], d: str) -> list[tuple[str, bool, str]] | None:
     dst = g._real(g._path(pos[1], d))
     src = "?" if floorpwsh.UNREAD.search(pos[0]) else g._real(g._path(pos[0], d))
     return [(os.path.join(dst, f), False, "") for f in pos[2:]] or [(dst, True, src)]
-
-
-def _extractions(acts, kept: Kept, shells=()) -> str | None:
-    """An archive extracted into a kept file's folder or a kept folder (tar -x -C, unzip -d, Expand-Archive
-    -DestinationPath, 7z x -o; the current folder when none is named): its members are not read. Round 14: into any
-    .git folder, or into a folder the floor cannot resolve."""
-    for (words, d), shell in zip(acts, list(shells) or ["bash"] * len(acts), strict=True):
-        prog = g._prog(words[0])
-        target = _extract_target(prog, words) if prog in EXTRACTORS else None
-        if target is None:
-            continue
-        spelled = floorpwsh.expand(target, d, shell) if target else [""]
-        if not spelled or len(spelled) > 1:
-            return f"{prog} refused: it extracts into a folder the floor cannot resolve ({target})"
-        real = g._real(g._path(spelled[0], d)) if spelled[0] else g._real(d)
-        if real in kept.folders or kept.inside(real):
-            return f"{prog} into {real} refused: an archive there can hold what sets the floor or runs the guard"
-        if floorpwsh.GIT_DIR.search(real):
-            return f"{prog} into {real} refused: a .git folder changes by git alone (its state, hooks and pointer)"
-    return None
-
-
-TAR_X = re.compile(r"-?[A-Za-z]*x[A-Za-z]*")   # x, xzf, -xf: a group of tar's short options holding x
-
-
-def _tar_target(args: list[str]) -> str | None:
-    """Where tar extracts (-C, --directory; '' for the current folder), None when it does not extract."""
-    short = [a for a in args if a.startswith("-") and not a.startswith("--")]
-    if not ((args and TAR_X.fullmatch(args[0])) or any(TAR_X.fullmatch(a) for a in short)
-            or "--extract" in args or "--get" in args):
-        return None
-    return _value(args, ("-C", "--directory"))
-
-
-def _unzip_target(args: list[str]) -> str | None:
-    """Where unzip extracts (-d), None for a listing or a test."""
-    return None if any(a in ("-l", "-v", "-t", "-Z") for a in args) else _value(args, ("-d",))
-
-
-def _7z_target(args: list[str]) -> str | None:
-    """Where 7z x or e extracts (-o<dir>), None for another command."""
-    if not args or args[0] not in ("x", "e"):
-        return None
-    return next((a[2:] for a in args if a.startswith("-o")), "")
-
-
-def _expand_target(args: list[str]) -> str:
-    """Where Expand-Archive extracts: -DestinationPath or a prefix of it PowerShell takes, else its second
-    positional argument."""
-    v = next((args[i + 1] for i, a in enumerate(args[:-1])
-              if len(a) > 1 and "-destinationpath".startswith(a.lower())), "")
-    pos = [a for a in args if not a.startswith("-")]
-    return v or (pos[1] if len(pos) > 1 else "")
-
-
-EXTRACT = {"tar": _tar_target, "bsdtar": _tar_target, "unzip": _unzip_target, "7z": _7z_target, "7za": _7z_target,
-           "expand-archive": _expand_target}
-
-
-def _extract_target(prog: str, words: list[str]) -> str | None:
-    """Where an extraction writes ('' for the current folder), or None when the command extracts nothing."""
-    return EXTRACT[prog](words[1:]) if prog in EXTRACT else None
-
-
-def _value(args: list[str], names: tuple[str, ...]) -> str:
-    """The value of the first of ``names`` in ``args`` (``-C x``, ``--directory=x``), '' when none."""
-    for i, a in enumerate(args):
-        name, eq, val = a.partition("=")
-        if name in names:
-            return val if eq else (args[i + 1] if i + 1 < len(args) else "")
-    return ""
 
 
 # --- Claude Code's settings written by git or an archive (round 6, #5): they change by Write or Edit only ---------
@@ -638,95 +576,6 @@ def _revs(sub: str, args: list[str]) -> list[str]:
     revs += [args[i + 1] for i, a in enumerate(args[:-1]) if a in REV_OPTS]
     revs += {"reset": ["HEAD"], "stash": ["stash@{0}"], "pull": ["@{u}"]}.get(sub, [])
     return list(dict.fromkeys(revs))
-
-
-def _archived_settings(acts) -> str | None:
-    """An extraction whose archive holds one of Claude Code's settings files (its members listed: tar, zip), or one
-    whose members the floor cannot list (from its input, 7z, a compression it does not read)."""
-    for words, d in acts:
-        prog = g._prog(words[0])
-        if prog not in EXTRACTORS or _extract_target(prog, words) is None:
-            continue
-        archive = _archive_of(prog, words[1:])
-        members = _members(g._path(archive, d)) if archive and archive != "-" else None
-        if members is None:
-            return f"{prog} refused: the floor cannot list what the archive holds ({archive or 'its input'})"
-        hit = next((m for m in members if SETTINGS.search(m.replace("\\", "/"))), "")
-        if hit:
-            return f"{prog} refused: the archive holds {hit}, and Claude Code's settings change by Write or Edit only"
-        hit = next((m for m in members if floorpwsh.GIT_DIR.search(m) or floorpwsh.CLAUDE_DIR.search(m)), "")
-        if hit:   # round 14: git's state and hooks, a skill's frontmatter: never read once extracted
-            return f"{prog} refused: the archive holds {hit}, in a .git or .claude folder"
-        link = _linked_member(g._path(archive, d))
-        if link:
-            return f"{prog} refused: the archive holds a link ({link}), which an extraction makes onto any path"
-    return None
-
-
-def _linked_member(path: str) -> str:
-    """The first member of a tar or zip archive that is a link (a tar hard or symbolic link, a zip entry whose mode
-    is a symbolic link's), '' for none (round 14: links as a class)."""
-    import tarfile
-    import zipfile
-    try:
-        if zipfile.is_zipfile(path):
-            with zipfile.ZipFile(path) as z:
-                return next((i.filename for i in z.infolist() if (i.external_attr >> 16) & 0o170000 == 0o120000), "")
-        with tarfile.open(path) as tf:
-            return next((m.name for m in tf.getmembers() if m.islnk() or m.issym()), "")
-    except (OSError, tarfile.TarError, zipfile.BadZipFile, ValueError, EOFError):
-        return ""
-
-
-def _archive_of(prog: str, args: list[str]) -> str:
-    """The archive an extraction reads: tar's -f (in a group of short options too, or old style: xzf FILE), unzip's
-    first argument, Expand-Archive's -Path or first argument, 7z's after x; '-' for tar's input."""
-    if prog in ("tar", "bsdtar"):
-        return _tar_archive(args)
-    if prog == "expand-archive":
-        return _expand_archive(args)
-    pos = [a for a in args if not a.startswith("-")]
-    return pos[1] if prog in ("7z", "7za") and len(pos) > 1 else (pos[0] if pos else "")
-
-
-def _tar_archive(args: list[str]) -> str:
-    """tar's archive: --file=X, --file X, a group of short options holding f (its value attached or next), the old
-    style's first word (xzf X); '-' (its input) when none."""
-    for i, a in enumerate(args):
-        if a.startswith("--file="):
-            return a[7:]
-        short = a.startswith("-") and not a.startswith("--") and "f" in a
-        old_style = i == 0 and re.fullmatch(r"[A-Za-z]+", a) is not None and "f" in a
-        if a == "--file" or short or old_style:
-            rest = "" if a == "--file" else a[a.index("f") + 1:]
-            return rest or (args[i + 1] if i + 1 < len(args) else "")
-    return "-"
-
-
-def _expand_archive(args: list[str]) -> str:
-    """Expand-Archive's archive: -Path or -LiteralPath (a prefix PowerShell takes), else its first argument."""
-    for i, a in enumerate(args[:-1]):
-        low = a.lower()
-        if (len(a) > 2 and "-literalpath".startswith(low)) or (len(a) > 1 and "-path".startswith(low)):
-            return args[i + 1]
-    return next((a for a in args if not a.startswith("-")), "")
-
-
-def _members(path: str) -> list[str] | None:
-    """The member names of a tar or zip archive, None when it cannot be read as one ([] when there is no such file:
-    the extraction fails)."""
-    import tarfile
-    import zipfile
-    if not os.path.lexists(path):
-        return []
-    try:
-        if zipfile.is_zipfile(path):
-            with zipfile.ZipFile(path) as z:
-                return z.namelist()
-        with tarfile.open(path) as tf:
-            return tf.getnames()
-    except (OSError, tarfile.TarError, zipfile.BadZipFile, ValueError, EOFError):
-        return None
 
 
 def _repo_of(folder: str) -> str:

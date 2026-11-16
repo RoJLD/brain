@@ -172,29 +172,38 @@ def apply_reads_only(args: list[str]) -> bool:
     left on, --apply left off, and no option that writes beside the work tree (--build-fake-ancestor, --reject,
     --unsafe-paths) nor one the floor does not know."""
     state, i = {}, 0
-    while i < len(args):
+    while i < len(args) and args[i] != "--":
         a = args[i]
-        if a == "--":
-            break
-        if a.startswith("--"):
-            hit = _long(a, APPLY_LONG)
-            if hit is None:
-                return False
-            name, neg = hit
-            value, harmless = APPLY_LONG[name]
-            if not (harmless or neg):
-                return False
-            state[name] = not neg
-            i += 1 if value and not neg and "=" not in a else 0
-        elif a.startswith("-") and len(a) > 1:
-            for k, c in enumerate(a[1:], 1):
-                if c not in APPLY_SHORT:
-                    return False
-                if APPLY_SHORT[c]:
-                    i += 0 if a[k + 1:] else 1
-                    break
-        i += 1
+        skip = _apply_long(a, state) if a.startswith("--") else _apply_short(a) if a.startswith("-") else 0
+        if skip is None:
+            return False
+        i += 1 + skip
     return any(state.get(r) for r in APPLY_READERS) and not state.get("apply")
+
+
+def _apply_long(a: str, state: dict) -> int | None:
+    """One long option of git apply recorded in ``state`` (its name: on or off): the words its value takes after it,
+    None for one that writes or that the floor does not know."""
+    hit = _long(a, APPLY_LONG)
+    if hit is None:
+        return None
+    name, neg = hit
+    value, harmless = APPLY_LONG[name]
+    if not (harmless or neg):
+        return None
+    state[name] = not neg
+    return 1 if value and not neg and "=" not in a else 0
+
+
+def _apply_short(a: str) -> int | None:
+    """A cluster of git apply's short options (-Rv, -p1, -C 3): the words its value takes after it, None for a letter
+    the floor does not know ('-' alone, standard input, takes none)."""
+    for k, c in enumerate(a[1:], 1):
+        if c not in APPLY_SHORT:
+            return None
+        if APPLY_SHORT[c]:
+            return 0 if a[k + 1:] else 1
+    return 0
 
 
 def resumes(sub: str, args: list[str]) -> str:
@@ -375,33 +384,44 @@ def code_link(lang: str, code: str) -> str:
 def link_words(prog: str, args: list[str]) -> list[str] | None:
     """The path words of a command that makes a link, in any spelling it is given (round 14: GNU's unique prefixes,
     PowerShell's parameter prefixes, colon forms and -ItemType read as a wildcard prefix, a splat, a type the floor
-    cannot read), or None when it makes none. A word the floor cannot read stays as written (UNREAD)."""
+    cannot read), or None when it makes none (LINKERS). A word the floor cannot read stays as written (UNREAD)."""
     if prog in ("busybox", "toybox") and args:
         return link_words(g._prog(args[0]), args[1:])
-    if prog in ("ln", "link"):
-        pos, opts = g._getopt(args, "St", ("suffix", "target-directory"))
-        return pos + [v for o, v in opts if v and not (o == "-S" or len(o) > 3 and "--suffix".startswith(o))]
-    if prog == "mklink":
-        return [a for a in args if not a.startswith("/")]
-    if prog in ("junction", "junction64", "subst"):
-        return [a for a in args if not a.startswith(("-", "/"))]
-    if prog == "fsutil":
-        low = [a.lower() for a in args]
-        return args[low.index("create") + 1:] if "hardlink" in low and "create" in low else None
-    if prog == "cp":
-        return _cp_link(args)
-    if prog in ("cpio", "pax"):
-        letters = "".join(a[1:] for a in args if re.match(r"^-[A-Za-z]+$", a))
-        longs = [a.partition("=")[0] for a in args if a.startswith("--")]
-        link = "l" in letters or any(len(x) > 3 and "--link".startswith(x) for x in longs)
-        return ["$(the names it reads from its input)", *(a for a in args if not a.startswith("-"))] if link else None
-    if prog == "rsync":
-        hits = [i for i, a in enumerate(args) if a.startswith("--link-d")]
-        return [args[i].partition("=")[2] or (args[i + 1] if i + 1 < len(args) else "$") for i in hits] + \
-            [a for a in args if not a.startswith("-")] if hits else None
-    if prog in ("new-item", "ni"):
-        return _new_item_link(args)
-    return None
+    reader = LINKERS.get(prog)
+    return reader(args) if reader else None
+
+
+def _ln_words(args: list[str]) -> list[str]:
+    """ln's and link's path words: its operands and -t's folder (not -S's suffix)."""
+    pos, opts = g._getopt(args, "St", ("suffix", "target-directory"))
+    return pos + [v for o, v in opts if v and not (o == "-S" or len(o) > 3 and "--suffix".startswith(o))]
+
+
+def _operands(args: list[str]) -> list[str]:
+    """The words that are not options (mklink's /D /H /J, junction's -s, subst's /D)."""
+    return [a for a in args if not a.startswith(("-", "/"))]
+
+
+def _fsutil_words(args: list[str]) -> list[str] | None:
+    """fsutil hardlink create NEW EXISTING: its two paths; None for another fsutil command."""
+    low = [a.lower() for a in args]
+    return args[low.index("create") + 1:] if "hardlink" in low and "create" in low else None
+
+
+def _pass_through_words(args: list[str]) -> list[str] | None:
+    """cpio -pl and pax -rwl: the names they link come from their input, which the floor does not read."""
+    letters = "".join(a[1:] for a in args if re.match(r"^-[A-Za-z]+$", a))
+    link = "l" in letters or any(len(x) > 3 and "--link".startswith(x.partition("=")[0]) for x in args)
+    return ["$(the names it reads from its input)", *(a for a in args if not a.startswith("-"))] if link else None
+
+
+def _rsync_words(args: list[str]) -> list[str] | None:
+    """rsync --link-dest DIR (hard links to DIR's files): DIR and its operands; None without it."""
+    hits = [i for i, a in enumerate(args) if a.startswith("--link-d")]
+    if not hits:
+        return None
+    return [args[i].partition("=")[2] or (args[i + 1] if i + 1 < len(args) else "$") for i in hits] + \
+        [a for a in args if not a.startswith("-")]
 
 
 def _cp_link(args: list[str]) -> list[str] | None:
@@ -412,26 +432,37 @@ def _cp_link(args: list[str]) -> list[str] | None:
         if a == "--":
             words += args[i + 1:]
             break
-        name = a.partition("=")[0]
-        if a.startswith("--"):
-            if len(name) > 2 and ("--link".startswith(name) or "--symbolic-link".startswith(name)):
-                link = True
-            elif len(name) > 3 and ("--target-directory".startswith(name) or "--suffix".startswith(name)):
-                val = a.partition("=")[2] if "=" in a else (args[i + 1] if i + 1 < len(args) else "")
-                i += 0 if "=" in a else 1
-                words += [val] if name.startswith("--t") else []
-        elif a.startswith("-") and len(a) > 1:
-            for k, c in enumerate(a[1:], 1):
-                link = link or c in "ls"
-                if c in "St":
-                    val = a[k + 1:] or (args[i + 1] if i + 1 < len(args) else "")
-                    i += 0 if a[k + 1:] else 1
-                    words += [val] if c == "t" else []
-                    break
+        if a.startswith("-") and len(a) > 1:
+            hit, named, i = (_cp_long if a.startswith("--") else _cp_short)(args, i)
+            link, words = link or hit, words + named
         else:
             words.append(a)
         i += 1
     return words if link else None
+
+
+def _cp_long(args: list[str], i: int) -> tuple[bool, list[str], int]:
+    """(it makes links, the path it names, the index of its last word) for cp's long option at ``i``."""
+    a = args[i]
+    name = a.partition("=")[0]
+    if len(name) > 2 and ("--link".startswith(name) or "--symbolic-link".startswith(name)):
+        return True, [], i
+    if len(name) > 2 and ("--target-directory".startswith(name) or "--suffix".startswith(name)):
+        val, i = (a.partition("=")[2], i) if "=" in a else ((args[i + 1] if i + 1 < len(args) else ""), i + 1)
+        return False, [val] if name.startswith("--t") else [], i
+    return False, [], i
+
+
+def _cp_short(args: list[str], i: int) -> tuple[bool, list[str], int]:
+    """(it makes links, the path it names, the index of its last word) for cp's short cluster at ``i`` (l, s; -t's
+    folder, -S's suffix skipped)."""
+    a, link = args[i], False
+    for k, c in enumerate(a[1:], 1):
+        link = link or c in "ls"
+        if c in "St":
+            val = a[k + 1:] or (args[i + 1] if i + 1 < len(args) else "")
+            return link, [val] if c == "t" else [], i + (0 if a[k + 1:] else 1)
+    return link, [], i
 
 
 def _new_item_link(args: list[str]) -> list[str] | None:
@@ -440,28 +471,41 @@ def _new_item_link(args: list[str]) -> list[str] | None:
     a type or a splat the floor cannot read; None for another item."""
     words, link, i = [], False, 0
     while i < len(args):
-        a = args[i]
-        m = PS_PARAM.match(a)
-        if a.startswith("@"):
-            words.append(a)
-            link = True   # a splat: its -ItemType is not read
-        elif m:
-            name, val = m.group(1).lower(), m.group(2)
-            if val is None and i + 1 < len(args) and not PS_PARAM.match(args[i + 1]):
-                i, val = i + 1, args[i + 1]
-            if "itemtype".startswith(name) or "type".startswith(name):
-                v = _unq((val or "").strip()).lower()
-                if not v or UNREAD.search(v.replace("*", "").replace("?", "").replace("[", "").replace("]", "")):
-                    words.append("$(an -ItemType the floor cannot read)")
-                    link = True
-                elif any(fnmatch.fnmatchcase(t, v + "*") for t in LINK_TYPES):
-                    link = True
-            elif val is not None:
-                words.append(_unq(val))
-        else:
-            words.append(_unq(a))
+        name, val, i = _ps_param(args, i)
+        if name is None:
+            link, words = link or val.startswith("@"), words + [_unq(val)]   # a splat: its -ItemType is not read
+        elif "itemtype".startswith(name) or "type".startswith(name):
+            kind = _item_type(val)
+            link, words = link or bool(kind), words + ([kind] if kind.startswith("$") else [])
+        elif val is not None:
+            words.append(_unq(val))
         i += 1
     return words if link else None
+
+
+def _ps_param(args: list[str], i: int) -> tuple[str | None, str | None, int]:
+    """(a PowerShell parameter's name, lowercased, its value: after a colon or the next word that is not a parameter,
+    the index of its last word) for ``args[i]``; (None, the word, i) for a positional word."""
+    m = PS_PARAM.match(args[i])
+    if not m:
+        return None, args[i], i
+    if m.group(2) is None and i + 1 < len(args) and not PS_PARAM.match(args[i + 1]):
+        return m.group(1).lower(), args[i + 1], i + 1
+    return m.group(1).lower(), m.group(2), i
+
+
+def _item_type(val: str | None) -> str:
+    """New-Item's -ItemType value read as PowerShell reads it: 'link' when it matches a link type as a wildcard prefix
+    (h, Hard*, j, Sym), a $(...) word when the floor cannot read it, '' for another item type."""
+    v = _unq((val or "").strip()).lower()
+    if not v or UNREAD.search(re.sub(r"[*?\[\]]", "", v)):
+        return "$(an -ItemType the floor cannot read)"
+    return "link" if any(fnmatch.fnmatchcase(t, v + "*") for t in LINK_TYPES) else ""
+
+
+LINKERS = {"ln": _ln_words, "link": _ln_words, "mklink": _operands, "junction": _operands, "junction64": _operands,
+           "subst": _operands, "fsutil": _fsutil_words, "cp": _cp_link, "cpio": _pass_through_words,
+           "pax": _pass_through_words, "rsync": _rsync_words, "new-item": _new_item_link, "ni": _new_item_link}
 
 
 def _link_reach(word: str, real: str, kept) -> bool:
@@ -482,32 +526,18 @@ def _program(what: str) -> str:
 
 def links(acts, cmds, shell: str, command: str, kept) -> str | None:
     """Round 14, links as a class whatever the tool, the spelling or the interpreter: inline code or .NET that makes
-    one (its paths unread); a link program run by a launcher the floor does not unwrap; a link program whose path
-    words the floor cannot resolve (a glob, a brace, a substitution, a variable, a splat, its input) or that reaches
-    what it keeps (_link_reach); and a call that makes a link and writes anything else (a write through the new link
-    is not known until the link exists)."""
+    one (its paths unread: _unread_link); a link program run by a launcher the floor does not unwrap; a link program
+    whose path words the floor cannot resolve (a glob, a brace, a substitution, a variable, a splat, its input) or
+    that reaches what it keeps (_link_paths); and a call that makes a link and writes anything else (a write through
+    the new link is not known until the link exists)."""
     makers, fed = set(), _fed(cmds, command)
     for words, d, *_ in acts:
         prog, args = g._prog(words[0]), words[1:]
-        lang = _lang(prog)
-        what = code_link(lang, _code_of(lang, args, fed)) if lang else ""
-        if what:
-            return f"{prog} refused: inline code that makes a link ({what}), whose paths the floor cannot read"
-        if prog not in TEXT_READERS and (any(NET_LINK.search(w) for w in words) or prog == "add-type" and any(
-                re.search(r"(?i)dllimport|link", w) for w in args)):
-            return f"{prog} refused: .NET code that makes a link, whose paths the floor cannot read"
-        if prog in UNWRAPPED and any(g._prog(w) in LINK_PROGS for w in args):
-            return f"{prog} refused: it runs a link program the floor does not read the paths of"
         found = link_words(prog, args)
-        if found is None:
-            continue
-        makers.add(prog)
-        for w in found or ["$(its input)"]:
-            if UNREAD.search(w):
-                return f"{prog} refused: a link whose path ({w}) the floor cannot resolve"
-            if _link_reach(w, g._real(g._path(w, d)), kept):
-                return (f"{prog} onto {w} refused: a link onto Claude Code's settings or customization, a .git folder "
-                        "or what sets the floor (they change by Write or Edit only)")
+        why = _unread_link(prog, words, fed) or (_link_paths(prog, found, d, kept) if found is not None else "")
+        if why:
+            return why
+        makers |= {prog} if found is not None else set()
     if makers and shell != "ps" and BRACE_WORD.search(_unquoted(command)):
         return "a link in a call with a brace expansion refused: the floor does not read the paths a brace makes"
     for what, target in g.shell_writes(cmds, shell) if makers else ():
@@ -515,6 +545,33 @@ def links(acts, cmds, shell: str, command: str, kept) -> str | None:
             return (f"a link and a write ({what} into {target}) in one call refused: the file a write reaches through "
                     "a new link is not known until the link exists")
     return None
+
+
+def _unread_link(prog: str, words: list[str], fed: str) -> str:
+    """A link made where the floor cannot read its paths: inline code (code_link), .NET (NET_LINK, a P/Invoke
+    Add-Type), a link program given to a launcher the floor does not unwrap; '' else."""
+    args, lang = words[1:], _lang(prog)
+    what = code_link(lang, _code_of(lang, args, fed)) if lang else ""
+    if what:
+        return f"{prog} refused: inline code that makes a link ({what}), whose paths the floor cannot read"
+    if prog not in TEXT_READERS and (any(NET_LINK.search(w) for w in words) or prog == "add-type" and any(
+            re.search(r"(?i)dllimport|link", w) for w in args)):
+        return f"{prog} refused: .NET code that makes a link, whose paths the floor cannot read"
+    if prog in UNWRAPPED and any(g._prog(w) in LINK_PROGS for w in args):
+        return f"{prog} refused: it runs a link program the floor does not read the paths of"
+    return ""
+
+
+def _link_paths(prog: str, found: list[str], d: str, kept) -> str:
+    """A link program's path word the floor cannot resolve (none at all: its input), or one that reaches what it keeps
+    (_link_reach): the refusal; '' else."""
+    for w in found or ["$(its input)"]:
+        if UNREAD.search(w):
+            return f"{prog} refused: a link whose path ({w}) the floor cannot resolve"
+        if _link_reach(w, g._real(g._path(w, d)), kept):
+            return (f"{prog} onto {w} refused: a link onto Claude Code's settings or customization, a .git folder or "
+                    "what sets the floor (they change by Write or Edit only)")
+    return ""
 
 
 NO_CONTENT = {"mkdir", "md", "rm", "rmdir", "unlink", "remove-item", "ri", "rd", "del", "erase"}
@@ -603,3 +660,175 @@ def unresolved_reach(target) -> bool:
     """Whether a write whose target the floor cannot resolve (brain.guards.Unresolved) may reach a .git or .claude
     folder or a settings file: its text names one, or the folder it is read in is one or in one."""
     return bool(GUARDED_TEXT.search(target.what) or GIT_DIR.search(str(target)) or CLAUDE_DIR.search(str(target)))
+
+# --- extractions and the archives they read (moved from brain.floorguard in round 14, unchanged but the .git and
+# link members) ----------------------------------------------------------------------------------------------
+
+EXTRACTORS = {"tar", "bsdtar", "unzip", "expand-archive", "7z", "7za"}
+
+
+def extractions(acts, kept, shells=()) -> str | None:
+    """An archive extracted into a kept file's folder or a kept folder (tar -x -C, unzip -d, Expand-Archive
+    -DestinationPath, 7z x -o; the current folder when none is named): its members are not read. Round 14: into any
+    .git folder, or into a folder the floor cannot resolve."""
+    for (words, d), shell in zip(acts, list(shells) or ["bash"] * len(acts), strict=True):
+        prog = g._prog(words[0])
+        target = _extract_target(prog, words) if prog in EXTRACTORS else None
+        if target is None:
+            continue
+        spelled = expand(target, d, shell) if target else [""]
+        if not spelled or len(spelled) > 1:
+            return f"{prog} refused: it extracts into a folder the floor cannot resolve ({target})"
+        real = g._real(g._path(spelled[0], d)) if spelled[0] else g._real(d)
+        if real in kept.folders or kept.inside(real):
+            return f"{prog} into {real} refused: an archive there can hold what sets the floor or runs the guard"
+        if GIT_DIR.search(real):
+            return f"{prog} into {real} refused: a .git folder changes by git alone (its state, hooks and pointer)"
+    return None
+
+
+TAR_X = re.compile(r"-?[A-Za-z]*x[A-Za-z]*")   # x, xzf, -xf: a group of tar's short options holding x
+
+
+def _tar_target(args: list[str]) -> str | None:
+    """Where tar extracts (-C, --directory; '' for the current folder), None when it does not extract."""
+    short = [a for a in args if a.startswith("-") and not a.startswith("--")]
+    if not ((args and TAR_X.fullmatch(args[0])) or any(TAR_X.fullmatch(a) for a in short)
+            or "--extract" in args or "--get" in args):
+        return None
+    return _value(args, ("-C", "--directory"))
+
+
+def _unzip_target(args: list[str]) -> str | None:
+    """Where unzip extracts (-d), None for a listing or a test."""
+    return None if any(a in ("-l", "-v", "-t", "-Z") for a in args) else _value(args, ("-d",))
+
+
+def _7z_target(args: list[str]) -> str | None:
+    """Where 7z x or e extracts (-o<dir>), None for another command."""
+    if not args or args[0] not in ("x", "e"):
+        return None
+    return next((a[2:] for a in args if a.startswith("-o")), "")
+
+
+def _expand_target(args: list[str]) -> str:
+    """Where Expand-Archive extracts: -DestinationPath or a prefix of it PowerShell takes, else its second
+    positional argument."""
+    v = next((args[i + 1] for i, a in enumerate(args[:-1])
+              if len(a) > 1 and "-destinationpath".startswith(a.lower())), "")
+    pos = [a for a in args if not a.startswith("-")]
+    return v or (pos[1] if len(pos) > 1 else "")
+
+
+EXTRACT = {"tar": _tar_target, "bsdtar": _tar_target, "unzip": _unzip_target, "7z": _7z_target, "7za": _7z_target,
+           "expand-archive": _expand_target}
+
+
+def _extract_target(prog: str, words: list[str]) -> str | None:
+    """Where an extraction writes ('' for the current folder), or None when the command extracts nothing."""
+    return EXTRACT[prog](words[1:]) if prog in EXTRACT else None
+
+
+def _value(args: list[str], names: tuple[str, ...]) -> str:
+    """The value of the first of ``names`` in ``args`` (``-C x``, ``--directory=x``), '' when none."""
+    for i, a in enumerate(args):
+        name, eq, val = a.partition("=")
+        if name in names:
+            return val if eq else (args[i + 1] if i + 1 < len(args) else "")
+    return ""
+
+
+def archived_settings(acts, settings) -> str | None:
+    """An extraction whose archive holds one of Claude Code's settings files (its members listed: tar, zip), or one
+    whose members the floor cannot list (from its input, 7z, a compression it does not read)."""
+    for words, d in acts:
+        prog = g._prog(words[0])
+        if prog not in EXTRACTORS or _extract_target(prog, words) is None:
+            continue
+        archive = _archive_of(prog, words[1:])
+        members = _members(g._path(archive, d)) if archive and archive != "-" else None
+        if members is None:
+            return f"{prog} refused: the floor cannot list what the archive holds ({archive or 'its input'})"
+        why = _member_refusal(members, g._path(archive, d), settings)
+        if why:
+            return f"{prog} refused: {why}"
+    return None
+
+
+def _member_refusal(members: list[str], path: str, settings) -> str:
+    """What an archive's members bring that the floor keeps: a settings file, anything in a .git or .claude folder
+    (round 14: git's state and hooks, a skill's frontmatter, never read once extracted), a link; '' else."""
+    hit = next((m for m in members if settings.search(m.replace("\\", "/"))), "")
+    if hit:
+        return f"the archive holds {hit}, and Claude Code's settings change by Write or Edit only"
+    hit = next((m for m in members if GIT_DIR.search(m) or CLAUDE_DIR.search(m)), "")
+    if hit:
+        return f"the archive holds {hit}, in a .git or .claude folder"
+    link = _linked_member(path)
+    return f"the archive holds a link ({link}), which an extraction makes onto any path" if link else ""
+
+
+def _linked_member(path: str) -> str:
+    """The first member of a tar or zip archive that is a link (a tar hard or symbolic link, a zip entry whose mode
+    is a symbolic link's), '' for none (round 14: links as a class)."""
+    import tarfile
+    import zipfile
+    try:
+        if zipfile.is_zipfile(path):
+            with zipfile.ZipFile(path) as z:
+                return next((i.filename for i in z.infolist() if (i.external_attr >> 16) & 0o170000 == 0o120000), "")
+        with tarfile.open(path) as tf:
+            return next((m.name for m in tf.getmembers() if m.islnk() or m.issym()), "")
+    except (OSError, tarfile.TarError, zipfile.BadZipFile, ValueError, EOFError):
+        return ""
+
+
+def _archive_of(prog: str, args: list[str]) -> str:
+    """The archive an extraction reads: tar's -f (in a group of short options too, or old style: xzf FILE), unzip's
+    first argument, Expand-Archive's -Path or first argument, 7z's after x; '-' for tar's input."""
+    if prog in ("tar", "bsdtar"):
+        return _tar_archive(args)
+    if prog == "expand-archive":
+        return _expand_archive(args)
+    pos = [a for a in args if not a.startswith("-")]
+    return pos[1] if prog in ("7z", "7za") and len(pos) > 1 else (pos[0] if pos else "")
+
+
+def _tar_archive(args: list[str]) -> str:
+    """tar's archive: --file=X, --file X, a group of short options holding f (its value attached or next), the old
+    style's first word (xzf X); '-' (its input) when none."""
+    for i, a in enumerate(args):
+        if a.startswith("--file="):
+            return a[7:]
+        short = a.startswith("-") and not a.startswith("--") and "f" in a
+        old_style = i == 0 and re.fullmatch(r"[A-Za-z]+", a) is not None and "f" in a
+        if a == "--file" or short or old_style:
+            rest = "" if a == "--file" else a[a.index("f") + 1:]
+            return rest or (args[i + 1] if i + 1 < len(args) else "")
+    return "-"
+
+
+def _expand_archive(args: list[str]) -> str:
+    """Expand-Archive's archive: -Path or -LiteralPath (a prefix PowerShell takes), else its first argument."""
+    for i, a in enumerate(args[:-1]):
+        low = a.lower()
+        if (len(a) > 2 and "-literalpath".startswith(low)) or (len(a) > 1 and "-path".startswith(low)):
+            return args[i + 1]
+    return next((a for a in args if not a.startswith("-")), "")
+
+
+def _members(path: str) -> list[str] | None:
+    """The member names of a tar or zip archive, None when it cannot be read as one ([] when there is no such file:
+    the extraction fails)."""
+    import tarfile
+    import zipfile
+    if not os.path.lexists(path):
+        return []
+    try:
+        if zipfile.is_zipfile(path):
+            with zipfile.ZipFile(path) as z:
+                return z.namelist()
+        with tarfile.open(path) as tf:
+            return tf.getnames()
+    except (OSError, tarfile.TarError, zipfile.BadZipFile, ValueError, EOFError):
+        return None
