@@ -383,6 +383,33 @@ def close_item(store: Path, nid: str, pr: str, outcome: str = "", today: str | N
     return _edit(store, nid, change)
 
 
+def proof(props) -> str:
+    """What proves a closed node, on one line: its ``props.pr`` and its ``props.evidence`` (wi-brain-evidence-views:
+    an item closed with --evidence has no PR, and its proof is shown where a PR is); "" when it has neither."""
+    props = props if isinstance(props, dict) else {}
+    parts = [(label, one_line(props.get(key))) for key, label in (("pr", ""), ("evidence", "evidence "))]
+    return "; ".join(f"{label}{text}" for label, text in parts if text)
+
+
+def one_line(value) -> str:
+    """A prop's value on one line: a list joined by "; " (an evidence written by hand as a YAML list), whitespace
+    collapsed; "" for None or an empty value."""
+    if isinstance(value, (list, tuple)):
+        value = "; ".join(str(x) for x in value if x not in (None, ""))
+    return " ".join(str(value if value is not None else "").split())
+
+
+def close_line(node: dict) -> str:
+    """The journal's line for a node just closed: its id, its status, what proves it (:func:`proof`) and the outcome
+    of ``props.done`` (or ``props.dropped``), for ``brain journal add``."""
+    props = node.get("props") if isinstance(node.get("props"), dict) else {}
+    status = str(node.get("status") or "")
+    outcome = " ".join(str(props.get("done" if status == "done" else status) or "").split())
+    outcome = re.sub(r"^\d{4}-\d{2}-\d{2}(?:T[\d:.]+Z?)?", "", outcome).lstrip(" :-")   # as research_graph closed
+    shown = proof(props)
+    return f"- {node.get('id')} {status}" + (f" ({shown})" if shown else "") + (f": {outcome}" if outcome else "")
+
+
 # --- research_graph, the graph engine ---
 # brain imports the research_graph package (installed into its venv from the pin in pyproject.toml) and runs its CLI
 # in this process. When $BRAIN_GRAPH_PYTHON is set, or the package is missing from this Python, it runs

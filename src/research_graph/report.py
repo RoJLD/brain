@@ -97,8 +97,10 @@ def closed(items: list[dict]) -> list[str]:
         src = {"git": f" (git {r['commit']})", "props.done": ""}.get(r["date_source"], " (no date)")
         out.append(f"{when}  {r['status']:<7}  {r['id']}{src}  {short(r['title'], 90)}")
         detail = r["outcome"] if isinstance(r["outcome"], str) and r["outcome"] else None
-        if detail or r.get("pr"):
+        if detail or r.get("pr") or r.get("evidence"):
             out.append("            " + "  ".join(x for x in (f"pr {r['pr']}" if r.get("pr") else "",
+                                                               f"evidence {short(r['evidence'], TEXT)}" if r.get("evidence")
+                                                               else "",
                                                                short(detail, TEXT) if detail else "") if x))
     out.append(f"{len(items)} closed item(s)")
     return out

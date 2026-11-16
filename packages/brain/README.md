@@ -617,6 +617,10 @@ An item closes with its evidence: `brain item close ID --pr "repo #N"` for a cod
 then the clauses of its typologies ([docs/typologies.md](docs/typologies.md)): its `props.typology`, else its
 project's `lifecycle.typologies` in `projects.yaml`. `brain item clauses ID [--json]` prints them; `--pr` is required
 for an item that takes a PR clause (the software pack's), and for a project that declares no typology, as before.
+The evidence is shown where the PR is (`wi-brain-evidence-views`): the cockpit's item detail (an Evidence section
+beside the PR), the digest's closed items, the items a lesson led to, `research_graph closed` (`evidence ...` beside
+`pr ...`, and in its `--json` when there is one), and the journal's line that `brain item close` prints for `brain
+journal add`: `- ID STATUS (PR; evidence TEXT): outcome`. `brain item show` prints it with the other props.
 
 `brain items --wave` takes a wave's release or id: the items whose wave it is now (carried in included), and those in
 no wave whose free-text `props.wave` names that release. `brain spec show --section` takes a heading's number (`2.1`),
