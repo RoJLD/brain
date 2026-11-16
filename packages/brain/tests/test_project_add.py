@@ -3,12 +3,13 @@ command, a plan then --apply: read only, an existing instance, or a new one from
 (--parent), marked by a class floor (--floor); the registry as it would be checked before the write, the entry
 appended with the comments kept, the step logged in the setup ledger. Fictitious names only."""
 
+import argparse
 import json
 import subprocess
 
 import pytest
 import yaml
-from brain import __version__, cli, init, paths, project_add, projects, skew
+from brain import __version__, cli, config, init, knowledge, paths, project_add, projects, schema, skew
 
 HEADER = "# the registry of a test brain: this comment is kept\nhome:\n  root: .\n  title: the brain itself\n"
 
@@ -286,3 +287,133 @@ def test_a_folder_inside_the_worktree_is_refused(worktree, capsys):
     (wt / "inner" / "notes" / "graph").mkdir(parents=True)
     assert cli.main(["--root", str(wt), "project", "add", "inner", "--existing", str(wt / "inner")]) == 2
     assert "removed with it" in capsys.readouterr().out
+
+
+# --- the notes step (wi-brain-project-add-notes) ---
+
+def with_notes(home, tmp_path, path="../notes"):
+    """The brain's config.json names a laid-out notes home."""
+    (home / "config.json").write_text(json.dumps({"v": 1, "identity": {"owner": "Ada"},
+                                                  "knowledge": {"path": path}}), encoding="utf-8")
+    notes = tmp_path / "notes"
+    knowledge.apply(notes, knowledge.plan(notes))
+    return notes
+
+
+def test_without_a_notes_home_the_plan_says_why_there_is_no_map(home, capsys):
+    assert cli.main(["--root", str(home), "project", "add", "orchard", "--read"]) == 0
+    assert "in the notes home: no map (this brain has no notes home" in capsys.readouterr().out
+
+
+def test_the_map_is_planned_then_written_after_the_entry_and_never_overwritten(home, tmp_path, capsys):
+    notes = with_notes(home, tmp_path)
+    words = ["--root", str(home), "project", "add", "orchard", "--read", "--title", "An orchard"]
+    assert cli.main(words) == 0
+    assert "maps/orchard.md, the project's map (scope: orchard), written, never over a file" in capsys.readouterr().out
+    assert not (notes / "maps" / "orchard.md").exists()                     # a plan writes nothing
+    assert cli.main([*words, "--apply"]) == 0
+    out = capsys.readouterr().out
+    assert "the notes home: write  maps/orchard.md in" in out and "commit it in the notes repo" in out
+    text = (notes / "maps" / "orchard.md").read_text(encoding="utf-8")
+    front, body = knowledge.front_matter(text)
+    assert front["id"] == "n-map-orchard" and front["scope"] == ["orchard"] and front["type"] == "map"
+    assert schema.validate("notes", front, schema.STRICT) == ([], [])
+    assert body.lstrip("\n").startswith("# An orchard\n")
+    assert registry(home)["orchard"]["access"] == "read"
+    assert "maps/orchard.md" in ledger_rows()[-1]["output"]
+    assert knowledge.check(notes, known=set()) == []
+    (notes / "maps" / "pear.md").write_text("the owner's own", encoding="utf-8")
+    assert cli.main(["--root", str(home), "project", "add", "pear", "--read", "--apply"]) == 0
+    assert "kept as it is (there already)" in capsys.readouterr().out
+    assert (notes / "maps" / "pear.md").read_text(encoding="utf-8") == "the owner's own"
+
+
+def test_no_notes_leaves_the_map_out(home, tmp_path, capsys):
+    notes = with_notes(home, tmp_path)
+    assert cli.main(["--root", str(home), "project", "add", "orchard", "--read", "--no-notes", "--apply"]) == 0
+    assert "no map (--no-notes)" in capsys.readouterr().out
+    assert not (notes / "maps" / "orchard.md").exists() and "--no-notes" in ledger_rows()[-1]["command"]
+
+
+def test_a_notes_home_missing_on_this_machine_is_said_and_the_entry_still_written(home, tmp_path, capsys):
+    (home / "config.json").write_text(json.dumps({"v": 1, "identity": {"owner": "Ada"},
+                                                  "knowledge": {"path": "../elsewhere"}}), encoding="utf-8")
+    assert cli.main(["--root", str(home), "project", "add", "orchard", "--read", "--apply"]) == 0
+    assert "is no folder on this machine (brain notes init lays it out)" in capsys.readouterr().out
+    assert "orchard" in registry(home)
+
+
+def test_a_map_that_cannot_be_written_leaves_the_entry_registered(home, tmp_path, capsys, monkeypatch):
+    notes = with_notes(home, tmp_path)
+
+    def full(*a, **k):
+        raise OSError("no space left on device")
+    monkeypatch.setattr(knowledge, "apply", full)
+    assert cli.main(["--root", str(home), "project", "add", "orchard", "--read", "--apply"]) == 0
+    out = capsys.readouterr().out
+    assert "maps/orchard.md not written (no space left on device); the entry is registered" in out
+    assert "orchard" in registry(home) and not (notes / "maps" / "orchard.md").exists()
+
+
+@pytest.mark.parametrize("title", ['say "hi": 100% of $HOME', "two\nlines", "<a & b>", "#not-a-comment"])
+def test_the_title_is_escaped_in_the_map(title, tmp_path):
+    step = knowledge.project_map(tmp_path, "orchard", title, today="2026-11-16")
+    front, body = knowledge.front_matter(step.data.decode("utf-8"))
+    shown = " ".join(title.split())
+    assert front["title"] == shown and body.lstrip("\n").startswith(f"# {shown}\n")
+    assert schema.validate("notes", front, schema.STRICT) == ([], [])
+
+
+@pytest.mark.parametrize("title", ["   ", "\n", ""])
+def test_a_blank_title_falls_back_to_the_name(title, tmp_path):
+    front, _ = knowledge.front_matter(knowledge.project_map(tmp_path, "orchard", title).data.decode("utf-8"))
+    assert front["title"] == "orchard" and schema.validate("notes", front, schema.STRICT) == ([], [])
+
+
+def test_an_unreadable_title_is_the_step_reason_never_a_crash(home, tmp_path):
+    """A lone surrogate (Windows argv may hold one; the registry's own step refuses it first, exit 2): the notes step
+    alone says why, it never raises."""
+    with_notes(home, tmp_path)
+    args = argparse.Namespace(no_notes=False, name="orchard", title="a\ud800b")
+    with project_add.this_brain(home / "projects.yaml"):
+        _, step, why = project_add.notes_step(args, config.load(home), home / "projects.yaml")
+    assert step is None and why.startswith("the notes home cannot be read")
+
+
+def test_another_brain_notes_home_is_never_used(home, tmp_path, capsys, monkeypatch):
+    """The registry edited has no config.json: the personal brain's (through $BRAIN_PERSONAL) names a notes home,
+    which is not this brain's."""
+    (home / "config.json").unlink()
+    personal = tmp_path / "personal"
+    personal.mkdir()
+    (personal / "config.json").write_text(json.dumps({"v": 1, "knowledge": {"path": "../pnotes"}}), encoding="utf-8")
+    pnotes = tmp_path / "pnotes"
+    knowledge.apply(pnotes, knowledge.plan(pnotes))
+    monkeypatch.setenv("BRAIN_PERSONAL", str(personal))
+    assert cli.main(["--root", str(home), "project", "add", "orchard", "--read", "--apply"]) == 0
+    assert "no map (this brain has no notes home" in capsys.readouterr().out
+    assert not (pnotes / "maps" / "orchard.md").exists()
+
+
+def test_the_registry_kind_knowledge_entry_is_the_home_without_a_config_key(home, tmp_path, capsys):
+    notes = tmp_path / "notes"
+    knowledge.apply(notes, knowledge.plan(notes))
+    (home / "projects.yaml").write_text(HEADER + "notes:\n  kind: knowledge\n  root: ../notes\n", encoding="utf-8")
+    assert cli.main(["--root", str(home), "project", "add", "orchard", "--read", "--apply"]) == 0
+    out = capsys.readouterr().out
+    assert f"in the notes home {notes}: maps/orchard.md" in out and (notes / "maps" / "orchard.md").is_file()
+    assert "in the notes home" in ledger_rows()[-1]["output"]
+
+
+def test_a_map_written_since_the_plan_is_kept_without_commit_advice(home, tmp_path, capsys, monkeypatch):
+    notes = with_notes(home, tmp_path)
+    real = knowledge.apply
+
+    def racing(target, steps):
+        (target / "maps" / "orchard.md").write_text("someone else's", encoding="utf-8")
+        return real(target, steps)
+    monkeypatch.setattr(knowledge, "apply", racing)
+    assert cli.main(["--root", str(home), "project", "add", "orchard", "--read", "--apply"]) == 0
+    out = capsys.readouterr().out
+    assert "maps/orchard.md kept as it is (written since the plan)" in out and "commit it" not in out
+    assert (notes / "maps" / "orchard.md").read_text(encoding="utf-8") == "someone else's"

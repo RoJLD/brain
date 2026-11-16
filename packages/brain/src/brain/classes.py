@@ -141,6 +141,8 @@ ENGINE_STORES = {
                       "the hand-over notes and their mirror, the cockpit's launch scripts"),
     "inbox": Known("$BRAIN_HOME/inbox", "sealed", "log", "the owner's messages to sessions"),
     "features": Known("$BRAIN_HOME/features", "sealed", "derived", "the feature stores' indexes (sqlite)"),
+    "notes-index": Known("$BRAIN_HOME/notes-index", "sealed", "derived",
+                         "the notes home's search index (sqlite FTS5, brain notes find), one per home"),
     "cache": Known("$BRAIN_HOME/cache", "sealed", "derived",
                    "the app metadata's picked keys (a closed list), the governor's and the guards' caches, the "
                    "release forecast per engine checkout (brain.nextrelease)"),

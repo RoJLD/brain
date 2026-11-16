@@ -12,6 +12,17 @@ never a run: brain.quiet), its floor when it is a collector, where its value liv
   entry declares (a project's own installer registered it): read from the scheduler (Windows), shown with its
   cadence, its window and its last run, and changed where its project registers it, not here.
 
+**The owner of the found tasks** (the owner's answer SCHED-1, « Pointer », 2026-11-13): a project's
+``schedules_owner: {file, apply, floors: {task: cadence}}`` names the settings file its own installer reads (relative
+to its root) and the command that applies it; a found task's row says ``change: <root>/<file>, then <apply>`` (``(no
+apply command declared)`` without one), and a task named in ``floors`` is a collector: its row carries the floor and
+says BELOW FLOOR when its cadence is slower, it has none, or it is disabled. A folder two projects name lists its tasks
+under the first, and a task one of them floors takes that project's owner and floor. A floored task missing from the
+scheduler is said under the list, never when the scheduler was not read (off Windows, or an error). ``brain check
+--all`` checks the key's shape, each floor (a cadence of 1m to 1d, a name once whatever its case, not a declared
+schedule's: that one's floor goes in its ``schedules:`` entry) and that floors come with ``alerts: scheduler:`` folders.
+The value stays in the project's file, changed by the project's own command: the engine never writes it.
+
 **The change** (``brain schedule set NAME [--every D|none] [--at HH:MM|none] [--days D,D|none] [--visible|--hidden]
 [--enable|--disable] [--apply]``): the entry's line rewritten in its file, its comments and the other lines kept, as
 a plan (the line before and after), then written by ``--apply``; the result must read back as the same file with
@@ -46,6 +57,91 @@ INSTALL_HINT = "then brain schedule install --apply on its machines (the owner's
 
 class SetError(ValueError):
     """A change that cannot be made (brain schedule set exits 2)."""
+
+
+# --- the owner of a project's found tasks (SCHED-1) ---
+
+OWNER_KEYS = ("file", "apply", "floors")
+
+
+@dataclass
+class Owner:
+    file: str                   # the settings file its installer reads, relative to the project's root
+    apply: str                  # the command that applies it ('' when none is declared)
+    floors: dict[str, float]    # a collector's task name, lowercase -> its slowest cadence (seconds)
+    names: dict[str, str]       # the same lowercase name -> its spelling as declared
+
+
+def owner_errors(value) -> list[str]:
+    """What is wrong with a schedules_owner entry ([] when it is absent or right)."""
+    from . import schema
+    if value is None:
+        return []
+    if not isinstance(value, dict):
+        return ["is a mapping of file, apply, floors"]
+    unknown = sorted(set(map(str, value)) - set(OWNER_KEYS))
+    errors = schema.tolerate(f"unknown key(s) {', '.join(unknown)} (known: {', '.join(OWNER_KEYS)})") if unknown else []
+    if not isinstance(value.get("file"), str) or not value["file"].strip():
+        errors.append("file is the settings file its installer reads, relative to the project's root")
+    if value.get("apply") is not None and not isinstance(value["apply"], str):
+        errors.append("apply is the command that applies the file, a string")
+    floors = value.get("floors")
+    if floors is None:
+        return errors
+    if not isinstance(floors, dict):
+        return errors + ["floors is a mapping of task -> cadence (15m, 1h, 1d)"]
+    seen: set[str] = set()
+    for name, cad in floors.items():
+        if str(name).lower() in seen:
+            errors.append(f"floors {name}: named twice (a task's name is matched whatever its case)")
+        seen.add(str(name).lower())
+        try:
+            s = schedule.seconds(cad)
+        except ValueError as exc:
+            errors.append(f"floors {name}: {exc}")
+            continue
+        if not 60 <= s <= 86400:
+            errors.append(f"floors {name}: a floor is 1m to 1d")
+    return errors
+
+
+def owner(p: projects.Project) -> Owner | None:
+    """The project's schedules_owner, None when it has none or a wrong one (brain check --all reports it)."""
+    value = getattr(p, "schedules_owner", None)
+    if value is None or owner_errors(value):
+        return None
+    declared = value.get("floors") or {}
+    floors = {str(k).lower(): schedule.seconds(v) for k, v in declared.items()}
+    return Owner(value["file"].strip(), str(value.get("apply") or "").strip(), floors,
+                 {str(k).lower(): str(k) for k in declared})
+
+
+def check(registry: Mapping[str, projects.Project]) -> list[str]:
+    """brain check --all: every project's schedules_owner, its floors against the declared schedules and its
+    project's scheduler folders."""
+    try:
+        names = {s.name.lower() for s in schedule.declared(registry)}
+    except schedule.ScheduleError:   # schedule.check reports it
+        names = set()
+    folders = _folders(registry)
+    out = []
+    for name, p in registry.items():
+        out += [f"project {name}: schedules_owner: {e}" for e in owner_errors(getattr(p, "schedules_owner", None))]
+        o = owner(p)
+        if not o or not o.floors:
+            continue
+        out += [f"project {name}: schedules_owner: floors {o.names[k]}: a declared schedule (its floor goes in its "
+                "schedules: entry)" for k in o.floors if k in names]
+        if not folders.get(name):
+            out.append(f"project {name}: schedules_owner: floors need its alerts: scheduler: folders (where its "
+                       "tasks are found)")
+    return out
+
+
+def _folders(registry: Mapping[str, projects.Project]) -> dict[str, set[str]]:
+    """{project: its alerts: scheduler: folders, normalised}."""
+    from . import alerts
+    return {c.project: {alerts._norm_folder(f) for f in c.scheduler} for c in _alerts_configs(registry)}
 
 
 # --- the view ---
@@ -99,6 +195,8 @@ def _scheduler_rows(registry: Mapping[str, projects.Project]) -> tuple[dict[str,
     sched = alerts.read_scheduler([alerts.Config(project="", scheduler=[schedule.WIN_FOLDER]), *cfgs])
     if "error" in sched:
         return {}, {}, sched["error"]
+    if "rows" not in sched:   # another system (alerts.OFF_WINDOWS): not read, so no task can be said missing
+        return {}, {}, alerts.OFF_WINDOWS
     every = sched.get("rows") or []
     own = {_where(r)[1]: r for r in every if _where(r)[0] == BRAIN_FOLDER}
     out: dict[str, list[dict]] = {}
@@ -142,9 +240,21 @@ def rows(registry: Mapping[str, projects.Project], *, here: str | None = None, r
     def declared_task(r: dict) -> bool:   # a declared schedule's own task, in brain schedule's folder
         return (alerts._norm_folder(str(r.get("folder") or "")) == BRAIN_FOLDER
                 and str(r.get("name") or "").lower() in names)
-    out += [_found_row(r, project, registry[project]) for project, rs in found.items() for r in rs
-            if not declared_task(r)]
+    folders = _folders(registry) if found else {}
+    out += [_found_row(r, project, registry, _owning(r, project, registry, folders)) for project, rs in found.items()
+            for r in rs if not declared_task(r)]
     return out, why
+
+
+def _owning(r: dict, project: str, registry: Mapping[str, projects.Project], folders: dict[str, set[str]]) -> str:
+    """The project whose schedules_owner holds a found task: one that floors it and names its folder (a folder two
+    projects name lists its tasks under the first), else the project it is listed under."""
+    folder, name = _where(r)
+    for q, p in registry.items():
+        o = owner(p)
+        if o and name in o.floors and folder in folders.get(q, ()):
+            return q
+    return project
 
 
 def _declared_row(s: schedule.Schedule, p: projects.Project, here: str, rec: dict, task: dict,
@@ -154,18 +264,51 @@ def _declared_row(s: schedule.Schedule, p: projects.Project, here: str, rec: dic
     return {"kind": "declared", "name": s.name, "project": s.project, "command": s.command, "when": s.when(),
             "window": s.window(), "enabled": s.enabled, "here": s.here(here), "machines": s.machines,
             "quiet": _quiet(p), "floor": s.floor, "installed": rec.get(s.name), "last_run": task.get("last_run"),
-            "last_result": task.get("last_result"),
+            "last_result": task.get("last_result"), "below_floor": "",
             "source": f"{src.as_posix() if src else 'projects.yaml'}: {key}",
             "change": f"{SET_HINT.format(name=s.name)}, {INSTALL_HINT}"}
 
 
-def _found_row(r: dict, project: str, p: projects.Project) -> dict:
-    return {"kind": "found", "name": r.get("name"), "project": project, "command": None, "when": _found_when(r),
-            "window": window_of(r), "enabled": r.get("state") != "Disabled", "here": True, "machines": [],
-            "quiet": _quiet(p), "floor": None, "installed": None, "last_run": r.get("last_run"),
-            "last_result": r.get("last_result"),
+def _found_row(r: dict, project: str, registry: Mapping[str, projects.Project], owning: str) -> dict:
+    from . import alerts
+    p, q = registry[project], registry[owning]
+    o = owner(q)
+    enabled = r.get("state") != "Disabled"
+    floor = o.floors.get(str(r.get("name") or "").lower()) if o else None
+    return {"kind": "found", "name": r.get("name"), "project": project, "owner": owning, "command": None,
+            "when": _found_when(r), "window": window_of(r), "enabled": enabled, "here": True, "machines": [],
+            "quiet": _quiet(p), "floor": floor, "below_floor": _below(floor, alerts.cadence(r), enabled),
+            "installed": None, "last_run": r.get("last_run"), "last_result": r.get("last_result"),
             "source": f"the Task Scheduler {r.get('folder') or ''}{r.get('name') or ''}",
-            "change": f"where {project} registers it (its own setup, not brain schedule)"}
+            "change": _owner_change(o, q) if o else f"where {project} registers it (its own setup, not brain schedule)"}
+
+
+def _below(floor: float | None, every: float | None, enabled: bool) -> str:
+    """Why a found collector is below its floor ('' when it is not, or has no floor)."""
+    if not floor:
+        return ""
+    if not enabled:
+        return "disabled"
+    if every is None:
+        return "no cadence (started by an event only)"
+    if every > floor:
+        return f"every {schedule.duration_text(every)} is slower"
+    return ""
+
+
+def _owner_change(o: Owner, p: projects.Project) -> str:
+    path = (p.root / o.file).as_posix()
+    return f"{path}, then {o.apply}" if o.apply else f"{path} (no apply command declared)"
+
+
+def missing_floors(registry: Mapping[str, projects.Project], rs: list[dict]) -> list[tuple[str, str, float]]:
+    """(project, task, floor) of each collector a schedules_owner floors that the scheduler did not show."""
+    seen = {(r.get("owner") or r["project"], str(r["name"] or "").lower()) for r in rs if r["kind"] == "found"}
+    out = []
+    for name, p in registry.items():
+        o = owner(p)
+        out += [(name, o.names[task], f) for task, f in (o.floors.items() if o else ()) if (name, task) not in seen]
+    return out
 
 
 def settings_line(r: dict) -> str:
@@ -174,7 +317,9 @@ def settings_line(r: dict) -> str:
     if r["quiet"]:
         parts.append(f"quiet {r['quiet']} (notifications held, the task runs)")
     if r["floor"]:
-        parts.append(f"collector, floor {schedule.duration_text(r['floor'])}")
+        below = r.get("below_floor")
+        parts.append(f"collector, floor {schedule.duration_text(r['floor'])}"
+                     + (f", BELOW FLOOR: {below}" if below else ""))
     if r["last_run"]:
         parts.append(f"last run {r['last_run']} (result {r['last_result']})")
     return ", ".join(parts)
@@ -437,17 +582,31 @@ def list_main(registry: Mapping[str, projects.Project], *, here: str | None = No
         return 2
     here = here or schedule.machine()
     w = schedule.watch(registry, here=here)
+    missing = [] if why else missing_floors(registry, rs)
     if as_json:
-        print(json.dumps({"machine": here, "schedules": [r for r in rs if r["kind"] == "declared"],
-                          "found": [r for r in rs if r["kind"] == "found"], "scheduler": why or "read",
-                          "alerts_pass": w}, indent=2, default=str))
+        print(json.dumps(_payload(here, rs, why, missing, w), indent=2, default=str))
         return 0
     if not any(r["kind"] == "declared" for r in rs):
         print("schedule none declared (projects.yaml schedules:)")
     for r in rs:
         print("\n".join(_row_lines(r)))
-    if why:
-        print(f"note     the scheduler's own tasks are not shown: {why}")
+    for line in _notes(why, missing):
+        print(line)
     if w:
         print(f"alerts pass: {w['line']}")
     return 0
+
+
+def _payload(here: str, rs: list[dict], why: str, missing: list[tuple[str, str, float]], w) -> dict:
+    """brain schedule list --json."""
+    return {"machine": here, "schedules": [r for r in rs if r["kind"] == "declared"],
+            "found": [r for r in rs if r["kind"] == "found"], "scheduler": why or "read",
+            "floors_missing": [{"project": p, "name": n, "floor": f} for p, n, f in missing], "alerts_pass": w}
+
+
+def _notes(why: str, missing: list[tuple[str, str, float]]) -> list[str]:
+    """The lines under the list: the scheduler not read, else each floored task it did not show."""
+    if why:
+        return [f"note     the scheduler's own tasks are not shown: {why}"]
+    return [f"note     {name} ({project}): a collector of its schedules_owner (floor {schedule.duration_text(f)}), "
+            "not found under its scheduler folders: BELOW FLOOR" for project, name, f in missing]

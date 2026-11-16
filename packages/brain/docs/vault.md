@@ -84,6 +84,7 @@ name its code writes there that the list does not hold, so a new store comes wit
 | `handover` | `$BRAIN_HOME/handover` | sealed | truth-local | the hand-over notes and their mirror |
 | `inbox` | `$BRAIN_HOME/inbox` | sealed | log | the owner's messages to sessions |
 | `features` | `$BRAIN_HOME/features` | sealed | derived | the feature stores' indexes |
+| `notes-index` | `$BRAIN_HOME/notes-index` | sealed | derived | the notes home's search index, one per home (`brain notes find`) |
 | `cache` | `$BRAIN_HOME/cache` | sealed | derived | the app metadata's picked keys, the governor's and the guards' caches, the release forecast per engine checkout |
 | `memory-sync` | `$BRAIN_HOME/memory-sync` | sealed | truth-local | the memory export's state, alerts and backups |
 | `schedules` | `$BRAIN_HOME/schedules` | sealed | truth-local | the scheduled tasks this machine installed |

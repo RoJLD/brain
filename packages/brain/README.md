@@ -617,6 +617,10 @@ An item closes with its evidence: `brain item close ID --pr "repo #N"` for a cod
 then the clauses of its typologies ([docs/typologies.md](docs/typologies.md)): its `props.typology`, else its
 project's `lifecycle.typologies` in `projects.yaml`. `brain item clauses ID [--json]` prints them; `--pr` is required
 for an item that takes a PR clause (the software pack's), and for a project that declares no typology, as before.
+The evidence is shown where the PR is (`wi-brain-evidence-views`): the cockpit's item detail (an Evidence section
+beside the PR), the digest's closed items, the items a lesson led to, `research_graph closed` (`evidence ...` beside
+`pr ...`, and in its `--json` when there is one), and the journal's line that `brain item close` prints for `brain
+journal add`: `- ID STATUS (PR; evidence TEXT): outcome`. `brain item show` prints it with the other props.
 
 `brain items --wave` takes a wave's release or id: the items whose wave it is now (carried in included), and those in
 no wave whose free-text `props.wave` names that release. `brain spec show --section` takes a heading's number (`2.1`),
@@ -744,8 +748,8 @@ offers it as « A new project » (without `--owner`, the owner of this machine's
 will propose are its later slices.
 
 `brain project add NAME (--read | --existing DIR [--store PATH] | --template T --dir DIR) [--parent NODE] [--floor
-CLASS] [--title TEXT] [--apply]` registers a project in a brain's `projects.yaml` (`wi-brain-project-add`), a plan
-then `--apply`, instead of a hand edit of the file:
+CLASS] [--title TEXT] [--no-notes] [--apply]` registers a project in a brain's `projects.yaml` (`wi-brain-project-add`),
+a plan then `--apply`, instead of a hand edit of the file:
 - `--read`: a project the brain reads and never writes (its entry: `title`, `access: read`, `parent`, `classes`);
 - `--existing DIR`: an instance that has its own brain, registered without a copy: its `root` and `stores` when
   `--store` names another than `notes/graph`; a folder without that store, or the root of a registered project, is
@@ -770,6 +774,14 @@ flow mapping or a document end marker, is refused), and the write is logged as t
 folder; its config.json and scopes.yaml are read beside it, whatever `$CLAUDE_BRAIN_DIR`, `$BRAIN_PERSONAL` or
 `$BRAIN_CONFIG` name. `--project` is refused: a brain's registry changes by a branch and a PR of that brain, so run it
 in a worktree of it, then `brain sync` and `brain check`.
+
+When the brain has a notes home (« The notes home », below: its own config.json's `knowledge.path`, else its
+registry's `kind: knowledge` entry, never another brain's), the plan also shows the project's map there,
+`maps/NAME.md` (`type: map`, `scope: [NAME]`, its id `n-map-NAME`), and `--apply` writes it after the entry, through a
+temporary name, never over a file (`wi-brain-project-add-notes`). The project gets a map, not a folder: the notes
+home's folders say the lifecycle and the class, never the subject, and a note joins the project by its `scope`. The
+step is optional: without a notes home, or with `--no-notes`, the plan says why there is no map; a map that cannot be
+written leaves the entry registered and says so. The owner commits the map in the notes repo.
 
 It also writes `<BRAIN_HOME>/personal.json` when the machine has none, so that the hooks and commands run from any
 folder find this brain. The brain is the owner's private repo: push it to their own account, never to a public one.
@@ -1156,6 +1168,27 @@ result must read back as the same file with that one entry changed and pass the 
 slower `every` and a `--disable`; a block entry is shown as the change to make by hand; a found task changes where its
 project registers it. Writing the file installs nothing: `brain schedule install --apply`, the owner's, applies it.
 
+A project whose own installer registers tasks names where they change in its registry entry:
+
+```yaml
+demo:
+  alerts:
+    scheduler: ['\Demo\']
+  schedules_owner:
+    file: setup/settings.psd1          # the settings file its installer reads, relative to the project's root
+    apply: pwsh -File setup.ps1 -Apply # the command that applies it (optional)
+    floors: {collect-prices: 15m}      # a collector's slowest cadence, 1m to 1d
+```
+
+Each of its found tasks then says `change: <root>/<file>, then <apply>` (`(no apply command declared)` without one);
+a task named in `floors` shows its floor and `BELOW FLOOR` when its cadence is slower, it has none (an event starts
+it) or it is disabled, and a floored task the scheduler does not show is said under the list (`floors_missing` in
+`--json`; never when the scheduler was not read, off Windows or on an error). A folder two projects name lists its
+tasks under the first; a task the other one floors takes its owner and floor. `brain check --all` checks the key's
+shape, each floor (a name once whatever its case, not a declared schedule's, which has its own `floor:`) and that
+floors come with the project's `alerts: scheduler:` folders. The engine never writes that file: the value changes
+there, by the project's own command.
+
 ### Dependency probes: loud fallbacks
 
 A capability that relies on something outside the brain (a CLI's login, a tool's last output, an index's freshness,
@@ -1371,6 +1404,53 @@ and `brain check --all` says what to declare). A first entry the brain skips for
 `prog/kanban_graph.md`), as do those of a project's second store. At such a root, `brain sync`, `check` and `refresh`
 cover every project registered there, and `--store prog/graph` runs as the project that lists that store.
 `examples/projects.yaml` has both.
+
+### The notes home: `brain notes`
+
+The owner's notes live beside the work brain, in a private repo of their own: Markdown with wikilinks, one idea per
+note (`brain.knowledge`). Any editor works; Obsidian opens the folder as a vault and is never required. The brain
+finds the home through `config.json` `knowledge.path` (relative to the file's folder), else the first `projects.yaml`
+entry with `kind: knowledge` (`title`, `kind`, `root`, `parent` and `classes` only: it is never loaded as a project,
+`--project` refuses it, `brain check --all` checks it), else `--dir`. Both need brain 0.5.1 or later on every machine:
+an older brain notes the config key as unknown (CI refuses it) and loads the entry as a project.
+
+The folders say the lifecycle and the class, never the subject; a note's `scope` (ids of the scope tree), `type` and
+`tags` are properties of its front matter (`schemas/notes.schema.json`):
+
+| Folder | Class | In git |
+|---|---|---|
+| `inbox/` | private | yes: captures; an agent only proposes a note here, by PR |
+| `notes/`, `sources/`, `maps/`, `templates/`, `attachments/` | private | yes |
+| `daily/`, `people/` | confidential | no: on the owner's devices; a person's contact data belongs in `people/` alone |
+| `sealed/` | sealed | no, and never indexed |
+| `_brain/`, `_maps/` | generated | no |
+
+`config.json` `knowledge.folders` raises a folder's class (never lowers it; a folder of the owner's own named there
+joins with its class, and one above private is kept out of git like `daily/`); a note's `class` raises its own, for
+`check` and `find` alike.
+
+- `brain notes init DIR [--from VAULT] [--apply] [--json]` prints the plan: the folders, one template per note type,
+  the `.gitignore` of the folders git must never hold, a README and the agents' rules. `--apply` writes it, each file
+  through a temporary name, never over a file that is there; a `.gitignore` already there keeps its lines and gets the
+  missing ones appended (a new repo's own one included). A file where the layout puts a folder is refused. `--from`
+  copies an existing vault's notes into `inbox/` and its other files into `attachments/` (never `.obsidian/`, `.git/`,
+  `.trash/`, `_brain/` or `_maps/`); a vault's top folder that the layout names (`daily/`, `people/`, `notes/`...)
+  keeps its place, and so its class: a copy, the vault is left as it was. Creating the repo and choosing its
+  visibility stay the owner's.
+- `brain notes check [--dir DIR] [--json]`: each note's front matter against the schema (an editor's own key is a
+  warning; a date written unquoted and a byte order mark are read), an id used twice, a cited Brain id (`links`, or a
+  `[[wi-...]]` wikilink) the registered graphs do not hold, a secret pattern (named by its line, never printed), an
+  e-mail address or a phone number outside `people/`, a `share` on a note above private, a class under its folder's,
+  tags that differ only by case, a line missing from the `.gitignore` and a file git tracks in a folder it must never
+  hold. A value of the wrong shape is reported, never a crash. Exit 1 on an error.
+- `brain notes find WORDS... [--confidential] [--scope ID] [--limit N] [--dir DIR] [--json]`: the notes that hold
+  every word, best first, by SQLite FTS5 (a plain LIKE search where SQLite lacks it), zero token. Private notes only
+  unless `--confidential`; a sealed note, by its folder or its own `class`, is never indexed. The index is
+  `$BRAIN_HOME/notes-index` (derived, rebuilt when a note or a folder's class changes).
+
+The owner commits their own edits (the Obsidian Git plugin, or git); a scheduled commit would be a new scheduled task,
+the owner's to decide. Later items add the setup wizard's step, `brain notes sync` and the Obsidian and Notion
+adapters.
 
 ### The scope tree
 

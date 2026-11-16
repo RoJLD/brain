@@ -25,7 +25,7 @@ from pathlib import Path
 
 KINDS = ("ddr", "sr", "ar")
 SCHEMAS = KINDS + ("event", "config", "members", "readme", "standards", "modules", "status", "permissions",
-                     "docgraph", "catalogue", "reference")  # event: the
+                     "docgraph", "catalogue", "reference", "notes")  # event: the
 # execution-time ledger and the ops error events (brain.timing); config: a personal brain's config.json
 # (brain.config); members: its members.yaml (brain.identity); readme: a repo's readme.yaml (brain.readme); standards:
 # a standards catalog (brain.standards); modules: an entry of a store's modules.yaml (brain.modules, brain.modulemap);
@@ -33,7 +33,8 @@ SCHEMAS = KINDS + ("event", "config", "members", "readme", "standards", "modules
 # not by a top-level v; permissions: permissions.yaml (brain.permissions), described for brain schema diff and the
 # fixtures, read by brain.permissions itself; docgraph: a documentation graph (brain.docgraph), versioned by its id
 # too (docgraph/v1); catalogue: a module catalogue (brain.catalogue), versioned by its id too (catalogue/v1); reference: a repo's
-# docs/reference.yaml, the prose of its technical reference (brain.reference, brain.arc42)
+# docs/reference.yaml, the prose of its technical reference (brain.reference, brain.arc42); notes: a note's front
+# matter in the owner's notes home (brain.knowledge)
 SCHEMA_DIR = Path(__file__).resolve().parent / "schemas"
 
 STRICT, READ = "strict", "read"

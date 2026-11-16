@@ -496,6 +496,8 @@ def check_registry(root: Path | None, projs: list[projects.Project], every: bool
     errors += [f"alerts: {e}" for e in alerts.check(projects.load(root))]
     from .. import schedule
     errors += [f"schedules: {e}" for e in schedule.check(projects.load(root))]
+    from .. import schedview
+    errors += [f"schedules: {e}" for e in schedview.check(projects.load(root))]
     for what, load, error in (("stacks", stacks.load, stacks.StackError),
                               ("code_index", codeindex.load, codeindex.CodeIndexError)):
         try:
