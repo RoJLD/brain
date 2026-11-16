@@ -103,3 +103,48 @@ def test_brain_projects_keys_lists_software(registry, capsys):
     registry("shop:\n  root: shop\n")
     assert cli.main(["--root", str(registry.root), "projects", "--keys"]) == 0
     assert "software" in capsys.readouterr().out
+
+
+# --- the review's cases ----------------------------------------------------------------------------------------------
+
+def test_status_measures_as_brain_audit_does(registry):
+    from brain import status
+    p = registry("plan:\n  root: plan\n  lifecycle: {typologies: [strategy]}\n")["plan"]
+    assert projects.repos_of(p, audit=True) == []
+    got = status.audit_of(p)
+    assert not got or not got.get("repos")
+
+
+def test_an_invalid_access_entry_whose_only_path_is_under_software_stays_guarded(registry):
+    registry("shop:\n  access: reed\n  software:\n    production: [shop]\n")
+    guarded = {p.name: p for p in projects.guarded(registry.root)}
+    assert "shop" in guarded and [p.name for p in guarded["shop"].production] == ["shop"]
+
+
+def test_a_repo_another_kinds_root_holds_and_a_software_project_declares_is_scouted_as_the_latters(registry):
+    from conftest import git_init
+    regs = registry("plan:\n  root: plan\n  lifecycle: {typologies: [strategy]}\n"
+                    "shop:\n  root: shop\n  repos: [., ../plan]\n")
+    git_init(registry.root / "plan")
+    args = type("A", (), {"repo_dir": str(registry.root / "plan"), "project": None})()
+    p, cfgs, c, top, registered = scout.resolve(args, registry.root)
+    assert registered and p.name == "shop" and scout._code_repo(p, top)
+    assert not scout._code_repo(regs["plan"], top)
+
+
+def test_a_production_checkout_of_another_kind_is_a_code_repo_for_the_scout(registry):
+    from conftest import git_init
+    p = registry("plan:\n  root: plan\n  lifecycle: {typologies: [strategy]}\n  software: {production: [.]}\n")["plan"]
+    git_init(registry.root / "plan")
+    assert scout._code_repo(p, (registry.root / "plan").resolve())
+
+
+def test_a_malformed_typology_list_is_reported_not_a_crash(registry, monkeypatch):
+    registry("plan:\n  root: plan\n  lifecycle: {typologies: [strategy, 3]}\n")
+    monkeypatch.setattr(audit, "trees_now", lambda cfgs: ({}, {}, {}))
+    monkeypatch.setattr(audit, "measure", lambda p, cfgs, trees, only: {"name": p.name, "repos": [], "layered": None,
+                                                                        "linked": None, "featured": None,
+                                                                        "coverage": None})
+    args = type("A", (), {"all": False, "project": "plan", "scope": None, "repo": None, "write": False,
+                          "items": False, "trend": 0})()
+    assert "strategy, 3" in audit.run(args, registry.root)["projects"][0]["not_software"]
