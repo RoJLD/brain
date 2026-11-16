@@ -1,8 +1,10 @@
 import json
+import os
+from pathlib import Path
 
 import pytest
 
-from brain import cli, diffs, impact
+from brain import cli, diffs, impact, projects
 from conftest import run_git
 from test_codemap import CORE, LAB, FakeGitNexus, _sha
 
@@ -300,3 +302,104 @@ def test_a_change_outside_any_coderef_lists_only_the_docs_it_edits(lab, make_rep
 def test_no_base_exits_2(lab, capsys):
     assert cli.main(["impact", "--diff", "nowhere", "--repo-dir", str(lab)]) == 2
     assert capsys.readouterr().err.startswith("brain impact: ")
+
+
+# --- wi-brain-impact-surfaces: the Markdown view (a PR body's section) and the project's overlays ---
+
+def test_md_escapes_markup_math_entities_and_folds_the_lines():
+    assert impact.md('a_b *c* [x](y) <b> &amp; $x$ 50% "q" \'q\'\nnext `t` #h | ~s \\') == (
+        'a\\_b \\*c\\* \\[x\\](y) \\<b\\> \\&amp; \\$x\\$ 50% "q" \'q\' next \\`t\\` \\#h \\| \\~s \\\\')
+    assert impact.md("  two\n\nlines  ") == "two lines"
+
+
+def test_the_markdown_view_is_the_checklist_as_tasks(lab, make_repo, monkeypatch, capsys):
+    _chain(lab, make_repo, monkeypatch)
+    assert cli.main(["impact", "--repo-dir", str(lab), "--markdown"]) == 0
+    out = capsys.readouterr().out.splitlines()
+    assert out[0] == impact.MD_HEADING and out[1] == ""
+    assert out[2].startswith("**demo/lab: main@") and out[2].endswith("..worktree, 2 file(s) changed**")
+    for line in ("- [ ] features whose status may change (3):",
+                 "  - feat-go (planned): implemented by code:lab:lab/core.py::go; this change may make it partial or "
+                 "have", "- [ ] tests to run (4):", "  - wi-go (todo): Ship go",
+                 "  - pytest tests/test\\_cli.py tests/test\\_core.py tests/test\\_new.py"):
+        assert line in out
+    assert not any(x.startswith("[ ]") or x == "checklist:" for x in out)   # every task is a list item
+    with pytest.raises(SystemExit):   # one view at a time
+        cli.main(["impact", "--repo-dir", str(lab), "--markdown", "--json"])
+
+
+OPS_NODES = """\
+- {id: feat-ops-go, type: Feature, status: planned, title: Ops runs go}
+- {id: feat-ops-helper, type: Feature, status: planned, title: Ops helper}
+- {id: "code:lab:lab/core.py::helper", type: CodeRef, status: active, title: x}
+"""
+OPS_EDGES = """\
+- {from: feat-ops-go, to: "code:lab:lab/core.py::go", type: implemented_by}
+- {from: feat-ops-helper, to: "code:lab:lab/core.py::helper", type: implemented_by}
+"""
+
+
+def _overlay(lab, nodes=OPS_NODES, schema=True):
+    """A sibling repo's store (ops/graph) declared as the demo project's overlay; its path from the lab root."""
+    from test_codemap import SCHEMA
+    ops = lab.parent / "ops-repo" / "ops" / "graph"
+    (ops / "nodes").mkdir(parents=True, exist_ok=True)
+    (ops / "edges").mkdir(exist_ok=True)
+    if schema:
+        (ops / "schema.yaml").write_text(SCHEMA, encoding="utf-8")
+    (ops / "nodes" / "ops.yaml").write_text(nodes, encoding="utf-8")
+    (ops / "edges" / "ops.yaml").write_text(OPS_EDGES, encoding="utf-8")
+    (ops / "external.yaml").write_text('- {id: "code:lab:lab/core.py::go"}\n', encoding="utf-8")
+    reg = Path(os.environ["BRAIN_PROJECTS"])
+    reg.write_text(reg.read_text(encoding="utf-8").replace("  code_index: [.]\n",
+                                                           "  code_index: [.]\n  overlays: ../ops-repo/ops/graph\n"),
+                   encoding="utf-8")
+    return ops
+
+
+def test_the_overlay_is_walked_and_its_coderefs_placed(lab, make_repo, monkeypatch, capsys):
+    _overlay(lab)
+    assert projects.describe(projects.load()["demo"])["overlays"] == ["../ops-repo/ops/graph"]
+    _chain(lab, make_repo, monkeypatch)
+    d = _impact(capsys, lab)[1]
+    assert ("code:lab:lab/core.py::helper", "symbol") in [(t["ref"], t["how"]) for t in d["coderefs"]]
+    assert [s["name"] for s in d["unmapped"]] == ["go"]                   # helper: the overlay's CodeRef names it
+    assert {"feat-ops-go", "feat-ops-helper"} <= set(_ids(d["features"])) and d["stores"] == []
+
+
+@pytest.mark.parametrize("nodes, schema, why", [
+    (OPS_NODES, False, "no graph store there (no schema.yaml); left out"),
+    (OPS_NODES + "- {id: feat-go, type: Feature, status: planned, title: Clash}\n", True, "does not load"),
+])
+def test_an_overlay_that_cannot_be_read_is_left_out_and_said(lab, make_repo, monkeypatch, capsys, nodes, schema,
+                                                              why):
+    _overlay(lab, nodes, schema)
+    FakeGitNexus(monkeypatch, {}, up=False)
+    make_repo.write(lab, {"src/lab/core.py": GO2})
+    d = _impact(capsys, lab)[1]
+    assert len(d["stores"]) == 1 and d["stores"][0].startswith("overlay ") and why in d["stores"][0]
+    assert _ids(d["features"]) == ["feat-all", "feat-go"]                  # the store itself, never half overlaid
+
+
+def test_check_refuses_overlays_that_are_not_paths(tmp_path, monkeypatch):
+    reg = tmp_path / "projects.yaml"
+    reg.write_text(f"demo:\n  root: {tmp_path.as_posix()}\n  overlays: {{a: 1}}\n", encoding="utf-8")
+    monkeypatch.setenv("BRAIN_PROJECTS", str(reg))
+    assert "project demo: overlays is a path or a list of paths" in projects.check()
+
+
+# --- the cockpit's frame: the branch of the checkout it runs from ---
+
+def test_the_cockpit_frame_reads_the_branch_of_its_checkout(lab, make_repo, monkeypatch, tmp_path):
+    from brain import cockpit
+    _chain(lab, make_repo, monkeypatch)
+    got = cockpit.branch_impact(lab)
+    assert (got["project"], got["repo"], got["branch"], got["files"]) == ("demo", "lab", "feature", 2)
+    lines = cockpit.impact_lines({"impact": got}, width=200)
+    assert lines[0] == f"{cockpit.title('impact')}: demo/lab feature, 2 file(s) changed"
+    assert "[ ] features whose status may change (3):" in lines and not any(x.startswith("== impact") for x in lines)
+    assert cockpit.impact_lines(None)[0].endswith("not probed yet")
+    assert cockpit.impact_lines({"impact": {}})[0].endswith("not probed yet")
+    bad = cockpit.branch_impact(tmp_path / "nowhere")                       # never raised: said in the frame
+    assert "error" in bad and cockpit.impact_lines({"impact": bad})[0].endswith("not read")
+    assert cockpit.tab_panels("health", "impact") == ("impact",) and cockpit.FRAMES["impact"] == "health"

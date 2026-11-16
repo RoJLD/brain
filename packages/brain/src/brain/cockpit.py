@@ -111,7 +111,8 @@ from . import (__version__, alerts, audit, config, decisions, defaults, digest, 
                projects, queue, quiet, ranking, resume, review, sessions, stateio, status, transcript, usage)
 
 PANELS = ("sessions", "queue", "alerts", "milestones", "frontier", "audit", "health", "digest")
-FRAMES = {"exec": "health"}  # a frame drawn from another panel's data, not a read of its own: the health tab's fourth
+# a frame drawn from another panel's data, not a read of its own: the health tab's fourth (exec) and its Impact view
+FRAMES = {"exec": "health", "impact": "health"}
 FILE_PANELS = {"graph": ("queue", "milestones", "frontier")}
 PROBE_PANELS = ("alerts", "audit", "health", "digest")
 HOURS = 24.0
@@ -553,6 +554,8 @@ class Cockpit:
         self.progress: dict | None = None  # the probe running: {what, n, total}
         self.last_ok: dict[tuple, str] = {}  # (project, stacks|code_index, name) -> its last OK measure
         self.dep_probes: dict | None = None  # this machine's dependency probes, from the last probe (brain.depprobes)
+        self.here = Path.cwd()  # the checkout the cockpit runs from: its branch's impact (brain.impact)
+        self.impact: dict | None = None  # that impact, from the last probe
         self.plugged_tried: set[str] = set()  # the plugins' panels read once since the last scope or probe
         self.lock = threading.Lock()
 
@@ -655,6 +658,8 @@ class Cockpit:
             self.progress = {"what": p.name, "n": i, "total": len(found)}
             measured[p.name] = m = {"audit": status.audit_of(p, detail=AUDIT_TOP), **status.probed(p, stack_reg, index)}
             self._last_ok(p.name, m, at)
+        self.progress = {"what": "the branch's impact", "n": 0, "total": 1}
+        self.impact = branch_impact(self.here, self.root)
         self.progress = {"what": "the alerts and digests", "n": 0, "total": len(found)}
         sched, last = alerts.read_scheduler(status._alert_configs(found)), alerts.state_load()
         for p in found:
@@ -696,7 +701,7 @@ class Cockpit:
         only = None if self.every else {p.name for p in self.projs}
         return {"alerts": {"projects": [g["alerts"] for g in got]}, "audit": {"projects": [g["audit"] for g in got]},
                 "health": {"projects": [g["health"] for g in got], "exec": perf_summary(only, now),
-                           "reviews": review_summary(),
+                           "reviews": review_summary(), "impact": self.impact,
                            **({"probes": self.dep_probes} if self.dep_probes is not None else {})},
                 "digest": {"projects": [g["digest"] for g in got]}}
 
@@ -1119,6 +1124,13 @@ HELP = {
                "from": "brain.status.records_of, brain.digest",
                "read": "at each probe",
                "detail": "brain digest; brain resume"},
+    "impact": {"what": "brain impact --diff of the checkout the cockpit runs from (a worktree's branch against the "
+                       "default branch): the files it changes, the CodeRefs they touch, then the checklist: features "
+                       "whose status may change, docs to update, ADRs and specs to re-read, tests to run, open items "
+                       "and pending decisions. On the default branch with nothing changed: no file changed.",
+               "from": "brain.impact, as brain impact --diff (GitNexus when it answers, else the file level, said so)",
+               "read": "at each probe",
+               "detail": "brain impact --diff; brain impact --diff --markdown (a PR body's section)"},
     "exec": {"what": "The execution-time ledger's last 7 days: runs and failures, the slowest steps by their median, the "
                      "regressions.",
              "from": "brain.perf, as brain perf",
@@ -1256,7 +1268,8 @@ def _saved_tabs(data: dict) -> dict:
 
 LANGS = ("en", "fr")
 TITLES = {"sessions": "Sessions", "alerts": "Alerts", "milestones": "Milestones", "frontier": "Frontier",
-          "audit": "Audit debt", "health": "Stacks and index", "digest": "Digest", "exec": "Exec times"}
+          "audit": "Audit debt", "health": "Stacks and index", "digest": "Digest", "exec": "Exec times",
+          "impact": "This branch's impact"}
 QUEUE_TITLES = {"en": ("{name}'s queue", "My queue"), "fr": ("File de {name}", "Ma file")}  # (named, unnamed)
 _VOWELS = "aeiouyàâäéèêëîïôöûùü"
 _settings_cache: dict = {}
@@ -1556,6 +1569,43 @@ def exec_lines(panel: dict | None, width: int = WIDTH) -> list[str]:
     return lines
 
 
+def branch_impact(here: Path, root: Path | None = None) -> dict:
+    """{repo, branch, files, lines} of ``brain impact --diff`` for the checkout at ``here`` (the cockpit's own
+    folder), else {error}: never raised, and nothing printed (a warning of brain.scout is kept in ``notes``: the
+    cockpit owns the screen)."""
+    import argparse
+    import contextlib
+    import io
+
+    from . import impact
+    args = argparse.Namespace(diff="", repo_dir=str(here), depth=None, json=False, markdown=False, project=None,
+                              root=None)
+    err = io.StringIO()
+    try:
+        with contextlib.redirect_stderr(err):
+            rep = impact.run(args, root)
+            branch = impact.git(Path(here), "branch", "--show-current").strip()
+    except Exception as exc:  # noqa: BLE001 (shown in the panel: not a git checkout, no base, a store that fails)
+        return {"error": " ".join(str(exc).split())[:300]}
+    return {"repo": rep.repo, "project": rep.project, "branch": branch or "(detached)", "files": len(rep.files),
+            "lines": impact.render(rep), "notes": [x for x in err.getvalue().splitlines() if x.strip()]}
+
+
+def impact_lines(panel: dict | None, width: int = WIDTH) -> list[str]:
+    """The impact frame's text, from the health panel's ``impact`` (:func:`branch_impact`, read at each probe): its
+    title line (the branch, the files it changes), then brain impact's text view."""
+    panel = (panel or {}).get("impact")
+    if panel is None:
+        return [f"{title('impact')}: not probed yet"]
+    if panel.get("error"):
+        return [f"{title('impact')}: not read", _line("  ", panel["error"], width)]
+    if not panel:
+        return [f"{title('impact')}: not probed yet"]
+    head = f"{title('impact')}: {panel['project']}/{panel['repo']} {panel['branch']}, {panel['files']} file(s) changed"
+    return [head, *(_line("", x, width) for x in panel.get("notes") or []),
+            *(_line("", x, width) for x in (panel.get("lines") or [])[1:])]
+
+
 def digest_lines(panel: dict | None, width: int = WIDTH, lines_max: int = 12, titled: bool = True) -> list[str]:
     """The digest panel's text: its first ``lines_max`` lines per project (0: all of them). ``titled`` False: under a
     frame that says Digest already, no « Digest » on each project's line and no first heading of the digest itself."""
@@ -1671,7 +1721,8 @@ def table(name: str, panel: dict | None, view: dict | None = None, search: str =
 def heading(name: str, panel: dict | None) -> str:
     """A panel's one-line title with its counts (the first line of its text)."""
     lines = {"sessions": session_lines, "queue": queue_lines, "alerts": alert_lines, "milestones": milestone_lines,
-             "frontier": frontier_lines, "audit": audit_lines, "health": health_lines, "exec": exec_lines}
+             "frontier": frontier_lines, "audit": audit_lines, "health": health_lines, "exec": exec_lines,
+             "impact": impact_lines}
     if name == "digest":
         return title("digest") if panel else f"{title('digest')}: not probed yet"
     if name in PLUGGED:
@@ -1691,7 +1742,7 @@ CARD_ORDER = ("queue", "sessions", "milestones", "frontier", "health", "resource
 VIEW_LABELS = {"cards": {"en": "Cards", "fr": "Cartes"}, "grid": {"en": "Grid", "fr": "Grille"},
                "digest": {"en": "Digest", "fr": "Digest"},
                "list": {"en": "List", "fr": "Liste"}, "frames": {"en": "Frames", "fr": "Cadres"},
-               "pages": {"en": "Pages", "fr": "Pages"}}
+               "pages": {"en": "Pages", "fr": "Pages"}, "impact": {"en": "Impact", "fr": "Impact"}}
 
 
 def _alerts_open(panels: dict) -> str:
@@ -1815,7 +1866,8 @@ TABS = {
                  "views": {}, "arrives": "the capability graph"},
     "health": {"key": "8", "label": {"en": "Health", "fr": "Santé"},
                "question": {"en": "What is breaking or getting worse?", "fr": "Qu'est-ce qui casse ou se dégrade ?"},
-               "views": {"frames": ("alerts", "audit", "health", "exec")}, "count": _alerts_open, "card": _health_card},
+               "views": {"frames": ("alerts", "audit", "health", "exec"), "impact": ("impact",)}, "count": _alerts_open,
+               "card": _health_card},
     "resources": {"key": "9", "label": {"en": "Resources", "fr": "Ressources"},
                   "question": {"en": "What does what runs cost?", "fr": "Que coûte ce qui tourne ?"},
                   "views": {}, "arrives": "the resources view"},
@@ -1981,7 +2033,8 @@ def render(snap: dict, width: int = WIDTH, views: dict[str, dict] | None = None,
                         ("frontier", frontier_lines(p.get("frontier") or {}, width, view=v("frontier"), search=search)),
                         ("audit", audit_lines(p.get("audit"), width)), ("health", health_lines(p.get("health"), width)),
                         ("exec", exec_lines(p.get("health"), width)),
-                        ("digest", digest_lines(p.get("digest"), width))):
+                        ("digest", digest_lines(p.get("digest"), width)),
+                        ("impact", impact_lines(p.get("health"), width))):
         if name in (tab_panels(tab) if tab else PANELS):
             out += ["", *lines, *(_line("  ", s, width) for s in states(name, snap, v(name), search, tz))]
     return out + _plugged_text(snap, width, views, search, tz, tab)

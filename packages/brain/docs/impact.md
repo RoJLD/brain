@@ -9,6 +9,7 @@ brain impact                      # from the merge base with the default branch 
 brain impact --diff main          # from merge-base(main, HEAD)
 brain impact --diff A..B          # the commits A..B only (a replay)
 brain impact --json               # the whole chain and the checklist
+brain impact --markdown           # the checklist as a PR body's section, its tasks ticked by hand
 brain code-map [--project P]      # the CodeRefs resolved in the code index, and the coverage
 ```
 
@@ -83,6 +84,28 @@ touched symbols no CodeRef names (2; the graph does not see them): src/lab/core.
 - **Malformed CodeRefs**: an active CodeRef whose id the grammar refuses is left out and named on the last lines.
 - **Touched symbols no CodeRef names**: code the graph does not see; a CodeRef on them (`brain features link --code`)
   brings them into the next impact.
+
+## Where it is read
+
+- **A PR body** (`--markdown`): the same checklist under a `### Impact (brain impact --diff)` heading, each entry a
+  task (`- [ ]`) with its details nested under it, every text escaped for GitHub's Markdown (`*`, `_`, `` ` ``, `[`,
+  `<`, `&`, `$`, `#`, `|`, `~` and the backslash; a line break folded into a space), so a title never turns into
+  markup, math or an entity. A procedure that opens a PR (the private brain's close-item step, say) appends it to the
+  body before `gh pr create --body-file`.
+- **The cockpit** (`brain tui`): the Health tab's second view, Impact (`v`), shows `brain impact --diff` of the
+  checkout the cockpit runs from: a worktree's branch against the default branch, read at each probe (GitNexus when it
+  answers, else the file level, said so). On the default branch with nothing changed it says so; a folder that is
+  not a git checkout says why it was not read.
+
+## Overlays
+
+A project may read another repo's graph store with its own, read-only: `overlays:` in `projects.yaml` (a path or a
+list, relative to the project's root, e.g. `../ops-repo/ops/graph`), research_graph's `--overlay` format (the
+overlay's own `schema.yaml`, `nodes/`, `edges/`, and `external.yaml` listing the ids of the project's first store it
+points to). `brain impact` walks the first store with its overlays applied, so a feature of the overlay that relies on
+a touched CodeRef is in the checklist, and the code map places the overlay's CodeRefs too. An overlay that cannot be
+read (no `schema.yaml`, an id it shares with the store, an unknown endpoint) is left out whole, never half applied,
+and named on the checklist's last lines (`store: overlay ...`). Nothing is ever written to an overlay.
 
 ## Without GitNexus
 

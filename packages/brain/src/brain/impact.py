@@ -311,6 +311,28 @@ def _load(store: Path, root: Path | None = None):
         return None, f"{store.as_posix()} does not load: {'; '.join(exc.errors[:3])}{more}"
 
 
+def _overlaid(g, p: projects.Project) -> tuple[object, list[str]]:
+    """``g`` (the project's first store) with its overlays applied, read-only (research_graph's apply_overlay; the
+    registry's ``overlays``), and why each that could not be read was left out: an overlay that fails leaves ``g``
+    as it was, never half applied."""
+    from research_graph.loader import ValidationError, apply_overlay
+    problems = []
+    for o in p.overlays:
+        if not (o / "schema.yaml").is_file():
+            problems.append(f"overlay {o.as_posix()}: no graph store there (no schema.yaml); left out")
+            continue
+        h = g.copy()
+        try:
+            apply_overlay(h, o, p.root)
+        except (ValidationError, OSError, ValueError) as exc:
+            errors = getattr(exc, "errors", None) or [str(exc)]
+            more = f" (and {len(errors) - 3} more)" if len(errors) > 3 else ""
+            problems.append(f"overlay {o.as_posix()} does not load: {'; '.join(map(str, errors[:3]))}{more}; left out")
+            continue
+        g = h
+    return g, problems
+
+
 class Walk:
     """One store's graph around the touched CodeRefs."""
 
@@ -546,11 +568,14 @@ def _graph(rep: Report, p: projects.Project, repo_match, hit: list[Touched], cha
     the registry of the brain at ``root``, the one that found the project (never ``p.root``: no projects.yaml)."""
     now = {ch.new for ch in changes if ch.new}
     changed = now | {ch.old for ch in changes if ch.old}
-    for store in (s for s in p.stores if (s / "schema.yaml").is_file()):
+    for i, store in enumerate(s for s in p.stores if (s / "schema.yaml").is_file()):
         g, problem = _load(store, root)
         if g is None:
             rep.stores.append(problem)
             continue
+        if i == 0 and p.overlays:   # another repo's store, read over the first (its external.yaml names its ids)
+            g, problems = _overlaid(g, p)
+            rep.stores += problems
         walk(rep, g, {t.ref for t in hit}, changed, changed | {t.path for t in hit}, repo_match, changed - now)
     _new_tests(rep, now)
 
@@ -671,6 +696,37 @@ def render(rep: Report) -> list[str]:
     return out + [f"store: {s}" for s in rep.stores]
 
 
+# --- the Markdown view: the checklist as a PR body's section (close-item, wi-brain-impact-surfaces) ---
+
+MD_HEADING = "### Impact (brain impact --diff)"
+_MD_SPECIAL = frozenset("\\`*_[]<>#|~$&")   # what GitHub's Markdown would read as markup, math or an entity
+
+
+def md(text: str) -> str:
+    """``text`` as one line of literal Markdown: every character GitHub would read as markup, math (``$``) or an
+    HTML entity or tag (``&``, ``<``) escaped with a backslash, the line breaks folded into spaces (a newline would
+    end the list item)."""
+    flat = " ".join(str(text).split())
+    return "".join(f"\\{c}" if c in _MD_SPECIAL else c for c in flat)
+
+
+def markdown(rep: Report) -> list[str]:
+    """The text view (:func:`render`) as a Markdown section for a PR body: its heading, then each line as a list item,
+    each checklist entry a task (``- [ ]``), its details nested under it; every text escaped (:func:`md`)."""
+    lines = render(rep)
+    out = [MD_HEADING, "", f"**{md(lines[0].removeprefix('== impact').strip())}**", ""]
+    for line in lines[1:]:
+        if line == "checklist:":
+            out.append("")
+        elif line.startswith("[ ] "):
+            out.append(f"- [ ] {md(line[4:])}")
+        elif line.startswith("  "):
+            out.append(f"  - {md(line)}")
+        else:
+            out.append(f"- {md(line)}")
+    return out
+
+
 def main(args, root: Path | None) -> int:
     try:
         rep = run(args, root)
@@ -679,6 +735,8 @@ def main(args, root: Path | None) -> int:
         return 2
     if args.json:
         print(json.dumps(rep.as_dict(), ensure_ascii=False, indent=1, sort_keys=True))
+    elif getattr(args, "markdown", False):
+        print("\n".join(markdown(rep)))
     else:
         print("\n".join(render(rep)))
     return 0
