@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Run the PreToolUse guards (hooks/guard.py, brain/guards.py) on the hook's JSON on stdin; $1 is shell (Bash,
-# PowerShell) or edit (Edit, Write, MultiEdit, NotebookEdit). A refusal is one JSON line on stdout; nothing else is
+# PowerShell), edit (Edit, Write, MultiEdit, NotebookEdit) or read (Read, Grep). A refusal is one JSON line on stdout; nothing else is
 # printed. Uses $BRAIN_PYTHON, else the brain command's venv (<BRAIN_HOME>/venv: the installed engine), else python3,
 # else python, skipping the Windows Store stubs. It always exits 0, so a guard never breaks a session: on an error the
 # call goes through, except where a leak is possible (COMPAT-4, wi-brain-guards-fail-closed): when no Python is found,
@@ -21,6 +21,7 @@
 { . "${BASH_SOURCE[0]%[!A-Za-z0-9._-]*}/common.sh" || { selftime_bash() { :; }; brain_python() { return 1; }; }; } 2>/dev/null  # brain_t0, selftime_bash, brain_python
 
 needs_python() {
+  [ "$1" = "read" ] && { reads_token "$2"; return; }
   [ "$1" = "shell" ] || return 0
   case "$2" in *'gh '*) return 0 ;; esac
   local command='"command"[[:space:]]*:[[:space:]]*"(([^"\\]|\\.)*)"' text=$2 redirect discard found
@@ -43,12 +44,13 @@ needs_python() {
   # The owner and power guards' programs (brain/guards.py: _owner_command, _power_command and their tables), the
   # --arm flag, the owner's gestures (brain/gestures.py: usage allow, schedule install, vault open|drill|device|reseal,
   # queue apply, brain's update and uninstall; tests/test_gestures.py checks each), brain handover and the chain root
-  # hook (midsession, auto_root: _root_override), the words ipc and otel-headers
+  # hook (midsession, auto_root: _root_override), the words ipc, token (the machine's token file, brain/tokenguard.py)
+  # and otel-headers
   # (brain ipc otel-headers, whatever runs it, quoted or not), the override's name, a magic packet's 0xFF, and the
   # third-party guard's claude plugin and skills add (_kit_command; its downloaders and shells are in the lists
   # already): claude or skills, then plugin or add as a later word, whatever comes between (a quote after a quoted claude.exe, global
   # options such as --model opus, a line continuation).
-  local owner_power="$before"'(schtasks|register-scheduledtask|set-scheduledtask|unregister-scheduledtask|enable-scheduledtask|disable-scheduledtask|register-scheduledjob|set-scheduledjob|unregister-scheduledjob|new-service|set-service|remove-service|nssm|crontab|at|batch|atrm|systemctl|systemd-run|launchctl|reg|new-itemproperty|set-itemproperty|sp|install\.ps1|ssh-keygen|age-keygen|gpg2?|cmdkey|set-secret|remove-secret|register-secretvault|unregister-secretvault|set-secretstorepassword|reset-secretstore|new-storedcredential|remove-storedcredential|security|secret-tool|docker|npm|pnpm|yarn|az|gcloud|aws|argocd|net|new-localuser|set-localuser|remove-localuser|rename-localuser|enable-localuser|disable-localuser|add-localgroupmember|remove-localgroupmember|useradd|usermod|userdel|passwd|chpasswd|chage|groupadd|groupmod|groupdel|gpasswd|setx|k3s|microk8s|kubectl|kubecolor|oc|helm|https?|xh|shutdown|poweroff|reboot|halt|psshutdown|rtcwake|logoff|pm-suspend|pm-hibernate|pm-suspend-hybrid|stop-computer|restart-computer|init|telinit|loginctl|pmset|osascript|dbus-send|busctl|gdbus|rundll32|nircmd|wmic|invoke-cimmethod|invoke-wmimethod|bcdedit|efibootmgr|ipmitool|racadm|k3s-killall\.sh|k3s-uninstall\.sh|k3s-agent-uninstall\.sh|wakeonlan|wol|etherwake|ether-wake|wakemeonlan|mc-wol|wolcmd|send-wol|invoke-wakeonlan|send-wakeonlan|sigma_node_power|forge_boot|pxe_router|telegram-send|tg|telegram|power|ssh|plink|start-process|saps|start|brain_guard_allow|ipc|otel-headers|0xff|gh|git|255)([^A-Za-z0-9_-]|$)|--arm([^A-Za-z0-9_-]|$)|usage[^|;&]*allow([^A-Za-z0-9_-]|$)|handover([^A-Za-z0-9_-]|$)|midsession|auto_root|schedule[^|;&]*install([^A-Za-z0-9_-]|$)|vault[^|;&]*(open|drill|device|reseal)([^A-Za-z0-9_-]|$)|queue[^|;&]*apply([^A-Za-z0-9_-]|$)|(^|[^A-Za-z0-9_.-]|-[A-Za-z]*m)brain(\.(exe|cmd|bat|ps1))?[^|;&]*[^A-Za-z0-9_-](update|uninstall)([^A-Za-z0-9_-]|$)|win32shutdown|setsuspendstate|exitwindowsex|initiatesystemshutdown|win32_operatingsystem|'"$before"'(claude(\.exe)?|skills(@[^[:space:]]*)?)(([^A-Za-z0-9_-]|\\[nrt]).*)?([[:space:]]|\\[nrt])(plugins?|add)([^A-Za-z0-9_-]|$)'
+  local owner_power="$before"'(schtasks|register-scheduledtask|set-scheduledtask|unregister-scheduledtask|enable-scheduledtask|disable-scheduledtask|register-scheduledjob|set-scheduledjob|unregister-scheduledjob|new-service|set-service|remove-service|nssm|crontab|at|batch|atrm|systemctl|systemd-run|launchctl|reg|new-itemproperty|set-itemproperty|sp|install\.ps1|ssh-keygen|age-keygen|gpg2?|cmdkey|set-secret|remove-secret|register-secretvault|unregister-secretvault|set-secretstorepassword|reset-secretstore|new-storedcredential|remove-storedcredential|security|secret-tool|docker|npm|pnpm|yarn|az|gcloud|aws|argocd|net|new-localuser|set-localuser|remove-localuser|rename-localuser|enable-localuser|disable-localuser|add-localgroupmember|remove-localgroupmember|useradd|usermod|userdel|passwd|chpasswd|chage|groupadd|groupmod|groupdel|gpasswd|setx|k3s|microk8s|kubectl|kubecolor|oc|helm|https?|xh|shutdown|poweroff|reboot|halt|psshutdown|rtcwake|logoff|pm-suspend|pm-hibernate|pm-suspend-hybrid|stop-computer|restart-computer|init|telinit|loginctl|pmset|osascript|dbus-send|busctl|gdbus|rundll32|nircmd|wmic|invoke-cimmethod|invoke-wmimethod|bcdedit|efibootmgr|ipmitool|racadm|k3s-killall\.sh|k3s-uninstall\.sh|k3s-agent-uninstall\.sh|wakeonlan|wol|etherwake|ether-wake|wakemeonlan|mc-wol|wolcmd|send-wol|invoke-wakeonlan|send-wakeonlan|sigma_node_power|forge_boot|pxe_router|telegram-send|tg|telegram|power|ssh|plink|start-process|saps|start|brain_guard_allow|ipc|token|otel-headers|0xff|gh|git|255)([^A-Za-z0-9_-]|$)|--arm([^A-Za-z0-9_-]|$)|usage[^|;&]*allow([^A-Za-z0-9_-]|$)|handover([^A-Za-z0-9_-]|$)|midsession|auto_root|schedule[^|;&]*install([^A-Za-z0-9_-]|$)|vault[^|;&]*(open|drill|device|reseal)([^A-Za-z0-9_-]|$)|queue[^|;&]*apply([^A-Za-z0-9_-]|$)|(^|[^A-Za-z0-9_.-]|-[A-Za-z]*m)brain(\.(exe|cmd|bat|ps1))?[^|;&]*[^A-Za-z0-9_-](update|uninstall)([^A-Za-z0-9_-]|$)|win32shutdown|setsuspendstate|exitwindowsex|initiatesystemshutdown|win32_operatingsystem|'"$before"'(claude(\.exe)?|skills(@[^[:space:]]*)?)(([^A-Za-z0-9_-]|\\[nrt]).*)?([[:space:]]|\\[nrt])(plugins?|add)([^A-Za-z0-9_-]|$)'
   # node-clis.txt: line 1 the alternation, line 2 its format (brain.guards.NODE_CLI_FORMAT; none before 0.3.2): with
   # another format the pre-filter cannot read the CLIs, so the guards read the command
   local clis='' form='' cache="${BRAIN_HOME:-${USERPROFILE:-$HOME}/.brain}/cache/node-clis.txt"
@@ -73,6 +75,24 @@ commits_or_pushes() {
   shopt -s nocasematch
   [[ $text =~ $gitcp ]] && found=0 || found=1
   shopt -u nocasematch
+  return $found
+}
+
+# reads_token JSON: whether a Read or Grep call may reach the machine's IPC token (brain/tokenguard.py, under
+# config.json guards.refuse_token_read): its JSON names ipc, token, .brain or BRAIN_HOME's folder (a Grep with no
+# path searches the cwd), or its path is a link. Any other Read or Grep starts no Python.
+reads_token() {
+  local path='"(file_path|path)"[[:space:]]*:[[:space:]]*"(([^"\\]|\\.)*)"' home=${BRAIN_HOME:-} found=1 p
+  home=${home%[\\/]}
+  home=${home##*[\\/]}
+  shopt -s nocasematch
+  case "$1" in *ipc*|*token*|*.brain*) found=0 ;; esac
+  [[ $found = 1 && -n $home && $1 == *"$home"* ]] && found=0
+  shopt -u nocasematch
+  if [[ $found = 1 && $1 =~ $path ]]; then
+    p=${BASH_REMATCH[2]//\\\\/\\}
+    [ -L "$p" ] && found=0
+  fi
   return $found
 }
 

@@ -14,9 +14,10 @@ path. :func:`judge` runs, in order:
 3. **the secret scan of a write's arguments**: a string argument of a write tool that matches a secret pattern is
    refused (nothing is written);
 4. **the engine's guards** (brain.guards.refusals, strict): production checkouts, the owner's never-grantable
-   categories, power and cluster, third-party kits, attribution, the public and secrets checks, conflict markers,
-   branch names, on the effect's payload. Strict: a check that fails to judge the call refuses it, where a hook lets
-   it through (a hook never breaks a session; a server never trusts its client).
+   categories, the machine's token file (brain.tokenguard, on here whatever config.json guards.refuse_token_read
+   says), power and cluster, third-party kits, attribution, the public and secrets checks, conflict markers, branch
+   names, on the effect's payload. Strict: a check that fails to judge the call refuses it, where a hook lets it
+   through (a hook never breaks a session; a server never trusts its client).
 
 ``BRAIN_GUARD_ALLOW`` lifts nothing here: a client's configuration can set the server's environment (a stdio
 server's ``env``), so the owner's override stays Claude Code's; the rest of that environment is the owner's
@@ -24,7 +25,8 @@ configuration (docs/mcp.md, « The guards »). An effect the guards do not read 
 command hidden behind an abbreviated global option is refused too. A refusal reaches the client as a tool error naming
 the guard, and goes to the guards ledger (``<BRAIN_HOME>/ledger/guards-<month>.jsonl``) with the tool as
 ``mcp:<name>`` and the client as its session. Every answer then passes the secret scan (brain.mcpserver.clean): no
-tool result carries a key's shape.
+tool result carries a key's shape; and the machine's token, which has none, is redacted wherever it appears
+(brain.tokenguard.redact).
 
 The Claude Code hooks, and where each one stands for an MCP client (docs/mcp.md, « The guards »): guard.sh is ported
 (4); governor.sh (sessions and agents) has no tool here, so none can start one; readhint.sh, inject-rules.sh and the

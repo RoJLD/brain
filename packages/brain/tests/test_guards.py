@@ -646,7 +646,7 @@ def test_hooks_json_declares_the_guards():
         ("mcp__.*scheduled[-_]?tasks?__(create|update)_scheduled_task", "tool"),
         ("mcp__.*__set_(remote_control|session_permission_mode|setting)", "tool"),
         ("^(Agent|Task|Workflow)$|^mcp__.+__start_session$", '"${CLAUDE_PLUGIN_ROOT}/hooks/governor.sh"'),
-        ("mcp__.*terminal__run_in_terminal", "shell"),
+        ("mcp__.*terminal__run_in_terminal", "shell"), ("^(Read|Grep)$", "read"),   # the machine's token
         *[(t, '"${CLAUDE_PLUGIN_ROOT}/hooks/readhint.sh"') for t in ("Read", "Grep", "Bash", "PowerShell")],
         *[(t, '"${CLAUDE_PLUGIN_ROOT}/hooks/waithint.sh"') for t in ("Bash", "PowerShell")]]
     # the read and wait hints: hints, never refusals, one group per tool gated by if conditions (test_hook_latency,

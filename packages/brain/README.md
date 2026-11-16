@@ -1667,6 +1667,13 @@ command or flag only the owner runs (`brain usage allow`, `brain schedule instal
 and a test checks that each one is refused to an agent's session. config.json `guards.owner_strict: true` adds the
 refusals 0.5.1 brings (off by default).
 
+**The machine's token** (`brain.tokenguard`, [docs/guards.md](docs/guards.md#the-machines-token)): under config.json
+`guards.refuse_token_read: true` (off by default), the owner guard (check `token`) refuses a session's `Read`, `Grep`,
+tool edit or shell call that reaches `<BRAIN_HOME>/ipc/token` (or `$BRAIN_IPC_TOKEN_FILE`), as it refuses `brain ipc
+otel-headers`: `cat`, `Get-Content`, a copy, a redirection, a glob, inline code that names it, a link to it; `ls`,
+`stat`, `Test-Path` and `brain ipc token` pass. The MCP server refuses it whatever the key, and redacts the token from
+every answer.
+
 **The read hint** (`readhint.sh`, `brain.readhint`, PreToolUse on Read, Grep, Bash and PowerShell) never refuses: when
 a call reads a registered brain's graph YAML (a store's `nodes/` or `edges/`, or the store), its decision log, its
 journal or a generated view (`*_graph.md`, `decision_queue.md`, `FEATURES.md`) by hand, it adds one line of hook
