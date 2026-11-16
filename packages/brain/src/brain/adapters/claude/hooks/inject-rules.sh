@@ -6,7 +6,7 @@
 # cached copy of the plugin on a machine with no pointer) it injects the plugin's own rules/global.md.
 # JSON is read and built with bash, tr, sed and awk only, so the hook needs nothing beyond bash (Git Bash on Windows).
 set -euo pipefail
-{ . "${BASH_SOURCE[0]%[!A-Za-z0-9._-]*}/common.sh" || { selftime_bash() { :; }; brain_python() { return 1; }; }; } 2>/dev/null  # brain_t0, selftime_bash, brain_python
+{ . "${BASH_SOURCE[0]%[!A-Za-z0-9._-]*}/common.sh" || { selftime_bash() { :; }; brain_python() { return 1; }; floor_setting() { :; }; }; } 2>/dev/null  # brain_t0, selftime_bash, brain_python, floor_setting
 
 event="${1:-SessionStart}"
 root="${CLAUDE_PLUGIN_ROOT:-$(cd "$(dirname "$0")/.." && pwd)}"
@@ -65,7 +65,22 @@ text() {
     tr -d '\r' < "${rules[$i]}" | tr '\t' ' '
   done
 }
-context=$(text | sed -e 's/\\/\\\\/g' -e 's/"/\\"/g' | awk '{printf "%s\\n", $0}')
+# A floor-only machine (config.json "floor": {"only": true} at its top level, brain/floor.py) gets the locked rules
+# alone: the lines that carry <!-- lock --> or <!-- lock: ID -->, the marker taken out, after brain.floor.ONLY_LINE
+# (the same words: tests/test_floor.py compares them). common.sh's floor_setting reads the top-level "floor" as
+# Python's json does. The locked lines are read in the C locale, so [[:space:]] and [A-Za-z] mean what
+# brain.floor.LOCK means.
+floor_only=$(floor_setting "$config" only)
+locked() {
+  printf '%s\n' "Floor only (config.json floor.only): this machine gets the locked rules alone, until it is adopted; the guard applies only the floor's refusals, the secrets and configuration checks, the override protection and the session-settings and scheduled-task checks, and the memory notes are not synced."
+  text | LC_ALL=C grep -E '<!--[[:space:]]*lock(:[[:space:]]*[A-Za-z0-9_.-]+)?[[:space:]]*-->' \
+    | LC_ALL=C sed -E 's/[[:space:]]*<!--[[:space:]]*lock(:[[:space:]]*[A-Za-z0-9_.-]+)?[[:space:]]*-->//g; s/[[:space:]]+$//' || :
+}
+if [ -n "$floor_only" ]; then
+  context=$(locked | sed -e 's/\\/\\\\/g' -e 's/"/\\"/g' | awk '{printf "%s\\n", $0}')
+else
+  context=$(text | sed -e 's/\\/\\\\/g' -e 's/"/\\"/g' | awk '{printf "%s\\n", $0}')
+fi
 
 printf '{"hookSpecificOutput":{"hookEventName":"%s","additionalContext":"%s"}}\n' "$event" "$context"
 selftime_bash "hook inject-rules $event [bash]"

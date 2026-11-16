@@ -15,7 +15,8 @@ from brain.commands import (bundle, capture, catalogue, check, code_map, collisi
                             formats, handover, health, impact, index, init, ipc, mcp, memory, merge_check, merge_driver,
                             milestone, notes, perf, probes, profile, project, quiet, refresh, resume, retro, review,
                             rules, schedule, schema, sessions, spec, timed, up, update)
-from brain.commands import lot, merge_ready, ship, telemetry
+from brain.commands import lint, lot, merge_ready, ship, telemetry
+from brain.commands import floor as floor_cmd
 from brain.commands import release as release_cmd
 from brain.commands import test as test_cmd
 from brain.commands import uninstall
@@ -61,8 +62,8 @@ def test_the_help_of_every_parser_formats_and_a_second_build_is_the_same(monkeyp
 # command needs the project's root (run only)
 EARLY = {capture, memory, timed, perf, init, merge_driver, merge_check, sessions, schedule, update, audit_cmd, impact,
          index, up, down, health, bundle, quiet, review, probes, schema, test_cmd, merge_ready, mcp, ipc,
-         handover, project, uninstall, lot, rules, release_cmd, telemetry, notes, ship}
-BOTH = {decision, resume, check, docgraph, catalogue, profile}
+         handover, project, uninstall, lot, rules, release_cmd, telemetry, notes, floor_cmd, ship}
+BOTH = {decision, resume, check, docgraph, catalogue, profile, lint}   # lint formats: any repo
 ALIASES = {"profile": ("doctor",)}
 ROOTED = {code_map, collisions, formats, milestone, refresh, retro, spec}   # a sample of the rest: they need the graph store
 

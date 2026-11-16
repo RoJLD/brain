@@ -282,6 +282,39 @@ an `info` line by default (shown, never blocking), a NEW line under `config.json
 moved into it from a file that no longer defines their function, make one DEFER line per file and norm to the repo's
 debt item, fixed by batches (never blocking).
 
+#### Format lints
+
+Three rules keep the brain's home behind its one door (`brain.formatlint`, wi-brain-format-lint):
+`format.home-path` (a path into the home built by hand outside `brain.paths`: `Path.home() / ".brain"`,
+`os.path.expanduser("~/.brain...")`), `format.direct-write` (a file of the home written around `brain.stateio`: a
+`write_text()`, `write_bytes()` or `open(..., "w")` on a path built from `brain_home()`, in the same function) and
+`format.real-home-test` (a test reading the real home: `Path.home()`, `os.path.expanduser("~...")`; `conftest.py`,
+which pins the home, is not a test). Two backends read them, each switched on by the owner in `config.json` and both
+off by default: `audit.format_lints_python` (the rules in the AST, nothing to install) and
+`audit.format_lints_ast_grep` (the same rules as ast-grep YAML, `brain/lints/*.yml`, run by the `ast-grep` binary at
+its pinned version, 0.51.0; N/A, said, without it). Switched on, `brain audit --diff` reads them in the Python files a
+change touches: an info line for an occurrence the change adds, one DEFER line per file and rule for those already
+there; never blocking, and an occurrence both backends find is said once.
+
+`brain lint formats [--repo-dir D] [--backend python|ast-grep | --compare] [--json]` runs them over a whole repo,
+whatever the switches; `--compare` runs both and prints, for each, its count by rule and the time taken, then what
+each finds that the other does not (one backend, or one N/A: its occurrences). The two differ by design where
+ast-grep has no data flow: it flags a write in any function that calls `brain_home()` (and none at module level),
+where the python backend follows the local names assigned from it in the same function (not a module constant, a
+closure's name or an attribute). Both read a literal argument only, and the python backend flags a test's
+`Path.home()` even after `monkeypatch.setattr(Path, "home", ...)` (a test then reads its own fake: justify it). The
+ast-grep backend never reads an empty or failed scan as no finding: a refused rule, a changed CLI or a timeout makes
+it N/A with ast-grep's own words; the files go in batches under the Windows command line's limit.
+
+The binary is the owner's install, never downloaded by the engine: the `lint` extra pins it
+(`pip install -e "packages/brain[lint]"` from a checkout, or in the brain's venv `pip install --only-binary :all: ast-grep-cli==0.51.0`, its
+wheels `ast_grep_cli-0.51.0-py3-none-win_amd64.whl`, sha256
+`be2586df4192adb60fa808bd83c4f3a46c63315f48394400f07700f9e76f4dc6`, and
+`ast_grep_cli-0.51.0-py3-none-manylinux_2_28_x86_64.whl`, sha256
+`17007574681fe872473850780304b3df57ca98ac575d88957972fea8c3810c26`, as PyPI publishes them; `--require-hashes` with a
+requirements line `ast-grep-cli==0.51.0 --hash=sha256:<the wheel's>` checks it). `ast-grep --version` then says
+0.51.0, and `brain lint formats --compare` shows what it adds.
+
 And it reads what a change of a schema narrows (`brain.schemadiff`, wi-brain-schema-diff): a JSON Schema
 (`*.schema.json`) or a graph store's `schema.yaml` whose new version refuses what the old one accepted (a property
 removed, a field newly required, an enum or a type narrowed, a bound tightened, a type or a status removed). A
@@ -1663,6 +1696,19 @@ brain whose `source/packs.yaml` gives its core pack `hooks:` gets them copied in
 [docs/formats.md](docs/formats.md#the-hook-contract)). The guards never block a session on an error: without Python,
 the call goes through. Each hook passes its `brain_version` to the Python it starts, and the SessionStart health says
 when a session's plugin copy and the engine differ, or when two `.brain` folders exist.
+
+**The locked floor** (`brain.floor`, [docs/guards.md](docs/guards.md#the-locked-floor)): the rules marked
+`<!-- lock -->` and the guard's refusals of a push to main or master and of a forced push (config.json
+`floor.refuse`), and of what would lift it (the config.json the guard reads, its pointer, a variable that chooses
+it); a floor-only machine (`floor.only`) gets the locked rules alone, the floor's refusals, the secrets check and the
+override protection alone, and no memory sync, until it is adopted. A machine with the floor on is locked by the
+owner's elevated `brain floor lock --apply` (its plan prints one command line to run from Win+R with
+Ctrl+Shift+Enter, no shell): the floor's copy goes to `<ProgramData>/Brain`, a compiled copy of the guard to
+`<Program Files>/Brain/guard`, and Claude Code's managed settings get `allowManagedHooksOnly` with the plugin's hooks
+declared from that copy (exec form; the judging ones block when they fail, Claude Code v2.1.295 or later), out of a
+session's reach; on a floor-only machine the guard refuses every call until then. `brain floor status` says whether a
+session can change them and whether the managed hooks are in force (Claude Code's managed sources are first-wins:
+server-managed settings or an HKLM policy skip the files).
 
 A hook costs every tool call its time, so the launchers start nothing they do not need: they read their JSON and find
 Python with bash builtins (`hooks/common.sh`, no `$(...)`), and `guard.sh` starts Python only for a shell command that
