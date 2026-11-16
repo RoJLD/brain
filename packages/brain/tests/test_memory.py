@@ -704,4 +704,10 @@ def test_the_two_week_pruning_counts_from_the_run_s_day():
     """The state keeps two weeks of branches counted from the run's day, so a run dated in the past (tests, a replay)
     prunes the same way whatever today is."""
     assert memory._days_ago(14, "2026-11-16") == "2026-11-02"
-    assert memory._days_ago(0) == memory.date.today().isoformat()
+    # the sync-level check is test_a_later_change_updates_the_same_pr_and_supersedes_an_older_one: its 2026-11-01
+    # branch must survive the next run, dated 2026-11-02, whatever today is
+
+
+def test_a_day_that_is_no_date_is_refused_before_anything_is_pushed():
+    with pytest.raises(ValueError):
+        memory.Sync("unused", deadline=0.0, day="not-a-day")

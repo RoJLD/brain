@@ -303,7 +303,7 @@ class Sync:
         self.remote = remote
         self.run = Runner(deadline)
         self.machine = machine()
-        self.day = day or date.today().isoformat()
+        self.day = date.fromisoformat(day).isoformat() if day else date.today().isoformat()   # refused before any push
         self.day_branch = f"memory/{self.machine}/{self.day}"
         self.branch = self.day_branch   # the branch this run pushes to (pick_branch: -2, -3... past one someone touched)
         self.heads: dict[str, str] = {}   # this machine's branches on the remote: ref -> commit
