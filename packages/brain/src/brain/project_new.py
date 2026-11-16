@@ -142,28 +142,33 @@ def answer_tools(a: Answers, lang: str | None, specs: list[str] | None) -> Answe
         raise WizardError(f"--lang {lang}: one of {', '.join(langs.LANGS)}")
     named: dict[str, str] = {}
     for spec in specs:
-        slot, sep, name = spec.partition("=")
-        slot, name = slot.strip(), name.strip()
-        if not sep or not slot or not name:
-            raise WizardError(f"--tool {spec}: SLOT=TOOL (slots: {', '.join(langs.SLOTS)}; TOOL {NONE} for none)")
-        if slot not in langs.SLOTS:
-            raise WizardError(f"--tool {spec}: the slot is one of {', '.join(langs.SLOTS)}")
-        if slot in named and named[slot] != name:
+        slot, name = _tool_spec(spec, lang)
+        if named.get(slot, name) != name:
             raise WizardError(f"--tool {slot}: named twice ({named[slot]}, {name})")
-        if name != NONE and langs.tool(lang, slot, name) is None:
-            known = ", ".join(langs.tools_for(lang, slot)) or "none known"
-            raise WizardError(f"--tool {spec}: not a {slot} tool of {lang} the wizard knows ({known}; {NONE} for "
-                              "none); another tool's report is declared by hand in projects.yaml repos[].tools")
         named[slot] = name
     a.lang = lang
     for slot in langs.SLOTS:
-        name = named.get(slot, langs.DEFAULT_TOOLS.get(lang, {}).get(slot, NONE))
-        t = langs.tool(lang, slot, name) if name != NONE else None
+        t = langs.tool(lang, slot, named.get(slot, langs.DEFAULT_TOOLS.get(lang, {}).get(slot, NONE)))
         if t is not None and t.report:
             a.tools[slot] = t
         elif t is not None:
             a.unreported.append(t)
     return a
+
+
+def _tool_spec(spec: str, lang: str) -> tuple[str, str]:
+    """One ``--tool SLOT=TOOL`` checked: (slot, tool), the tool one the wizard knows for that slot in ``lang`` or
+    ``none``."""
+    slot, sep, name = (x.strip() for x in spec.partition("="))
+    if not sep or not slot or not name:
+        raise WizardError(f"--tool {spec}: SLOT=TOOL (slots: {', '.join(langs.SLOTS)}; TOOL {NONE} for none)")
+    if slot not in langs.SLOTS:
+        raise WizardError(f"--tool {spec}: the slot is one of {', '.join(langs.SLOTS)}")
+    if name != NONE and langs.tool(lang, slot, name) is None:
+        known = ", ".join(langs.tools_for(lang, slot)) or "none known"
+        raise WizardError(f"--tool {spec}: not a {slot} tool of {lang} the wizard knows ({known}; {NONE} for "
+                          "none); another tool's report is declared by hand in projects.yaml repos[].tools")
+    return slot, name
 
 
 def answer_data(a: Answers, floor: str | None, residency: bool = False, personal: bool = False) -> Answers:
@@ -251,22 +256,23 @@ _Unique.add_constructor(yaml.resolver.BaseResolver.DEFAULT_MAPPING_TAG, _unique_
 
 def _landed(text: str, name: str, a: Answers) -> None:
     try:
-        data = yaml.load(text, Loader=_Unique)  # noqa: S506 - a SafeLoader with one more check
-    except Exception as exc:  # noqa: BLE001 - the template's registry with the answers' lines: one error
+        data = yaml.load(text, Loader=_Unique)
+    except yaml.YAMLError as exc:   # the template's registry with the answers' lines
         raise init.InitError(f"--template {a.template}: projects.yaml with the answers is not YAML, or holds a key "
                              f"twice ({exc}): the answers' lines go in by hand") from exc
-    entry = data.get(name) if isinstance(data, dict) else None
-    entry = entry if isinstance(entry, dict) else {}
+    entry = _dict(data.get(name) if isinstance(data, dict) else None)
     repo = _own_repo(entry)
-    cls = entry.get("classes") if isinstance(entry.get("classes"), dict) else {}
-    std = entry.get("standards") if isinstance(entry.get("standards"), dict) else {}
-    got = {"lang": repo.get("lang") if a.lang else None, "tools": (repo.get("tools") or {}) if a.lang else None,
-           "floor": cls.get("floor") if a.floor else None, "include": std.get("include") if a.include else None}
-    want = {"lang": a.lang or None, "tools": a.repo_tools() if a.lang else None, "floor": a.floor or None,
-            "include": list(a.include) or None}
-    if list(data or {})[-1:] != [name] or got != want:
+    got = {"lang": repo.get("lang"), "tools": repo.get("tools") or {}, "floor": _dict(entry.get("classes")).get(
+        "floor"), "include": _dict(entry.get("standards")).get("include")}
+    want = {"lang": a.lang or None, "tools": a.repo_tools(), "floor": a.floor or None, "include": list(a.include)}
+    asked = {"lang": a.lang, "tools": a.lang, "floor": a.floor, "include": a.include}
+    if list(data or {})[-1:] != [name] or any(got[k] != want[k] for k in want if asked[k]):
         raise init.InitError(f"--template {a.template}: projects.yaml: the answers' lines go under the brain's own "
                              f"entry ({name}), the registry's last: its repo '- path: .' and its standards block")
+
+
+def _dict(value) -> dict:
+    return value if isinstance(value, dict) else {}
 
 
 def _own_repo(entry: dict) -> dict:
@@ -301,15 +307,24 @@ def summary(cat: typologies.Catalog, a: Answers, rows: dict | None = None) -> li
               if a.missing else ""),
            f"  its registry entry records lifecycle: {{typologies: [{', '.join(a.kinds)}], "
            f"stage: {a.lifecycle_stage}}} (brain item clauses reads its typologies)"]
-    if a.lang:
-        out.append(f"  language: {a.lang}; its tools (repos[].tools: the reports the project's CI writes, brain audit "
-                   "reads them):")
-        out += [f"    {slot}: {t.name} -> {t.report} ({t.format}): {t.command}" for slot, t in a.tools.items()]
-        out += [f"    {t.slot}: {t.name}, an exit code only ({t.command}): named, not declared" for t in a.unreported]
-        named = set(a.tools) | {t.slot for t in a.unreported}
-        missing = [s for s in langs.SLOTS if s not in named]
-        if missing:
-            out.append(f"    no tool: {', '.join(missing)} (--tool SLOT=TOOL names one)")
+    return out + _tool_lines(a) + _data_lines(a, rows)
+
+
+def _tool_lines(a: Answers) -> list[str]:
+    """The plan's lines of the languages and tools (none when not asked)."""
+    if not a.lang:
+        return []
+    out = [f"  language: {a.lang}; its tools (repos[].tools: the reports the project's CI writes, brain audit reads "
+           "them):"]
+    out += [f"    {slot}: {t.name} -> {t.report} ({t.format}): {t.command}" for slot, t in a.tools.items()]
+    out += [f"    {t.slot}: {t.name}, an exit code only ({t.command}): named, not declared" for t in a.unreported]
+    missing = [s for s in langs.SLOTS if s not in set(a.tools) | {t.slot for t in a.unreported}]
+    return out + ([f"    no tool: {', '.join(missing)} (--tool SLOT=TOOL names one)"] if missing else [])
+
+
+def _data_lines(a: Answers, rows: dict | None) -> list[str]:
+    """The plan's lines of the data and of the standards rows the answers select."""
+    out = []
     if a.floor:
         out.append(f"  data: class floor {a.floor} ({classes.CLASS_TEXT.get(a.floor, '')}): classes: {{floor: "
                    f"{a.floor}}}")
@@ -354,20 +369,27 @@ def changes(entry: dict, a: Answers) -> list[str]:
              ("template", entry.get("_template"), a.template)]
     if std:
         pairs.append(("standards.stage", std.get("stage"), a.stage))
+    pairs += _asked_pairs(entry, std, a)
+    return [f"  {key}: {_shown(old)} -> {_shown(new)}" for key, old, new in pairs
+            if (list(old) if isinstance(old, list) else old) != new]
+
+
+def _asked_pairs(entry: dict, std: dict, a: Answers) -> list[tuple]:
+    """(key, what the entry holds, what the answers write) for what slice 2 asked: the language and tools, the class
+    floor, the standards' include."""
+    pairs = []
     if a.lang:
         repo = _own_repo(entry)
-        tools = repo.get("tools") if isinstance(repo.get("tools"), dict) else {}
+        tools = _dict(repo.get("tools"))
         pairs.append(("repos[path: .].lang", repo.get("lang"), a.lang))
         pairs += [(f"repos[path: .].tools.{s}", _tool_of(tools.get(s)), a.tools[s].name if s in a.tools else None)
                   for s in langs.SLOTS if s in tools or s in a.tools]
     if a.floor:
-        cls = entry.get("classes") if isinstance(entry.get("classes"), dict) else {}
-        pairs.append(("classes.floor", cls.get("floor"), a.floor))
+        pairs.append(("classes.floor", _dict(entry.get("classes")).get("floor"), a.floor))
     if a.include:
-        have = [str(x) for x in std.get("include") or []] if isinstance(std.get("include"), list) else []
+        have = [str(x) for x in std.get("include")] if isinstance(std.get("include"), list) else []
         pairs.append(("standards.include", have or None, have + [i for i in a.include if i not in have]))
-    return [f"  {key}: {_shown(old)} -> {_shown(new)}" for key, old, new in pairs
-            if (list(old) if isinstance(old, list) else old) != new]
+    return pairs
 
 
 def _tool_of(spec) -> str | None:
