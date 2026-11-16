@@ -6,4 +6,8 @@ section: Added
   --apply`, `& $brain ...`, PowerShell's `@rest` and `@('--apply')`) and through Python's inline code that drives
   brain's modules (`python -c "... main(['schedule', 'install', '--apply'])"`); guard.sh's pre-filter now reads a
   command's escaped words (`b\rain sched\ule install`) and starts Python for a brain usage, schedule, vault or queue
-  command with such a word. The MCP server matches wide always (docs/guards.md, « The owner's gestures »).
+  command with such a word; under the key, a call that clears an agent session's markers (CLAUDECODE= ..., env -u,
+  unset, $env:CLAUDECODE = '') is refused too. The gestures that act (schedule install --apply, update, uninstall
+  --apply, queue apply, handover root) now refuse themselves while any agent marker is set (CLAUDECODE,
+  CLAUDE_CODE_ENTRYPOINT, BRAIN_AGENT_SESSION), not only CLAUDECODE. The MCP server matches wide always (docs/guards.md,
+  « The owner's gestures »).

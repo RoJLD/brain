@@ -103,6 +103,8 @@ OWNER_REFUSED = [
     ("scheduled", "brain schedule install --app=1"),
     ("scheduled", "brain --proj p schedule --project p install --task x --apply"),
     ("scheduled", "x=install; brain schedule $x --apply"),
+    ("scheduled", "brain schedule ins''tall --apply"),   # the review (2026-11-17): empty quotes in a word
+    ("scheduled", "brain sched\"\"ule install --apply"),
     ("scheduled", "bash -c 'python3 -m brain schedule install --apply'"),
     ("scheduled", "schtasks.exe /change /tn \\Demo\\cycle /tr x"),
     ("scheduled", "schtasks /delete /tn BrainDigest /f"),
@@ -188,6 +190,26 @@ WIDE_REFUSED = [
     ("PowerShell", "brain schedule install @('--apply')"),
     ("PowerShell", "brain schedule install @rest"),
     ("PowerShell", "& $brain schedule install --apply"),
+    # the review (2026-11-17): a word that may split, python's options with a value, the code's own arguments
+    ("Bash", "brain schedule $x"), ("Bash", "brain schedule install $opts"),
+    ("PowerShell", "brain schedule @a"),
+    ("Bash", "python -X utf8 -c \"from brain.cli import main; main(['schedule', 'install', '--apply'])\""),
+    ("Bash", "python3 -W ignore -c \"import brain.cli as c; c.main(['schedule', 'install', '--apply'])\""),
+    ("Bash", "python -c \"import sys; from brain.cli import main; main(sys.argv[1:])\" schedule install --apply"),
+    ("Bash", "$PY -c \"from brain.cli import main; main(['schedule', 'install', '--apply'])\""),
+    ("Bash", "python3.13t -c \"from brain.cli import main; main(['schedule', 'install', '--apply'])\""),
+]
+
+# a word that may hold any gesture (brain $x, brain "$@", brain @rest): refused, as the first gesture it may be
+WIDE_ANY = [("Bash", "brain $x"), ("Bash", "brain \"$@\""), ("PowerShell", "brain @rest")]
+
+# clearing an agent session's markers, which the gestures' own check reads (brain.detail.refused)
+MARKERS_CLEARED = [
+    ("Bash", "CLAUDECODE= brain schedule install --apply"), ("Bash", "env -u CLAUDECODE python run.py"),
+    ("Bash", "unset CLAUDECODE CLAUDE_CODE_ENTRYPOINT; python run.py"), ("Bash", "env -i PATH=$PATH python run.py"),
+    ("Bash", "python -c \"import os; os.environ.pop('CLAUDECODE'); import runpy\""),
+    ("PowerShell", "$env:CLAUDECODE = ''; python run.py"), ("PowerShell", "Remove-Item Env:CLAUDECODE"),
+    ("PowerShell", "[Environment]::SetEnvironmentVariable('BRAIN_AGENT_SESSION', $null)"),
 ]
 
 
@@ -203,6 +225,37 @@ def test_wide_matching_refuses_what_the_guard_cannot_resolve(owner, tmp_path, mo
     _wide(tmp_path, monkeypatch, True)
     reason = (bash if tool == "Bash" else pwsh)(owner, command)
     assert refused(reason, "owner", "scheduled") and "brain schedule install --apply" in reason, reason
+
+
+@pytest.mark.parametrize("tool, command", WIDE_ANY)
+def test_wide_matching_refuses_a_word_that_may_hold_any_gesture(owner, tmp_path, monkeypatch, tool, command):
+    _wide(tmp_path, monkeypatch, True)
+    reason = (bash if tool == "Bash" else pwsh)(owner, command)
+    assert reason is not None and f"{guards.ALLOW_ENV}=owner" in reason, reason
+
+
+@pytest.mark.parametrize("tool, command", MARKERS_CLEARED)
+def test_wide_matching_refuses_clearing_the_agent_markers(owner, tmp_path, monkeypatch, tool, command):
+    _wide(tmp_path, monkeypatch, True)
+    reason = (bash if tool == "Bash" else pwsh)(owner, command)
+    assert refused(reason, "owner", "override") and "clears an agent session's marker" in reason, reason
+    _wide(tmp_path, monkeypatch, False)
+    assert "clears an agent" not in ((bash if tool == "Bash" else pwsh)(owner, command) or "")
+
+
+def test_the_markers_named_start_python():
+    commands = [c for tool, c in MARKERS_CLEARED if tool == "Bash"] + ["brain $x", "$b usage $x allow"]
+    missed = [c for c, started in zip(commands, _needs_python(commands)) if not started]
+    assert not missed
+
+
+def test_a_gesture_refuses_itself_whichever_agent_marker_is_set(monkeypatch):
+    """The command's own check (brain.detail.refused, schedule install --apply, update, uninstall, queue apply,
+    handover root): any of the agent markers, so that clearing one is not enough."""
+    from brain import detail
+    for var in ("CLAUDECODE", "CLAUDE_CODE_ENTRYPOINT", "BRAIN_AGENT_SESSION"):
+        assert var in detail.refused({var: "1"})
+    assert detail.refused({}) == ""
 
 
 @pytest.mark.parametrize("tool, command", WIDE_REFUSED)
@@ -225,6 +278,7 @@ def test_the_prefilter_starts_python_for_the_wide_shapes():
     "python -c \"from brain import schedule; print(schedule.installed())\"",
     "python -c \"from brain import schedule; print(schedule.install.__doc__)\"",
     "python -c \"print('schedule install --apply')\"", "python script.py brain schedule install --apply",
+    "echo $CLAUDECODE", "test -n \"$CLAUDE_CODE_ENTRYPOINT\" && echo session", "brain --project $P status",
 ])
 def test_wide_matching_passes_reads(owner, tmp_path, monkeypatch, command):
     _wide(tmp_path, monkeypatch, True)

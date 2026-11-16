@@ -35,7 +35,7 @@ LAUNCHERS = ("uv", "uvx", "poetry", "pipx", "pdm", "hatch", "rye")  # ... run br
 UNRESOLVED = re.compile(r"[$`%]")                            # a word the guard cannot resolve ($x, %x%, a backquote)
 SPLAT = re.compile(r"@(?:[a-z_]\w*)?", re.I)   # PowerShell's splat (@args), or an array literal @(...) whose words the
                                                # guard's reader splits off: any words
-PYTHON = re.compile(r"^(?:python[0-9.]*w?|pythonw|py|pypy[0-9.]*)(?:\.exe)?$")   # whose -c runs brain's modules
+PYTHON = re.compile(r"^(?:python[0-9.]*[tw]?(?:-dbg)?|pythonw|py|pypy[0-9.]*)(?:\.exe)?$")   # whose -c runs brain's modules
 
 
 @dataclass(frozen=True)
@@ -153,16 +153,26 @@ def _value(cmd: list[str], i: int, wide: bool) -> bool:
     return i > 0 and cmd[i - 1].startswith("-") and "=" not in cmd[i - 1] and not _unknown(cmd[i - 1], wide)
 
 
+HOLDS = -2   # _words_at: a word the guard cannot resolve may hold the gesture's remaining words and its flag
+
+
 def _words_at(g: Gesture, cmd: list[str], wide: bool = False) -> int:
     """Where a gesture's words end in ``cmd`` (its subcommand first), options and their values allowed between them
-    (``usage --hours 2 allow``, ``queue --kind action apply``), a positional word not (``queue add ... apply``); under
-    ``wide``, a word the guard cannot resolve stands for any of them (``schedule $(echo install)``), but an option's
-    value; -1 when they are not there."""
-    if not g.words or not cmd or not (cmd[0] == g.words[0] or _unknown(cmd[0], wide)):
+    (``usage --hours 2 allow``, ``queue --kind action apply``), a positional word not (``queue add ... apply``); -1
+    when they are not there. Under ``wide``, :data:`HOLDS` when a word the guard cannot resolve stands where the
+    gesture's next word would (``schedule $x``, ``$x``, ``schedule @rest``): it may split into the remaining words and
+    the flag; an option's value is no such word."""
+    if not g.words or not cmd:
+        return -1
+    if _unknown(cmd[0], wide):
+        return HOLDS
+    if cmd[0] != g.words[0]:
         return -1
     i = 1
     for word in g.words[1:]:
-        while i < len(cmd) and not (cmd[i] == word or (_unknown(cmd[i], wide) and not _value(cmd, i, wide))):
+        while i < len(cmd) and cmd[i] != word:
+            if _unknown(cmd[i], wide) and not _value(cmd, i, wide):
+                return HOLDS
             if not (cmd[i].startswith("-") or _value(cmd, i, wide)):
                 return -1
             i += 1
@@ -184,13 +194,22 @@ def _starts(cmd: list[str], wide: bool) -> list[list[str]]:
 
 
 def _code(low: list[str]) -> str:
-    """Python's inline code in the simple command ``low`` (``python -c CODE``, ``python -Ic CODE``), else ''."""
-    if not PYTHON.match(re.split(r"[\\/]", low[0])[-1]):
+    """Python's inline code in the simple command ``low`` (``python -c CODE``, ``python -X utf8 -Ic CODE``, ``$PY -c
+    CODE``), with the arguments it gets after it (its sys.argv), else ''."""
+    if not (PYTHON.match(re.split(r"[\\/]", low[0])[-1]) or _unknown(low[0])):
         return ""
+    skip = False
     for i, w in enumerate(low[1:], 1):
+        if skip:
+            skip = False
+            continue
+        if w[:2] in ("-x", "-w"):   # -X utf8, -W ignore: an option with its value (or -Xutf8)
+            skip = len(w) == 2
+            continue
         m = re.fullmatch(r"-[a-z]*c(.*)", w, re.S)
         if m:
-            return m.group(1) or (low[i + 1] if i + 1 < len(low) else "")
+            code = m.group(1) or (low[i + 1] if i + 1 < len(low) else "")
+            return " ".join([code, *low[i + (1 if m.group(1) else 2):]])
         if not w.startswith("-"):
             return ""   # a script or a module: not inline code
     return ""
@@ -249,6 +268,9 @@ def match(words: list[str], wide: bool | None = None) -> Gesture | None:
 
 
 def _find(low: list[str], cmd: list[str], at: int, helped: bool, wide: bool) -> Gesture | None:
+    """The gesture ``cmd`` runs: one its words spell out first, else (under ``wide``) the first one a word the guard
+    cannot resolve may hold."""
+    held = None
     for g in GESTURES:
         if g.program != "brain":
             continue
@@ -258,7 +280,8 @@ def _find(low: list[str], cmd: list[str], at: int, helped: bool, wide: bool) -> 
             end = _words_at(g, start, wide)
             if end >= 0 and _fits(g, start[end:], wide):
                 return g
-    return None
+            held = held or (g if end == HOLDS else None)
+    return held
 
 
 def _anywhere(g: Gesture, low: list[str]) -> bool:
@@ -279,6 +302,22 @@ def strict(data: dict | None = None) -> bool:
         data = config.load().data   # an unreadable config.json loads as no data: strict stays off
     section = data.get("guards") if isinstance(data, dict) else None
     return isinstance(section, dict) and section.get("owner_strict") is True
+
+
+_MARKERS = "|".join(AGENT_ENV)
+# what clears an agent session's markers, so that a gesture's own check (CLAUDECODE...) would not see the session:
+# an assignment (CLAUDECODE= cmd, $env:CLAUDECODE = ''), unset, env -u or -i, PowerShell's Env: drive or .NET call,
+# inline code's environ
+CLEARS = re.compile(rf"(?i)(?<![\w$])(?:\$env:)?(?:{_MARKERS})\s*=|\bunset\b[^;&|\n]*\b(?:{_MARKERS})\b|"
+                    rf"(?:^|\s)(?:-u\s*|--unset[= ])(?:{_MARKERS})\b|\benv\s+(?:-[a-z]*i\b|--ignore-environment\b|-\s)|"
+                    rf"\benv:\\?(?:{_MARKERS})\b|SetEnvironmentVariable\s*\(\s*['\"](?:{_MARKERS})|"
+                    rf"\b(?:environ|unsetenv|putenv)\b[^\n]*\b(?:{_MARKERS})\b")
+
+
+def clears_marker(command: str) -> str:
+    """The text of ``command`` that clears an agent session's markers (:data:`AGENT_ENV`), else ''."""
+    m = CLEARS.search(command or "")
+    return m.group(0).strip() if m else ""
 
 
 def wide_matching(data: dict | None = None) -> bool:
