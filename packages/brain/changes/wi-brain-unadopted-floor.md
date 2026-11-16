@@ -54,12 +54,14 @@ section: Added
   `claude plugin install|enable|update|marketplace add|update` are refused under `floor.only` too. Four classes are
   refused as classes, not spellings (`brain.floorpwsh`): a link in any spelling, tool or interpreter whose paths reach
   what the floor keeps, a `.claude` or `.git` folder, or that the floor cannot resolve, and a call that makes a link
-  and writes; any write, copy or extraction into a `.git` folder by anything but git; `git am`, `rebase`,
-  `cherry-pick` and `revert` resuming a queue (`--continue`, `--skip`, any prefix), `git apply` unless its options,
-  read as git reads them, are read-only, and `git clone`/`init` given a template or configuration; a glob or a brace
-  read as the shell expands it, a write or a copy whose path the floor cannot resolve where it may reach what it keeps. The managed settings also set `strictPluginOnlyCustomization: ["hooks", "mcp"]` and
-  `strictKnownMarketplaces` (the brain's marketplace only); the guard's copy carries the
-  rendered rules and hook contract, and on Windows its hooks run the copy's own engine.
+  and writes (inline code read by a positive rule after NFKC normalisation; cmd's carets removed; awk and sed that
+  run a command, PowerShell script blocks run from text refused); any write, copy, merge or extraction into a `.git`
+  folder by anything but git, and git's own writers aimed into one; `git am`, `rebase`, `cherry-pick` and `revert`
+  resuming a queue (`--continue`, `--skip`, any prefix), `git apply` unless its options, read as git reads them, are
+  read-only, and `git clone`/`init` given a template or configuration; a glob or a brace read as the shell expands
+  it, and a path the floor cannot resolve refused where its text may reach what it keeps. The managed settings also
+  set `strictPluginOnlyCustomization: ["hooks", "mcp"]` and `strictKnownMarketplaces` (the brain's marketplace only);
+  the guard's copy carries the rendered rules and hook contract, and on Windows its hooks run the copy's own engine.
 - Under a lock, the guard's refusal names the elevated `brain floor lock --lower` and `brain floor unlock` instead of
   `BRAIN_GUARD_ALLOW`, and `guard.sh` no longer steps aside for the managed file (it judges where the managed
   settings are not in force: Claude Code's managed sources are first-wins).

@@ -171,13 +171,15 @@ def _shell(cmds, sub: str, command: str, kept: Kept) -> str | None:
     """What a shell call would lift or stop the floor by (check_files), else None."""
     full = list(g.actions(cmds, sub, command=command))
     acts = [(words, d) for words, d, _, _ in full]
-    shells = ["bash" if s == "ssh" else s for _, _, s, _ in full]
+    dot = "dotglob" if floorpwsh.DOTGLOB.search(command) else "bash"   # bash's dot rule off (review round 14 #6)
+    shells = [dot if s in ("bash", "ssh") else s for _, _, s, _ in full]
     plain = floor.unspelled(_code(command))
     checks = (lambda: _opaque(cmds, acts, command), lambda: _env(plain), lambda: _registry(plain),
               lambda: _removals(acts, kept), lambda: _acl(acts, kept), lambda: _writes(cmds, sub, kept),
               lambda: _copies(acts, kept, shells), lambda: floorpwsh.extractions(acts, kept, shells),
               lambda: floorpwsh.archived_settings(acts, SETTINGS), lambda: floorpwsh.links(full, cmds, sub, command, kept),
-              lambda: floorpwsh.braced(command, sub),
+              lambda: floorpwsh.braced(command, sub), lambda: floorpwsh.scripted(full),
+              lambda: floorpwsh.entered(command, sub),
               lambda: _git_settings(acts), lambda: _checkout(acts, kept),
               lambda: _named(acts, command), lambda: _plugin_cmd(acts), lambda: floorpwsh.piped(command, acts, kept),
               lambda: floorpwsh.methods(command, acts, kept), lambda: floorpwsh.typed(plain))
@@ -456,26 +458,48 @@ def _copied(prog: str, words: list[str], d: str, shell: str = "bash") -> list[tu
     if not dest:
         return []
     dst = _destination(dest, d, shell)
-    if dst is None:
-        return None
+    if not dst:
+        return None if dst is None else []
     sources = [x for s in sources for x in (floorpwsh.expand(s, d, shell) or [s])]
     into = bool(target) or len(sources) > 1 or os.path.isdir(dst) or dest.endswith(("/", "\\"))
-    whole = prog in MOVERS or _recursive(prog, words)   # a move takes a folder whole
-    return [_lands(src, dst, into, whole, d) for src in sources]
+    return _landings(prog, words, sources, dst, into, d)
+
+
+def _landings(prog: str, words: list[str], sources: list[str], dst: str, into: bool, d: str):
+    """Each source's landing (_copied): its contents in ``dst`` itself for a merge (_merges), else _lands."""
+    whole, merge = prog in MOVERS or _recursive(prog, words), _merges(prog, words)   # a move takes a folder whole
+    return [(dst, True, g._real(g._path(src, d))) if merge(src) and os.path.isdir(g._path(src, d))
+            else _lands(src, dst, into, whole, d) for src in sources]
+
+
+def _merges(prog: str, words: list[str]):
+    """Whether a source's contents land in the destination itself (review round 14 #6): cp and mv -T or
+    --no-target-directory (any prefix GNU takes), an rsync source ending in /, every xcopy source."""
+    no_target = prog in ("cp", "mv", "install") and any(
+        re.match(r"^-[A-Za-z]*T", a) or len(a.partition("=")[0]) > 5 and "--no-target-directory".startswith(a)
+        for a in words[1:])
+    return lambda src: no_target or prog == "xcopy" or (prog == "rsync" and src.endswith(("/", "\\", "/.")))
 
 
 def _destination(dest: str, d: str, shell: str) -> str | None:
-    """A copy's destination as its shell expands it (a glob, a brace), resolved; None when the floor cannot resolve
-    it or it expands to more than one path."""
+    """A copy's destination as its shell expands it (a glob, a brace), resolved; '' for a variable or a substitution
+    whose text names no .git or .claude folder nor git's own folder (read as a write to "$OUT" is: docs/guards.md,
+    Limits); None when it may name one, or expands to more than one path."""
     dests = floorpwsh.expand(dest, d, shell)
+    if dests is None and not floorpwsh.GUARDED_TEXT.search(dest) and not floorpwsh.GLOB.search(dest):
+        return ""
     return g._real(g._path(dests[0], d)) if dests and len(dests) == 1 else None
 
 
-def _patched(words: list[str], d: str) -> list[tuple[str, bool, str]]:
-    """The file patch writes: -o's, else its first file argument."""
-    out = next((words[i + 1] for i, w in enumerate(words[:-1]) if w in ("-o", "--output")), "")
-    first = next((w for w in words[1:] if not w.startswith("-")), "")
-    return [(g._real(g._path(out or first, d)), False, "")] if (out or first) else []
+def _patched(words: list[str], d: str) -> list[tuple[str, bool, str]] | None:
+    """The file patch writes: -o's, else its file operand; None when it names neither (the files its diff names,
+    from its input or -i, are not read: review round 14 #8); nothing for --dry-run."""
+    pos, opts = g._getopt(words[1:], "dorBpiDFzVYg", ("directory", "output", "reject-file", "input", "strip", "prefix",
+                                                      "ifdef", "fuzz", "suffix", "version-control"))
+    if any(o == "--dry-run" for o, _ in opts):
+        return []
+    out = next((v for o, v in opts if o in ("-o", "--output")), "") or (pos[0] if pos else "")
+    return [(g._real(g._path(out, d)), False, "")] if out else None
 
 
 def _lands(src: str, dst: str, into: bool, whole: bool, d: str = ".") -> tuple[str, bool, str]:
@@ -517,6 +541,9 @@ def _git_settings(acts) -> str | None:
     for _, folder, sub, args in _git(acts):
         if sub in floorpwsh.RESUMERS and (why := floorpwsh.resumes(sub, args)):   # round 14: as a class
             return why
+        aimed = floorpwsh.git_output(sub, args, folder)
+        if aimed:
+            return f"git {sub} into {aimed} refused: a .git folder holds git's state and hooks, never written by a command"
         if sub not in GIT_TREE_WRITERS:
             continue
         named = next((a for a in args if any(SETTINGS.search(part) for part in re.split(r"[,=]", a))), "")

@@ -155,13 +155,75 @@ def test_apply_options_are_read_as_git_reads_them():
     assert fp.resumes("rebase", ["--edit-todo"]) == "" and fp.resumes("rebase", ["--c"])
 
 
-def test_inline_code_is_judged_by_what_it_calls():
+def test_inline_code_is_judged_by_a_positive_rule():
+    """Review round 14 #1, #12, #14: a link name as a token outside strings (NFKC first), spelled in pieces, or in a
+    string the code reaches members by; one in a print, a comment or a regular expression passes."""
     from brain import floorpwsh as fp
-    assert fp.code_link("python", "import os; os.link('a', 'b')") == ".link"
+    assert fp.code_link("python", "import os; os.link('a', 'b')") == "link"
+    assert fp.code_link("python", "import os; os.ｌink('a', 'b')") == "link"   # a fullwidth l
     assert fp.code_link("python", "print('os.link(a, b)')  # os.symlink") == ""
-    assert fp.code_link("python", "for link in links: print(link)") == ""
-    assert fp.code_link("node", "fs['sym'+'link']('a','b')")
+    assert fp.code_link("python", "for link in links: print(link)")                 # a token: refused
+    assert fp.code_link("python", "import os; print(os.path.islink('a'), os.readlink, os.unlink)") == ""
+    assert fp.code_link("node", "fs['sym'+'link']('a','b')") and fp.code_link("node", "require('fs')['linkSync']('a')")
     assert fp.code_link("perl", "print 'x'") == "" and fp.code_link("perl", "symlink 'a', 'b'")
+    assert fp.code_link("perl", 'link"a","b"') and fp.code_link("perl", "print if /link/") == ""
+    assert fp.code_link("ruby", "File.public_method(:link).call('a','b')") and fp.code_link("php", "'link'('a','b');")
+    assert "\n" not in fp.code_link("python", "import os; os.\\\nlink('a','b')")
+    assert fp.code_link("python", fp.UNREAD_CODE).startswith("code the floor cannot read")
+
+
+REVIEW_14_BASH = [
+    "python -c \"import os; os.__getattribute__('li'+'nk')('.claude/settings.json','y.txt')\"",
+    "python -c \"import os; os.ｌink('.claude/settings.json','y.txt')\"",
+    "node -e \"require('fs')['linkSync']('.claude/settings.json','y.txt')\"",
+    "node -e \"const {linkSync: l} = require('fs'); l('a.txt','y.txt')\"", "perl -e 'link\".claude/settings.json\",\"y.txt\"'",
+    "ruby -e \"File.public_method(:link).call('a.txt','y.txt')\"", "php -r \"('li'.'nk')('a.txt','y.txt');\"",
+    "cmd /c \"mk^link /H y.txt .claude\\settings.json\"", "cmd /c \"fsu^til hardlink create y.txt .claude\\settings.json\"",
+    "cmd /c \"mklink /H y.txt .cla^ude\\settings.json\"",
+    "cmd /c \"set D=.cl&& call mklink /H y.txt %D%aude\\settings.json\"",
+    "awk 'BEGIN{system(\"ln .claude/settings.json y.txt\")}'", "sed -n '1e ln .claude/settings.json y.txt' a.txt",
+    "coreutils ln .claude/settings.json y.txt", "gln .claude/settings.json y.txt",
+    "cd .gi?/hooks && echo x > pre-commit", "cd .cl*/ && echo '{}' > settings.local.json",
+    "cd .cl* && ln -s ../a.txt settings.local.json", "echo x > \"$(git rev-parse --git-dir)/hooks/pre-commit\"",
+    "echo x | tee \"$(git rev-parse --git-path hooks)/pre-commit\"",
+    "cd \"$(git rev-parse --git-dir)\" && echo x > hooks/pre-commit", "cp -rT ../stage .",
+    "cp -r --no-target-directory ../stage .", "rsync -a ../stage/ ./", "shopt -s dotglob; cp -r ../stage/* .",
+    "tar -xf ../state.tar --transform='s,^,.git/hooks/,'", "tar -xf ../state.tar --transform 's,^,.claude/,'",
+    "python -m zipfile -e ../plain.zip .git", "python -m tarfile -e ../state.tar .git/hooks", "cpio -idm < ../state.cpio",
+    "patch -p1 < p.diff", "patch -p0 -i p.diff", "python - < p.py", "cat p.py | python -", "python -c \"$(cat p.py)\"",
+    "git checkout-index --prefix=.git/hooks/ pre-commit", "git format-patch -1 -o .git/hooks",
+    "awk '{print > \".git/hooks/pre-commit\"}' a.txt", "sed -n 'w .git/hooks/pre-commit' a.txt",
+]
+REVIEW_14_PS = ["cmd /c mk^link /H y.txt .claude\\settings.json", "xcopy /E /H /Y ..\\stage .",
+                "$ExecutionContext.InvokeCommand.InvokeScript('New-Item -ItemType HardLink -Path y.txt -Target a.txt')",
+                "Set-Location .gi?/hooks; Set-Content pre-commit x", "Set-Location .cl*; Set-Content settings.local.json '{}'"]
+REVIEW_14_ORDINARY = [
+    "for f in *.txt; do mv \"$f\" \"${f%.txt}.md\"; done", "for f in *.txt; do cp \"$f\" \"$f.bak\"; done",
+    "cp a.txt \"$UNSET_OUT_DIR/\"", "tar -xzf b.tgz -C \"$UNSET_OUT_DIR\"", "ln --help", "ln --version",
+    "python -c \"import subprocess; print(subprocess.check_output(['git','rev-parse','--symbolic-full-name','@{u}']))\"",
+    "python -c \"import os; print(os.path.islink('a.txt'))\"", "cd \"$(git rev-parse --show-toplevel)\" && ls",
+    "cd notes && echo x > n.txt", "awk '{print $1}' a.txt", "sed 's/x/y/g' a.txt > b.txt", "sed -i s/a/b/ a.txt",
+    "patch a.txt fix.diff", "patch --dry-run -p1 < p.diff", "git format-patch -1 -o ../out", "git worktree add ../wt2",
+    "echo x > \"$UNSET_OUT/log.txt\"", "cat <<'EOF' | python -\nprint(1)\nEOF", "git diff | python -c \"print(1)\"",
+]
+
+
+@pytest.mark.parametrize("section", [{"only": True}, {"refuse": True}])
+def test_review_14_findings_are_refused_and_ordinary_work_passes(repo, tmp_path, monkeypatch, section):
+    """Review round 14 #1-#13: each payload refused under both floors; the medium regression's loops and the lows'
+    harmless forms pass."""
+    config(tmp_path, monkeypatch, **section)
+    monkeypatch.chdir(repo)
+    for command in REVIEW_14_BASH:
+        assert "locked floor" in (bash(repo, command) or ""), command
+    for command in REVIEW_14_PS:
+        assert "locked floor" in (pwsh(repo, command) or ""), command
+    for command in REVIEW_14_ORDINARY:
+        assert bash(repo, command) is None, command
+    assert pwsh(repo, "New-Item -ItemType: File -Path g.txt") is None
+    config(tmp_path, monkeypatch)
+    for command in REVIEW_14_BASH + REVIEW_14_ORDINARY:
+        assert "locked floor" not in (bash(repo, command) or ""), command
 
 
 def test_globs_and_braces_are_read_as_the_shell_expands_them(tmp_path):

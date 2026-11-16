@@ -338,23 +338,38 @@ Round 7 (the same classes, new spellings; on any machine with the floor on):
   `permissions.additionalDirectories` entry; a write to a stream of a settings or customization file is refused.
   Since review round 14 four classes are refused as classes, not spellings, under `floor.refuse` and `floor.only`:
   1. **A link**, whatever makes it: `ln`, `link`, `mklink`, `junction`, `subst`, `fsutil hardlink`, `cp` with `-l`,
-     `-s` or any prefix GNU takes of `--link` and `--symbolic-link`, `cpio -pl`, `rsync --link-dest`, `busybox ln`,
-     `New-Item` whose `-ItemType` (any parameter prefix, a colon form) matches a link type as PowerShell's wildcard
-     prefix does (`h`, `Hard*`, `j`, `Sym`), an archive member that is a link. A link program run by `xargs`, `find
+     `-s` or any prefix GNU takes of `--link` and `--symbolic-link`, `cpio -pl`, `rsync --link-dest`, a multicall
+     binary (`busybox`, `toybox`, `coreutils`, `uutils`, cmd's `call`) and GNU's `g` prefix (`gln`), `New-Item` whose
+     `-ItemType` (any parameter prefix, a colon form) matches a link type as PowerShell's wildcard prefix does (`h`,
+     `Hard*`, `j`, `Sym`), an archive member that is a link; in a `cmd /c` payload its carets are removed first
+     (`mk^link` is `mklink`) and a `%VAR%` is a word the floor cannot resolve. A link program run by `xargs`, `find
      -exec` or another launcher the floor does not unwrap is refused, and so is one whose path words it cannot resolve
      (a glob, a brace, a substitution, a variable, a splat, its input), one that names a settings or kept file, a
      folder above a kept path, the home, any `.claude` or `.git` folder or what is in one (a symbolic link's target is
      read from the link's folder, so the name as written counts too), and a call that makes a link and writes anything
-     else (a folder made or a file removed aside). Inline code that makes a link is refused whatever the interpreter
-     (Python, Node, Perl, Ruby, PHP, from `-c` or from its input), and so is code that reaches a member by a name the
-     floor cannot read (`getattr` of a computed name, `eval`, `__import__`, a name spelled in pieces) or runs a program
-     whose command line names a link maker; .NET's `CreateSymbolicLink`, `CreateHardLink`, `CreateAsSymbolicLink` and a
-     P/Invoke `Add-Type` are refused. A link between ordinary files, by a program whose paths the floor reads, passes; a
-     search or a text that only names a link function passes (only an interpreter's own code is read).
+     else (a folder made or a file removed aside). Inline code (Python, Node, Perl, Ruby, PHP, from `-c` or from its
+     input) is read by a positive rule, after Unicode normalisation (NFKC, as Python reads identifiers): it is refused
+     when a link name is a token of its code (`link`, `symlink`, `linkSync`, `hardlink_to`, `ln_s`...; `islink`,
+     `readlink` and `unlink` are not), when one is spelled across strings (`'li'+'nk'`), when one is in a string while
+     the code reaches members by a name held in text (`getattr`, `__getattribute__`, an index in Node, `send` and
+     `public_method` in Ruby, any string in PHP), when it evaluates text (`eval`, `exec`, `compile`, `__import__`),
+     when it runs a program whose command line names a link maker, and when the floor cannot read it (code given by a
+     substitution or a variable, a file or a pipe on the interpreter's input). A link name in a print, a comment or a
+     regular expression passes; a search or a text outside an interpreter is not read as code. awk that runs a command
+     (`system()`, a pipe) and sed that runs one (its `e` command, `s///e`) are refused, and so are they when they write
+     into a `.git` or `.claude` folder; PowerShell's script blocks run from text (`InvokeScript`, `NewScriptBlock`,
+     `[scriptblock]::Create`) are refused; .NET's `CreateSymbolicLink`, `CreateHardLink`, `CreateAsSymbolicLink` and
+     a P/Invoke `Add-Type` are refused. A link between ordinary files, by a program whose paths the floor reads, passes.
   2. **A write into any `.git` folder** by anything but git: a redirection, a program that writes, Write or Edit, a copy
-     or a move whose destination is in one, an extraction into one, an archive that holds a `.git` or `.claude`
-     member, a merge of a folder's contents (`.`, `*`, robocopy) that brings a `.claude` folder or a `.git` folder
-     over an existing one; a removal passes (`rm .git/index.lock`), and git's own commands write there as they do.
+     or a move whose destination is in one, an extraction into one (tar, unzip, Expand-Archive, 7z, `python -m
+     zipfile -e` and `tarfile -e`; `cpio -i` and `pax -r` read their members from their input and are refused; tar's
+     member renames, `--transform` and `-s`, are refused), an archive that holds a `.git` or `.claude` member, a merge
+     of a folder's contents (`.`, `*`, a glob under `shopt -s dotglob`, robocopy, xcopy, `cp -T`, an rsync source
+     ending in `/`) that brings a `.claude` folder or a `.git` folder over an existing one, `patch` that names no file
+     (the files its diff names are not read), a `cd` or `Set-Location` into a glob that may be `.git` or `.claude` or
+     into git's own folder by a substitution (`$(git rev-parse --git-dir)`); a removal passes (`rm .git/index.lock`).
+     git's own commands write there as they do, but not when aimed into one: `checkout-index --prefix`,
+     `format-patch -o`, `archive -o`, `bundle create`, `worktree add`, clone's and init's folder.
   3. **Resuming a queue**: `git am`, `rebase`, `cherry-pick` and `revert` with `--continue`, `--skip` (am's
      `--resolved` and `-r`) in any prefix git takes; the owner finishes it in their terminal, and `--abort`, `--quit`
      and `--show-current-patch` pass. `git apply` passes only when its options, parsed as git parses them (unique
@@ -363,15 +378,18 @@ Round 7 (the same classes, new spellings; on any machine with the floor on):
      `--unsafe-paths`, an option the floor does not know); `git am` applies nothing; `git clone` and `git init` with
      a template folder or configuration (`--template`, `-c`, `--config`) are refused: its hooks run at the checkout.
   4. **A path the floor cannot resolve** where it may reach what it keeps: a glob or a brace is read as the shell
-     expands it against the file system (bash's leading dot; PowerShell's wildcards match any name); a write whose
-     target holds a substitution or a variable is refused when its text names a `.git` or `.claude` folder or a
-     settings file, or when the folder it is read in is one; a copy, a move or an extraction whose destination the
-     floor cannot resolve is refused.
+     expands it against the file system (bash's leading dot unless `dotglob`; PowerShell's wildcards match any name);
+     a write, a copy, a move or an extraction whose target holds a substitution or a variable is refused when its text
+     names a `.git` or `.claude` folder, a settings file, a `hooks` folder or git's own folder (`--git-dir`,
+     `--git-path`, `GIT_DIR`), or when the folder it is read in is one; otherwise it passes, as a variable alone does.
+  Not read, and left to the operating system's lock (the next wave's ACL): a script file an interpreter runs
+  (`python p.py`), a write or a copy whose target is a variable alone (`> "$OUT"`, `cp x "$OUT"`), a program an
+  interpreter runs from a name it computes, and code that hides a link name from the rules above in a way they do not
+  read.
   A write that adds a `hooks` key, at any depth, to a skill's, command's or agent's frontmatter (read as YAML) is
   refused, and `claude plugin install`, `enable`, `update` and `marketplace add`/`update` are refused, under
   `floor.only` too. A hard link made before the floor was on, to the settings file of a project outside those folders,
-  is not found until a session works there; a write whose target is a variable alone (`> "$OUT"`), and a program an
-  interpreter runs from a name it computes, are not read. On an unlocked machine the
+  is not found until a session works there. On an unlocked machine the
   MCP servers of `~/.claude.json` and `.mcp.json` are not judged (`claude mcp add` passes), and a shell write into a
   skill, a command or an agent file is not read; such a write through code the guard does not read is not either. Elsewhere it is the parser's alone, with no backstop (an edit that adds
   a settings file's PreToolUse or PermissionRequest hook is refused too), open through code the

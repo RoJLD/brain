@@ -11,6 +11,7 @@ from __future__ import annotations
 import fnmatch
 import os
 import re
+import unicodedata
 from pathlib import Path
 
 from . import floor
@@ -52,7 +53,11 @@ TYPE_CALL = re.compile(r"(?i)(?:\)|\}|\$[\w:]+)\s*::\s*\w|\]\s*\.\s*(?:GetMethod
 # am state, its hooks, its gitdir pointer); a path the floor cannot resolve (a glob, a brace, a substitution, a
 # variable, a splat); the names a glob or a brace may reach that the floor keeps.
 GIT_DIR = re.compile(r"(?i)(?:^|[\\/])\.git(?:[\\/]|$)")
-UNREAD = re.compile(r"[*?\[\]{}$`]|^@|^~[^\\/]")
+UNREAD = re.compile(r"[*?\[\]{}$`]|^@|^~[^\\/]|%\w+%")   # %VAR%: cmd's variables (review round 14 #2)
+SCRIPT_BLOCK = re.compile(r"(?i)\.\s*InvokeScript\s*\(|\.\s*InvokeCommand\b|\bNewScriptBlock\b|"
+                          r"\[\s*scriptblock\s*\]\s*::\s*Create")
+# git's commands that print or name its own folder: a write spelled with one reaches .git (review round 14 #5).
+GIT_SUBST = re.compile(r"(?i)\b(?:git-dir|git-path|git-common-dir|absolute-git-dir)\b|\bGIT_DIR\b")
 GUARDED_NAMES = (".git", ".claude", "settings.json", "settings.local.json", ".mcp.json", ".claude.json")
 CLAUDE_DIR = re.compile(r"(?i)(?:^|[\\/])\.claude(?:[\\/]|$)")
 HOME_VARS = re.compile(r"(?i)^(?:\$env:(?:USERPROFILE|HOME)|\$\{env:(?:USERPROFILE|HOME)\}|\$HOME|~)(?=$|[\\/])")
@@ -92,7 +97,11 @@ def piped(command: str, acts, kept) -> str | None:
 def typed(plain: str) -> str | None:
     """A static member reached through anything but a literal [Type] (TYPE_CALL), or through a variable that holds a
     .NET type (TYPE_VAR). A link made by code is judged per command (links), not on the call's whole text (round 13:
-    a search that names a link function passes)."""
+    a search that names a link function passes); review round 14 #3: a script block run from text (InvokeScript,
+    NewScriptBlock, [scriptblock]::Create), whose commands the floor does not read."""
+    m = SCRIPT_BLOCK.search(plain)
+    if m:
+        return f"{m.group(0).strip()} refused: a script block run from text, whose commands the floor cannot read"
     m = TYPE_CALL.search(plain)
     if m:
         return (f"{m.group(0).strip()} refused: a .NET member reached through a type the floor cannot read (name the "
@@ -288,7 +297,8 @@ def _settings_folders(cwd: str) -> list[Path]:
 
 # --- round 14: a link, in any spelling, judged by every path it names ------------------------------------------------
 
-LINK_PROGS = {"ln", "link", "mklink", "junction", "junction64", "subst"}
+LINK_PROGS = {"ln", "link", "mklink", "junction", "junction64", "subst", "gln"}
+MULTICALL = {"busybox", "toybox", "coreutils", "uutils", "call"}   # NAME PROG ARGS runs PROG
 LINK_TYPES = ("symboliclink", "hardlink", "junction")
 # What runs another program the floor does not unwrap (docs/guards.md, Limits): a link program given to one is
 # refused, its paths unread.
@@ -297,27 +307,36 @@ UNWRAPPED = {"find", "parallel", "watch", "flock", "chrt", "script", "entr", "fd
 NET_LINK = re.compile(r"(?i)::\s*Create(?:Symbolic|Hard)Link\w*|\.\s*CreateAsSymbolicLink\s*\(|\bCreateJunction\b")
 PS_PARAM = re.compile(r"^[-–—](\w+)(?::(.*))?$", re.S)
 TEXT_READERS = g.TEXT_TOOLS | {"get-content", "gc", "type", "more", "wc", "sort", "uniq", "cut", "diff", "jq"}
-# Inline code: the languages, how their programs are named, a reference to a link maker (a call, an attribute, an
-# import), what reaches a member by a name the floor cannot read, and what runs a program.
+# Inline code (review round 14, a positive rule): the languages and how their programs are named; a link name as a
+# token (islink, readlink and unlink are not; NFKC-normalised first, as Python reads identifiers); what reaches a
+# member or a function by a name held in text; what evaluates text; what runs a program, and a command line that
+# names a link maker; comments and regular-expression literals, taken out before the code is read.
 LANGS = (("python", re.compile(r"^(?:python[\d.]*w?|pythonw|py|pypy[\d.]*)$")),
          ("node", re.compile(r"^(?:node|nodejs|deno|bun)$")), ("perl", re.compile(r"^perl[\d.]*$")),
          ("ruby", re.compile(r"^ruby[\d.]*$")), ("php", re.compile(r"^php[\d.]*$")))
-_NAMES = (r"(?:link|symlink|hardlink_to|symlink_to|link_to|linkSync|symlinkSync|ln|ln_s|ln_sf|make_link|"
-          r"CreateHardLink\w*|CreateSymbolicLink\w*|CreateJunction|CreateAsSymbolicLink|copy_function|mklink)")
-CODE_LINK = re.compile(r"(?:\.\s*|\bimport\b[^\n;]*?\b|\buse\b[^\n;]*?\b)" + _NAMES + r"\b|\b" + _NAMES + r"\s*\(")
-PERL_LINK = re.compile(r"(?<![$@%&\w])(?:link|symlink)\b\s*(?:\(|[$\w])")   # a call: link OLD, NEW (not /link/)
-DYNAMIC = {"python": re.compile(r"(?<![.\w])(?:getattr|__import__|eval|exec|compile|vars|globals|locals)\s*\(|"
-                                r"\b(?:import_module|ctypes|_winapi|__dict__|__builtins__|attrgetter|methodcaller)\b"),
-           "node": re.compile(r"\b(?:eval|Function|Reflect|binding|import)\s*[.(]|\[[^\]\n]*\+[^\]\n]*\]"),
-           "perl": re.compile(r"\beval\b|&\s*[{$]|->\s*can\b|\bCORE::"),
-           "ruby": re.compile(r"\b(?:send|public_send|__send__|method|instance_eval|eval|const_get)\b"),
-           "php": re.compile(r"\b(?:eval|call_user_func\w*|create_function)\b|\$\w+\s*\(")}
+LINK_TOKEN = re.compile(r"(?i)(?<![a-z])(?:sym|hard)?link(?:s?ync|_to|s)?(?![a-z])|\bln(?:_sf?)?\b|mklink|"
+                        r"Create(?:Symbolic|Hard)Link|CreateJunction|copy_function")
+INDIRECT = {"python": re.compile(r"\b(?:getattr|__getattribute__|__dict__|vars|globals|locals|inspect|attrgetter|"
+                                 r"methodcaller|__builtins__|ctypes|_winapi)\b"),
+            "node": re.compile(r"[\w)\]]\s*\[|\bReflect\b"),
+            "perl": re.compile(r"&\s*[{$]|->\s*can\b|\bCORE::|\\&"),
+            "ruby": re.compile(r"\b(?:send|public_send|__send__|method|public_method|singleton_method|"
+                               r"instance_method|const_get)\b"),
+            "php": re.compile(r"[\s\S]")}   # PHP calls a function by a name held in a string: any literal counts
+EVALS = {"python": re.compile(r"(?<![.\w])(?:eval|exec|compile|__import__)\s*\(|\bimport_module\b|"
+                              r"(?<![.\w])getattr\s*\([^,()]*,\s*(?!S\s*[,)])"),
+         "node": re.compile(r"\beval\s*\(|\bFunction\s*\(|\bimport\s*\("), "perl": re.compile(r"\beval\b"),
+         "ruby": re.compile(r"\b(?:instance_)?eval\b"), "php": re.compile(r"\beval\s*\(|\bcreate_function\b")}
 SPAWN = re.compile(r"(?i)\b(?:subprocess|system|popen|spawn\w*|exec\w*|child_process|Open3|shell_exec|passthru|"
                    r"proc_open|qx)\b|`")
-LINK_COMMAND = re.compile(r"(?i)(?:^|[\s'\"\[,(])(?:ln|link|mklink|fsutil|new-item|ni|junction|subst|cpio)"
-                          r"(?:\.exe)?(?=$|[\s'\",\])])|\bcp\s+-\w*[ls]|--link|--sym")
+LINK_COMMAND = re.compile(r"(?i)(?:^|[\s'\"\[,(])(?:ln|gln|link|mklink|fsutil|new-item|ni|junction|subst|cpio|"
+                          r"busybox|coreutils)(?:\.exe)?(?=$|[\s'\",\])])|\bcp\s+-\w*[ls]|\bcp\b[^'\"]*?\s--(?:l|sy)")
 COMMENT = {"python": r"#[^\n]*", "ruby": r"#[^\n]*", "perl": r"#[^\n]*", "node": r"//[^\n]*|/\*.*?\*/",
            "php": r"//[^\n]*|#[^\n]*|/\*.*?\*/"}
+REGEX_LITERAL = re.compile(r"(?:=~|!~|\bif\b|\bunless\b|\bsplit\b|^|[(,=;!&|?:])\s*m?/(?:\\.|[^/\n])+/[a-z]*")
+UNREAD_CODE = "\0code the floor cannot read"
+INTERPRETER_WORD = re.compile(r"(?:^|[\\/\s])(?:python[\d.]*w?|pythonw|py|pypy[\d.]*|node|nodejs|deno|bun|perl[\d.]*|"
+                              r"ruby[\d.]*|php[\d.]*)(?:\.exe)?\b")
 
 
 def _lang(prog: str) -> str:
@@ -325,7 +344,10 @@ def _lang(prog: str) -> str:
 
 
 def _fed(cmds, command: str) -> str:
-    """What a call may feed a program's input: its heredocs, its here-strings, the words echo and printf print."""
+    """What a call may feed a program's input: its heredocs, its here-strings, the words echo and printf print; or
+    UNREAD_CODE when an interpreter's input is a file (<) or a pipe from another program (review round 14 #9)."""
+    if _input_unread(command):
+        return UNREAD_CODE
     fed = g._heredocs(command)
     for words, _ in cmds:
         if "<<<" in words[:-1]:
@@ -335,59 +357,91 @@ def _fed(cmds, command: str) -> str:
     return "\n".join(fed)
 
 
+def _input_unread(command: str) -> bool:
+    """Whether an interpreter's input in ``command`` is a file (a < redirect on its command) or a pipe from a program
+    that is not echo, printf, or cat of a heredoc."""
+    for seg in re.split(r"[;&\n]+", command):
+        parts = seg.split("|")
+        for k, part in enumerate(parts):
+            if not INTERPRETER_WORD.search(part.split("<")[0]):
+                continue
+            if re.search(r"(?<!<)<(?![<(&])", part):
+                return True
+            left = parts[k - 1].split() if k else []
+            if left and g._prog(left[0]) not in g.STDIN_FEEDERS and not (g._prog(left[0]) == "cat" and "<<" in part
+                                                                         + parts[k - 1]):
+                return True
+    return False
+
+
 def _code_of(lang: str, args: list[str], fed: str) -> str:
     """The code an interpreter runs from its arguments (python -c, node -e, perl -e, ruby -e, php -r, deno eval) or
-    from its input (no script named: what the call feeds, _fed); '' when it runs a script or a module."""
-    if lang in g.INLINE:
-        code = g._inline(args, *g.INLINE[lang][:2])
-        if code:
-            return code[0]
+    from its input (no script named: what the call feeds, _fed); UNREAD_CODE for code given by a substitution or a
+    variable (a $ in Python code, a $( or a backtick in the others); '' when it runs a script or a module."""
+    code = _inline_code(lang, args)
+    if code is not None:
+        return UNREAD_CODE if re.search(r"\$" if lang == "python" else r"\$\(|`", code) else code
+    return fed if _reads_input(lang, args) else ""
+
+
+def _inline_code(lang: str, args: list[str]) -> str | None:
+    """The code an interpreter is given as an argument (python -c, node -e, perl -e, ruby -e, php -r, deno eval);
+    None for none."""
+    found = g._inline(args, *g.INLINE[lang][:2]) if lang in g.INLINE else []
+    if found:
+        return found[0]
     if lang == "php" and "-r" in args[:-1]:
         return args[args.index("-r") + 1]
-    if args[:1] == ["eval"] and len(args) > 1:   # deno eval CODE
-        return args[1]
-    values = g.INLINE.get(lang, ("", "", []))[1]
-    i = 0
-    while i < len(args):
+    return args[1] if args[:1] == ["eval"] and len(args) > 1 else None   # deno eval CODE
+
+
+def _reads_input(lang: str, args: list[str]) -> bool:
+    """Whether an interpreter runs its input: no script, module or required file named before a lone -."""
+    values, i = g.INLINE.get(lang, ("", "", []))[1], 0
+    while i < len(args) and args[i] != "-":
         a = args[i]
-        if a == "-":
-            break
         if not a.startswith("-") or a in ("-m", "-r") or a.startswith("--require"):
-            return ""   # a script, a module, a file it requires
+            return False   # a script, a module, a file it requires
         i += 2 if len(a) == 2 and a[1] in values else 1
-    return fed
+    return True
 
 
 def code_link(lang: str, code: str) -> str:
-    """Why inline code may make a link (round 14, whatever the interpreter): a link maker it names as a call, an
-    attribute or an import; a member or a module reached by a name the floor cannot read, a link name spelled in
-    pieces; a program it runs whose command line names a link maker. '' for code that only names one in a string or
-    a comment (round 13: ordinary code passes)."""
-    stripped = re.sub(COMMENT.get(lang, r"#[^\n]*"), " ", g.LITERAL.sub("S", code), flags=re.S)
-    if lang == "perl" and PERL_LINK.search(stripped):
-        return "link"
-    m = CODE_LINK.search(stripped)
+    """Why inline code may make a link (review round 14, a positive rule whatever the interpreter): code the floor
+    cannot read; a link name as a token outside a string (NFKC-normalised: os.ｌink is os.link); a link name spelled
+    across strings ('li'+'nk'); a link name in a string while the code reaches members or functions by a name held in
+    text (getattr, an index, send, a PHP string call); code that evaluates text; a program run with a command line
+    that names a link maker. '' for code that names one only in a string, a comment or a regular expression."""
+    if code == UNREAD_CODE or code.startswith(UNREAD_CODE):
+        return "code the floor cannot read (a substitution, a variable, a file or a pipe on its input)"
+    text = unicodedata.normalize("NFKC", code)
+    literals = [m.group(2) for m in g.LITERAL.finditer(text)]
+    stripped = re.sub(COMMENT.get(lang, r"#[^\n]*"), " ", g.LITERAL.sub(" S ", text), flags=re.S)
+    stripped = REGEX_LITERAL.sub(" R ", stripped, ) if lang in ("perl", "ruby", "node") else stripped
+    m = LINK_TOKEN.search(stripped)
     if m:
-        return m.group(0).strip()
-    collapsed = re.sub(r"['\"\s+,.]", "", code).lower()
-    dyn = DYNAMIC.get(lang)
-    if dyn and dyn.search(stripped) and ("link" in collapsed or lang == "python" and re.search(
-            r"(?<![.\w])(?:eval|exec|compile|__import__)\s*\(|\bimport_module\b|"
-            r"(?<![.\w])getattr\s*\([^,()]*,\s*(?!S\s*[,)])", stripped)):
-        return dyn.search(stripped).group(0).strip()
-    strings = " ".join(m.group(2) for m in g.LITERAL.finditer(code))
-    if SPAWN.search(stripped) and LINK_COMMAND.search(strings):
-        return LINK_COMMAND.search(strings).group(0).strip(" '\"[,(")
-    return ""
+        return " ".join(m.group(0).split())
+    named = any(LINK_TOKEN.search(s) for s in literals)
+    if not named and "link" in "".join(literals).lower():
+        return "a link name spelled in pieces"
+    if named and INDIRECT.get(lang, re.compile("$^")).search(stripped):
+        return "a link name reached by a name held in text"
+    m = EVALS.get(lang, re.compile("$^")).search(stripped)
+    if m:
+        return f"text it evaluates ({' '.join(m.group(0).split())})"
+    m = LINK_COMMAND.search(" ".join(literals)) if SPAWN.search(stripped) else None
+    return f"a program run with {m.group(0).strip(' ' + chr(39) + chr(34) + '[,(')}" if m else ""
 
 
 def link_words(prog: str, args: list[str]) -> list[str] | None:
     """The path words of a command that makes a link, in any spelling it is given (round 14: GNU's unique prefixes,
     PowerShell's parameter prefixes, colon forms and -ItemType read as a wildcard prefix, a splat, a type the floor
     cannot read), or None when it makes none (LINKERS). A word the floor cannot read stays as written (UNREAD)."""
-    if prog in ("busybox", "toybox") and args:
+    if prog in MULTICALL and args:   # busybox ln, coreutils ln, cmd's call mklink
         return link_words(g._prog(args[0]), args[1:])
-    reader = LINKERS.get(prog)
+    if "--help" in args or "--version" in args:
+        return None
+    reader = LINKERS.get(prog) or (LINKERS.get(prog[1:]) if prog[:1] == "g" else None)   # gln, gcp: GNU's prefix
     return reader(args) if reader else None
 
 
@@ -489,7 +543,7 @@ def _ps_param(args: list[str], i: int) -> tuple[str | None, str | None, int]:
     m = PS_PARAM.match(args[i])
     if not m:
         return None, args[i], i
-    if m.group(2) is None and i + 1 < len(args) and not PS_PARAM.match(args[i + 1]):
+    if not m.group(2) and i + 1 < len(args) and not PS_PARAM.match(args[i + 1]):   # -ItemType: File too
         return m.group(1).lower(), args[i + 1], i + 1
     return m.group(1).lower(), m.group(2), i
 
@@ -565,7 +619,7 @@ def _unread_link(prog: str, words: list[str], fed: str) -> str:
 def _link_paths(prog: str, found: list[str], d: str, kept) -> str:
     """A link program's path word the floor cannot resolve (none at all: its input), or one that reaches what it keeps
     (_link_reach): the refusal; '' else."""
-    for w in found or ["$(its input)"]:
+    for w in found:   # a link program with no path makes nothing (ln --help); xargs and find -exec are refused apart
         if UNREAD.search(w):
             return f"{prog} refused: a link whose path ({w}) the floor cannot resolve"
         if _link_reach(w, g._real(g._path(w, d)), kept):
@@ -598,7 +652,8 @@ def braced(command: str, shell: str) -> str | None:
 # --- round 14: a path word as its shell expands it ------------------------------------------------------------------
 
 GLOB = re.compile(r"[*?\[]")
-GUARDED_TEXT = re.compile(r"(?i)\.git\b|\.claude\b|settings(?:\.local)?\.json|rebase-(?:apply|merge)|\.mcp\.json")
+GUARDED_TEXT = re.compile(r"(?i)\.git\b|\.claude\b|settings(?:\.local)?\.json|rebase-(?:apply|merge)|\.mcp\.json|"
+                          r"\b(?:git-dir|git-path|git-common-dir|absolute-git-dir)\b|\bGIT_DIR\b|[\\/]hooks(?:[\\/]|$)")
 
 
 def _braces(word: str) -> list[str]:
@@ -631,7 +686,7 @@ def _glob(pattern: str, shell: str) -> list[str] | None:
             except OSError:
                 continue
             nxt += [os.path.join(p, n) for n in names if fnmatch.fnmatchcase(n.lower(), seg.lower())
-                    and (shell == "ps" or not n.startswith(".") or seg.startswith("."))]
+                    and (shell in ("ps", "dotglob") or not n.startswith(".") or seg.startswith("."))]
         paths = nxt
         if len(paths) > 256:
             return None
@@ -664,27 +719,58 @@ def unresolved_reach(target) -> bool:
 # --- extractions and the archives they read (moved from brain.floorguard in round 14, unchanged but the .git and
 # link members) ----------------------------------------------------------------------------------------------
 
-EXTRACTORS = {"tar", "bsdtar", "unzip", "expand-archive", "7z", "7za"}
+EXTRACTORS = {"tar", "bsdtar", "unzip", "expand-archive", "7z", "7za", "cpio", "pax"}
+TRANSFORM = re.compile(r"^(?:--transform|--xform|--transf|--xfor|-s)(?:=|$)")   # tar's renames of its members
+
+
+def _extractor(words: list[str]) -> list[str]:
+    """``words`` with an extraction an interpreter's module runs read as the program it equals (review round 14 #7):
+    python -m zipfile -e ARCHIVE DIR as unzip ARCHIVE -d DIR, python -m tarfile -e ARCHIVE DIR as tar -xf ARCHIVE -C
+    DIR."""
+    args = words[1:]
+    if _lang(g._prog(words[0])) != "python" or "-m" not in args[:-1]:
+        return words
+    module, rest = args[args.index("-m") + 1], args[args.index("-m") + 2:]
+    if module not in ("zipfile", "tarfile") or not {"-e", "--extract"} & set(rest):
+        return words
+    pos = [a for a in rest if not a.startswith("-")]
+    archive, target = (pos + ["", ""])[:2]
+    return ["unzip", archive, "-d", target or "."] if module == "zipfile" else ["tar", "-xf", archive, "-C", target or "."]
 
 
 def extractions(acts, kept, shells=()) -> str | None:
     """An archive extracted into a kept file's folder or a kept folder (tar -x -C, unzip -d, Expand-Archive
-    -DestinationPath, 7z x -o; the current folder when none is named): its members are not read. Round 14: into any
-    .git folder, or into a folder the floor cannot resolve."""
+    -DestinationPath, 7z x -o, python -m zipfile -e; the current folder when none is named): its members are not
+    read. Round 14: into any .git folder, into a folder the floor cannot resolve whose text names a .git or .claude
+    folder or git's own folder, or with tar's member renames (--transform, -s)."""
     for (words, d), shell in zip(acts, list(shells) or ["bash"] * len(acts), strict=True):
+        words = _extractor(words)
         prog = g._prog(words[0])
         target = _extract_target(prog, words) if prog in EXTRACTORS else None
         if target is None:
             continue
-        spelled = expand(target, d, shell) if target else [""]
-        if not spelled or len(spelled) > 1:
+        if any(TRANSFORM.match(a) for a in words[1:]):
+            return f"{prog} refused: it renames what it extracts (--transform, -s), which the floor does not read"
+        real = _extract_real(target, d, shell)
+        if real is None:
             return f"{prog} refused: it extracts into a folder the floor cannot resolve ({target})"
-        real = g._real(g._path(spelled[0], d)) if spelled[0] else g._real(d)
         if real in kept.folders or kept.inside(real):
             return f"{prog} into {real} refused: an archive there can hold what sets the floor or runs the guard"
         if GIT_DIR.search(real):
             return f"{prog} into {real} refused: a .git folder changes by git alone (its state, hooks and pointer)"
     return None
+
+
+def _extract_real(target: str, d: str, shell: str) -> str | None:
+    """An extraction's folder as its shell expands it, resolved ('' for a variable's folder whose text names nothing
+    the floor keeps, read as a write to "$OUT" is: docs/guards.md, Limits); None when it may name one, or expands to
+    more than one."""
+    spelled = expand(target, d, shell) if target else [""]
+    if spelled is None and not GUARDED_TEXT.search(target):
+        return ""
+    if not spelled or len(spelled) > 1:
+        return None
+    return g._real(g._path(spelled[0], d)) if spelled[0] else g._real(d)
 
 
 TAR_X = re.compile(r"-?[A-Za-z]*x[A-Za-z]*")   # x, xzf, -xf: a group of tar's short options holding x
@@ -720,8 +806,16 @@ def _expand_target(args: list[str]) -> str:
     return v or (pos[1] if len(pos) > 1 else "")
 
 
+def _copy_in_target(args: list[str]) -> str | None:
+    """cpio -i (--extract) and pax -r without -w extract into the current folder, their members read from their
+    input; None for another mode."""
+    letters = "".join(a[1:] for a in args if re.match(r"^-[A-Za-z]+$", a))
+    copy_in = "i" in letters or "--extract" in args or ("r" in letters and "w" not in letters)
+    return "" if copy_in else None
+
+
 EXTRACT = {"tar": _tar_target, "bsdtar": _tar_target, "unzip": _unzip_target, "7z": _7z_target, "7za": _7z_target,
-           "expand-archive": _expand_target}
+           "expand-archive": _expand_target, "cpio": _copy_in_target, "pax": _copy_in_target}
 
 
 def _extract_target(prog: str, words: list[str]) -> str | None:
@@ -742,10 +836,11 @@ def archived_settings(acts, settings) -> str | None:
     """An extraction whose archive holds one of Claude Code's settings files (its members listed: tar, zip), or one
     whose members the floor cannot list (from its input, 7z, a compression it does not read)."""
     for words, d in acts:
+        words = _extractor(words)
         prog = g._prog(words[0])
         if prog not in EXTRACTORS or _extract_target(prog, words) is None:
             continue
-        archive = _archive_of(prog, words[1:])
+        archive = "-" if prog in ("cpio", "pax") else _archive_of(prog, words[1:])
         members = _members(g._path(archive, d)) if archive and archive != "-" else None
         if members is None:
             return f"{prog} refused: the floor cannot list what the archive holds ({archive or 'its input'})"
@@ -832,3 +927,86 @@ def _members(path: str) -> list[str] | None:
             return tf.getnames()
     except (OSError, tarfile.TarError, zipfile.BadZipFile, ValueError, EOFError):
         return None
+
+
+# --- review round 14: text tools that run or write, a folder entered by a glob, git's writers aimed at .git ---------
+
+AWK = {"awk", "gawk", "mawk", "nawk"}
+AWK_RUNS = re.compile(r"\bsystem\s*\(|\|\s*&?\s*(?:getline|\")|\"\s*\|")   # system(), a pipe to or from a command
+AWK_WRITES = re.compile(r"\bprint[f]?\b[^;}\n]*>>?|\bfflush\s*\(\s*\"")
+SED_RUNS = re.compile(r"(?:^|[;\n{}\d$/!])\s*e(?:\s|$|;)|\bs(.)(?:\\.|(?!\1).)*\1(?:\\.|(?!\1).)*\1[a-zA-Z0-9]*e")
+SED_WRITES = re.compile(r"(?:^|[;\n{}\d$/!])\s*[wW]\s+\S|\bs(.)(?:\\.|(?!\1).)*\1(?:\\.|(?!\1).)*\1[a-zA-Z0-9]*w\s*\S")
+CD_WORD = re.compile(r"(?i)(?:^|[;&|(\n]\s*)(?:cd|pushd|chdir|set-location|sl|push-location)\s+(?:-\w+\s+)*"
+                     r"('[^']*'|\"(?:[^\"\\]|\\.)*\"|[^\s;&|)]+)")
+
+
+def scripted(acts) -> str | None:
+    """awk that runs a command (system(), a pipe to or from one) or prints into a .git or .claude folder, and sed that
+    runs one (its e command, s///e) or writes into one (w, s///w): the refusal (review round 14 #3: they run what the
+    floor does not read)."""
+    for words, *_ in acts:
+        prog, args = g._prog(words[0]), words[1:]
+        text = _awk_text(args) if prog in AWK else _sed_text(args) if prog in ("sed", "gsed") else ""
+        runs, writes = (AWK_RUNS, AWK_WRITES) if prog in AWK else (SED_RUNS, SED_WRITES)
+        if text and runs.search(text):
+            return f"{prog} refused: its program runs a command, which the floor does not read"
+        if text and writes.search(text) and GUARDED_TEXT.search(text):
+            return f"{prog} refused: its program writes into a .git or .claude folder or Claude Code's settings"
+    return None
+
+
+def _awk_text(args: list[str]) -> str:
+    """awk's program: -f's files are not read (their text is the program: refused through the whole text), else its
+    first operand."""
+    pos, opts = g._getopt(args, "fvFiE", ("file", "assign", "field-separator", "include"))
+    return "system(" if any(o in ("-f", "--file") for o, _ in opts) else (pos[0] if pos else "")
+
+
+def _sed_text(args: list[str]) -> str:
+    """sed's script: its -e values, else its first operand (-f's file is refused as a program the floor does not
+    read)."""
+    pos, opts = g._getopt(args, "efl", ("expression", "file", "line-length"), optional="i")
+    if any(o in ("-f", "--file") for o, _ in opts):
+        return "1e"
+    return "\n".join(v for o, v in opts if o in ("-e", "--expression")) or (pos[0] if pos else "")
+
+
+def entered(command: str, shell: str) -> str | None:
+    """A cd, pushd or Set-Location into a folder the floor cannot read that may be a .git or .claude folder (review
+    round 14 #4, #5): a glob one of whose parts matches .git or .claude (bash: a part that starts with a dot, or any
+    under dotglob; PowerShell: any), or a substitution that names git's own folder (rev-parse --git-dir). The
+    refusal; None else."""
+    dot_rule = shell != "ps" and not DOTGLOB.search(command)
+    for m in CD_WORD.finditer(command):
+        word = _unq(m.group(1))
+        parts = re.split(r"[\\/]", word)
+        globbed = any(GLOB.search(p) and (p.startswith(".") or not dot_rule) and
+                      any(fnmatch.fnmatchcase(n, p.lower()) for n in (".git", ".claude")) for p in parts)
+        if globbed or (re.search(r"\$\(|`", word) and GIT_SUBST.search(word)):
+            return f"cd {word} refused: a folder the floor cannot resolve, which may be a .git or .claude folder"
+    return None
+
+
+DOTGLOB = re.compile(r"\bshopt\s+(?:-\w+\s+)*-s\b[^;&|\n]*\bdotglob\b|\bGLOBIGNORE=")
+# git's own writers and where they write: an option's value, or the positional that names the folder.
+GIT_OUTPUTS = {"checkout-index": ("--prefix",), "format-patch": ("-o", "--output-directory"), "archive": ("-o",),
+               "bundle": (), "worktree": (), "clone": (), "init": ()}
+
+
+def git_output(sub: str, args: list[str], d: str) -> str:
+    """git's own command aimed into a .git folder (review round 14 #10): checkout-index --prefix, format-patch -o,
+    archive -o, bundle create FILE, worktree add PATH, clone's and init's folder; the path, '' else."""
+    named = _git_named(sub, args) if sub in GIT_OUTPUTS else []
+    return next((p for p in named if GIT_DIR.search(g._real(g._path(p, d))) or GIT_DIR.search(p)), "")
+
+
+def _git_named(sub: str, args: list[str]) -> list[str]:
+    """The paths a git writer of GIT_OUTPUTS names (git_output)."""
+    named = [v for v in g._option_values(args, GIT_OUTPUTS[sub]) if v]
+    named += [a[2:] for a in args if sub in ("format-patch", "archive") and a.startswith("-o") and len(a) > 2]
+    pos = [a for a in args if not a.startswith("-")]
+    if sub in ("bundle", "worktree"):
+        named += pos[1:2] if pos[:1] in (["create"], ["add"]) else []
+    elif sub in ("clone", "init"):
+        named += pos[-1:]
+    return named

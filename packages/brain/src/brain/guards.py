@@ -1054,6 +1054,7 @@ def _nested(prog: str, args: list[str], cwd: str, shell: str):
     elif sub == "cmd":
         k = next((i for i, a in enumerate(args) if a.lower().lstrip("/") in ("c", "k")), None)
         inner = None if k is None else " ".join(args[k + 1:]) or None
+        inner = re.sub(r"\^(.)", r"\1", inner) if inner else inner   # cmd's escape: mk^link is mklink
     elif prog in ("iex", "invoke-expression"):
         inner = " ".join(a for a in args if not a.lower().startswith("-c")) or None
     else:
