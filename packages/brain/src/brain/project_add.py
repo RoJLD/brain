@@ -48,6 +48,7 @@ brain, as any edit of it: the command writes in the checkout it runs in.
 from __future__ import annotations
 
 import contextlib
+import json
 import os
 import re
 import time
@@ -385,7 +386,6 @@ def who_of(args) -> str:
         return ""
     f = Path(args.existing) / config.FILE
     try:
-        import json
         ident = json.loads(f.read_text(encoding="utf-8")).get("identity")
         kind = ident.get("kind") if isinstance(ident, dict) else None
     except (OSError, ValueError, AttributeError):
