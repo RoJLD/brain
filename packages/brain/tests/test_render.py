@@ -418,21 +418,37 @@ def test_the_read_hint_is_not_registered_by_default(ada, hints):
     hooks, files = _rendered_hooks(ada)
     assert not any("readhint" in c for c in _commands(hooks)) and "readhint.sh" in files
     engine = json.loads((render.claude_hooks() / "hooks.json").read_text(encoding="utf-8"))
-    assert _commands(hooks) == [c for c in _commands(engine) if "readhint" not in c]
+    optional = ("readhint", "tokenguard")   # brain.render.OPTIONAL_HOOKS: the token guard's is off here too
+    assert _commands(hooks) == [c for c in _commands(engine) if not any(o in c for o in optional)]
     assert [g["matcher"] for g in hooks["hooks"]["PreToolUse"]] == \
-        [g["matcher"] for g in engine["hooks"]["PreToolUse"] if "readhint" not in g["hooks"][0]["command"]]
+        [g["matcher"] for g in engine["hooks"]["PreToolUse"]
+         if not any(o in g["hooks"][0]["command"] for o in optional)]
 
 
 def test_hints_read_true_registers_the_read_hint(ada):
     cfg = json.loads((ada / "config.json").read_text(encoding="utf-8"))
-    write(ada, {"config.json": json.dumps({**cfg, "hints": {"read": True}})})
+    write(ada, {"config.json": json.dumps({**cfg, "hints": {"read": True},
+                                           "guards": {"refuse_token_read": True}})})
     hooks, _ = _rendered_hooks(ada)
     hinted = [g["matcher"] for g in hooks["hooks"]["PreToolUse"]
               if all(h["command"] == 'bash "${CLAUDE_PLUGIN_ROOT}/hooks/readhint.sh"' for h in g["hooks"])]
     assert hinted == ["Read", "Grep", "Bash", "PowerShell"]   # one group per tool, gated by if (test_hook_latency)
-    engine = render.claude_hooks() / "hooks.json"   # on: the engine's file byte for byte
+    engine = render.claude_hooks() / "hooks.json"   # every optional hook on: the engine's file byte for byte
     out = {o.rel: o.text for o in render.render(ada, "claude").outputs}["plugins/ada-core/hooks/hooks.json"]
     assert out == neutral.lf(engine.read_text(encoding="utf-8"))
+
+
+@pytest.mark.parametrize("guards", [None, {"refuse_token_read": False}, {"refuse_token_read": True}])
+def test_the_token_guard_hook_follows_its_key(ada, guards):
+    """brain.tokenguard's Read and Grep hook (tokenguard.sh) is registered only under guards.refuse_token_read: off,
+    no Read or Grep pays its cost; the script ships either way."""
+    if guards is not None:
+        cfg = json.loads((ada / "config.json").read_text(encoding="utf-8"))
+        write(ada, {"config.json": json.dumps({**cfg, "guards": guards})})
+    hooks, files = _rendered_hooks(ada)
+    on = bool(guards and guards.get("refuse_token_read"))
+    groups = [g["matcher"] for g in hooks["hooks"]["PreToolUse"] if "tokenguard.sh" in g["hooks"][0]["command"]]
+    assert groups == (["^(Read|Grep)$"] if on else []) and "tokenguard.sh" in files
 
 
 def test_turning_the_read_hint_on_makes_the_render_stale(ada, capsys):

@@ -814,24 +814,34 @@ check `token` (`brain.tokenguard`) refuses a session's call that reaches the fil
 
 | Door | Refused | Passes |
 |---|---|---|
-| `Read` (`guard.sh read`) | the token file, by any spelling the file system resolves to it (`..`, a link, an 8.3 name, `token::$DATA`) | any other file |
-| `Grep` (`guard.sh read`) | a path that is the token file, its folder, or a folder of `<BRAIN_HOME>` that holds it (no path: the cwd) | any other folder |
+| `Read` (`tokenguard.sh`) | the token file, by any spelling the file system resolves to it (`..`, a link, an 8.3 name, `token::$DATA`, a loopback admin share `\\localhost\C$\...`) | any other file |
+| `Grep` (`tokenguard.sh`) | a path that is the token file, its folder, or a folder of `<BRAIN_HOME>` that holds it (no path: the cwd) | any other folder; a `type`, or a `glob` that cannot match the file's name (`*.md`) |
 | `Edit`, `Write`, `MultiEdit`, `NotebookEdit` | the token file (a session never chooses the machine's token either) | |
-| a shell call (Bash, PowerShell, the Terminal panel; wrappers, launchers, nested shells, `cmd /c`, `pwsh -Command`) | any program whose words name the file or its folder (`cat`, `Get-Content`, `type`, `cp -r`, `tar`, `grep -r`, `rm`), an option's value (`-Path:x`, `--file=x`, `if=x`, `@x`), an input redirection (`< x`), a glob that matches it, PowerShell's `${x}`; inline code or a command substitution that names it as text (`open('.../ipc/token')`, `Path(h) / 'ipc' / 'token'`, `$(echo .../ipc/token)`, `[IO.File]::ReadAllText(...)`), brain.ipcauth in inline code; over ssh, any command that names `ipc/token` | `ls`, `dir`, `stat`, `test`, `file`, `du`, `Test-Path`, `Get-Item`, `Get-ChildItem`, `Get-Acl`, `icacls`, `attrib`, `realpath`, `echo` of the path; `brain ipc token` (it never prints the token); a mention in a search (`grep -rn 'ipc/token' docs`) |
+| a shell call (Bash, PowerShell, the Terminal panel; wrappers, launchers, nested shells, `cmd /c`, `pwsh -Command`) | any program whose words name the file, its folder or `<BRAIN_HOME>` itself (`cat`, `Get-Content`, `type`, `cp -r ~/.brain`, `tar`, `grep -r . ~/.brain`, `Compress-Archive`, `rm`); an option's value (`-Path:x`, `--file=x`, `if=x`, `@x`, `f=@x`), a PowerShell list (`'x','T'`) or join (`Join-Path $h ipc token`, `[IO.Path]::Combine(...)`), an input or output redirection (`< T`, `> T`), a glob that matches it (part by part, without reading the disk), `${NAME}`, `${env:NAME}`, `${T}`, a WSL path (`/mnt/c/...`); a metadata program whose output a pipe or a substitution carries (`echo T \| xargs cat`, `Get-Item T \| Get-Content`); inline code, or a heredoc fed to an interpreter, that names `ipc/token` and does something with a path (`open('.../ipc/token')`, `Path(h) / 'ipc' / 'token'`), or uses brain.ipcauth; over ssh, any command that names `ipc/token` | `ls`, `dir`, `stat`, `test`, `file`, `du`, `Test-Path`, `Get-Item`, `Get-ChildItem`, `Get-Acl`, `icacls`, `attrib`, `realpath`, `echo` of the path (not in a pipe); `brain ipc token` (it never prints the token); a mention in a search, a message or an argument (`grep -rn 'ipc/token' docs`, `git commit -m '... ipc/token'`, `pytest -k ipc/token`, `print('ipc/token')`) |
 
 The refusal names the owner and the key; `BRAIN_GUARD_ALLOW=owner` (or `owner:token`) lifts it for the owner. Nothing
-is queued: the owner reads their own token in their own terminal. `guard.sh read` starts Python only when the call
-names `ipc`, `token`, `.brain` or `$BRAIN_HOME`'s folder, or its path is a link; the shell pre-filter starts it on the
-words `ipc` and `token`. The MCP server (below) refuses it whatever the key, and redacts the token from every answer.
-The locked floor neither turns it on nor off: a floor-only machine keeps it, and `guard.sh read` never fails closed
-under the floor (a Read or Grep is judged for the token alone).
+is queued: the owner reads their own token in their own terminal.
+
+**Its cost.** Read and Grep reach it through their own hook, `tokenguard.sh`, which `brain render --target claude`
+(`brain sync`) registers only when the key is on (`brain.render.OPTIONAL_HOOKS`): off, no Read or Grep pays anything.
+On, it starts Python only when the call names `ipc`, `token`, `.brain` or `$BRAIN_HOME`'s folder or the file
+`$BRAIN_IPC_TOKEN_FILE` names, or its path (a relative one read from the call's cwd, a trailing separator dropped) is
+a link. Shell calls and edits are `guard.sh`'s: its pre-filter starts Python on the words `ipc` and `token`, `.brain`,
+`$BRAIN_HOME`'s folder and the token file's name. A locked floor's managed hooks (`brain floor lock`) leave
+`tokenguard.sh` out, so a locked machine judges a Read or Grep for nothing; its shell calls and edits keep the check.
+The locked floor never turns the check on (the key does) nor off (a floor-only machine keeps it).
+
+The MCP server (below) runs the check whatever the key, on its tools' effects: every effect is a `brain` command, so
+it refuses a reference that resolves to the file (a link named as a spec); its real protection is that every answer
+has the token's value redacted.
 
 **What it does not see** (the token is readable by the owner's account, which a session shares: this guard is the
 lock, and it is advisory): a script file that reads the token (`python leak.py`), a path built at run time from
 pieces the guard cannot read (base64, character codes, `os.sep` joins, a variable set by an earlier call), a
-recursive read of a folder above the token's own beyond `<BRAIN_HOME>` (`grep -r x ~`), a link made earlier by a
-script, and a glob that spells neither `ipc` nor `token` (`~/.brain/ip?/*`), which the pre-filter lets through
-without starting Python.
+recursive read of a folder above `<BRAIN_HOME>` (`grep -r x ~`), a link made earlier by a script, a working folder
+that is itself a link, and a glob that spells neither `ipc`, `token` nor the brain's home (`~/.br?in/ip?/*`), which
+the pre-filter lets through without starting Python. A pipe that carries a metadata program's output is refused even
+when it only counts (`ls ~/.brain/ipc | wc -l`).
 
 ## The guards for other agents (the MCP server)
 

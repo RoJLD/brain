@@ -34,8 +34,8 @@ on Windows, else bash (TERMINAL_TOOL), in its cwd, else the session's. Nine guar
   owner can queue, any other is refused naming the owner's terminal. A category the file does
   not declare is not guarded; money and legal have no command, only their deny rules. Under config.json
   guards.refuse_token_read (off by default), its check ``token`` (brain.tokenguard) refuses a Read, Grep, tool edit
-  or shell call that reaches the machine's IPC token file (Read and Grep: guard.sh read). Also refused: setting
-  BRAIN_GUARD_ALLOW for later sessions (setx, the registry, Claude Code's settings, a shell profile; check override).
+  or shell call that reaches the machine's IPC token file (Read and Grep: the opt-in hook tokenguard.sh). Also
+  refused: setting BRAIN_GUARD_ALLOW for later sessions (setx, the registry, Claude Code's settings, a shell profile; check override).
   A session's Remote Control and permission mode (security-settings, never lifted) are refused but in Remote Control's
   three exceptions (wi-brain-guard-rc-archive, remote_control): off on a finished session the caller started; at a
   handover between Brain coordinators, on for the coordinator the caller started to succeed it and off on itself,

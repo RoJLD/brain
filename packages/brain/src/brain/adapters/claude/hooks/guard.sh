@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Run the PreToolUse guards (hooks/guard.py, brain/guards.py) on the hook's JSON on stdin; $1 is shell (Bash,
-# PowerShell), edit (Edit, Write, MultiEdit, NotebookEdit) or read (Read, Grep). A refusal is one JSON line on stdout; nothing else is
+# PowerShell) or edit (Edit, Write, MultiEdit, NotebookEdit). A refusal is one JSON line on stdout; nothing else is
 # printed. Uses $BRAIN_PYTHON, else the brain command's venv (<BRAIN_HOME>/venv: the installed engine), else python3,
 # else python, skipping the Windows Store stubs. It always exits 0, so a guard never breaks a session: on an error the
 # call goes through, except where a leak is possible (COMPAT-4, wi-brain-guards-fail-closed): when no Python is found,
@@ -21,7 +21,6 @@
 { . "${BASH_SOURCE[0]%[!A-Za-z0-9._-]*}/common.sh" || { selftime_bash() { :; }; brain_python() { return 1; }; brain_config() { :; }; floor_setting() { :; }; }; } 2>/dev/null  # brain_t0, selftime_bash, brain_python, brain_config, floor_setting
 
 needs_python() {
-  [ "$1" = "read" ] && { reads_token "$2"; return; }
   [ "$1" = "shell" ] || return 0
   case "$2" in *'gh '*) return 0 ;; esac
   local command='"command"[[:space:]]*:[[:space:]]*"(([^"\\]|\\.)*)"' text=$2 redirect discard found
@@ -58,6 +57,14 @@ needs_python() {
   [ -f "$cache" ] && { IFS= read -r clis; IFS= read -r form; } < "$cache"
   [[ -n $form && $form != '#brain.node-clis/v1' ]] && return 0
   local node_clis="$before($clis)([^A-Za-z0-9_-]|$)"
+  # the machine's token (brain/tokenguard.py): the brain's home named (.brain, BRAIN_HOME's folder) or the file
+  # BRAIN_IPC_TOKEN_FILE names; the words ipc and token are in owner_power
+  local tokfile=${BRAIN_IPC_TOKEN_FILE:-} homename=${BRAIN_HOME:-}
+  tokfile=${tokfile%[\\/]}; tokfile=${tokfile##*[\\/]}; homename=${homename%[\\/]}; homename=${homename##*[\\/]}
+  local token_home='[\\/]\.brain([\\/"]|$)'
+  [ -n "$tokfile" ] && [[ $rest == *"$tokfile"* ]] && return 0
+  [ -n "$homename" ] && [[ $rest =~ [\\/]"$homename"([\\/\"]|$) ]] && return 0
+  [[ $rest =~ $token_home ]] && return 0
   shopt -s nocasematch
   [[ $rest =~ $writers || $rest =~ $owner_power || ( -n $clis && $rest =~ $node_clis ) ]] && found=0 || found=1
   shopt -u nocasematch
@@ -76,24 +83,6 @@ commits_or_pushes() {
   shopt -s nocasematch
   [[ $text =~ $gitcp ]] && found=0 || found=1
   shopt -u nocasematch
-  return $found
-}
-
-# reads_token JSON: whether a Read or Grep call may reach the machine's IPC token (brain/tokenguard.py, under
-# config.json guards.refuse_token_read): its JSON names ipc, token, .brain or BRAIN_HOME's folder (a Grep with no
-# path searches the cwd), or its path is a link. Any other Read or Grep starts no Python.
-reads_token() {
-  local path='"(file_path|path)"[[:space:]]*:[[:space:]]*"(([^"\\]|\\.)*)"' home=${BRAIN_HOME:-} found=1 p
-  home=${home%[\\/]}
-  home=${home##*[\\/]}
-  shopt -s nocasematch
-  case "$1" in *ipc*|*token*|*.brain*) found=0 ;; esac
-  [[ $found = 1 && -n $home && $1 == *"$home"* ]] && found=0
-  shopt -u nocasematch
-  if [[ $found = 1 && $1 =~ $path ]]; then
-    p=${BASH_REMATCH[2]//\\\\/\\}
-    [ -L "$p" ] && found=0
-  fi
   return $found
 }
 
@@ -153,7 +142,6 @@ why="no Python 3 found (BRAIN_PYTHON, <BRAIN_HOME>/venv, python3, python)"
 [ -n "$path_py" ] && floor_on && why="only PATH's $brain_py was found, not <BRAIN_HOME>/venv's"
 [ -n "$brain_py" ] && [ "$brain_py" = "${BRAIN_PYTHON:-}" ] && why="$why; BRAIN_PYTHON chose it: fix or unset BRAIN_PYTHON"
 selftime_bash "hook guard ${1:-} [cannot run]" 1
-# a Read or Grep is judged for the token only (brain/tokenguard.py, off by default): the floor never refuses it
-if [ "${1:-}" != read ] && floor_on; then refuse_floor "$why"; exit 0; fi
+if floor_on; then refuse_floor "$why"; exit 0; fi
 commits_or_pushes "${1:-}" "$input" && refuse_cannot_run "$why"
 exit 0
