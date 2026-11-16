@@ -138,7 +138,11 @@ holds the standard steps for the whole release, and a PR's fragment adds only it
   its line names the engine that read the store. CI holds no owner's store and does not run it, so the maintainer
   runs it by hand before opening the version PR. A version that names two waves (a later wave pinned to the current
   wave's jump) is refused as ambiguous. A store with no wave of this version passes when no pending wave is below
-  it. `brain next` then shows the next wave, the carried items first.
+  it and the last reached wave before it records what it shipped as (`props.shipped_as`): a wave reached by hand
+  without it is refused, since whether it shipped as this version cannot be told (`brain item set <wave>
+  props.shipped_as=X.Y.Z` records it). The line names the wave it checked, and how when it ships under another
+  number (`wave-s3 (1.0.2, closed as 1.1.0, a jump)`). `brain next` then shows the next wave, the carried items
+  first.
 - `compat-prev` is green on main's latest PR: the upgrade test goes from the last tag to HEAD and back
   ([`packages/brain/docs/formats.md`](../packages/brain/docs/formats.md), « The upgrade test »).
 - **Read what changed**: `git log vP..origin/main` and `git diff --stat vP origin/main`. Look for what a brain that

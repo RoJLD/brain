@@ -514,7 +514,8 @@ def closure_problems(plan: Plan, version: str) -> list[str]:
     w = plan.for_release(version)
     behind = _behind(plan, version, w)
     if w is None:
-        return behind
+        unrecorded = _unrecorded_ship(plan, version)
+        return behind + ([unrecorded] if unrecorded and not behind else [])
     out = behind + [f"{i}: in {len(plan.planned(i))} waves ({', '.join(plan.planned(i))}), {w} among them: one wave "
                     "per item (brain check)" for i in sorted(plan.members.get(w, ())) if len(plan.planned(i)) > 1]
     left = [i for i in plan.items_of(w) if plan.status(i) in OPEN]
@@ -526,6 +527,46 @@ def closure_problems(plan: Plan, version: str) -> list[str]:
         out.append(f"wave {version} ({w}) is still pending: brain wave close {version} --write reaches it, then "
                    f"brain sync")
     return out
+
+
+def closing(plan: Plan, version: str) -> str:
+    """Which wave a version PR of ``version`` closes, as said: ``wave-s3 (1.0.2, closed as 1.1.0, a jump)`` when its
+    label is another release (the release jumped, or a reached wave shipped as ``version``), ``wave-s3 (1.1.0)``
+    when it is labelled so; '' when ``version`` names none (wi-brain-release-check-shipped-wave)."""
+    w = plan.for_release(version)
+    if w is None:
+        return ""
+    label = plan.label(w)
+    if label == version:
+        return f"{w} ({label})"
+    how = "a jump" if plan.status(w) == "pending" else "its props.shipped_as"
+    return f"{w} ({label}, closed as {version}, {how})"
+
+
+def previous_wave(plan: Plan, version: str) -> str | None:
+    """The last live reached wave whose release (what it shipped as, else its label) is below ``version``: the one a
+    version PR of a release no wave names follows; None without one."""
+    key = release_key(version)
+    if key is None:
+        return None
+    below = [(release_key(plan.shipped(w)), w) for w in plan.live if plan.status(w) == "reached"]
+    below = [(k, w) for k, w in below if k and k < key]
+    return max(below)[1] if below else None
+
+
+def _unrecorded_ship(plan: Plan, version: str) -> str:
+    """When ``version`` names no wave: the wave before it was reached without ``props.shipped_as`` (closed by hand,
+    not by brain wave close), so whether it shipped as ``version`` cannot be told and the closure rule would pass
+    unread (a wave closed by hand that shipped as the next minor, its version PR finding no wave of that number;
+    wi-brain-release-check-shipped-wave). '' when that wave records what it shipped as, or there is none."""
+    w = previous_wave(plan, version)
+    if w is None or release_key(_props(plan.nodes[w]).get("shipped_as")):
+        return ""
+    label = plan.label(w)
+    return (f"release {version} names no wave, and the wave before it, {w} ({label}), was reached without "
+            f"props.shipped_as: record what it shipped as, so the closure rule reads the right wave (brain item set "
+            f"{w} props.shipped_as={version} if this version ships it, props.shipped_as={label} if {label} shipped "
+            f"it already), then brain sync")
 
 
 def ambiguous(plan: Plan, version: str) -> str:

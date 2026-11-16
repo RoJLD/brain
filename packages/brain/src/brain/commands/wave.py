@@ -146,7 +146,9 @@ def _check(args, root: Path, store: Path) -> int:
     for line in found:
         print(f"error: {line}")
     if not found:
-        print(f"wave {args.version}: closed, or no wave of that release (its version PR may go)")
+        closing = waves.closing(plan, args.version)   # the wave it closes when it ships under another number
+        print(f"wave {args.version}: " + (f"{closing} closed" if closing else "no wave of that release")
+              + " (its version PR may go)")
     wid = plan.resolve(args.version)
     release = plan.label(wid) if wid else args.version
     if waves.release_key(release):
