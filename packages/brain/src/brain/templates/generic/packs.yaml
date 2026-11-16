@@ -4,7 +4,9 @@
 # the rendered files are never edited by hand: brain check refuses them.
 #
 # A pack may also list rules (files of source/rules/), procedures (source/procedures/<name>/ or the engine's) and
-# MCP servers (source/mcp.yaml); projects: [a, b] gives it to those projects only.
+# MCP servers (source/mcp.yaml); projects: [a, b] gives it to those projects only. A typology pack names its
+# typologies and its parts; the engine's (software, research) are taken with from: engine, as brain typologies
+# propose PROJECT plans from the project's lifecycle.typologies (docs/typologies.md, « Typology packs »).
 
 marketplace:
   owner:
