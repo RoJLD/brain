@@ -37,8 +37,8 @@ import json
 import sys
 from pathlib import Path
 
-from . import (audit, docsgraph, feature_coverage, formats, graph, inventory, links, norms, paths, projects, schemadiff,
-               structure)
+from . import (audit, docsgraph, feature_coverage, formatlint, formats, graph, inventory, links, norms, paths,
+               projects, schemadiff, structure)
 from .inventory import AuditError, git
 
 ORDER = {"entry": 0, "prod": 1, "other": 2, "": 3}
@@ -371,6 +371,9 @@ def main(args, root: Path | None) -> int:
     out = sorted(out + _structure(args, p, c, top, rows, base_tree, new_tree, base_rev, new_rev, root, touched,
                                   cfgs[0].name if cfgs else c.name)
                  + _reread(p, cfgs, c, top, rows, base_rev, new_rev), key=_rank)
+    # the format lints, each backend the owner switched on (brain.formatlint): info and DEFER lines, never blocking
+    lint_rows, lint_na = formatlint.signals(c.name, rows, base_tree, new_tree, formatlint.enabled(root))
+    out, errors = sorted(out + lint_rows, key=_rank), {**errors, **lint_na}
     n_new = sum(1 for f in out if f["tag"] == "NEW")
     n_left = sum(1 for f in out if f["tag"] == "LEFT")
     n_defer = sum(1 for f in out if f["tag"] == "DEFER")

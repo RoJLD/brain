@@ -1,0 +1,19 @@
+# format.real-home-test (brain.formatlint): a test that reads the real home. brain.formatlint gives it the test
+# modules only (conftest.py, which pins the home, is not one).
+id: format.real-home-test
+language: python
+severity: warning
+message: a test reads the real home
+rule:
+  any:
+    - pattern: Path.home()
+    - pattern: pathlib.Path.home()
+    - all:
+        - any:
+            - pattern: os.path.expanduser($S)
+            - pattern: Path($S).expanduser()
+            - pattern: pathlib.Path($S).expanduser()
+        - has:
+            kind: string
+            regex: '^[rbuRBU]*["'']~'
+            stopBy: end

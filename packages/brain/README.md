@@ -281,6 +281,34 @@ an `info` line by default (shown, never blocking), a NEW line under `config.json
 moved into it from a file that no longer defines their function, make one DEFER line per file and norm to the repo's
 debt item, fixed by batches (never blocking).
 
+#### Format lints
+
+Three rules keep the brain's home behind its one door (`brain.formatlint`, wi-brain-format-lint):
+`format.home-path` (a path into the home built by hand outside `brain.paths`: `Path.home() / ".brain"`,
+`os.path.expanduser("~/.brain...")`), `format.direct-write` (a file of the home written around `brain.stateio`: a
+`write_text()`, `write_bytes()` or `open(..., "w")` on a path built from `brain_home()`, in the same function) and
+`format.real-home-test` (a test reading the real home: `Path.home()`, `os.path.expanduser("~...")`; `conftest.py`,
+which pins the home, is not a test). Two backends read them, each switched on by the owner in `config.json` and both
+off by default: `audit.format_lints_python` (the rules in the AST, nothing to install) and
+`audit.format_lints_ast_grep` (the same rules as ast-grep YAML, `brain/lints/*.yml`, run by the `ast-grep` binary at
+its pinned version, 0.51.0; N/A, said, without it). Switched on, `brain audit --diff` reads them in the Python files a
+change touches: an info line for an occurrence the change adds, one DEFER line per file and rule for those already
+there; never blocking, and an occurrence both backends find is said once.
+
+`brain lint formats [--repo-dir D] [--backend python|ast-grep | --compare] [--json]` runs them over a whole repo,
+whatever the switches; `--compare` runs both and prints, for each, the occurrences found and the time taken, then what
+each finds that the other does not (ast-grep has no data flow: it flags a write in any function that calls
+`brain_home()`, where the python backend follows the local names assigned from it).
+
+The binary is the owner's install, never downloaded by the engine: the `lint` extra pins it
+(`pip install -e "packages/brain[lint]"` from a checkout, or in the brain's venv `pip install --only-binary :all: ast-grep-cli==0.51.0`, its
+wheels `ast_grep_cli-0.51.0-py3-none-win_amd64.whl`, sha256
+`be2586df4192adb60fa808bd83c4f3a46c63315f48394400f07700f9e76f4dc6`, and
+`ast_grep_cli-0.51.0-py3-none-manylinux_2_28_x86_64.whl`, sha256
+`17007574681fe872473850780304b3df57ca98ac575d88957972fea8c3810c26`, as PyPI publishes them; `--require-hashes` with a
+requirements line `ast-grep-cli==0.51.0 --hash=sha256:<the wheel's>` checks it). `ast-grep --version` then says
+0.51.0, and `brain lint formats --compare` shows what it adds.
+
 And it reads what a change of a schema narrows (`brain.schemadiff`, wi-brain-schema-diff): a JSON Schema
 (`*.schema.json`) or a graph store's `schema.yaml` whose new version refuses what the old one accepted (a property
 removed, a field newly required, an enum or a type narrowed, a bound tightened, a type or a status removed). A
