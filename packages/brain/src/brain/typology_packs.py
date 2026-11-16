@@ -296,17 +296,19 @@ def propose(root: Path, project: str) -> tuple[list[str], list[Proposal], Path |
     have_layers = _store_layers(store)
     std = p.standards if isinstance(p.standards, dict) else {}
     have_profiles = {str(x) for x in std.get("profiles") or []}
-    out = []
-    for pid, origin, spec, active, own in _candidates(neutral.load(root), project):
-        named = [str(t) for t in spec.get("typologies") or []]
-        meets = sorted({t for k in kinds for t in cat.meets(k, named)})
-        if not meets:
-            continue
-        packstd = spec.get("standards") if isinstance(spec.get("standards"), dict) else {}
-        out.append(Proposal(pid, origin, meets, active, "" if active else ("extend" if own else "add"),
-                            [la for la in spec.get("layers") or [] if have_layers is not None and la not in have_layers],
-                            [x for x in packstd.get("profiles") or [] if x not in have_profiles]))
-    return kinds, out, store
+    out = [_proposal(c, kinds, cat, have_layers, have_profiles) for c in _candidates(neutral.load(root), project)]
+    return kinds, [pr for pr in out if pr.meets], store
+
+
+def _proposal(candidate, kinds: list[str], cat, have_layers: set[str] | None, have_profiles: set[str]) -> Proposal:
+    """One candidate pack against a project: the typologies it meets (none: not proposed), its step, what it lacks."""
+    pid, origin, spec, active, own = candidate
+    named = [str(t) for t in spec.get("typologies") or []]
+    meets = sorted({t for k in kinds for t in cat.meets(k, named)})
+    packstd = spec.get("standards") if isinstance(spec.get("standards"), dict) else {}
+    layers = [la for la in spec.get("layers") or [] if have_layers is not None and la not in have_layers]
+    return Proposal(pid, origin, meets, active, "" if active else ("extend" if own else "add"), layers,
+                    [x for x in packstd.get("profiles") or [] if x not in have_profiles])
 
 
 def _candidates(src, project: str) -> list[tuple[str, str, dict, bool, bool]]:
