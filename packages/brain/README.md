@@ -296,9 +296,14 @@ change touches: an info line for an occurrence the change adds, one DEFER line p
 there; never blocking, and an occurrence both backends find is said once.
 
 `brain lint formats [--repo-dir D] [--backend python|ast-grep | --compare] [--json]` runs them over a whole repo,
-whatever the switches; `--compare` runs both and prints, for each, the occurrences found and the time taken, then what
-each finds that the other does not (ast-grep has no data flow: it flags a write in any function that calls
-`brain_home()`, where the python backend follows the local names assigned from it).
+whatever the switches; `--compare` runs both and prints, for each, its count by rule and the time taken, then what
+each finds that the other does not (one backend, or one N/A: its occurrences). The two differ by design where
+ast-grep has no data flow: it flags a write in any function that calls `brain_home()` (and none at module level),
+where the python backend follows the local names assigned from it in the same function (not a module constant, a
+closure's name or an attribute). Both read a literal argument only, and the python backend flags a test's
+`Path.home()` even after `monkeypatch.setattr(Path, "home", ...)` (a test then reads its own fake: justify it). The
+ast-grep backend never reads an empty or failed scan as no finding: a refused rule, a changed CLI or a timeout makes
+it N/A with ast-grep's own words; the files go in batches under the Windows command line's limit.
 
 The binary is the owner's install, never downloaded by the engine: the `lint` extra pins it
 (`pip install -e "packages/brain[lint]"` from a checkout, or in the brain's venv `pip install --only-binary :all: ast-grep-cli==0.51.0`, its

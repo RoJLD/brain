@@ -1,6 +1,6 @@
 # format.direct-write (brain.formatlint): a file of the brain's home written around brain.stateio. ast-grep has no
 # data flow: it flags a write inside a function that calls brain_home(), where the python backend follows the local
-# names assigned from it. brain lint formats --compare shows where they differ.
+# names assigned from it (and reads a module-level write too). brain lint formats --compare shows where they differ.
 id: format.direct-write
 language: python
 severity: warning
@@ -9,11 +9,22 @@ rule:
   any:
     - pattern: $P.write_text($$$)
     - pattern: $P.write_bytes($$$)
-    - all:
+    - all:   # open(path, "w" | "a" | "x" | "+"...): the mode is the second argument, a literal
         - pattern: open($F, $MODE, $$$)
         - has:
-            kind: string
-            regex: '^[rbuRBU]*["''][^"'']*[wax+]'
+            kind: argument_list
+            has:
+              kind: string
+              nthChild: 2
+              regex: '^[rbuRBU]*["''][^"'']*[wax+]'
+    - all:   # path.open("w"): the mode is the first argument
+        - pattern: $P.open($MODE, $$$)
+        - has:
+            kind: argument_list
+            has:
+              kind: string
+              nthChild: 1
+              regex: '^[rbuRBU]*["''][^"'']*[wax+]'
   inside:
     kind: function_definition
     stopBy: end

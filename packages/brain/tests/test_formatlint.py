@@ -7,6 +7,8 @@ import json
 import os
 import stat
 import sys
+from pathlib import Path
+
 import pytest
 
 from brain import cli, formatlint, inventory, scout
@@ -81,6 +83,9 @@ def test_each_rule_reads_its_files_and_never_its_door():
     assert _checks("src/brain/paths.py", HOME_PATH) == []
     assert {c for c, _ in _checks("tests/test_x.py", HOME_PATH)} == {"format.real-home-test"}   # a test's own rule
     assert _checks("src/brain/x.py", "def (:\n") == []                     # does not parse: nothing
+    assert formatlint.checks_for("tools/paths.py") == ["format.home-path", "format.direct-write"]   # not a door
+    imported = "from os.path import expanduser\n\n\ndef f():\n    return expanduser('~/.brain')\n"
+    assert _checks("src/brain/x.py", imported) == [("format.home-path", 5)]
 
 
 def test_both_backends_are_off_by_default_and_switched_by_the_owner(tmp_path, monkeypatch):
@@ -95,8 +100,11 @@ def test_both_backends_are_off_by_default_and_switched_by_the_owner(tmp_path, mo
 # --- the ast-grep backend: its pinned binary, faked ---
 
 FAKE = '''\
-import json, re, sys
+import json, os, re, sys
 args = sys.argv[1:]
+if os.path.exists(os.path.join(os.path.dirname(__file__), "broken")):
+    print("error: the rule does not parse", file=sys.stderr)
+    sys.exit(2)
 if args == ["--version"]:
     print("ast-grep VERSION")
     sys.exit(0)
@@ -145,6 +153,26 @@ def test_another_version_is_na_the_pinned_one_scans(fake_grep):
     assert [(h.check, h.path, h.line) for h in got] == [
         ("format.home-path", "src/brain/x.py", 6), ("format.home-path", "src/brain/x.py", 10),
         ("format.home-path", "src/brain/x.py", 14), ("format.real-home-test", "tests/test_x.py", 7)]
+    (Path(os.environ["PATH"].split(os.pathsep)[0]) / "broken").write_text("", encoding="utf-8")
+    got, why = formatlint.grep_hits({"src/brain/x.py": Path(__file__)}, formatlint.shutil.which("ast-grep"))
+    assert got == [] and why == "ast-grep scan direct-write.yml: exit 2, error: the rule does not parse"   # never 0 hits
+
+
+def test_the_files_go_in_batches_under_the_command_line_limit():
+    files = [f"C:/some/long/folder/file_{i:04d}.py" for i in range(2000)]
+    batches = formatlint._batches(files)
+    assert len(batches) > 1 and [f for b in batches for f in b] == files
+    assert all(sum(len(f) + 3 for f in b) <= formatlint.ARGV_CHARS for b in batches)
+
+
+@pytest.mark.skipif(not formatlint.ast_grep()[0], reason="the real ast-grep at its pinned version is not installed")
+def test_the_real_rules_find_what_the_python_backend_finds():
+    """With the owner's binary installed: the YAML rules on the same samples (the comparison's ground)."""
+    texts = {"src/brain/x.py": HOME_PATH, "src/brain/y.py": DIRECT_WRITE, "tests/test_x.py": REAL_HOME}
+    got, why = formatlint.hits(texts, "ast-grep")
+    assert why == ""
+    assert sorted((h.check, h.path, h.line) for h in got) == sorted(
+        (h.check, h.path, h.line) for p, t in texts.items() for h in formatlint.python_hits(p, t))
 
 
 def test_the_rules_ship_with_the_engine():
@@ -165,7 +193,8 @@ def _change(make_repo):
     return repo, base
 
 
-def test_the_scout_says_what_a_change_adds_and_defers_what_was_there(make_repo):
+def test_the_scout_says_what_a_change_adds_and_defers_what_was_there(make_repo, monkeypatch):
+    monkeypatch.setattr(formatlint.shutil, "which", lambda name: None)   # no ast-grep, even an installed one
     repo, base = _change(make_repo)
     rows = scout.changed(repo, base)
     args = ("lab", rows, inventory.git_tree(repo, base), inventory.work_tree(repo))

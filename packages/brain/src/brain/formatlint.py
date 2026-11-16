@@ -83,9 +83,8 @@ def checks_for(path: str) -> list[str]:
         return ["format.real-home-test"]
     if path.rsplit("/", 1)[-1] == "conftest.py" or inventory.in_tests(path):
         return []
-    base = path.rsplit("/", 1)[-1]
-    return [c for c, door in (("format.home-path", "paths.py"), ("format.direct-write", "stateio.py"))
-            if base != door]
+    return [c for c, door in (("format.home-path", "brain/paths.py"), ("format.direct-write", "brain/stateio.py"))
+            if path != door and not path.endswith("/" + door)]   # the engine's doors, not any paths.py
 
 
 def _sig(text: str) -> str:
@@ -105,11 +104,14 @@ def _home_call(n: ast.AST, m: norms.Module) -> bool:
 
 
 def _expanded(n: ast.AST, m: norms.Module, rx: re.Pattern) -> bool:
-    """``os.path.expanduser(S)`` or ``Path(S).expanduser()`` with a literal S that ``rx`` matches."""
-    if not (isinstance(n, ast.Call) and isinstance(n.func, ast.Attribute) and n.func.attr == "expanduser"):
+    """``os.path.expanduser(S)`` (however imported) or ``Path(S).expanduser()`` with a literal S that ``rx``
+    matches."""
+    if not isinstance(n, ast.Call):
         return False
     if norms.dotted(n.func, m.names) == "os.path.expanduser":
         return bool(n.args) and bool(rx.match(_str(n.args[0]) or ""))
+    if not (isinstance(n.func, ast.Attribute) and n.func.attr == "expanduser"):
+        return False
     inner = n.func.value
     return (isinstance(inner, ast.Call) and norms.dotted(inner.func, m.names) in ("pathlib.Path", "Path")
             and bool(inner.args) and bool(rx.match(_str(inner.args[0]) or "")))
@@ -188,6 +190,8 @@ def python_hits(path: str, text: str | None, checks: list[str] | None = None) ->
 def ast_grep() -> tuple[str, str]:
     """(the binary, '') when ``ast-grep`` at :data:`AST_GREP_PIN` is on the PATH, else ('', why not)."""
     exe = shutil.which("ast-grep")
+    if exe and Path(exe).resolve().parent == Path.cwd().resolve():   # Windows looks in the current folder first
+        exe = None
     if not exe:
         return "", (f"ast-grep is not on the PATH (the owner's install, ast-grep-cli {AST_GREP_PIN}: README, "
                     "Format lints)")
@@ -212,23 +216,57 @@ def grep_hits(files: dict[str, Path], exe: str) -> tuple[list[Hit], str]:
     back = {str(Path(f).resolve()).replace("\\", "/").lower(): p for p, f in files.items()}
     out: list[Hit] = []
     for check, paths in sorted(by_rule.items()):
-        argv = [exe, "scan", "--rule", str(RULES_DIR / RULE_FILES[check]), "--json=compact",
-                *(str(files[p]) for p in paths)]
-        try:
-            proc = subprocess.run(argv, capture_output=True, text=True, encoding="utf-8", errors="replace",
-                                  timeout=AST_GREP_TIMEOUT, stdin=subprocess.DEVNULL)
-            rows = json.loads(proc.stdout or "[]")
-        except (OSError, subprocess.SubprocessError, ValueError) as exc:
-            return [], f"ast-grep scan {RULE_FILES[check]} failed ({type(exc).__name__})"
-        if not isinstance(rows, list):
-            return [], f"ast-grep scan {RULE_FILES[check]}: not a JSON list"
-        for r in rows if isinstance(rows, list) else []:
-            key = str(Path(str(r.get("file", ""))).resolve()).replace("\\", "/").lower()
-            path = back.get(key)
-            start = ((r.get("range") or {}).get("start") or {}).get("line")
-            if path is not None and isinstance(start, int):
-                out.append(Hit(check, path, start + 1, _sig(str(r.get("text", "")))))
+        for batch in _batches([str(files[p]) for p in paths]):
+            rows, why = _scan(exe, RULE_FILES[check], batch)
+            if why:
+                return [], why
+            out += _rows(rows, check, back)
     return sorted(set(out), key=lambda h: (h.path, h.line, h.check)), ""
+
+
+ARGV_CHARS = 24_000   # a command line's files at most (Windows refuses past 32,767 characters)
+
+
+def _batches(files: list[str]) -> list[list[str]]:
+    """``files`` in batches whose command line stays under :data:`ARGV_CHARS`."""
+    out, cur, size = [], [], 0
+    for f in files:
+        if cur and size + len(f) + 3 > ARGV_CHARS:
+            out.append(cur)
+            cur, size = [], 0
+        cur.append(f)
+        size += len(f) + 3
+    return out + ([cur] if cur else [])
+
+
+def _scan(exe: str, rule: str, batch: list[str]) -> tuple[list, str]:
+    """One ``ast-grep scan`` of a rule over a batch: (its JSON rows, '') or ([], why it failed: a rule refused, a CLI
+    that changed, a timeout), never an empty answer read as no finding."""
+    argv = [exe, "scan", "--rule", str(RULES_DIR / rule), "--json=compact", *batch]
+    try:
+        proc = subprocess.run(argv, capture_output=True, text=True, encoding="utf-8", errors="replace",
+                              timeout=AST_GREP_TIMEOUT, stdin=subprocess.DEVNULL)
+        rows = json.loads(proc.stdout) if (proc.stdout or "").strip() else None
+    except (OSError, subprocess.SubprocessError, ValueError) as exc:
+        return [], f"ast-grep scan {rule} failed ({type(exc).__name__})"
+    if proc.returncode not in (0, 1) or not isinstance(rows, list):
+        tail = " ".join((proc.stderr or "").split())[-200:]
+        return [], f"ast-grep scan {rule}: exit {proc.returncode}, {tail or 'no JSON list on stdout'}"
+    return rows, ""
+
+
+def _rows(rows: list, check: str, back: dict[str, str]) -> list[Hit]:
+    """ast-grep's JSON rows as hits, each file mapped back to its repo path (``back``: the resolved, case-folded
+    file -> its path); a row of another file, or without a line, is left out."""
+    out = []
+    for r in rows:
+        r = r if isinstance(r, dict) else {}
+        key = str(Path(str(r.get("file", ""))).resolve()).replace("\\", "/").lower()
+        path = back.get(key)
+        start = ((r.get("range") or {}).get("start") or {}).get("line")
+        if path is not None and isinstance(start, int):
+            out.append(Hit(check, path, start + 1, _sig(str(r.get("text", "")))))
+    return out
 
 
 # --- a set of texts, by backend ---
@@ -246,7 +284,7 @@ def hits(texts: dict[str, str], backend: str) -> tuple[list[Hit], str]:
         for p, t in texts.items():
             f = Path(d) / p
             f.parent.mkdir(parents=True, exist_ok=True)
-            f.write_text(t, encoding="utf-8")
+            f.write_bytes(t.encode("utf-8"))   # its bytes as read: no newline translated
             files[p] = f
         return grep_hits(files, exe)
 
@@ -364,8 +402,9 @@ def render(report: dict[str, dict], diff: dict[str, list[Hit]], limit: int = 20)
         out.append(f"{label} ({len(rows)}):")
         out += [f"  {h.path}:{h.line} {h.check}: {h.sig}" for h in rows[:limit]]
         out += [f"  ... {len(rows) - limit} more"] if len(rows) > limit else []
-    if len(report) == 1:
-        only = next(iter(report.values()))
-        out += [f"  {h.path}:{h.line} {h.check}: {h.sig}" for h in only["hits"][:limit]]
-        out += [f"  ... {len(only['hits']) - limit} more (--json: all)"] if len(only["hits"]) > limit else []
+    for b, r in report.items() if not diff else ():   # nothing to compare (one backend, or one N/A): its hits
+        if not r["why"]:
+            out.append(f"{b}:")
+            out += [f"  {h.path}:{h.line} {h.check}: {h.sig}" for h in r["hits"][:limit]]
+            out += [f"  ... {len(r['hits']) - limit} more (--json: all)"] if len(r["hits"]) > limit else []
     return out

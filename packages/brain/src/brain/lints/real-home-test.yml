@@ -11,9 +11,13 @@ rule:
     - all:
         - any:
             - pattern: os.path.expanduser($S)
+            - pattern: expanduser($S)
             - pattern: Path($S).expanduser()
             - pattern: pathlib.Path($S).expanduser()
+        # the literal argument itself: "~" or "~/..." (not "~user")
         - has:
-            kind: string
-            regex: '^[rbuRBU]*["'']~'
+            kind: argument_list
             stopBy: end
+            has:
+              kind: string
+              regex: '^[rbuRBU]*["'']~([/\\]|["''])'

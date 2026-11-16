@@ -16,9 +16,13 @@ rule:
     - all:
         - any:
             - pattern: os.path.expanduser($S)
+            - pattern: expanduser($S)
             - pattern: Path($S).expanduser()
             - pattern: pathlib.Path($S).expanduser()
+        # the literal argument itself (a child of the argument list), never a string deeper in an expression
         - has:
-            kind: string
-            regex: '^[rbuRBU]*["'']~[/\\]+\.brain'
+            kind: argument_list
             stopBy: end
+            has:
+              kind: string
+              regex: '^[rbuRBU]*["'']~[/\\]+\.brain(["''/\\])'
