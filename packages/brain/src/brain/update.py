@@ -516,16 +516,25 @@ def write_pin(file: Path, frm: str, to: str) -> None:
     """engine.pin ``frm`` -> ``to`` in config.json, its other keys, their order, its indent, its line endings and its
     BOM kept, written atomically (brain.stateio.write_atomic; git holds the previous version, so no .bak beside it).
     Raises ValueError when the file no longer pins ``frm`` (moved since the plan) or is not JSON."""
+    def move(data: dict) -> None:
+        eng = data.get("engine") if isinstance(data, dict) else None
+        if not isinstance(eng, dict) or eng.get("pin") != frm:
+            raise ValueError(f"{file.name} engine.pin is no longer {frm}: nothing written (brain update again)")
+        eng["pin"] = to
+    rewrite_json(file, move)
+
+
+def rewrite_json(file: Path, change) -> None:
+    """A JSON file (config.json) changed in place by ``change(data)``, its other keys, their order, its indent, its
+    line endings and its BOM kept, written atomically; ``change`` raises ValueError to write nothing, and so does a
+    file that is not JSON."""
     from . import stateio
 
     raw = file.read_bytes()
     bom = raw.startswith(b"\xef\xbb\xbf")
     text = raw.decode("utf-8-sig")
     data = json.loads(text)
-    eng = data.get("engine") if isinstance(data, dict) else None
-    if not isinstance(eng, dict) or eng.get("pin") != frm:
-        raise ValueError(f"{file.name} engine.pin is no longer {frm}: nothing written (brain update again)")
-    eng["pin"] = to
+    change(data)
     m = re.search(r"\n([ \t]+)\S", text)
     indent = m.group(1) if m else None
     out = json.dumps(data, indent=indent, ensure_ascii=False) + "\n"
