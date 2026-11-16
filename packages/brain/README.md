@@ -997,7 +997,7 @@ and its recap.
 - **`brain sessions [--hours H] [--all] [--json]`**: the sessions active in the last 24 h with both ids, role
   (`master`, `sub`, `relay`, `solo`), parent, children live/started, state and context against its budget (the
   brief's; a master's without one: config.json `usage.master_budget`, else the model's window, 1M). The options may
-  come before or after `tree` and `show`.
+  come before or after `tree` and `show` (only `--json` applies to `self`, before or after it).
 - **`brain sessions tree [ID]`**: the families with a member active in the last `--hours` (the app's last activity,
   else its SessionStart), or ID's, each child with its report: a master learns what its children did without paging
   their transcripts (archived branches counted, `--all` draws them). A session detached to the top level
@@ -1007,9 +1007,11 @@ and its recap.
 - **`brain sessions show ID [--report]`**: one session by either id (a prefix of 8 or more) or its short name, its
   family, and what a message would meet: live and working (it waits in the queue), idle (it starts a turn), archived
   (lost). `--report` prints its last final message in full, read from its transcript, never stored.
-- **`brain sessions self [--json]`**: this session's own app id (`local_...`, from `$CLAUDE_CODE_HOST_SESSION_ID`),
-  the one a report to its coordinator is signed with, never the coordinator's nor the shared notes folder's (`brain
-  brief` says so); exit 1 outside an app session, where the app's get_session tool with the id `self` tells it.
+- **`brain sessions self [--json]`**: this session's own app id (`local_...`, from `$CLAUDE_CODE_HOST_SESSION_ID`,
+  read as the stamps read it: only when the app's file of that id names this transcript), the one a report to its
+  coordinator is signed with, never the coordinator's nor the shared notes folder's (`brain brief` says so). Exit 1
+  outside an app session, on a malformed id, or on an id inherited from another session's shell (a `claude` started
+  there; `--json` gives `"inherited": true`): the app's get_session tool with the id `self` tells it then.
 
 `brain decision ask`, `answer`, `ack` and `archive` (and the question-tool capture) stamp the session's transcript id
 and its app id with the machine (`host_id`, `machine`), the app id only when the app's own file of it names this

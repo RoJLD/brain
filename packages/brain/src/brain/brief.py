@@ -13,8 +13,9 @@ The brief holds, in this order:
   coordinator's live streams under ``max_streams``, and the streams at this item's estimate that keep the week's
   forecast at its reset under ``ask_over_pct`` (brain.wavegate.room, what the governor checks at the start);
 - the coordinator's app session id (``--coordinator``, else ``$CLAUDE_CODE_HOST_SESSION_ID``: the session that runs
-  ``brain brief``) and the shared notes folder (``--notes``, else the desktop app's folder for that session when it
-  exists);
+  ``brain brief``), with the line that tells the sub-session to sign with its own id, read by ``brain sessions
+  self`` (wi-brain-brief-own-id), and the shared notes folder (``--notes``, else the desktop app's folder for that
+  session when it exists);
 - the item's subgraph: every edge in and out with the other node's type, status and title (a spec's anchor);
 - its files and collisions (brain collisions' line for the item);
 - how to start: the repo, a worktree from the default branch (a card cannot carry a source branch, so the brief says
