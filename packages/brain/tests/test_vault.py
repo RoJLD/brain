@@ -9,7 +9,7 @@ from pathlib import Path
 
 import pytest
 
-from brain import config, keystore, rotation, stateio, vault
+from brain import cli, config, keystore, rotation, stateio, vault
 
 FAKE = Path(__file__).parent / "fixtures" / "fake_age.py"
 NOW = datetime(2026, 11, 2, 12, 0, tzinfo=timezone.utc)
@@ -725,3 +725,34 @@ def test_device_rotation_keeps_the_keys_a_newer_brain_added(brain, brain_home):
     assert disk["later"] == {"kept": True} and new["later"] == {"kept": True}
     assert disk["public"] == new["public"] != old["public"] and disk["previous"]["public"] == old["public"]
     assert list(disk)[:2] == ["v", "name"]
+
+
+def test_canary_due_catches_up_a_missed_day_and_never_reseals_the_same_day(brain, brain_home, capsys, monkeypatch):
+    """A logon trigger runs brain vault canary --due after every boot: it seals when a recipient was never sealed,
+    fails, or was sealed more than DUE_HOURS ago (the machine was off at the daily run), and not otherwise."""
+    found = fake_age()
+    cfg = brain({})
+    facts = vault.device_init(cfg, "box1", now=NOW, found=found)
+    (_, rec_pub), = keygen(1, found["age"])
+    cfg = brain({"box1": {"kind": "device", "age": facts["public"]}, "recovery": {"kind": "recovery", "age": rec_pub}})
+    assert vault.due(cfg, now=NOW) == "box1: never sealed"
+    vault.canary(cfg, now=NOW, found=found)
+    assert vault.due(cfg, now=NOW + timedelta(hours=19)) == ""
+    assert vault.due(cfg, now=NOW + timedelta(hours=21)) == "box1: sealed 21 h ago"
+    st = vault.load_state(write=True)
+    st["canary"]["box1"]["opened_at"] = ""
+    vault.save_state(st)
+    assert vault.due(cfg, now=NOW + timedelta(hours=1)) == "box1: not opened by this machine's key within 20 h"
+    st["canary"]["box1"]["opened_at"] = st["canary"]["box1"]["sealed_at"]
+    st["canary"]["recovery"]["error"] = "no adapter found for its keys"
+    vault.save_state(st)
+    assert vault.due(cfg, now=NOW + timedelta(hours=1)) == "recovery: no adapter found for its keys"
+
+    calls = []
+    monkeypatch.setattr(vault, "canary", lambda c: calls.append(c) or {})
+    monkeypatch.setattr(vault, "due", lambda c: "")
+    assert cli.main(["--root", str(brain.root), "vault", "canary", "--due"]) == 0
+    assert capsys.readouterr().out.startswith("canary not due: every recipient sealed within 20 h") and calls == []
+    assert cli.main(["--root", str(brain.root), "vault", "canary"]) == 0 and len(calls) == 1   # without --due: sealed whatever its age
+    monkeypatch.setattr(vault, "due", lambda c: "box1: sealed 30 h ago")
+    assert cli.main(["--root", str(brain.root), "vault", "canary", "--due"]) == 0 and len(calls) == 2

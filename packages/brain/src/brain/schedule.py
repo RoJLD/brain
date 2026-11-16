@@ -7,7 +7,7 @@ A project's ``schedules:`` entry, inline or a YAML file relative to its root, on
   brain:
     schedules:
       alerts-pass: {command: alerts --all --notify, every: 15m, at_logon: true}
-      vault-canary: {command: vault canary, at: '07:30', machines: [ada-desktop]}
+      vault-canary: {command: vault canary --due, at: '07:30', at_logon: true, machines: [ada-desktop]}
 
   command   the brain command's arguments (a string or a list): the task runs the interpreter of the brain command
             that installed it, ``python -I -m brain <command>``

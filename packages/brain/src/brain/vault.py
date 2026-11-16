@@ -58,6 +58,7 @@ KINDS = ("device", "recovery", "hardware", "person")
 ADAPTERS = ("age", "gpg")
 MIN_RECIPIENTS = 2
 CANARY_HOURS = 26
+DUE_HOURS = 20   # brain vault canary --due: a canary sealed within this is not due (a day's run, less a margin)
 DRILL_DAYS = 400
 NAME = re.compile(r"^[a-z0-9][a-z0-9-]*$")
 AGE_KEY = re.compile(r"^age1[0-9a-z]{20,}$")                      # X25519 and plugin recipients, bech32 lower case
@@ -963,6 +964,29 @@ def _distinct_key(cfg: config.Config, name: str, age: str, gpg: Path | None) -> 
 
 
 # --- the canary and the drill ---
+def due(cfg: config.Config, now: datetime | None = None, hours: float = DUE_HOURS) -> str:
+    """Why the canary is due ('' when it is not): a recipient never sealed, failing, sealed more than ``hours`` ago,
+    or this machine's device key not opening its own within ``hours``. ``brain vault canary --due`` seals only then,
+    so a logon trigger catches up a run the machine was off for without a second canary the same day."""
+    t = _now(now)
+    recs, errors = recipients(cfg)
+    if errors:
+        return "; ".join(errors)
+    st = load_state()
+    dev = device()
+    for r in recs.values():
+        c = st["canary"].get(r.name) or {}
+        sealed, opened = _parse(c.get("sealed_at", "")), _parse(c.get("opened_at", ""))
+        if c.get("error") or not sealed:
+            return f"{r.name}: " + (c["error"] if c.get("error") else "never sealed")
+        if t - sealed > timedelta(hours=hours):
+            return f"{r.name}: sealed {_age(t - sealed)} ago"
+        mine = dev and r.kind == "device" and r.name == dev.get("name")
+        if mine and (not opened or t - opened > timedelta(hours=hours)):
+            return f"{r.name}: not opened by this machine's key within {hours:g} h"
+    return ""
+
+
 def canary(cfg: config.Config, now: datetime | None = None, found: dict[str, Adapter] | None = None) -> dict:
     """Seal a fresh nonce to each recipient alone, then open what this machine's device key opens; the results in
     state.json. Unattended (the scheduled task's command)."""

@@ -24,8 +24,10 @@ USAGE = """\
   brain vault seal STORE [PATH...] [--out FILE] [--adapter age|gpg]   seal a store (its declared content, or the
                  paths) client-side to its recipients, public keys only, unattended; refuses a resident or secret
                  store and fewer than two recipients; a manifest beside the sealed file
-  brain vault canary   seal a fresh nonce to each recipient alone, open the one this machine's device key opens,
-                 compare the digests ($BRAIN_HOME/vault/state.json): the daily proof, the scheduled task's command
+  brain vault canary [--due]   seal a fresh nonce to each recipient alone, open the one this machine's device key
+                 opens, compare the digests ($BRAIN_HOME/vault/state.json): the daily proof, the scheduled task's
+                 command; --due: only when a recipient was never sealed, fails or was sealed more than 20 h ago (a
+                 logon trigger then catches up a day the machine was off at the run's time)
   brain vault recipient add NAME --kind device|recovery|hardware|person (--age KEY | --gpg FILE) [--host H]
                  [--replace] [--write]   declare a public recipient in config.json (a plan without --write); refuses
                  a private key, and a declared name unless --replace (a rotation)
@@ -64,6 +66,11 @@ def cmd_vault(args, root: Path) -> int:
                   f"{vault.vault_dir() / 'sealed' / man['store'] / man['file'] if not args.out else args.out}")
             return 0
         if args.vault_cmd == "canary":
+            why = vault.due(cfg) if args.due else "asked"
+            if not why:
+                print(f"canary not due: every recipient sealed within {vault.DUE_HOURS} h (brain vault canary seals "
+                      "anyway)")
+                return 0
             res = vault.canary(cfg)
             for name, e in res.items():
                 print(f"{name}: " + (f"error: {e['error']}" if e["error"] else
@@ -139,8 +146,11 @@ def register(sub, ctx) -> None:
     vl.add_argument("paths", nargs="*", metavar="PATH", help="what to seal instead of the store's declared content")
     vl.add_argument("--out", help="the sealed file (default $BRAIN_HOME/vault/sealed/<store>/)")
     vl.add_argument("--adapter", choices=vault.ADAPTERS, help="age or gpg (default: config's, else age, else gpg)")
-    va.add_parser("canary", help="the daily proof: a nonce sealed to each recipient alone, opened by this machine's "
-                                 "device key")
+    vc = va.add_parser("canary", help="the daily proof: a nonce sealed to each recipient alone, opened by this "
+                                      "machine's device key")
+    vc.add_argument("--due", action="store_true", help=f"only when it is due: a recipient never sealed, failing or "
+                                                       f"sealed more than {vault.DUE_HOURS} h ago (a logon trigger's "
+                                                       "catch-up after a boot)")
     vr = va.add_parser("recipient", help="declare a public recipient").add_subparsers(dest="recipient_cmd",
                                                                                        required=True)
     vra = vr.add_parser("add", help="a plan, or --write into config.json; refuses a private key")
