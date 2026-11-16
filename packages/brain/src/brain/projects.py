@@ -395,8 +395,11 @@ def _claimant(name: str, entry, base: Path) -> Project | None:
     ``access: read`` on an entry that still names its ``root`` (both refused by check()). It is never loaded, yet it
     keeps the root it was registered at and the files it would write there, so the next project at that root stays a
     sharer and never becomes its owner (fail closed: a typo never hands another project the owner's views, records or
-    rendered files). None for a tenant mount, a valid read-only entry (no root of its own) or a malformed path."""
-    if not isinstance(entry, dict) or is_mount(entry) or not (bad_access(entry) or "root" in entry):
+    rendered files). None for a tenant mount, a notes home (its root is the notes repo's, never a project's), a valid
+    read-only entry (no root of its own) or a malformed path."""
+    if not isinstance(entry, dict) or is_mount(entry) or is_knowledge(entry):
+        return None
+    if not (bad_access(entry) or "root" in entry):
         return None
     try:
         return _project(name, entry, _resolve_root(str(entry.get("root") or "."), base))
@@ -886,7 +889,7 @@ def repo_tokens(root: Path | None = None) -> set[str]:
     (wi-brain-audit-unregistered-coderef): every repo of every project the registry loads, cloned on this machine or
     not, by its name and its main checkout's folder; for a project whose ``repos:`` does not read (projects.check says
     it), its name and its declared paths' folders; and the name of each entry the walk skips (a read-only project, a
-    tenant mount), whose repos the brain never audits. ``root``: as :func:`load` takes it (a project's
+    tenant mount, a notes home), whose repos the brain never audits. ``root``: as :func:`load` takes it (a project's
     ``registry_dir`` names the registry it came from)."""
     out: set[str] = set()
     for p in load(root).values():
@@ -899,9 +902,14 @@ def repo_tokens(root: Path | None = None) -> set[str]:
                                                              if isinstance(x, str) and x}
             continue
         out |= {r.name.lower() for r in rs} | {r.folder.lower() for r in rs if r.folder}
-    out |= {str(name).lower() for name, entry in raw(root).items()
-            if is_read_only(entry) or is_mount(entry) or is_knowledge(entry)}
+    out |= {str(name).lower() for name, entry in raw(root).items() if _repo_only(entry)}
     return out
+
+
+def _repo_only(entry) -> bool:
+    """An entry the walk skips whose name is still a repo a CodeRef may name: a read-only project, a tenant mount, a
+    notes home."""
+    return is_read_only(entry) or is_mount(entry) or is_knowledge(entry)
 
 
 def code_refs(store: Path) -> list[tuple[str, str]]:

@@ -76,6 +76,7 @@ def contact(text: str) -> bool:
     """True when ``text`` holds an e-mail address or a phone number (a third party's contact data)."""
     return bool(EMAIL.search(text)) or any(sum(c.isdigit() for c in m.group()) >= 9 for m in PHONE.finditer(text))
 SKIP_IMPORT = {".obsidian", ".git", ".trash"}
+GENERATED = ("_brain", "_maps")
 
 _BODIES = {"fleeting": "", "idea": "\n## What\n\n## Why\n\n## For which project\n", "note": "\n",
            "source": "\n## Summary\n\n## Quotes\n", "daily": "\n", "weekly": "\n",
@@ -92,11 +93,14 @@ def template(type_: str) -> str:
     return head + "---\n" + _BODIES[type_]
 
 
-def gitignore() -> str:
-    lines = ["# brain notes init: the folders git must never hold (brain.knowledge.LAYOUT)"]
-    lines += [f"/{name}/" for name, (_, tracked, _) in LAYOUT.items() if not tracked]
-    lines += [".obsidian/workspace*.json", ".trash/", ""]
-    return "\n".join(lines)
+def ignore_lines(classes: dict[str, str] | None = None) -> list[str]:
+    """The lines the home's .gitignore must hold: each folder git must never hold, then the editor's own files."""
+    return [f"/{name}/" for name in untracked(classes)] + [".obsidian/workspace*.json", ".trash/"]
+
+
+def gitignore(classes: dict[str, str] | None = None) -> str:
+    return "\n".join(["# brain notes init: the folders git must never hold (brain.knowledge.LAYOUT)",
+                      *ignore_lines(classes), ""])
 
 
 README = """# Notes
@@ -140,19 +144,40 @@ def home(cfg: config.Config | None = None) -> Path | None:
 
 
 def folder_classes(cfg: config.Config | None = None) -> dict[str, str]:
-    """{folder: class}: the layout's, raised by config.json knowledge.folders (never lowered)."""
+    """{folder: class}: the layout's, raised by config.json knowledge.folders (never lowered); a folder of the owner's
+    own named there joins with its class."""
     out = {name: cls for name, (cls, _, _) in LAYOUT.items()}
-    for name, cls in (_knowledge(cfg or config.load()).get("folders") or {}).items():
-        if cls in RANK and RANK[cls] > RANK.get(out.get(name, "private"), 0):
-            out[name] = cls
+    folders = _knowledge(cfg or config.load()).get("folders")
+    for name, cls in (folders.items() if isinstance(folders, dict) else ()):
+        if isinstance(cls, str) and cls in RANK and RANK[cls] > RANK.get(out.get(name, "private"), 0):
+            out[str(name)] = cls
     return out
+
+
+def untracked(classes: dict[str, str] | None = None) -> list[str]:
+    """The folders git must never hold: the layout's (confidential, sealed, generated) and any folder whose class
+    config.json raised above private."""
+    classes = classes if classes is not None else folder_classes()
+    return [n for n, c in classes.items() if c != "private" or (n in LAYOUT and not LAYOUT[n][1])]
+
+
+def strings(value) -> list[str]:
+    """A front matter list's strings; [] for anything else (a number, a mapping, a lone string)."""
+    return [str(x) for x in value if isinstance(x, (str, int, float)) and not isinstance(x, bool)] \
+        if isinstance(value, list) else []
+
+
+def note_class(folder_cls: str, front: dict | None) -> str:
+    """A note's class: its folder's, raised (never lowered) by its own ``class``."""
+    raised = (front or {}).get("class")
+    return raised if isinstance(raised, str) and RANK.get(raised, -1) > RANK.get(folder_cls, 0) else folder_cls
 
 
 # --- init ---
 
 @dataclass
 class Step:
-    action: str   # mkdir, write, copy, keep
+    action: str   # mkdir, write, copy, append (lines added after the file as it is), keep
     path: str     # relative to the notes home
     what: str = ""
     data: bytes | None = None
@@ -180,7 +205,14 @@ def plan(target: Path, source: Path | None = None) -> list[Step]:
             file(f"{name}/.gitkeep", b"", "keeps the empty folder in git")
     for t in TYPES:
         file(f"templates/{t}.md", template(t), f"the template of a {t}")
-    file(".gitignore", gitignore(), "the folders git must never hold")
+    ignore = target / ".gitignore"
+    if ignore.is_file():   # the owner's lines kept; only the missing ones added, else git would hold daily/
+        have = {line.strip() for line in ignore.read_text(encoding="utf-8", errors="replace").splitlines()}
+        missing = [line for line in ignore_lines() if line not in have]
+        steps.append(Step("append", ".gitignore", "adds " + ", ".join(missing), "\n".join(missing).encode("utf-8"))
+                     if missing else Step("keep", ".gitignore", "there already: holds every line"))
+    else:
+        file(".gitignore", gitignore(), "the folders git must never hold")
     rows = "\n".join(f"| `{n}/` | {c} | {'yes' if t else 'no'} | {w} |" for n, (c, t, w) in LAYOUT.items())
     file("README.md", README.format(rows=rows), "what this repo is")
     file("CLAUDE.md", AGENTS, "the agents' rules: propose in inbox/ only")
@@ -193,6 +225,11 @@ def refuse_init(target: Path, source: Path | None = None) -> str:
     into itself would never end."""
     if target.exists() and not target.is_dir():
         return f"{target} is a file, not a folder"
+    files = [n for n in LAYOUT if (target / n).exists() and not (target / n).is_dir()]
+    if files:
+        return f"{', '.join(files)} in {target}: a file where the layout puts a folder; move it first"
+    if (target / ".gitignore").is_dir():
+        return f"{target / '.gitignore'} is a folder"
     if source is None:
         return ""
     if not source.is_dir():
@@ -226,14 +263,19 @@ def project_map(home: Path, name: str, title: str = "", today: str = "") -> Step
 
 
 def _imports(target: Path, source: Path) -> list[Step]:
-    """A vault's notes into inbox/, its other files into attachments/, their sub-folders kept; never one that is
-    there."""
+    """A vault's notes into inbox/, its other files into attachments/, their sub-folders kept; a vault's top folder
+    that the layout names (daily/, people/, sealed/, notes/...) keeps its place and so its class, never under inbox/
+    where git would hold it; its generated folders are left out; never a file that is there."""
     out = []
     for f in sorted(source.rglob("*")):
         rel = f.relative_to(source)
-        if not f.is_file() or f.is_symlink() or rel.parts[0] in SKIP_IMPORT:
+        top = rel.parts[0]
+        if not f.is_file() or f.is_symlink() or top in SKIP_IMPORT or top in GENERATED:
             continue
-        dest = Path("inbox" if f.suffix.lower() == ".md" else "attachments") / rel
+        if len(rel.parts) > 1 and top in folder_classes():
+            dest = rel
+        else:
+            dest = Path("inbox" if f.suffix.lower() == ".md" else "attachments") / rel
         if (target / dest).exists():
             out.append(Step("keep", dest.as_posix(), "there already: kept as it is"))
         else:
@@ -249,6 +291,12 @@ def apply(target: Path, steps: list[Step]) -> list[str]:
         dest = target / s.path
         if s.action == "mkdir":
             dest.mkdir(parents=True, exist_ok=True)
+        elif s.action == "append":   # the file as it is, the missing lines after it, through a temporary name
+            old = dest.read_bytes() if dest.is_file() else b""
+            sep = b"" if not old or old.endswith(b"\n") else b"\n"
+            tmp = dest.with_name(dest.name + ".brain-tmp")
+            tmp.write_bytes(old + sep + (s.data or b"") + b"\n")
+            os.replace(tmp, dest)
         elif s.action in ("write", "copy"):
             if dest.exists():
                 done.append(f"kept   {s.path}: written meanwhile")
@@ -269,7 +317,12 @@ def apply(target: Path, steps: list[Step]) -> list[str]:
 # --- reading notes ---
 
 def front_matter(text: str) -> tuple[dict | None, str]:
-    """(the front matter, the body); None when the note has none, {} when it does not parse to a mapping."""
+    """(the front matter, the body); None when the note has none, {} when it does not parse to a mapping. A byte
+    order mark (Windows Notepad writes one) is skipped; a date an editor writes unquoted (``created: 2026-11-02``)
+    reads as its ISO text, as the schema has it."""
+    import datetime as _dt
+
+    text = text.removeprefix("﻿")
     if not text.startswith("---"):
         return None, text
     end = re.search(r"^---\s*$", text[3:], re.M)
@@ -281,7 +334,10 @@ def front_matter(text: str) -> tuple[dict | None, str]:
         data = yaml.safe_load(text[3:3 + end.start()])
     except yaml.YAMLError:
         return {}, text[3 + end.end():]
-    return (data if isinstance(data, dict) else {}), text[3 + end.end():]
+    if not isinstance(data, dict):
+        return {}, text[3 + end.end():]
+    return ({str(k): v.isoformat() if isinstance(v, _dt.date) else v for k, v in data.items()},
+            text[3 + end.end():])
 
 
 def note_files(root: Path, classes: set[str] | None = None) -> list[Path]:
@@ -336,47 +392,53 @@ def _git_tracked(root: Path, folder: str) -> list[str]:
     return [line for line in p.stdout.splitlines() if line.strip()] if p.returncode == 0 else []
 
 
-def _front_findings(rel: str, folder: str, text: str) -> tuple[list[Finding], dict]:
-    front, _ = front_matter(text)
+def _unknown_line(u: str) -> str:
+    """An unknown field's warning; its name is left out when it looks like a secret (a key that is a token)."""
+    u = u.removeprefix("notes: ")
+    return "an unknown field whose name looks like a secret (not printed)" if secretscan.scan_lines(u) else u
+
+
+def _front_findings(rel: str, folder: str, front: dict | None) -> list[Finding]:
     if front is None:
-        return ([] if folder in FRONT_FREE else [Finding("error", rel, "no front matter (templates/ holds one per "
-                                                                       "type)")]), {}
+        return [] if folder in FRONT_FREE else [Finding("error", rel, "no front matter (templates/ holds one per type)")]
     if not front:
-        return [Finding("error", rel, "its front matter does not parse to a mapping")], {}
+        return [Finding("error", rel, "its front matter does not parse to a mapping")]
     errors, unknown = schema.validate("notes", front, schema.READ)
     return ([Finding("error", rel, e.removeprefix("notes: ").removeprefix("notes.")) for e in errors]
-            + [Finding("warn", rel, u.removeprefix("notes: ")) for u in unknown]), front
+            + [Finding("warn", rel, _unknown_line(u)) for u in unknown])
 
 
 def _note_findings(rel: str, folder: str, cls: str, text: str, known: set[str] | None) -> tuple[list[Finding], dict]:
-    out, front = _front_findings(rel, folder, text)
-    body = front_matter(text)[1]
+    front, body = front_matter(text)
+    out = _front_findings(rel, folder, front)
+    front = front or {}
     raised = front.get("class")
-    if raised in RANK and RANK[raised] < RANK[cls]:
+    if isinstance(raised, str) and raised in RANK and RANK[raised] < RANK[cls]:
         out.append(Finding("error", rel, f"class {raised} is under its folder's ({cls}): class only raises it"))
     out += [Finding("error", f"{rel}:{line}", f"a secret pattern ({pattern}): never in a note")
             for line, pattern in secretscan.scan_lines(text)]
-    if folder != "people" and contact(body):
+    if folder != "people" and contact(text):
         out.append(Finding("warn", rel, "an e-mail address or a phone number outside people/ (a third party's data "
                                         "goes in people/, at the minimum)"))
     if known is not None:
-        cited = [x for x in front.get("links") or [] if isinstance(x, str)]
-        cited += [m.strip() for m in WIKILINK.findall(body)]
+        cited = strings(front.get("links")) + [m.strip() for m in WIKILINK.findall(body)]
         out += [Finding("warn", rel, f"{c}: no such Brain id in the graph") for c in dict.fromkeys(cited)
                 if BRAIN_ID.match(c) and c not in known]
-    if front.get("share") and cls != "private":
-        out.append(Finding("error", rel, f"share on a {cls} note: only a private note is shared"))
+    own = note_class(cls, front)
+    if front.get("share") and own != "private":
+        out.append(Finding("error", rel, f"share on a {own} note: only a private note is shared"))
     return out, front
 
 
-def _layout_findings(root: Path) -> list[Finding]:
-    ignore = (root / ".gitignore").read_text(encoding="utf-8").splitlines() if (root / ".gitignore").is_file() else []
+def _layout_findings(root: Path, classes: dict[str, str]) -> list[Finding]:
+    f = root / ".gitignore"
+    ignore = {line.strip() for line in f.read_text(encoding="utf-8", errors="replace").splitlines()} \
+        if f.is_file() else set()
     out = []
-    for name, (_, tracked, _) in LAYOUT.items():
-        if tracked:
-            continue
+    for name in untracked(classes):
         if f"/{name}/" not in ignore:
-            out.append(Finding("error", ".gitignore", f"/{name}/ is missing: git would hold {name}/"))
+            out.append(Finding("error", ".gitignore", f"/{name}/ is missing: git would hold {name}/ (brain notes init "
+                                                      "adds it)"))
         out += [Finding("error", t, f"tracked by git, in {name}/ (never in git): git rm --cached it")
                 for t in _git_tracked(root, name)]
     return out
@@ -384,8 +446,8 @@ def _layout_findings(root: Path) -> list[Finding]:
 
 def check(root: Path, known: set[str] | None = None) -> list[Finding]:
     """Every finding of the notes home at ``root`` (``known``: the Brain's ids, None to leave links unchecked)."""
-    out = _layout_findings(root)
     fc = folder_classes()
+    out = _layout_findings(root, fc)
     ids: dict[str, str] = {}
     tags: dict[str, set[str]] = {}
     for f in note_files(root):
@@ -399,14 +461,16 @@ def check(root: Path, known: set[str] | None = None) -> list[Finding]:
             out.append(Finding("error", rel, f"id {nid} is {ids[nid]}'s too: an id is never reused"))
         if isinstance(nid, str):
             ids.setdefault(nid, rel)
-        for t in front.get("tags") or []:
-            if isinstance(t, str):
-                tags.setdefault(t.lower(), set()).add(t)
+        for t in strings(front.get("tags")):
+            tags.setdefault(t.lower(), set()).add(t)
     return out + [Finding("warn", "tags", f"{' and '.join(sorted(v))} differ only by case") for v in tags.values()
                   if len(v) > 1]
 
 
 # --- find ---
+
+INDEX_V = 2   # the index's own shape: a change of it rebuilds every index
+
 
 def index_path(root: Path) -> Path:
     """The home's index: ``$BRAIN_HOME/notes-index/<a hash of its path>.sqlite`` (derived, rebuilt at will)."""
@@ -426,18 +490,20 @@ def _table(con: sqlite3.Connection) -> bool:
 
 
 def index(root: Path) -> Path:
-    """Rebuild the index of the private and confidential notes when one changed (paths, sizes, mtimes); sealed/ never
-    enters it. Written to a temporary file, then renamed."""
+    """Rebuild the index of the private and confidential notes when a note or a folder's class changed (paths,
+    sizes, mtimes, the classes); a sealed note, by its folder or its own ``class``, never enters it. Written to a
+    temporary file of this process, then renamed."""
     db = index_path(root)
     fc = folder_classes()
     files = note_files(root)
-    stamp = hashlib.sha256(json.dumps([(str(f), f.stat().st_size, f.stat().st_mtime_ns) for f in files])
+    stamp = hashlib.sha256(json.dumps([INDEX_V, sorted(fc.items()),
+                                       [(str(f), f.stat().st_size, f.stat().st_mtime_ns) for f in files]])
                            .encode("utf-8")).hexdigest()
     mark = db.with_suffix(".stamp")
     if db.is_file() and mark.is_file() and mark.read_text(encoding="utf-8") == stamp:
         return db
     db.parent.mkdir(parents=True, exist_ok=True)
-    tmp = db.with_name(db.name + ".tmp")
+    tmp = db.with_name(f"{db.name}.{os.getpid()}.tmp")
     tmp.unlink(missing_ok=True)
     con = sqlite3.connect(tmp)
     try:
@@ -445,17 +511,23 @@ def index(root: Path) -> Path:
         for f in files:
             rel = f.relative_to(root).as_posix()
             front, body = front_matter(f.read_text(encoding="utf-8", errors="replace"))
+            cls = note_class(fc.get(rel.split("/", 1)[0], "private"), front)
+            if cls not in ("private", "confidential"):
+                continue
             front = front or {}
             con.execute("INSERT INTO notes VALUES (?, ?, ?, ?, ?, ?)",
-                        (rel, fc.get(rel.split("/", 1)[0], "private"),
-                         " ".join(str(s) for s in front.get("scope") or []), str(front.get("title") or f.stem),
-                         " ".join(str(t) for t in front.get("tags") or []), body))
+                        (rel, cls, " ".join(strings(front.get("scope"))), str(front.get("title") or f.stem),
+                         " ".join(strings(front.get("tags"))), body))
         con.commit()
     finally:
         con.close()
     os.replace(tmp, db)
     mark.write_text(stamp, encoding="utf-8")
     return db
+
+
+def _like(term: str) -> str:
+    return "%" + term.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_") + "%"
 
 
 def find(root: Path, words: str, *, confidential: bool = False, scope: str = "", limit: int = 20) -> list[dict]:
@@ -471,9 +543,9 @@ def find(root: Path, words: str, *, confidential: bool = False, scope: str = "",
             rows = con.execute("SELECT path, cls, scope, title, snippet(notes, 5, '[', ']', '...', 12) FROM notes "
                                "WHERE notes MATCH ? ORDER BY rank", (" ".join(f'"{t}"' for t in terms),)).fetchall()
         else:
-            like = " AND ".join("(title || ' ' || tags || ' ' || body) LIKE ?" for _ in terms)
+            like = " AND ".join("(title || ' ' || tags || ' ' || body) LIKE ? ESCAPE '\\'" for _ in terms)
             rows = con.execute(f"SELECT path, cls, scope, title, substr(body, 1, 80) FROM notes WHERE {like}",
-                               [f"%{t}%" for t in terms]).fetchall()
+                               [_like(t) for t in terms]).fetchall()
     finally:
         con.close()
     classes = ("private", "confidential") if confidential else ("private",)
