@@ -698,3 +698,10 @@ def test_a_refused_push_is_a_failure_not_a_lost_lease(world, monkeypatch):
     (world.mem / "b.md").write_text("b\n", encoding="utf-8")
     with pytest.raises(memory.SyncError, match="pre-receive hook declined"):
         world.sync()
+
+
+def test_the_two_week_pruning_counts_from_the_run_s_day():
+    """The state keeps two weeks of branches counted from the run's day, so a run dated in the past (tests, a replay)
+    prunes the same way whatever today is."""
+    assert memory._days_ago(14, "2026-11-16") == "2026-11-02"
+    assert memory._days_ago(0) == memory.date.today().isoformat()
