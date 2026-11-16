@@ -57,7 +57,9 @@ def test_the_posix_script_runs_in_the_cockpits_place(brain, tmp_path):
     procs = [("brain update --yes", ["/venv/bin/python", "-m", "brain", "update", "--yes"])]
     text = handover.script(procs, brain, ["/venv/bin/python", "-m", "brain", "tui"], tmp_path, 4242, "Update",
                            windows=False)
-    assert text.startswith("#!/bin/sh\n") and "4242" not in text  # exec'd in place: nothing to wait for
+    # exec'd in place: nothing to wait for. The pid is searched outside the paths, which hold pytest's basetemp (a
+    # folder named pytest-4242 can be one: wi-brain-test-handover-basetemp); every path of the script is under it
+    assert text.startswith("#!/bin/sh\n") and "4242" not in text.replace(str(tmp_path), "")
     assert "'/venv/bin/python' '-m' 'brain' 'update' '--yes' || { code=$?; failed='brain update --yes'" in text
     assert text.rstrip().endswith("exec '/venv/bin/python' '-m' 'brain' 'tui'")
     assert "'\\''" in text  # the apostrophe of the brain's folder, quoted for sh

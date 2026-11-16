@@ -50,12 +50,71 @@ def brain(tmp_path, monkeypatch, brain_home):
     return write
 
 
-def keygen(n: int, ad: vault.Adapter) -> list[tuple[str, str]]:
-    return [ad.keygen(f"test {i}") for i in range(n)]
+GPG_KEYGEN_S = 120   # the deadline of a real gpg key generation in a test (wi-brain-test-vault-gpg-hang)
+
+
+def keygen(n: int, ad: vault.Adapter, deadline: float = GPG_KEYGEN_S) -> list[tuple[str, str]]:
+    """``n`` key pairs of ``ad``. A real gpg's within ``deadline`` seconds, else the test is skipped with its reason:
+    gpg --quick-gen-key can wait forever on its agent or on entropy, and a gpg-agent the key generation spawned can
+    hold the output pipe open past subprocess.run's own timeout, so the wait is bounded here, in a thread."""
+    if not isinstance(ad, vault.Gpg):
+        return [ad.keygen(f"test {i}") for i in range(n)]
+    return [_bounded_gpg_keygen(ad, f"test {i}", deadline) for i in range(n)]
+
+
+def _bounded_gpg_keygen(ad: vault.Gpg, label: str, deadline: float) -> tuple[str, str]:
+    import threading
+
+    got: dict = {}
+
+    def run() -> None:
+        try:
+            got["key"] = ad.keygen(label)
+        except vault.VaultError as exc:
+            got["error"] = exc
+
+    t = threading.Thread(target=run, name=f"gpg-keygen-{label}", daemon=True)
+    t.start()
+    t.join(deadline)
+    if t.is_alive():
+        pytest.skip(f"gpg key generation did not end within {deadline:g} s (its agent or entropy): skipped, "
+                    "not waited on")
+    if "error" in got:
+        if "Timeout" in str(got["error"]):
+            pytest.skip(f"gpg key generation timed out: {got['error']}")
+        raise got["error"]
+    return got["key"]
 
 
 def tree(d: Path) -> dict:
     return {p.relative_to(d).as_posix(): p.read_bytes() for p in sorted(d.rglob("*")) if p.is_file()}
+
+
+class _StuckGpg(vault.Gpg):
+    """A gpg whose key generation never ends (an agent that never answers), or fails the way it is told."""
+
+    def __init__(self, error: Exception | None = None):
+        super().__init__(["gpg"])
+        self.error = error
+
+    def keygen(self, label):
+        import threading
+        if self.error:
+            raise self.error
+        threading.Event().wait(30)   # longer than the deadline below: the test never waits on it
+        return "never", "never"
+
+
+def test_a_gpg_key_generation_that_hangs_is_skipped_with_its_reason_not_waited_on():
+    import time
+    start = time.monotonic()
+    with pytest.raises(pytest.skip.Exception, match=r"did not end within 0.2 s \(its agent or entropy\)"):
+        keygen(1, _StuckGpg(), deadline=0.2)
+    assert time.monotonic() - start < 10
+    with pytest.raises(pytest.skip.Exception, match="gpg key generation timed out"):
+        keygen(1, _StuckGpg(vault.VaultError("gpg: TimeoutExpired: Command timed out after 300 seconds")))
+    with pytest.raises(vault.VaultError, match="gpg: key generation: bad"):   # any other failure is a failure
+        keygen(1, _StuckGpg(vault.VaultError("gpg: key generation: bad")))
 
 
 # --- the round trips ---
