@@ -264,8 +264,7 @@ def signals(repo: str, rows: list[tuple[str, str, str]], base: inventory.Tree, n
     touched file had), and {backend: why N/A}."""
     if not backends:
         return [], {}
-    after = {p: new.text(p) for _, _, p in rows if p and checks_for(p) and new.text(p) is not None}
-    before = {p: base.text(old or p) for _, old, p in rows if p in after and base.has(old or p)}
+    before, after = _texts(rows, base, new)
     out, na = [], {}
     for b in backends:
         now, why = hits(after, b)
@@ -275,6 +274,13 @@ def signals(repo: str, rows: list[tuple[str, str, str]], base: inventory.Tree, n
         else:
             out += _lines(repo, b, now, was)
     return _one_per_occurrence(out), na
+
+
+def _texts(rows: list[tuple[str, str, str]], base: inventory.Tree, new: inventory.Tree) -> tuple[dict, dict]:
+    """(the base's texts, the change's) of the files a rule reads, each by its new path (a moved file: its old
+    text)."""
+    after = {p: new.text(p) for _, _, p in rows if p and checks_for(p) and new.text(p) is not None}
+    return {p: base.text(old or p) for _, old, p in rows if p in after and base.has(old or p)}, after
 
 
 def _lines(repo: str, b: str, now: list[Hit], was: list[Hit]) -> list[dict]:
