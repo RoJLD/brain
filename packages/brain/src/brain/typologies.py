@@ -160,15 +160,22 @@ def engine() -> Catalog:
     cat.stages = {str(k): dict(v or {}) for k, v in (data.get("stages") or {}).items()}
     cat.standards_stages = {str(k): str(v) for k, v in (data.get("standards_stages") or {}).items()}
     cat.done = [_clause(c) for c in data.get("done") or []]
-    from . import typology_packs   # the packs carry the clauses of done (wi-brain-typology-packs)
+    cat.clauses = _pack_clauses()
+    return cat
+
+
+def _pack_clauses() -> dict[str, list[Clause]]:
+    """{a typology: the clauses of done of the engine's packs that name it} (brain.typology_packs carries them)."""
+    from . import typology_packs
     try:
         packs = typology_packs.engine()
     except typology_packs.PackError as exc:   # the same broken install: said as the catalog's error
         raise CatalogError(str(exc)) from None
+    out: dict[str, list[Clause]] = {}
     for spec in packs.values():
         for tid in spec.get("typologies") or []:
-            cat.clauses.setdefault(str(tid), []).extend(_clause(c, str(tid)) for c in spec.get("done") or [])
-    return cat
+            out.setdefault(str(tid), []).extend(_clause(c, str(tid)) for c in spec.get("done") or [])
+    return out
 
 
 def _add_entry(cat: Catalog, eid: str, spec: dict) -> None:

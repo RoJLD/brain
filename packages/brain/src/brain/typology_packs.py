@@ -88,67 +88,91 @@ def overlay(pid: str, spec: dict) -> dict:
 
 # --- checking -------------------------------------------------------------------------------------------------------
 
+def _strings(value) -> bool:
+    return isinstance(value, list) and all(isinstance(x, str) and x.strip() for x in value)
+
+
+@dataclass
+class _Checker:
+    """One pack's parts checked: ``errors`` gathers the shape errors and, in strict mode, the unknown ids."""
+    where: str
+    spec: dict
+    strict: bool | None
+    notes: list[str] | None
+    errors: list[str] = field(default_factory=list)
+
+    def ids(self, key: str) -> list[str]:
+        value = self.spec.get(key)
+        if value is not None and not _strings(value):
+            self.errors.append(f"{self.where}: {key} is a list of ids")
+            return []
+        return list(value or [])
+
+    def unknown(self, key: str, given, known, what: str) -> None:
+        for x in given or []:
+            if x not in known:
+                self.errors += schema.tolerate(f"{self.where}: {key}: {what} {x!r} is not known to this engine",
+                                               self.strict, self.notes)
+
+    def standards(self) -> None:
+        from . import standards
+        std = self.spec.get("standards")
+        if std is None:
+            return
+        if not (isinstance(std, dict) and not set(map(str, std)) - STANDARDS_KEYS
+                and all(_strings(v) for v in std.values())):
+            self.errors.append(f"{self.where}: standards is {{catalogs: [name], profiles: [id]}}")
+            return
+        self.unknown("standards.profiles", std.get("profiles"), standards.profiles(), "profile")
+        self.unknown("standards.catalogs", std.get("catalogs"), {f.stem for f in standards.ENGINE_DIR.glob("*.yaml")},
+                     "engine catalog")
+
+    def stages(self, cat) -> None:
+        stages = self.spec.get("stages")
+        if stages is None:
+            return
+        if not (isinstance(stages, dict) and all(_strings(v) for v in stages.values())):
+            self.errors.append(f"{self.where}: stages is {{stage: [a gate, in words]}}")
+        elif cat is not None:
+            known = set(cat.stages) | set(cat.standards_stages) | _layer_stages()
+            self.unknown("stages", [str(s) for s in stages], known, "stage")
+
+    def texts(self, key: str) -> None:
+        """doors, roles: a list of {id, text}, an id once."""
+        value = self.spec.get(key)
+        if value is None:
+            return
+        if not (isinstance(value, list) and all(isinstance(x, dict) and set(map(str, x)) == TEXT_KEYS
+                                                and _strings(list(x.values())) for x in value)):
+            self.errors.append(f"{self.where}: {key} is a list of {{id, text}}")
+            return
+        got = [x["id"] for x in value]
+        self.errors += [f"{self.where}: {key}: {i!r} twice" for i in sorted(set(got)) if got.count(i) > 1]
+
+
 def part_errors(where: str, spec: dict, strict: bool | None = None, notes: list[str] | None = None) -> list[str]:
     """What a pack's parts break: each part's shape is an error; an id this engine does not know (a typology, a layer,
-    a standards profile, a stage, a guard, a registry key) a note in read mode, an error in strict mode (CI), so a
-    pack written for a later engine is read by this one."""
-    from . import guards, projects, standards, typologies
-    errors: list[str] = []
+    a standards profile or catalog, a stage, a guard, a registry key) a note in read mode, an error in strict mode
+    (CI), so a pack written for a later engine is read by this one."""
+    from . import guards, projects, typologies
+    c = _Checker(where, spec, strict, notes)
     try:
         cat = typologies.load()
     except typologies.CatalogError:
         cat = None
-
-    def ids(key: str) -> list[str] | None:
-        value = spec.get(key)
-        if value is None:
-            return []
-        if not (isinstance(value, list) and all(isinstance(x, str) and x for x in value)):
-            errors.append(f"{where}: {key} is a list of ids")
-            return None
-        return value
-
-    def unknown(key: str, given, known, what: str) -> None:
-        for x in given or []:
-            if x not in known:
-                errors.extend(schema.tolerate(f"{where}: {key}: {what} {x!r} is not known to this engine", strict,
-                                              notes))
-
-    typs = ids("typologies")
+    typs = c.ids("typologies")
     if typs and cat is not None:
-        errors.extend(typologies.unknown(f"{where}: typologies", typs, cat, strict, notes))
-    unknown("layers", ids("layers"), _layer_names(), "layer")
-    unknown("guards", ids("guards"), guards.GUARDS, "guard")
-    unknown("registry", ids("registry"), projects.KEYS, "registry key")
-    std = spec.get("standards")
-    if std is not None:
-        if not isinstance(std, dict) or set(map(str, std)) - STANDARDS_KEYS or not all(
-                isinstance(v, list) and all(isinstance(x, str) and x for x in v) for v in std.values()):
-            errors.append(f"{where}: standards is {{catalogs: [name], profiles: [id]}}")
-        else:
-            unknown("standards.profiles", std.get("profiles"), standards.profiles(), "profile")
-            unknown("standards.catalogs", std.get("catalogs"),
-                    {f.stem for f in standards.ENGINE_DIR.glob("*.yaml")}, "engine catalog")
-    stages = spec.get("stages")
-    if stages is not None:
-        if not isinstance(stages, dict) or not all(
-                isinstance(v, list) and all(isinstance(x, str) and x.strip() for x in v) for v in stages.values()):
-            errors.append(f"{where}: stages is {{stage: [a gate, in words]}}")
-        elif cat is not None:
-            known = set(cat.stages) | set(cat.standards_stages) | _layer_stages()
-            unknown("stages", [str(s) for s in stages], known, "stage")
+        c.errors += typologies.unknown(f"{where}: typologies", typs, cat, strict, notes)
+    c.unknown("layers", c.ids("layers"), _layer_names(), "layer")
+    c.unknown("guards", c.ids("guards"), guards.GUARDS, "guard")
+    c.unknown("registry", c.ids("registry"), projects.KEYS, "registry key")
+    c.standards()
+    c.stages(cat)
     if spec.get("done") is not None:
-        errors.extend(typologies.clauses_errors(f"{where}: done", spec.get("done")))
-    for key in ("doors", "roles"):
-        value = spec.get(key)
-        if value is not None and not (isinstance(value, list) and all(
-                isinstance(x, dict) and set(map(str, x)) == TEXT_KEYS and all(isinstance(v, str) and v.strip()
-                                                                               for v in x.values()) for x in value)):
-            errors.append(f"{where}: {key} is a list of {{id, text}}")
-        elif value:
-            got = [x["id"] for x in value]
-            errors.extend(f"{where}: {key}: {i!r} twice" for i in sorted(set(got)) if got.count(i) > 1)
-    return errors
+        c.errors += typologies.clauses_errors(f"{where}: done", spec.get("done"))
+    c.texts("doors")
+    c.texts("roles")
+    return c.errors
 
 
 def _layer_names() -> set[str]:
@@ -214,6 +238,27 @@ def self_check() -> list[str]:
     return errors
 
 
+def rows(src) -> list[dict]:
+    """The typology packs as ``brain typologies packs`` lists them: the engine's (taken when the brain's packs.yaml
+    holds it ``from: engine``), then the brain's own packs that name typologies; each with its projects and parts.
+    ``src``: the brain's neutral source, or None."""
+    from . import neutral
+    own = {p.id: p for p in (src.packs if src else []) if p.spec.get("typologies") or FROM in (p.given or {})}
+    out = []
+    for pid, spec in engine().items():
+        p = own.pop(pid, None)
+        taken = p is not None and (p.given or {}).get(FROM) == ENGINE
+        origin = ENGINE if p is None or taken else neutral.PACKS   # a brain pack of the same id, not from the engine
+        out.append({"id": pid, "origin": origin, "taken": taken or p is not None,
+                    "projects": p.projects if p else [], **_parts(p.spec if p else spec)})
+    return out + [{"id": pid, "origin": neutral.PACKS, "taken": True, "projects": p.projects, **_parts(p.spec)}
+                  for pid, p in own.items()]
+
+
+def _parts(spec: dict) -> dict:
+    return {k: spec.get(k) or ({} if k in ("standards", "stages") else []) for k in PARTS}
+
+
 # --- what a project's typologies propose (TYPO-4) -------------------------------------------------------------------
 
 @dataclass
@@ -247,31 +292,31 @@ def propose(root: Path, project: str) -> tuple[list[str], list[Proposal], Path |
     if not kinds:
         return [], [], (p.stores[0] if p.stores else None)
     cat = typologies.load(config.load(root))
-    src = neutral.load(root)
-    own = {pk.id: pk for pk in src.packs}
-    candidates: list[tuple[str, str, dict, bool]] = []   # (id, origin, spec as it applies, active)
-    for pk in src.packs:
-        if pk.core:
-            continue
-        candidates.append((pk.id, neutral.PACKS, pk.spec, pk.projects is None or project in pk.projects))
-    for pid, spec in engine().items():
-        if pid not in own:
-            candidates.append((pid, ENGINE, spec, False))
-    have_layers = _store_layers(p.stores[0] if p.stores else None)
+    store = p.stores[0] if p.stores else None
+    have_layers = _store_layers(store)
     std = p.standards if isinstance(p.standards, dict) else {}
     have_profiles = {str(x) for x in std.get("profiles") or []}
     out = []
-    for pid, origin, spec, active in candidates:
+    for pid, origin, spec, active, own in _candidates(neutral.load(root), project):
         named = [str(t) for t in spec.get("typologies") or []]
         meets = sorted({t for k in kinds for t in cat.meets(k, named)})
         if not meets:
             continue
-        step = "" if active else ("extend" if pid in own else "add")
         packstd = spec.get("standards") if isinstance(spec.get("standards"), dict) else {}
-        out.append(Proposal(pid, origin, meets, active, step,
+        out.append(Proposal(pid, origin, meets, active, "" if active else ("extend" if own else "add"),
                             [la for la in spec.get("layers") or [] if have_layers is not None and la not in have_layers],
                             [x for x in packstd.get("profiles") or [] if x not in have_profiles]))
-    return kinds, out, (p.stores[0] if p.stores else None)
+    return kinds, out, store
+
+
+def _candidates(src, project: str) -> list[tuple[str, str, dict, bool, bool]]:
+    """(id, origin, spec as it applies, the project takes it, the brain's packs.yaml holds it): the brain's packs but
+    the core, then the engine's packs the brain does not hold."""
+    from . import neutral
+    out = [(pk.id, neutral.PACKS, pk.spec, pk.projects is None or project in pk.projects, True)
+           for pk in src.packs if not pk.core]
+    own = {pk.id for pk in src.packs}
+    return out + [(pid, ENGINE, spec, False, False) for pid, spec in engine().items() if pid not in own]
 
 
 def _store_layers(store: Path | None) -> set[str] | None:
@@ -390,18 +435,22 @@ def _extend(lines: list[str], pack: str, project: str) -> list[str]:
         value, comment = m.group(2).rstrip(), m.group(3) or ""   # the comment and its spacing kept
         if value.startswith("[") and value.endswith("]"):
             items = [x.strip() for x in value[1:-1].split(",") if x.strip()]
-            lines = list(lines)
-            lines[i] = f"{m.group(1)}projects: [{', '.join([*items, project])}]{comment}"
-            return lines
-        if value == "":
-            j = i + 1
-            item_pad = None
-            while j < end and (not lines[j].strip() or lines[j].lstrip().startswith(("-", "#"))):
-                if lines[j].lstrip().startswith("-"):
-                    item_pad = lines[j][: len(lines[j]) - len(lines[j].lstrip())]
-                    last = j
-                j += 1
-            if item_pad is not None:
-                return lines[: last + 1] + [f"{item_pad}- {project}"] + lines[last + 1:]
-        raise ValueError(f"packs.yaml: pack {pack}'s projects is neither a [flow] nor a block list (edit it by hand)")
+            return [*lines[:i], f"{m.group(1)}projects: [{', '.join([*items, project])}]{comment}", *lines[i + 1:]]
+        last = _last_item(lines, i + 1, end) if value == "" else None
+        if last is None:
+            raise ValueError(f"packs.yaml: pack {pack}'s projects is neither a [flow] nor a block list (edit it by "
+                             "hand)")
+        item_pad = lines[last][: len(lines[last]) - len(lines[last].lstrip())]
+        return lines[: last + 1] + [f"{item_pad}- {project}"] + lines[last + 1:]
     raise ValueError(f"packs.yaml: pack {pack} has no projects: it applies to every project already")
+
+
+def _last_item(lines: list[str], start: int, end: int) -> int | None:
+    """The last ``- item`` line of the block list that starts at ``start`` (blank and comment lines between), None
+    when there is none."""
+    last, j = None, start
+    while j < end and (not lines[j].strip() or lines[j].lstrip().startswith(("-", "#"))):
+        if lines[j].lstrip().startswith("-"):
+            last = j
+        j += 1
+    return last

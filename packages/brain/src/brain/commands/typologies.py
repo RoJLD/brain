@@ -92,20 +92,9 @@ def _show(cat: typologies.Catalog, args) -> int:
 def _packs(root: Path, args) -> int:
     """The engine's typology packs and the brain's packs that name typologies (or take one from the engine)."""
     try:
-        engine = typology_packs.engine()
+        rows = typology_packs.rows(neutral.load(root) if neutral.applies(root) else None)
     except typology_packs.PackError as exc:
         raise SystemExit(f"brain: {exc} (reinstall the engine)") from None
-    src = neutral.load(root) if neutral.applies(root) else None
-    own = {p.id: p for p in (src.packs if src else []) if p.spec.get("typologies") or p.spec.get(typology_packs.FROM)}
-    rows = []
-    for pid, spec in engine.items():
-        p = own.get(pid)
-        rows.append({"id": pid, "origin": "engine", "taken": p is not None and p.spec.get(typology_packs.FROM) == "engine",
-                     "projects": (p.projects if p else []), **_parts(p.spec if p else spec)})
-    for pid, p in own.items():
-        if pid not in engine:
-            rows.append({"id": pid, "origin": neutral.PACKS, "taken": True, "projects": p.projects,
-                         **_parts(p.spec)})
     if args.json:
         print(json.dumps({"packs": rows}, ensure_ascii=False, indent=1, sort_keys=True))
         return 0
@@ -118,10 +107,6 @@ def _packs(root: Path, args) -> int:
             if value:
                 print(f"  {key}: {_short(value)}")
     return 0
-
-
-def _parts(spec: dict) -> dict:
-    return {k: spec.get(k) or ([] if k not in ("standards", "stages") else {}) for k in typology_packs.PARTS}
 
 
 def _short(value) -> str:
