@@ -51,6 +51,19 @@ anywhere in the command, its last word unresolved too (`brain ipc $x`), `--help`
 of the never-grantable list (keys, scheduled; installer when permissions.yaml declares it) makes the refusal an action
 the owner can queue (`brain queue add --guard`); the others name the gesture and the owner's terminal.
 
+Quoted or escaped words are read as the shell reads them (`'brain' "schedule" install --apply`, `b\rain sched\ule
+install --ap\ply`, PowerShell's backtick, cmd's caret), and so are the variables the call itself sets
+(`x=install; brain schedule $x --apply`, `$a = '--apply'; brain schedule install $a`), whatever runs brain (its `.exe`,
+a venv's, `python -m brain`, `-mbrain`, `py -3.12 -X utf8 -m brain.cli`, `uv run`, `uvx`, `Start-Process`, `bash
+-c`, `cmd /c`). **Wide** (config.json `guards.gestures_wide: true`, off by default: refusals 0.5.2 adds): a word the
+guard cannot resolve may be any of a gesture's words or flags (`brain schedule install $FLAG`, `brain schedule $(echo
+install) --apply`, `brain $opts schedule install --apply`, `& $brain schedule install --apply`, PowerShell's `@rest`
+and `@('--apply')`), but an option's value (`brain usage --hours $h guard` passes); and Python's inline code that
+names brain and, as words, each of a gesture's words and one of its flags drives it (`python -c "from brain.cli import
+main; main(['schedule', 'install', '--apply'])"`, `schedule.install(reg, apply=True)`, `runpy.run_module('brain')`
+with such an argv). The MCP server matches wide always. Not seen: a script file that drives brain's modules, code fed
+by a heredoc (`python - <<EOF`), a gesture's words built at run time.
+
 **Strict** (config.json `guards.owner_strict: true`, off by default): the refusals 0.5.1 adds to what the guard let
 through before. At the guard: `brain vault reseal --apply`, and the gestures whose commands refuse themselves in an
 agent's session already (`vault open`, `drill`, `device init` and `forget-previous`, `update`, `uninstall --apply`,

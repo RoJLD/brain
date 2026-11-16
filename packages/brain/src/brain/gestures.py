@@ -33,6 +33,9 @@ MODULES = ("brain", "brain.cli", "brain.__main__")           # python -m brain, 
 VALUE_OPTS = ("--root", "--project", "--store")              # brain's options before the subcommand that take a value
 LAUNCHERS = ("uv", "uvx", "poetry", "pipx", "pdm", "hatch", "rye")  # ... run brain
 UNRESOLVED = re.compile(r"[$`%]")                            # a word the guard cannot resolve ($x, %x%, a backquote)
+SPLAT = re.compile(r"@(?:[a-z_]\w*)?", re.I)   # PowerShell's splat (@args), or an array literal @(...) whose words the
+                                               # guard's reader splits off: any words
+PYTHON = re.compile(r"^(?:python[0-9.]*w?|pythonw|py|pypy[0-9.]*)(?:\.exe)?$")   # whose -c runs brain's modules
 
 
 @dataclass(frozen=True)
@@ -130,22 +133,37 @@ def _command(low: list[str], start: int) -> list[str]:
     return low[i:]
 
 
-def _fits(g: Gesture, rest: list[str]) -> bool:
-    if g.flags and not any(_flag(w, f) for w in rest for f in g.flags):
+def _unknown(word: str, wide: bool = True) -> bool:
+    """Whether the guard cannot tell what ``word`` holds, under ``wide``: a variable, a command substitution, a
+    backquote, a %VAR%, PowerShell's splat of a variable (``@args``) or array (``@('--apply')``, read as ``@``): it may
+    be any word, a gesture's included."""
+    return wide and bool(UNRESOLVED.search(word) or SPLAT.fullmatch(word))
+
+
+def _fits(g: Gesture, rest: list[str], wide: bool = False) -> bool:
+    """Whether ``rest`` (the words after a gesture's) gives one of its flags (under ``wide``, a word the guard cannot
+    resolve counting as one: ``schedule install $f``) and none of the flags that make it a read."""
+    if g.flags and not any(_flag(w, f) or _unknown(w, wide) for w in rest for f in g.flags):
         return False
     return not (g.unless and any(_flag(w, f) for w in rest for f in g.unless))
 
 
-def _words_at(g: Gesture, cmd: list[str]) -> int:
+def _value(cmd: list[str], i: int, wide: bool) -> bool:
+    """Whether ``cmd[i]`` is an option's value (the word after an option without =)."""
+    return i > 0 and cmd[i - 1].startswith("-") and "=" not in cmd[i - 1] and not _unknown(cmd[i - 1], wide)
+
+
+def _words_at(g: Gesture, cmd: list[str], wide: bool = False) -> int:
     """Where a gesture's words end in ``cmd`` (its subcommand first), options and their values allowed between them
-    (``usage --hours 2 allow``, ``queue --kind action apply``), a positional word not (``queue add ... apply``); -1
-    when they are not there."""
-    if not g.words or cmd[:1] != [g.words[0]]:
+    (``usage --hours 2 allow``, ``queue --kind action apply``), a positional word not (``queue add ... apply``); under
+    ``wide``, a word the guard cannot resolve stands for any of them (``schedule $(echo install)``), but an option's
+    value; -1 when they are not there."""
+    if not g.words or not cmd or not (cmd[0] == g.words[0] or _unknown(cmd[0], wide)):
         return -1
     i = 1
     for word in g.words[1:]:
-        while i < len(cmd) and cmd[i] != word:
-            if not (cmd[i].startswith("-") or (cmd[i - 1].startswith("-") and "=" not in cmd[i - 1])):
+        while i < len(cmd) and not (cmd[i] == word or (_unknown(cmd[i], wide) and not _value(cmd, i, wide))):
+            if not (cmd[i].startswith("-") or _value(cmd, i, wide)):
                 return -1
             i += 1
         if i >= len(cmd):
@@ -154,31 +172,92 @@ def _words_at(g: Gesture, cmd: list[str]) -> int:
     return i
 
 
+def _starts(cmd: list[str], wide: bool) -> list[list[str]]:
+    """``cmd``, and under ``wide`` ``cmd`` from each later word that may be the subcommand: past leading words the
+    guard cannot resolve (``brain $opts schedule install --apply``: $opts may be options)."""
+    out = [cmd]
+    i = 0
+    while wide and i < len(cmd) - 1 and _unknown(cmd[i]):
+        i += 1
+        out.append(cmd[i:])
+    return out
+
+
+def _code(low: list[str]) -> str:
+    """Python's inline code in the simple command ``low`` (``python -c CODE``, ``python -Ic CODE``), else ''."""
+    if not PYTHON.match(re.split(r"[\\/]", low[0])[-1]):
+        return ""
+    for i, w in enumerate(low[1:], 1):
+        m = re.fullmatch(r"-[a-z]*c(.*)", w, re.S)
+        if m:
+            return m.group(1) or (low[i + 1] if i + 1 < len(low) else "")
+        if not w.startswith("-"):
+            return ""   # a script or a module: not inline code
+    return ""
+
+
+def _inline(low: list[str]) -> Gesture | None:
+    """The gesture Python's inline code runs through brain's own modules: the code names brain and, as words, each of
+    the gesture's words and one of its flags (``main(['schedule', 'install', '--apply'])``,
+    ``schedule.install(reg, apply=True)``), none of its read flags; underscores read as hyphens (otel_headers)."""
+    code = _code(low)
+    if not code or not re.search(r"(?<![\w.])brain\b", code):
+        return None
+    tokens = set(re.findall(r"[a-z][a-z0-9-]*", code.replace("_", "-")))
+    for g in GESTURES:
+        if g.program != "brain" or not g.words or not set(g.words) <= tokens:
+            continue
+        if g.flags and not any(f.lstrip("-").lower() in tokens for f in g.flags):
+            continue
+        if any(f.lstrip("-").lower() in tokens for f in g.unless):
+            continue
+        return g
+    return None
+
+
 def _help(low: list[str]) -> bool:
     """Whether brain is asked for its help (--help or -h before any --): a read."""
     words = low[1:low.index("--")] if "--" in low else low[1:]
     return "--help" in words or "-h" in words
 
 
-def match(words: list[str]) -> Gesture | None:
+def match(words: list[str], wide: bool | None = None) -> Gesture | None:
     """The gesture the simple command ``words`` runs, else None. A brain gesture's words follow brain's own options
     (``brain --project x usage allow``, their prefixes too), options allowed between them; a loose one is found
     anywhere, whatever runs it, its last word unresolved too (``brain ipc $x``), even with --help. ``--help`` or
-    ``-h`` before any ``--`` makes any other one a read."""
+    ``-h`` before any ``--`` makes any other one a read. ``wide`` (None: config.json ``guards.gestures_wide``, read
+    only when the call has a word the guard cannot resolve or Python's inline code): a word the guard cannot resolve
+    may be any of a gesture's words or flags, and Python's inline code that drives brain's modules counts (_inline)."""
     low = [w.lower() for w in words]
     if not low:
         return None
     at = runs_brain(low)
     cmd = _command(low, at + 1) if at >= 0 else []
     helped = _help(low)
+    found = _find(low, cmd, at, helped, False)
+    if found or wide is False:
+        return found
+    if wide is None:
+        if not (any(_unknown(w) for w in low) or _code(low)):
+            return None
+        wide = wide_matching()
+    if not wide:
+        return None
+    if at < 0 and _unknown(low[0]):   # & $exe schedule install --apply: the program may be brain
+        at, cmd = 0, _command(low, 1)
+    return _find(low, cmd, at, helped, True) or _inline(low)
+
+
+def _find(low: list[str], cmd: list[str], at: int, helped: bool, wide: bool) -> Gesture | None:
     for g in GESTURES:
         if g.program != "brain":
             continue
         if g.loose and _anywhere(g, low):
             return g
-        end = -1 if helped else _words_at(g, cmd)
-        if end >= 0 and _fits(g, cmd[end:]):
-            return g
+        for start in ([] if helped or at < 0 else _starts(cmd, wide)):
+            end = _words_at(g, start, wide)
+            if end >= 0 and _fits(g, start[end:], wide):
+                return g
     return None
 
 
@@ -200,6 +279,16 @@ def strict(data: dict | None = None) -> bool:
         data = config.load().data   # an unreadable config.json loads as no data: strict stays off
     section = data.get("guards") if isinstance(data, dict) else None
     return isinstance(section, dict) and section.get("owner_strict") is True
+
+
+def wide_matching(data: dict | None = None) -> bool:
+    """config.json's ``guards.gestures_wide``: a gesture is matched through words the guard cannot resolve and
+    Python's inline code too (off by default: refusals 0.5.2 adds; the MCP server matches wide always)."""
+    if data is None:
+        from . import config
+        data = config.load().data
+    section = data.get("guards") if isinstance(data, dict) else None
+    return isinstance(section, dict) and section.get("gestures_wide") is True
 
 
 def cli_refusal(argv: list[str], env=None, data: dict | None = None) -> str:

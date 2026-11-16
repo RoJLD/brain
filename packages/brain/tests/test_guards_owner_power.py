@@ -91,6 +91,19 @@ OWNER_REFUSED = [
     ("scheduled", "brain schedule install --apply"),
     ("scheduled", "python -I -m brain schedule install --apply"),
     ("scheduled", "~/.brain/venv/bin/python -m brain --root ~/my-brain schedule install --json --apply"),
+    # every launcher, quoted or escaped words, a word the guard cannot resolve (wi-brain-schedule-guard-launchers)
+    ("scheduled", "python -mbrain schedule install --apply"),
+    ("scheduled", "py -3.12 -X utf8 -m brain schedule install --apply"),
+    ("scheduled", "/c/x/venv/Scripts/brain.exe schedule install --apply"),
+    ("scheduled", "C:/x/venv/Scripts/python.exe -m brain.cli schedule install --apply"),
+    ("scheduled", "uv run python -m brain schedule install --apply"),
+    ("scheduled", "uvx brain schedule install --apply"),
+    ("scheduled", "'brain' \"schedule\" 'install' \"--apply\""),
+    ("scheduled", "b\\rain sched\\ule ins\\tall --ap\\ply"),
+    ("scheduled", "brain schedule install --app=1"),
+    ("scheduled", "brain --proj p schedule --project p install --task x --apply"),
+    ("scheduled", "x=install; brain schedule $x --apply"),
+    ("scheduled", "bash -c 'python3 -m brain schedule install --apply'"),
     ("scheduled", "schtasks.exe /change /tn \\Demo\\cycle /tr x"),
     ("scheduled", "schtasks /delete /tn BrainDigest /f"),
     ("scheduled", "crontab -e"),
@@ -130,6 +143,12 @@ OWNER_REFUSED = [
 ]
 
 PS_OWNER_REFUSED = [
+    ("scheduled", "& 'C:\\x\\venv\\Scripts\\brain.exe' schedule install --apply"),
+    ("scheduled", "& \"$env:USERPROFILE\\.brain\\venv\\Scripts\\python.exe\" -m brain schedule install --apply"),
+    ("scheduled", "b`rain sch`edule install `--apply"),
+    ("scheduled", "$a = '--apply'; brain schedule install $a"),
+    ("scheduled", "Start-Process python -ArgumentList '-m brain schedule install --apply'"),
+    ("scheduled", "cmd /c \"brain sched^ule install --apply\""),
     ("installer", ".\\install.ps1 -Apply"),
     ("installer", "& 'D:\\work\\demo-brain\\install.ps1' -Ap"),
     ("installer", ". .\\install.ps1 -Apply"),
@@ -154,6 +173,62 @@ PS_OWNER_REFUSED = [
     ("keys", "Invoke-RestMethod -Method:Put -Uri https://api.github.com/repos/o/r/actions/secrets/FOO -Body $b"),
     ("scheduled", "New-ItemProperty -Path 'HKCU:/Software/Microsoft/Windows/CurrentVersion/Run' -Name x -Value y"),
 ]
+
+# config.json guards.gestures_wide (off by default): a gesture through words the guard cannot resolve, and Python's
+# inline code that drives brain's modules (wi-brain-schedule-guard-launchers)
+WIDE_REFUSED = [
+    ("Bash", "brain schedule install $FLAG"),
+    ("Bash", "brain schedule $(echo install) --apply"),
+    ("Bash", "brain $opts schedule install --apply"),
+    ("Bash", "brain schedule install \"${args[@]}\""),
+    ("Bash", "python -c \"from brain.cli import main; main(['schedule', 'install', '--apply'])\""),
+    ("Bash", "python3 -Ic \"import runpy, sys; sys.argv = ['brain', 'schedule', 'install', '--apply']; "
+             "runpy.run_module('brain', run_name='__main__')\""),
+    ("Bash", "python -c \"from brain import schedule, projects; schedule.install(projects.load(), apply=True)\""),
+    ("PowerShell", "brain schedule install @('--apply')"),
+    ("PowerShell", "brain schedule install @rest"),
+    ("PowerShell", "& $brain schedule install --apply"),
+]
+
+
+def _wide(tmp_path, monkeypatch, on: bool):
+    cfg = tmp_path / "wide-config.json"
+    cfg.write_text(json.dumps({"v": 1, "identity": {"owner": "Ada", "kind": "person"}, "power": POWER,
+                               "guards": {"gestures_wide": on}}), encoding="utf-8")
+    monkeypatch.setenv("BRAIN_CONFIG", str(cfg))
+
+
+@pytest.mark.parametrize("tool, command", WIDE_REFUSED)
+def test_wide_matching_refuses_what_the_guard_cannot_resolve(owner, tmp_path, monkeypatch, tool, command):
+    _wide(tmp_path, monkeypatch, True)
+    reason = (bash if tool == "Bash" else pwsh)(owner, command)
+    assert refused(reason, "owner", "scheduled") and "brain schedule install --apply" in reason, reason
+
+
+@pytest.mark.parametrize("tool, command", WIDE_REFUSED)
+def test_wide_matching_is_off_by_default(owner, tmp_path, monkeypatch, tool, command):
+    for on in (None, False):
+        if on is not None:
+            _wide(tmp_path, monkeypatch, on)
+        assert (bash if tool == "Bash" else pwsh)(owner, command) is None, command
+
+
+def test_the_prefilter_starts_python_for_the_wide_shapes():
+    commands = [c for _, c in WIDE_REFUSED]
+    missed = [c for c, started in zip(commands, _needs_python(commands)) if not started]
+    assert not missed
+
+
+@pytest.mark.parametrize("command", [
+    "brain schedule install --plan", "brain schedule list $x", "brain usage --hours $h guard",
+    "python -c \"import brain; print(brain.__version__)\"",
+    "python -c \"from brain import schedule; print(schedule.installed())\"",
+    "python -c \"from brain import schedule; print(schedule.install.__doc__)\"",
+    "python -c \"print('schedule install --apply')\"", "python script.py brain schedule install --apply",
+])
+def test_wide_matching_passes_reads(owner, tmp_path, monkeypatch, command):
+    _wide(tmp_path, monkeypatch, True)
+    assert bash(owner, command) is None, command
 
 
 @pytest.mark.parametrize("category, command", OWNER_REFUSED)
@@ -186,6 +261,10 @@ def test_owner_refuses_in_powershell(owner, category, command):
     "crontab -l",
     "brain ipc token",
     "grep -n 'ipc otel-headers' docs/mcp.md",
+    "brain schedule install", "brain schedule install --json", "brain schedule list", "python -m brain schedule list",
+    "brain schedule install --apply --help", "brain usage --hours $h guard",
+    "python -c \"import brain; print(brain.__version__)\"", "python -c \"from brain import schedule; print(schedule.installed())\"",
+    "grep -rn 'schedule install --apply' docs/", "echo brain schedule install --apply",
     "systemctl status brain.service",
     "ssh-keygen -lf ~/.ssh/id_ed25519.pub",
     "ssh-keygen -R box1",

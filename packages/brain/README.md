@@ -1678,7 +1678,8 @@ command or flag only the owner runs (`brain usage allow`, `brain schedule instal
 `device init`, `reseal --apply`, `brain update`, `brain uninstall --apply`, `brain queue apply`, `brain handover root`,
 `brain ipc otel-headers`, `install.ps1 -Apply`) is declared once; the owner guard and the command line read that list,
 and a test checks that each one is refused to an agent's session. config.json `guards.owner_strict: true` adds the
-refusals 0.5.1 brings (off by default).
+refusals 0.5.1 brings (off by default). `guards.gestures_wide: true` (off by default) matches them through words the guard
+cannot resolve (`brain schedule install $FLAG`) and Python's inline code that drives brain's modules.
 
 **The read hint** (`readhint.sh`, `brain.readhint`, PreToolUse on Read, Grep, Bash and PowerShell) never refuses: when
 a call reads a registered brain's graph YAML (a store's `nodes/` or `edges/`, or the store), its decision log, its
