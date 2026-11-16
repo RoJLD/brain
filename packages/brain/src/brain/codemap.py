@@ -241,7 +241,7 @@ def _by_repo(cm: CodeMap, p: projects.Project, only: set[str] | None) -> dict[st
 
 def build(p: projects.Project, ix: codeindex.Indexer, entries: list, only: set[str] | None = None) -> CodeMap:
     """The code map of ``p``: ``entries`` is GitNexus's registry (/api/repos); ``only``: these repos (lowercase)."""
-    cm = CodeMap(p.name, codeindex._now(), [os.path.relpath(s, p.root).replace(os.sep, "/") for s in p.stores])
+    cm = CodeMap(p.name, codeindex._now(), [projects._up(s, p.root) for s in [*p.stores, *p.overlays]])
     record = codeindex.read_record()
     for repo, refs in sorted(_by_repo(cm, p, only).items()):
         cm.repos[repo] = _map_repo(ix, codeindex._entry(entries, ix, repo), record.get(repo) or {}, repo, refs)
