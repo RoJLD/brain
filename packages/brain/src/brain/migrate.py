@@ -268,7 +268,7 @@ def _migrated(e: Entry, raw: dict) -> dict:
     for s in e.steps:
         try:
             out = s.fn(copy.deepcopy(data))
-        except Exception as exc:  # noqa: BLE001 - a step is code: any failure stops the run, the file untouched
+        except Exception as exc:   # a step is code: any failure stops the run, the file untouched
             raise Failed(f"step {s.id} failed ({exc.__class__.__name__}: {exc}): nothing written") from None
         if not isinstance(out, dict):
             raise Failed(f"step {s.id} returned a {type(out).__name__}, not a record: nothing written")

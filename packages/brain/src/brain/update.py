@@ -357,7 +357,7 @@ def pending_migrations(root: Path | None = None) -> list[dict]:
         from . import migrate
         return [{"format": e.format, "file": str(e.file), "from": e.v, "to": e.steps[-1].to}
                 for e in migrate.pending(root)]
-    except Exception:  # noqa: BLE001 - a line of the plan, never a reason for the update to fail
+    except Exception:   # a line of the plan, never a reason for the update to fail
         return []
 
 
@@ -486,11 +486,16 @@ def lines(p: dict) -> list[str]:
                 if runs(p) else "To do by hand:", *(f"  {s}" for s in steps)]
     if p.get("blocked") and newer:
         out += ["", f"Not applicable here: {p['blocked']}"]
-    if p.get("migrations"):
-        files = ", ".join(f"{Path(m['file']).name} v{m['from']} -> v{m['to']}" for m in p["migrations"])
-        out += ["", f"Migrations pending for brain {p['installed']}'s formats: {files} (brain migrate --plan, then "
-                    "--apply; brain update applies none)"]
-    return out
+    return out + migration_lines(p)
+
+
+def migration_lines(p: dict) -> list[str]:
+    """The plan's line on the migrations pending on this machine (none: no line)."""
+    if not p.get("migrations"):
+        return []
+    files = ", ".join(f"{Path(m['file']).name} v{m['from']} -> v{m['to']}" for m in p["migrations"])
+    return ["", f"Migrations pending for brain {p['installed']}'s formats: {files} (brain migrate --plan, then "
+                "--apply; brain update applies none)"]
 
 
 # --- applying it: the owner's gesture only ---
