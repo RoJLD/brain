@@ -57,14 +57,17 @@ needs_python() {
   [ -f "$cache" ] && { IFS= read -r clis; IFS= read -r form; } < "$cache"
   [[ -n $form && $form != '#brain.node-clis/v1' ]] && return 0
   local node_clis="$before($clis)([^A-Za-z0-9_-]|$)"
-  # the machine's token (brain/tokenguard.py): the brain's home named (.brain, BRAIN_HOME's folder) or the file
-  # BRAIN_IPC_TOKEN_FILE names; the words ipc and token are in owner_power
-  local tokfile=${BRAIN_IPC_TOKEN_FILE:-} homename=${BRAIN_HOME:-}
+  # the machine's token (brain/tokenguard.py), only under config.json guards.refuse_token_read (read by awk, no
+  # Python): the brain's home named (.brain, BRAIN_HOME's folder, $BRAIN_HOME), the token file's name or
+  # $BRAIN_IPC_TOKEN_FILE, any case; the words ipc and token are in owner_power
+  local tokfile=${BRAIN_IPC_TOKEN_FILE:-} homename=${BRAIN_HOME:-} token_home='[\\/]\.brain([\\/"]|$)' named=
   tokfile=${tokfile%[\\/]}; tokfile=${tokfile##*[\\/]}; homename=${homename%[\\/]}; homename=${homename##*[\\/]}
-  local token_home='[\\/]\.brain([\\/"]|$)'
-  [ -n "$tokfile" ] && [[ $rest == *"$tokfile"* ]] && return 0
-  [ -n "$homename" ] && [[ $rest =~ [\\/]"$homename"([\\/\"]|$) ]] && return 0
-  [[ $rest =~ $token_home ]] && return 0
+  shopt -s nocasematch
+  [[ $rest =~ $token_home || $rest == *brain_home* || $rest == *brain_ipc_token_file* ]] && named=1
+  [[ -n $tokfile && $rest == *"$tokfile"* ]] && named=1
+  [[ -n $homename && ( $rest == *[\\/]"$homename"[\\/\"]* || $rest == *[\\/]"$homename" ) ]] && named=1
+  shopt -u nocasematch
+  [ -n "$named" ] && [ -n "$(floor_setting "$(brain_config "${root:-}")" refuse_token_read guards)" ] && return 0
   shopt -s nocasematch
   [[ $rest =~ $writers || $rest =~ $owner_power || ( -n $clis && $rest =~ $node_clis ) ]] && found=0 || found=1
   shopt -u nocasematch

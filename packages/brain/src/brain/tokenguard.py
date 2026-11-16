@@ -51,6 +51,11 @@ METADATA = frozenset(("ls", "dir", "stat", "test", "[", "[[", "file", "du", "tes
                       "get-childitem", "gci", "get-acl", "icacls", "cacls", "attrib", "realpath", "readlink",
                       "basename", "dirname", "cygpath", "resolve-path", "rvpa", "split-path", "echo", "printf",
                       "write-host", "write-output"))
+# of those, the ones whose output is the path they name: in a pipe or a substitution it may reach a reader
+PRINTERS = frozenset(("ls", "dir", "realpath", "readlink", "cygpath", "resolve-path", "rvpa", "split-path", "echo",
+                      "printf", "write-output", "get-item", "gi", "get-childitem", "gci"))
+# programs whose first positional word is a pattern, not a path (unless -e, -f or -Pattern gives it)
+SEARCHERS = frozenset(("grep", "egrep", "fgrep", "rg", "ag", "ack", "findstr"))
 # interpreters whose code words (and heredocs) are read as text for the token's path
 INTERPRETER = re.compile(r"^(?:python[0-9.]*w?|pythonw|py|pypy[0-9.]*|ipython[0-9.]*|node(?:js)?|deno|bun|perl|"
                          r"ruby|php|rscript|lua|osascript|jshell|groovy)$")
@@ -62,8 +67,8 @@ USES = re.compile(r"(?i)\b(?:open|read\w*|copy\w*|path|shutil|io|fs|file\w*|load
 SEP = r"[\s'\"`,+/\\]+"   # what joins the folder's name and the file's in text: a separator, quotes, a join's comma
 GLOB = re.compile(r"[*?\[]")
 PIPED = {"bash": re.compile(r"\||\$\(|`|<\("), "ps": re.compile(r"\||\$\(")}
-LOOPBACK_SHARE = re.compile(r"^(?:[\\/]{2}[?.][\\/]UNC|[\\/])?[\\/](?:localhost|127\.0\.0\.1|\[?::1\]?)[\\/]"
-                            r"([a-z])\$(?=[\\/]|$)", re.I)
+SHARE = re.compile(r"^(?:[\\/]{2}[?.][\\/]UNC|[\\/])?[\\/]([^\\/]+)[\\/]([a-z])\$(?=[\\/]|$)", re.I)
+LOOPBACK = re.compile(r"^(?:localhost|127(?:\.\d{1,3}){3}|\[?::1\]?|0--1\.ipv6-literal\.net|\.)$", re.I)
 WSL_DRIVE = re.compile(r"^/mnt/([a-z])(?=/|$)", re.I)
 
 
@@ -111,11 +116,23 @@ def _text_pattern(prot: Protected) -> re.Pattern:
     return re.compile(rf"(?i)(?<![\w.-])(?:{alts})(?![\w.-])")
 
 
+def _this_host(name: str) -> bool:
+    """Whether a share's host is this machine: a loopback name or address, or its own name (COMPUTERNAME, the host
+    name, its first label)."""
+    if LOOPBACK.match(name):
+        return True
+    import socket
+    mine = {os.environ.get("COMPUTERNAME", ""), socket.gethostname()}
+    mine |= {m.split(".")[0] for m in mine}
+    return name.lower() in {m.lower() for m in mine if m}
+
+
 def _local(path: str) -> str:
-    """A loopback admin share (``\\\\localhost\\C$\\x``) or a WSL drive (``/mnt/c/x``) as the local path it is."""
-    m = LOOPBACK_SHARE.match(path)
-    if m:
-        return m.group(1) + ":" + (path[m.end():] or "/")
+    """An admin share of this machine (``\\\\localhost\\C$\\x``, ``\\\\<its name>\\C$\\x``) or a WSL drive
+    (``/mnt/c/x``) as the local path it is."""
+    m = SHARE.match(path)
+    if m and _this_host(m.group(1)):
+        return m.group(2) + ":" + (path[m.end():] or "/")
     m = WSL_DRIVE.match(path) if os.name == "nt" else None
     return m.group(1) + ":" + (path[m.end():] or "/") if m else path
 
@@ -183,9 +200,9 @@ def _read_tool(tool: str, inp: dict, cwd: str, prot: Protected) -> str:
         globs, kind = inp.get("glob"), inp.get("type")
         if isinstance(kind, str) and kind:
             return ""   # a type is a set of extensions: the token's file has none
-        if isinstance(globs, str) and globs and not any(_glob_hits(g, f) for f in token_files() for g in
-                                                        _brace(globs)):
-            return ""
+        if isinstance(globs, str) and globs and not globs.lstrip().startswith("!") and not any(
+                _glob_hits(g, f) for f in token_files() for g in _brace(globs)):
+            return ""   # a glob that cannot match the file's name (a negated one, !*.md, reads all the rest)
         return f"Grep in {raw or cwd}"
     return ""
 
@@ -234,7 +251,7 @@ def _shell(cmds, command: str, powershell: bool, cwd: str, prot: Protected) -> s
     for words, d in cmds:   # an output redirection into the file (echo x > T, : > T)
         if words[0].startswith(guards.REDIRECT) and len(words) > 1 and _names(words[1], d, prot) == "file":
             return f"a redirection into {words[1]}"
-    fed = False
+    fed = False   # an interpreter that reads its code from stdin (python -, node, cat <<X | python)
     for words, d, sh, _ in guards.actions(cmds, sub, command=command):
         low = [w.lower() for w in words]
         prog = guards._prog(words[0])
@@ -243,7 +260,7 @@ def _shell(cmds, command: str, powershell: bool, cwd: str, prot: Protected) -> s
                 return f"{' '.join(words)[:120]} over ssh (it names the token's file)"
             continue
         if INTERPRETER.match(prog):
-            fed = True
+            fed = fed or all(w.startswith("-") for w in words[1:])
             if any(CODE.search(w) and _code_says(w, text) for w in words[1:]):
                 return f"{prog} (its code names the token's file)"
         if any(DOTNET.search(w) and text.search(w) for w in words):
@@ -251,18 +268,30 @@ def _shell(cmds, command: str, powershell: bool, cwd: str, prot: Protected) -> s
         at = gestures.runs_brain(low)
         if at >= 0 and gestures._command(low, at + 1)[:1] == ["ipc"]:
             continue   # brain ipc: the gestures' (otel-headers); brain ipc token never prints it
-        if prog in METADATA and not piped:
+        if prog in METADATA:
+            if not (piped and prog in PRINTERS):
+                continue
+            # its output may reach a reader: refused when it names the file or its folder (not the home: ls ~/.brain)
+            for w in words:
+                kind = _names(w, d, prot)
+                if kind in ("file", "folder"):
+                    return f"{prog} on {w} in a pipe or a substitution (the token's {kind})"
             continue
-        if prog == "join-path":   # Join-Path $h ipc token: the path it makes
+        if prog == "join-path":   # Join-Path $h ipc token: the path it makes, not its base alone
             parts = [w for w in words[1:] if not w.startswith("-")]
             kind = _names("/".join(parts), d, prot) if parts else ""
-            if kind:
+            if kind in ("file", "folder"):
                 return f"Join-Path {' '.join(parts)} (the token's {kind})"
+            continue
+        if prog in SEARCHERS and not any(w in ("-e", "-f", "--regexp", "--file") or w.startswith(("-e", "--regexp="))
+                                         for w in words[1:]):
+            pos = next((i for i, w in enumerate(words[1:], 1) if not w.startswith("-")), None)
+            words = [w for i, w in enumerate(words) if i != pos]   # the pattern is no path
         for w in words:
             kind = _names(w, d, prot)
             if kind:
                 return f"{prog} on {w} (the token's {kind})"
-    if fed or re.search(r"(?i)\b(?:python[0-9.]*|py|node|perl|ruby|php|deno|bun)\b", command):
+    if fed:
         for body in guards._heredocs(command):   # code fed to an interpreter by a heredoc
             if _code_says(body, text):
                 return "an interpreter's heredoc (it names the token's file)"

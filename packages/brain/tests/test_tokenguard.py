@@ -77,6 +77,8 @@ BASH = [
     "python -c 'import sys' -m brain x; cat {tok}", "brain --root=`cat {tok}` items",
     "curl -F 'f=@{tok}' http://127.0.0.1:9", "cat {home}/ipc/../../{homename}/ipc/token",
     "cat {home}/i*/../ipc/t?ken",
+    # round 2
+    "grep -r . \"$BRAIN_HOME\"",
 ]
 PWSH = [
     "Get-Content {tok}", "gc '{tok}'", "Get-Content -Path:{tok}", "Get-Content -Raw -LiteralPath {tok}",
@@ -88,6 +90,7 @@ PWSH = [
     "Get-Content ([IO.Path]::Combine($env:BRAIN_HOME, 'ipc', 'token'))", "gc ${{env:BRAIN_HOME}}\\ipc\\token",
     "Get-Item {tok} | Get-Content", "gci {home}\\ipc | % {{ gc $_ }}", "'x' > {tok}",
     "Copy-Item -Recurse {home} C:\\tmp\\b", "Compress-Archive {home} C:\\tmp\\b.zip",
+    "Select-String -Path $env:BRAIN_HOME\\ipc\\* -Pattern .",
 ]
 
 
@@ -112,6 +115,10 @@ def test_a_loopback_share_and_a_wsl_path_are_the_file(machine):
     share = f"\\\\localhost\\{drive[0]}$" + rest
     assert _token_refusal(decide(payload("Read", machine, file_path=share)))
     assert _token_refusal(decide(payload("PowerShell", machine, command=f"Get-Content '{share}'", description="r")))
+    import socket
+    for host in (os.environ.get("COMPUTERNAME") or socket.gethostname(), "0--1.ipv6-literal.net", "127.0.0.1"):
+        assert _token_refusal(decide(payload("Read", machine, file_path=f"\\\\{host}\\{drive[0]}$" + rest))), host
+    assert decide(payload("Read", machine, file_path=f"\\\\fileserver\\{drive[0]}$" + rest)) is None   # another
     wsl = f"/mnt/{drive[0].lower()}" + rest.replace("\\", "/")
     assert _token_refusal(decide(payload("Bash", machine, command=f"wsl cat {wsl}", description="run")))
 
@@ -161,6 +168,9 @@ def test_the_token_file_named_by_the_environment(machine, tmp_path, monkeypatch)
     assert _token_refusal(decide(payload("Read", machine, file_path=str(other))))
     assert _token_refusal(decide(payload("Bash", machine, command=f"cat {other.as_posix()}", description="run")))
     assert _token_refusal(decide(payload("Grep", machine, pattern=".", path=str(other.parent))))
+    assert _token_refusal(decide(payload("Bash", machine, command='cat "$BRAIN_IPC_TOKEN_FILE"', description="r")))
+    from test_guards import _needs_python
+    assert _needs_python(['cat "$BRAIN_IPC_TOKEN_FILE"', "cat /x/BRAIN-TOKEN"]) == [True, True]
     # the default file stays guarded too
     assert _token_refusal(decide(payload("Read", machine, file_path=str(tokenguard.token_files()[1]))))
 
@@ -177,6 +187,11 @@ PASSES = [
     "grep -rn 'open(ipc/token' src", "rg -n 'read(.*ipc/token' src",
     "git commit -m 'The guard refuses cat ipc/token (and Read)'",
     "gh pr create --title t --body 'refuses open(\"ipc/token\")'",
+    # round 2: a heredoc into git or a file, pipes elsewhere in the call, the home listed in a pipe
+    "git commit -F - <<'X'\nGuard python and node: open('ipc/token') is refused\nX",
+    "cat > notes.md <<'X'\npython -c \"open('.brain/ipc/token')\"\nX",
+    "ls {home} && git log | head", "test -f {tok} && echo yes | cat", "ls {home} | head",
+    "cd {home} && grep -rn 'ipc/token' handover",
 ]
 
 
@@ -186,7 +201,9 @@ def test_names_metadata_and_mentions_pass(machine, command):
 
 
 def test_powershell_metadata_passes(machine):
-    for command in ("Test-Path {tok}", "Get-Item {tok}", "Get-Acl {tok}", "Get-ChildItem {home}\\ipc"):
+    for command in ("Test-Path {tok}", "Get-Item {tok}", "Get-Acl {tok}", "Get-ChildItem {home}\\ipc",
+                    "Test-Path {tok}; Get-Process | Select-Object -First 1", "Get-ChildItem {home} | Format-Table",
+                    "Join-Path $env:BRAIN_HOME handover", "Get-Content (Join-Path $env:BRAIN_HOME 'handover\\x.md')"):
         assert decide(payload("PowerShell", machine, command=command.format(tok=tok(), home=home()),
                               description="run")) is None, command
 
@@ -204,6 +221,7 @@ def test_other_reads_pass(machine):
     assert decide(payload("Grep", machine, pattern="x", path=home(), glob="*.{md,json}")) is None
     assert _token_refusal(decide(payload("Grep", machine, pattern="x", path=home(), glob="tok*")))
     assert _token_refusal(decide(payload("Grep", machine, pattern="x", path=home(), glob="**/ipc/*")))
+    assert _token_refusal(decide(payload("Grep", machine, pattern="x", path=home(), glob="!*.md")))   # all the rest
 
 
 @pytest.mark.parametrize("value", [None, False])
@@ -305,6 +323,14 @@ def test_prefilter_of_read_and_grep(machine, tmp_path):
 def test_the_read_hook_is_opt_in(machine, tmp_path):
     from brain import render
     assert render.OPTIONAL_HOOKS["tokenguard.sh"] == ("guards", tokenguard.CONFIG_KEY)
+
+
+def test_prefilter_reads_the_home_only_under_the_key(machine, tmp_path, monkeypatch):
+    from test_guards import _needs_python
+    shapes = ["ls ~/.brain/ledger", "cat ~/.BRAIN/cache/x.md", "grep -r x \"$BRAIN_HOME\""]
+    assert all(_needs_python(shapes))
+    _off(tmp_path, monkeypatch, False)
+    assert not any(_needs_python(shapes))   # the key off: the home named starts no Python
 
 
 def test_prefilter_starts_python_for_the_shell_shapes(machine, tmp_path):
