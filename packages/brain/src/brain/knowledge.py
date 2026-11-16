@@ -240,6 +240,28 @@ def refuse_init(target: Path, source: Path | None = None) -> str:
     return ""
 
 
+def project_map(home: Path, name: str, title: str = "", today: str = "") -> Step:
+    """What ``brain project add`` plans in the notes home for a new project (wi-brain-project-add-notes): its map,
+    ``maps/<name>.md`` (type map, ``scope: [name]``), kept as it is when there. Never a folder of its own: the folders
+    say the lifecycle and the class, never the subject (SB-4); a note joins the project by its ``scope``, wherever it
+    lives, and the generated map of the scope goes to ``_maps/``."""
+    import datetime as _dt
+
+    import yaml
+
+    rel = f"maps/{name}.md"
+    if (home / rel).exists():
+        return Step("keep", rel, "there already: kept as it is")
+    nid = f"n-map-{name}"
+    shown = " ".join(str(title).split()) or name   # one line, never empty: a heading and a YAML scalar alike
+    front = {"id": nid, "type": "map", "title": shown, "scope": [name], "tags": [], "status": "seed", "links": [],
+             "share": [], "summary": "", "aliases": [nid], "created": today or _dt.date.today().isoformat()}
+    text = ("---\n" + yaml.safe_dump(front, sort_keys=False, allow_unicode=True, width=1000) + "---\n"
+            f"# {shown}\n\nThe notes of `{name}`: a note joins it by `scope: [{name}]` in its front matter, wherever it "
+            f"lives. The generated map of the scope is `_maps/{name}.md`.\n\n## Notes\n\n## Sources\n")
+    return Step("write", rel, f"the map of {name}: scope {name}", text.encode("utf-8"))
+
+
 def _imports(target: Path, source: Path) -> list[Step]:
     """A vault's notes into inbox/, its other files into attachments/, their sub-folders kept; a vault's top folder
     that the layout names (daily/, people/, sealed/, notes/...) keeps its place and so its class, never under inbox/

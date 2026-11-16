@@ -744,8 +744,8 @@ offers it as « A new project » (without `--owner`, the owner of this machine's
 will propose are its later slices.
 
 `brain project add NAME (--read | --existing DIR [--store PATH] | --template T --dir DIR) [--parent NODE] [--floor
-CLASS] [--title TEXT] [--apply]` registers a project in a brain's `projects.yaml` (`wi-brain-project-add`), a plan
-then `--apply`, instead of a hand edit of the file:
+CLASS] [--title TEXT] [--no-notes] [--apply]` registers a project in a brain's `projects.yaml` (`wi-brain-project-add`),
+a plan then `--apply`, instead of a hand edit of the file:
 - `--read`: a project the brain reads and never writes (its entry: `title`, `access: read`, `parent`, `classes`);
 - `--existing DIR`: an instance that has its own brain, registered without a copy: its `root` and `stores` when
   `--store` names another than `notes/graph`; a folder without that store, or the root of a registered project, is
@@ -770,6 +770,14 @@ flow mapping or a document end marker, is refused), and the write is logged as t
 folder; its config.json and scopes.yaml are read beside it, whatever `$CLAUDE_BRAIN_DIR`, `$BRAIN_PERSONAL` or
 `$BRAIN_CONFIG` name. `--project` is refused: a brain's registry changes by a branch and a PR of that brain, so run it
 in a worktree of it, then `brain sync` and `brain check`.
+
+When the brain has a notes home (« The notes home », below: its own config.json's `knowledge.path`, else its
+registry's `kind: knowledge` entry, never another brain's), the plan also shows the project's map there,
+`maps/NAME.md` (`type: map`, `scope: [NAME]`, its id `n-map-NAME`), and `--apply` writes it after the entry, through a
+temporary name, never over a file (`wi-brain-project-add-notes`). The project gets a map, not a folder: the notes
+home's folders say the lifecycle and the class, never the subject, and a note joins the project by its `scope`. The
+step is optional: without a notes home, or with `--no-notes`, the plan says why there is no map; a map that cannot be
+written leaves the entry registered and says so. The owner commits the map in the notes repo.
 
 It also writes `<BRAIN_HOME>/personal.json` when the machine has none, so that the hooks and commands run from any
 folder find this brain. The brain is the owner's private repo: push it to their own account, never to a public one.
