@@ -66,7 +66,7 @@ A typology pack bundles what a kind of project adds to the generic core (`brain.
 | `layers` | the graph layers it brings (`research_graph layers`) | the plan: the layers a project's store lacks |
 | `standards` | `{catalogs, profiles}`: the engine's catalogs it reads, the profiles it opts a project in to | the plan: the profiles a project does not opt in to |
 | `stages` | `{stage: [a gate, in words]}`: its gates by lifecycle stage (the catalog's, or a layer's own) | listed (`brain typologies packs`) |
-| `done` | its clauses of the definition of done (`{id, text, evidence}`) | `brain item clauses`, `brain item close` |
+| `done` | its clauses of the definition of done (`{id, text, evidence}`) | `brain item clauses`, `brain item close`: the engine's packs' (a brain's own `done` is a note, not read yet) |
 | `doors` | its one-way doors, `{id, text}` | listed |
 | `roles` | its roles, `{id, text}` | listed |
 | `guards` | the guards it turns on (`brain.guards`) | listed |
@@ -94,7 +94,7 @@ and lists every pack whose typologies it meets, the brain's and the engine's: th
 step that gives it (a pack `from: engine` with `projects: [PROJECT]` appended under `packs:`, or `PROJECT` added to a
 brain pack's `projects`), the layers its store lacks and the standards profiles it does not opt in to. `--apply`
 writes the packs.yaml steps, comments kept, and refuses the write when `brain check` would find a new error in the
-source; the layers (`research_graph layers add --store S L --write`) and the standards opt-in (`projects.yaml`, by a PR
+source; the layers (`research_graph --store S layers add L --write`) and the standards opt-in (`projects.yaml`, by a PR
 of the registry) stay the owner's next steps, printed by the plan. A pack that comes from a typology is given to the
 projects named, never to every project (TYPO-6: node-local). `brain typologies packs [--json]` lists the engine's
 packs and the brain's, their parts and the projects that take them.

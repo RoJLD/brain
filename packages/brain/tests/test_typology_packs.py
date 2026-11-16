@@ -107,7 +107,7 @@ def test_a_project_s_typologies_propose_the_engines_pack_and_nothing_is_written_
     assert "demo: typologies cli" in out
     assert "software (engine; for software): to take: packs.yaml gains it, from: engine, projects: [demo]" in out
     assert "research (engine" not in out and "writing" not in out    # a cli meets software only
-    assert "layers its store lacks" in out and "research_graph layers add --store" in out
+    assert "layers its store lacks" in out and "research_graph --store \"" in out and "layers add code" in out
     assert "standards profiles it does not opt in to: software" in out
     assert "(plan only: brain typologies propose demo --apply writes it)" in out
     assert (brain / "source" / "packs.yaml").read_text(encoding="utf-8") == before
@@ -190,3 +190,106 @@ def test_an_unreadable_engine_pack_file_is_one_error(monkeypatch, tmp_path):
         assert typology_packs.overlay("software", {"from": "engine"}) == {"from": "engine"}
     finally:
         typology_packs._read.cache_clear()
+
+
+# --- the review's cases ----------------------------------------------------------------------------------------------
+
+def test_a_layers_own_stage_is_known():
+    assert typology_packs.part_errors("p", {"stages": {"preregistration-backtest": ["a gate"]}}, strict=True) == []
+
+
+def test_check_knows_the_brains_own_typology_ids(brain, monkeypatch):
+    (brain / "config.json").write_text('{"v": 1, "typologies": {"podcast": {"parent": "creation"}}}', encoding="utf-8")
+    (brain / "source" / "packs.yaml").write_text(PACKS.replace("typologies: [creation]", "typologies: [podcast]"),
+                                                encoding="utf-8")
+    monkeypatch.setattr(schema, "mode", lambda: schema.STRICT)
+    assert not any("podcast" in e for e in neutral.check(neutral.load(brain)))
+
+
+def test_apply_writes_the_packs_own_projects_never_a_nested_mappings(brain):
+    nested = PACKS.replace("  writing:\n", "  writing:\n    claude:\n      projects: [zzz]\n")
+    (brain / "source" / "packs.yaml").write_text(nested, encoding="utf-8")
+    f = brain / "projects.yaml"
+    f.write_text(f.read_text(encoding="utf-8") + "third:\n  root: ../third\n  lifecycle: {typologies: [creation]}\n",
+                 encoding="utf-8")
+    (brain.parent / "third").mkdir(exist_ok=True)
+    assert _run(brain, "propose", "third", "--apply") == 0
+    text = (brain / "source" / "packs.yaml").read_text(encoding="utf-8")
+    assert "      projects: [zzz]\n" in text and "projects: [other, third]" in text
+
+
+def test_apply_takes_the_files_indent_and_line_ends(brain):
+    four = PACKS.replace("\n  core:", "\n    core:").replace("\n    core: true", "\n        core: true") \
+        .replace("\n    hooks: true", "\n        hooks: true").replace("\n  writing:", "\n    writing:") \
+        .replace("\n    projects: [other]", "\n        projects: [other]") \
+        .replace("\n    typologies: [creation]", "\n        typologies: [creation]")
+    f = brain / "source" / "packs.yaml"
+    f.write_bytes(four.replace("\n", "\r\n").encode("utf-8"))
+    assert _run(brain, "propose", "demo", "--apply") == 0
+    raw = f.read_bytes()
+    assert b"\n" not in raw.replace(b"\r\n", b"")                           # every line end kept CRLF
+    assert b"    software:" in raw and b"        from: engine\r\n        projects: [demo]\r\n" in raw
+    assert next(p for p in neutral.load(brain).packs if p.id == "software").projects == ["demo"]
+
+
+def test_a_refused_or_failed_apply_puts_the_file_back_byte_for_byte(brain, monkeypatch):
+    f = brain / "source" / "packs.yaml"
+    f.write_bytes(PACKS.replace("\n", "\r\n").encode("utf-8"))
+    original = f.read_bytes()
+    real = neutral.check
+    calls = {"n": 0}
+
+    def boom(src, nodes=None):
+        calls["n"] += 1
+        if calls["n"] > 1:
+            raise RuntimeError("the check broke")
+        return real(src, nodes)
+    monkeypatch.setattr(neutral, "check", boom)
+    with pytest.raises(RuntimeError):
+        typology_packs.apply(brain, "demo", typology_packs.propose(brain, "demo")[1])
+    assert f.read_bytes() == original
+
+
+def test_apply_without_a_packs_yaml_is_refused_not_a_traceback(brain, capsys):
+    (brain / "source" / "packs.yaml").unlink()
+    assert _run(brain, "propose", "demo", "--apply") in (1, 2)
+    assert "Traceback" not in capsys.readouterr().err
+
+
+def test_a_brain_pack_bearing_an_engine_packs_id_is_said_to_hide_it(brain, capsys):
+    (brain / "source" / "packs.yaml").write_text(PACKS + "  software:\n    procedures: []\n", encoding="utf-8")
+    assert _run(brain, "propose", "demo", "--apply") == 0
+    out = capsys.readouterr().out
+    assert "software (packs.yaml; for software): hidden by packs.yaml's own pack software" in out
+    assert "nothing for --apply to write" in out
+
+
+def test_a_brains_own_done_is_a_note_and_malformed_parts_list_safely(brain, monkeypatch, capsys):
+    f = brain / "source" / "packs.yaml"
+    f.write_text(PACKS.replace("    typologies: [creation]\n", "    typologies: [creation]\n    layers: research\n"
+                               "    done: [{id: shipped, text: shipped}]\n"), encoding="utf-8")
+    monkeypatch.setattr(schema, "mode", lambda: schema.STRICT)
+    errors = neutral.check(neutral.load(brain))
+    assert any("a brain's clauses of done are not read" in e for e in errors)
+    assert any("layers is a list of ids" in e for e in errors)
+    assert _run(brain, "packs") == 0
+    assert "layers: r, e" not in capsys.readouterr().out
+
+
+def test_a_yaml_special_project_name_is_quoted(brain):
+    f = brain / "projects.yaml"
+    f.write_text(f.read_text(encoding="utf-8") + "'on':\n  root: ../on\n  lifecycle: {typologies: [software]}\n",
+                 encoding="utf-8")
+    (brain.parent / "on").mkdir(exist_ok=True)
+    assert _run(brain, "propose", "on", "--apply") == 0
+    assert next(p for p in neutral.load(brain).packs if p.id == "software").projects == ["on"]
+
+
+def test_self_check_finds_a_clause_id_given_twice(monkeypatch):
+    packs = typology_packs.engine()
+    packs["software"]["done"].append({"id": "verified", "text": "again"})
+    packs["other"] = {"typologies": ["software"], "done": [{"id": "pr", "text": "again"}]}
+    monkeypatch.setattr(typology_packs, "engine", lambda: packs)
+    errors = typology_packs._clause_collisions()
+    assert any("'verified' is the generic sentence's" in e for e in errors)
+    assert any("'pr' also given to software" in e for e in errors)

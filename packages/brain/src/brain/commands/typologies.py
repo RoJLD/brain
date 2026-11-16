@@ -91,8 +91,9 @@ def _show(cat: typologies.Catalog, args) -> int:
 
 def _packs(root: Path, args) -> int:
     """The engine's typology packs and the brain's packs that name typologies (or take one from the engine)."""
+    brain = neutral.brain_root(root)   # from a project's repo: its brain's source, as brain render reads it
     try:
-        rows = typology_packs.rows(neutral.load(root) if neutral.applies(root) else None)
+        rows = typology_packs.rows(neutral.load(brain) if neutral.applies(brain) else None)
     except typology_packs.PackError as exc:
         raise SystemExit(f"brain: {exc} (reinstall the engine)") from None
     if args.json:
@@ -116,18 +117,17 @@ def _short(value) -> str:
 
 
 def _propose(root: Path, args) -> int:
+    brain = neutral.brain_root(root)   # from a project's repo: its brain's registry and source, as brain render
     try:
-        kinds, props, store = typology_packs.propose(root, args.name)
+        kinds, props, store = typology_packs.propose(brain, args.name)
     except (typology_packs.ProposeError, typology_packs.PackError) as exc:
-        print(f"brain typologies propose: {exc}")
-        return 2
+        return _refused(args, str(exc), 2)
     written: list[str] = []
-    if args.apply and any(p.step for p in props):
+    if args.apply and any(p.step in ("add", "extend") for p in props):
         try:
-            written = typology_packs.apply(root, args.name, props)
+            written = typology_packs.apply(brain, args.name, props)
         except ValueError as exc:
-            print(f"brain typologies propose: {exc}; nothing written")
-            return 1
+            return _refused(args, f"{exc}; nothing written", 1)
     if args.json:
         print(json.dumps({"project": args.name, "typologies": kinds, "packs": [p.as_dict() for p in props],
                           "store": store.as_posix() if store else None, "written": written},
@@ -138,9 +138,16 @@ def _propose(root: Path, args) -> int:
         print(f"written: {line}")
     if written:
         print("next: brain render (or brain sync) renders what the packs carry; a PR of this brain records it")
-    elif any(p.step for p in props) and not args.apply:
+    elif any(p.step in ("add", "extend") for p in props) and not args.apply:
         print(f"(plan only: brain typologies propose {args.name} --apply writes it)")
     return 0
+
+
+def _refused(args, why: str, code: int) -> int:
+    """A propose that cannot be made or applied: said as text, or as {error} with --json."""
+    print(json.dumps({"project": args.name, "error": why}, ensure_ascii=False) if args.json
+          else f"brain typologies propose: {why}")
+    return code
 
 
 def register(sub, ctx) -> None:

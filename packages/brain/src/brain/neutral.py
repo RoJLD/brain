@@ -460,14 +460,18 @@ def check(src: Source, nodes: list[str] | None = None) -> list[str]:
             if lid not in ids:
                 errors.append(f"{rel}: lock {lid!r} names no rule")
     errors += _check_meta_keys(src)
-    from . import typology_packs
+    from . import config, typologies, typology_packs
+    try:   # the catalog with the brain's own ids (config.json typologies), which its packs may name
+        cat = typologies.load(config.load(src.root))
+    except typologies.CatalogError:
+        cat = None
     for p in src.packs:
         given = p.given if p.given is not None else p.spec
         for k in given:   # a newer brain's pack key: kept, a note in read mode
             if k not in PACK_KEYS and not isinstance(given[k], dict):
                 errors += schema.tolerate(f"{PACKS}: pack {p.id}: unknown key {k!r} (known: "
                                           f"{', '.join(sorted(PACK_KEYS))}, or a target's mapping)")
-        errors += typology_packs.source_errors(p.id, given, p.spec)
+        errors += typology_packs.source_errors(p.id, given, p.spec, cat=cat)
         for rel in p.items("rules"):
             if rel not in src.rule_files:
                 errors.append(f"{PACKS}: pack {p.id}: rules {rel!r} not in {FOLDER}/")

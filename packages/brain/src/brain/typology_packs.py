@@ -150,16 +150,19 @@ class _Checker:
         self.errors += [f"{self.where}: {key}: {i!r} twice" for i in sorted(set(got)) if got.count(i) > 1]
 
 
-def part_errors(where: str, spec: dict, strict: bool | None = None, notes: list[str] | None = None) -> list[str]:
+def part_errors(where: str, spec: dict, strict: bool | None = None, notes: list[str] | None = None,
+                cat=None) -> list[str]:
     """What a pack's parts break: each part's shape is an error; an id this engine does not know (a typology, a layer,
     a standards profile or catalog, a stage, a guard, a registry key) a note in read mode, an error in strict mode
-    (CI), so a pack written for a later engine is read by this one."""
+    (CI), so a pack written for a later engine is read by this one. ``cat``: the typology catalog with the brain's own
+    ids (config.json typologies); default the engine's."""
     from . import guards, projects, typologies
     c = _Checker(where, spec, strict, notes)
-    try:
-        cat = typologies.load()
-    except typologies.CatalogError:
-        cat = None
+    if cat is None:
+        try:
+            cat = typologies.load()
+        except typologies.CatalogError:
+            cat = None
     typs = c.ids("typologies")
     if typs and cat is not None:
         c.errors += typologies.unknown(f"{where}: typologies", typs, cat, strict, notes)
@@ -188,18 +191,22 @@ def _layer_stages() -> set[str]:
     try:
         from research_graph import layers as rg_layers
         return {str(i.get("stage")) for la in rg_layers.catalogue().values()
-                for i in (la.lifecycle.get("injects") or []) if isinstance(i, dict)}
-    except Exception:  # noqa: BLE001
+                for i in (la.lifecycle().get("injects") or []) if isinstance(i, dict)}
+    except Exception:  # noqa: BLE001 - research_graph's catalogue unreadable: every layer stage a note, never a crash
         return set()
 
 
 def source_errors(pid: str, raw: dict, applied: dict, *, strict: bool | None = None,
-                  notes: list[str] | None = None) -> list[str]:
+                  notes: list[str] | None = None, cat=None) -> list[str]:
     """A brain's pack in packs.yaml: ``from`` names the engine and an id it ships, a typology pack is never the core
-    pack, then its parts (:func:`part_errors`, on the pack as it applies)."""
+    pack, a brain's own ``done`` is not read (a note), then its parts (:func:`part_errors`, on the pack as it
+    applies, against ``cat``: the catalog with the brain's own ids)."""
     from . import neutral
     where = f"{neutral.PACKS}: pack {pid}"
     errors = []
+    if "done" in raw:   # the engine's packs carry the clauses of done; a brain's own clauses wait on their reader
+        errors += schema.tolerate(f"{where}: done: a brain's clauses of done are not read by this engine (the "
+                                  "engine's packs carry them: brain item clauses)", strict, notes)
     if FROM in raw:
         if raw[FROM] != ENGINE:
             errors.append(f"{where}: from is {ENGINE!r} (the engine's typology pack of that id), not {raw[FROM]!r}")
@@ -209,7 +216,8 @@ def source_errors(pid: str, raw: dict, applied: dict, *, strict: bool | None = N
     if applied.get("typologies") and applied.get("core"):
         errors.append(f"{where}: a typology pack is never the core pack (the core is every project's, whatever its "
                       "kind)")
-    return errors + part_errors(where, applied, strict, notes)
+    return errors + part_errors(where, {k: v for k, v in applied.items() if k != "done" or "done" not in raw},
+                                strict, notes, cat)
 
 
 def _engine_ids() -> set[str]:
@@ -235,7 +243,31 @@ def self_check() -> list[str]:
         errors += [f"{where}: procedure {p!r} is not the engine's" for p in spec.get("procedures") or []
                    if p not in procs]
         errors += part_errors(where, spec, strict=True)
+    return errors + _clause_collisions()
+
+
+def _clause_collisions() -> list[str]:
+    """A clause id of an engine pack that is the generic sentence's, or that two packs give one typology: done_clauses
+    takes a clause id once, so the second would be dropped without a word."""
+    from . import typologies
+    generic = {str(c.get("id")) for c in typologies._read().get("done") or [] if isinstance(c, dict)}
+    errors, by_kind = [], {}
+    for pid, spec in engine().items():
+        for c in spec.get("done") or []:
+            cid = str(c.get("id")) if isinstance(c, dict) else ""
+            if cid in generic:
+                errors.append(f"{FILE.name}: pack {pid}: done: clause {cid!r} is the generic sentence's")
+            for tid in spec.get("typologies") or []:
+                if cid in by_kind.setdefault(tid, {}):
+                    errors.append(f"{FILE.name}: pack {pid}: done: clause {cid!r} also given to {tid} by pack "
+                                  f"{by_kind[tid][cid]}")
+                by_kind[tid][cid] = pid
     return errors
+
+
+def _list(value) -> list[str]:
+    """A part's list as given, or [] when it is not a list of strings (check() says why)."""
+    return [str(x) for x in value] if _strings(value) else []
 
 
 def rows(src) -> list[dict]:
@@ -243,7 +275,8 @@ def rows(src) -> list[dict]:
     holds it ``from: engine``), then the brain's own packs that name typologies; each with its projects and parts.
     ``src``: the brain's neutral source, or None."""
     from . import neutral
-    own = {p.id: p for p in (src.packs if src else []) if p.spec.get("typologies") or FROM in (p.given or {})}
+    own = {p.id: p for p in (src.packs if src else []) if _list(p.spec.get("typologies")) or FROM in (p.given or {})
+           or p.id in engine()}
     out = []
     for pid, spec in engine().items():
         p = own.pop(pid, None)
@@ -256,7 +289,18 @@ def rows(src) -> list[dict]:
 
 
 def _parts(spec: dict) -> dict:
-    return {k: spec.get(k) or ({} if k in ("standards", "stages") else []) for k in PARTS}
+    """A pack's parts for the listing: a mapping part as given when it is one, a list part as given when it is a list
+    of strings (doors, roles, done: of mappings), else empty (check() says why)."""
+    out = {}
+    for k in PARTS:
+        v = spec.get(k)
+        if k in ("standards", "stages"):
+            out[k] = v if isinstance(v, dict) else {}
+        elif k in ("done", "doors", "roles"):
+            out[k] = [x for x in v if isinstance(x, dict)] if isinstance(v, list) else []
+        else:
+            out[k] = _list(v)
+    return out
 
 
 # --- what a project's typologies propose (TYPO-4) -------------------------------------------------------------------
@@ -267,7 +311,8 @@ class Proposal:
     origin: str                      # engine, or the brain's packs.yaml
     meets: list[str]                 # the pack's typologies the project's kinds meet
     active: bool                     # the project has it already
-    step: str = ""                   # add (a new pack from: engine), extend (the project added to its projects)
+    step: str = ""                   # add (a new pack from: engine), extend (the project added to its projects),
+    #                                  shadowed (a brain pack of the engine pack's id hides it: nothing --apply writes)
     layers: list[str] = field(default_factory=list)      # its layers the project's store lacks
     standards: list[str] = field(default_factory=list)   # its standards profiles the project does not opt in to
 
@@ -277,7 +322,7 @@ class Proposal:
 
 
 class ProposeError(ValueError):
-    """A project the plan cannot be made for (not registered, read only): nothing is planned."""
+    """A project the plan cannot be made for (not a loaded project of the registry): nothing is planned."""
 
 
 def propose(root: Path, project: str) -> tuple[list[str], list[Proposal], Path | None]:
@@ -302,23 +347,30 @@ def propose(root: Path, project: str) -> tuple[list[str], list[Proposal], Path |
 
 def _proposal(candidate, kinds: list[str], cat, have_layers: set[str] | None, have_profiles: set[str]) -> Proposal:
     """One candidate pack against a project: the typologies it meets (none: not proposed), its step, what it lacks."""
-    pid, origin, spec, active, own = candidate
-    named = [str(t) for t in spec.get("typologies") or []]
-    meets = sorted({t for k in kinds for t in cat.meets(k, named)})
+    pid, origin, spec, active, step = candidate
+    meets = sorted({t for k in kinds for t in cat.meets(k, _list(spec.get("typologies")))})
     packstd = spec.get("standards") if isinstance(spec.get("standards"), dict) else {}
-    layers = [la for la in spec.get("layers") or [] if have_layers is not None and la not in have_layers]
-    return Proposal(pid, origin, meets, active, "" if active else ("extend" if own else "add"), layers,
-                    [x for x in packstd.get("profiles") or [] if x not in have_profiles])
+    layers = [la for la in _list(spec.get("layers")) if have_layers is not None and la not in have_layers]
+    return Proposal(pid, origin, meets, active, "" if active else step, layers,
+                    [x for x in _list(packstd.get("profiles")) if x not in have_profiles])
 
 
-def _candidates(src, project: str) -> list[tuple[str, str, dict, bool, bool]]:
-    """(id, origin, spec as it applies, the project takes it, the brain's packs.yaml holds it): the brain's packs but
-    the core, then the engine's packs the brain does not hold."""
+def _candidates(src, project: str) -> list[tuple[str, str, dict, bool, str]]:
+    """(id, origin, spec as it applies, the project takes it, the step that gives it): the brain's packs but the core,
+    then the engine's packs the brain does not hold; a brain pack that bears an engine pack's id without ``from:
+    engine`` nor typologies of its own hides that pack: its typologies are the engine's, its step ``shadowed``."""
     from . import neutral
-    out = [(pk.id, neutral.PACKS, pk.spec, pk.projects is None or project in pk.projects, True)
-           for pk in src.packs if not pk.core]
+    shipped = engine()
+    out = []
+    for pk in src.packs:
+        if pk.core:
+            continue
+        shadow = pk.id in shipped and FROM not in (pk.given or {}) and not _list(pk.spec.get("typologies"))
+        out.append((pk.id, neutral.PACKS, shipped[pk.id] if shadow else pk.spec,
+                    not shadow and (pk.projects is None or project in pk.projects),
+                    "shadowed" if shadow else "extend"))
     own = {pk.id for pk in src.packs}
-    return out + [(pid, ENGINE, spec, False, False) for pid, spec in engine().items() if pid not in own]
+    return out + [(pid, ENGINE, spec, False, "add") for pid, spec in shipped.items() if pid not in own]
 
 
 def _store_layers(store: Path | None) -> set[str] | None:
@@ -342,70 +394,109 @@ def plan_lines(project: str, kinds: list[str], props: list[Proposal], store: Pat
     if not props:
         return lines + ["  no typology pack meets them (brain typologies packs lists the packs and their typologies)"]
     for pr in props:
-        state = "taken" if pr.active else ("to take: packs.yaml gains it, from: engine, projects: [" + project + "]"
-                                           if pr.step == "add" else f"to take: {project} added to its projects")
-        lines.append(f"  {pr.pack} ({pr.origin}; for {', '.join(pr.meets)}): {state}")
-        if pr.layers and store is not None:
-            lines.append(f"    layers its store lacks: {', '.join(pr.layers)} (the owner: research_graph layers add "
-                         f"--store {store.as_posix()} {' '.join(pr.layers)} --write)")
-        if pr.standards:
-            lines.append(f"    standards profiles it does not opt in to: {', '.join(pr.standards)} (projects.yaml "
-                         f"{project}: standards.profiles, by a PR of the registry; brain standards)")
-    todo = [pr for pr in props if pr.step]
+        lines += _plan_pack(project, pr, store)
+    todo = [pr for pr in props if pr.step in ("add", "extend")]
     lines.append(f"--apply writes packs.yaml's {len(todo)} step(s); the layers and standards above stay the owner's"
-                 if todo else "every pack is taken: --apply writes nothing")
+                 if todo else "nothing for --apply to write")
+    return lines
+
+
+def _plan_pack(project: str, pr: Proposal, store: Path | None) -> list[str]:
+    """One pack's lines of the plan: its state, then the layers and the standards it would bring."""
+    from . import neutral
+    states = {"add": f"to take: packs.yaml gains it, from: engine, projects: [{project}]",
+              "extend": f"to take: {project} added to its projects",
+              "shadowed": f"hidden by {neutral.PACKS}'s own pack {pr.pack}, which is not from: engine: give yours "
+                          "from: engine, or rename it, to take the engine's"}
+    lines = [f"  {pr.pack} ({pr.origin}; for {', '.join(pr.meets)}): {'taken' if pr.active else states[pr.step]}"]
+    if pr.layers and store is not None:
+        lines.append(f"    layers its store lacks: {', '.join(pr.layers)} (the owner: research_graph --store "
+                     f"\"{store.as_posix()}\" layers add {' '.join(pr.layers)} --write)")
+    if pr.standards:
+        lines.append(f"    standards profiles it does not opt in to: {', '.join(pr.standards)} (projects.yaml "
+                     f"{project}: standards.profiles, by a PR of the registry; brain standards)")
     return lines
 
 
 # --- applying the packs.yaml steps ----------------------------------------------------------------------------------
 
-_TOP = re.compile(r"^[A-Za-z_][\w-]*\s*:")
-
-
 def apply(root: Path, project: str, props: list[Proposal]) -> list[str]:
-    """packs.yaml with the steps written: a pack ``from: engine`` appended at the end of ``packs:`` for each ``add``,
-    the project appended to ``projects:`` for each ``extend``; comments kept. The source is checked as it would be: an
-    error it would add refuses the write (ValueError, nothing written). Returns what was written, one line each."""
+    """packs.yaml with the steps written: a pack ``from: engine`` appended at the end of ``packs:`` for each ``add``
+    (indented as its first pack), the project appended to the pack's own ``projects:`` for each ``extend``; comments
+    and line ends kept. The source is checked as it would be: an error it would add, or a check that fails, puts the
+    file back byte for byte and refuses (ValueError). Returns what was written, one line each."""
     from . import neutral
     f = neutral.folder(root) / neutral.PACKS
-    text = neutral.lf(f.read_text(encoding="utf-8"))
-    before = set(neutral.check(neutral.load(root)))
-    lines = text.splitlines()
-    done = []
-    for pr in props:
-        if pr.step == "extend":
-            lines = _extend(lines, pr.pack, project)
-            done.append(f"{neutral.PACKS}: pack {pr.pack} projects += {project}")
-    adds = [pr for pr in props if pr.step == "add"]
-    if adds:
-        lines = _append(lines, [x for pr in adds for x in (
-            f"  {pr.pack}:                    # the engine's typology pack (brain typologies packs), for "
-            f"{', '.join(pr.meets)}", f"    {FROM}: {ENGINE}", f"    projects: [{project}]")])
-        done += [f"{neutral.PACKS}: pack {pr.pack} (from: engine, projects: [{project}])" for pr in adds]
+    if not f.is_file():
+        raise ValueError(f"{f}: not found (brain init writes the neutral source)")
+    original = f.read_bytes()
+    text = original.decode("utf-8")
+    eol = "\r\n" if "\r\n" in text else "\n"
+    lines, done = _edited(neutral.lf(text).splitlines(), project, props)
     if not done:
         return []
-    new = "\n".join(lines) + "\n"
-    f.write_text(new, encoding="utf-8", newline="\n")
-    after = [e for e in neutral.check(neutral.load(root)) if e not in before]
+    before = set(neutral.check(neutral.load(root)))
+    f.write_bytes((eol.join(lines) + eol).encode("utf-8"))
+    try:
+        after = [e for e in neutral.check(neutral.load(root)) if e not in before]
+    except BaseException:
+        f.write_bytes(original)
+        raise
     if after:
-        f.write_text(text, encoding="utf-8", newline="\n")
+        f.write_bytes(original)
         raise ValueError("packs.yaml as it would be: " + "; ".join(after))
     return done
 
 
+def _edited(lines: list[str], project: str, props: list[Proposal]) -> tuple[list[str], list[str]]:
+    """(packs.yaml's lines with the steps written, what was written)."""
+    from . import neutral
+    done = []
+    name = _scalar(project)
+    for pr in props:
+        if pr.step == "extend":
+            lines = _extend(lines, pr.pack, name)
+            done.append(f"{neutral.PACKS}: pack {pr.pack} projects += {project}")
+    adds = [pr for pr in props if pr.step == "add"]
+    if adds:
+        pad, sub = _pack_indent(lines)
+        lines = _append(lines, [x for pr in adds for x in (
+            f"{pad}{pr.pack}:   # the engine's typology pack (brain typologies packs), for {', '.join(pr.meets)}",
+            f"{pad}{sub}{FROM}: {ENGINE}", f"{pad}{sub}projects: [{name}]")])
+        done += [f"{neutral.PACKS}: pack {pr.pack} (from: engine, projects: [{project}])" for pr in adds]
+    return lines, done
+
+
+def _scalar(value: str) -> str:
+    """A project's name as a YAML flow scalar: quoted when plain YAML would read it as something else (on, 1, a: b)."""
+    import yaml
+    return yaml.safe_dump([value], default_flow_style=True, width=1 << 20).strip()[1:-1]
+
+
+def _indent(line: str) -> int:
+    return len(line) - len(line.lstrip())
+
+
+def _content(line: str) -> bool:
+    return bool(line.strip()) and not line.lstrip().startswith("#")
+
+
 def _block(lines: list[str], start: int, indent: int) -> int:
-    """The end (exclusive) of the block opened at ``start``: the first line after it, not blank nor a comment, indented
-    ``indent`` or less."""
-    end = start + 1
-    last = start
+    """The end (exclusive) of the block opened at ``start``: after its last line, not blank nor a comment, indented
+    more than ``indent``."""
+    end, last = start + 1, start
     while end < len(lines):
-        ln = lines[end]
-        if ln.strip() and not ln.lstrip().startswith("#"):
-            if len(ln) - len(ln.lstrip()) <= indent:
+        if _content(lines[end]):
+            if _indent(lines[end]) <= indent:
                 break
             last = end
         end += 1
     return last + 1
+
+
+def _child_indent(lines: list[str], start: int, end: int) -> int | None:
+    """The indent of the first content line of the block ``start``..``end`` (its keys' indent), None when empty."""
+    return next((_indent(lines[i]) for i in range(start + 1, end) if _content(lines[i])), None)
 
 
 def _packs_line(lines: list[str]) -> int:
@@ -415,36 +506,53 @@ def _packs_line(lines: list[str]) -> int:
     raise ValueError("packs.yaml: no block 'packs:' at the top level to write into (edit it by hand)")
 
 
+def _pack_indent(lines: list[str]) -> tuple[str, str]:
+    """(the packs' indent, a pack's keys' indent beyond it), as the file writes them; two spaces each by default."""
+    top = _packs_line(lines)
+    end = _block(lines, top, 0)
+    pad = _child_indent(lines, top, end)
+    if not pad:
+        return "  ", "  "
+    head = next(i for i in range(top + 1, end) if _content(lines[i]))
+    sub = _child_indent(lines, head, _block(lines, head, pad))
+    return " " * pad, " " * ((sub - pad) if sub and sub > pad else 2)
+
+
 def _append(lines: list[str], new: list[str]) -> list[str]:
-    i = _packs_line(lines)
-    end = _block(lines, i, 0)
+    end = _block(lines, _packs_line(lines), 0)
     return lines[:end] + new + lines[end:]
 
 
-def _extend(lines: list[str], pack: str, project: str) -> list[str]:
-    """``project`` appended to pack ``pack``'s ``projects:`` (a flow list, or a block list)."""
+def _extend(lines: list[str], pack: str, name: str) -> list[str]:
+    """``name`` appended to pack ``pack``'s own ``projects:`` (a flow list, or a block list): the pack at the packs'
+    indent, its key at the pack's keys' indent, never a nested mapping's."""
     top = _packs_line(lines)
     pend = _block(lines, top, 0)
-    head = next((i for i in range(top + 1, pend) if re.match(rf"^(\s+){re.escape(pack)}\s*:", lines[i])), None)
+    pad = _child_indent(lines, top, pend)
+    head = next((i for i in range(top + 1, pend) if _indent(lines[i]) == pad
+                 and re.match(rf"^\s*{re.escape(pack)}\s*:(\s|$)", lines[i])), None)
     if head is None:
         raise ValueError(f"packs.yaml: pack {pack} not found under packs: (edit it by hand)")
-    pad = len(lines[head]) - len(lines[head].lstrip())
+    if re.match(rf"^\s*{re.escape(pack)}\s*:\s*\{{", lines[head]):
+        raise ValueError(f"packs.yaml: pack {pack} is a flow mapping ({{...}}): edit it by hand")
     end = _block(lines, head, pad)
+    keys = _child_indent(lines, head, end)
     for i in range(head + 1, end):
         m = re.match(r"^(\s+)projects\s*:\s*(.*?)(\s*#.*)?$", lines[i])
-        if not m:
-            continue
-        value, comment = m.group(2).rstrip(), m.group(3) or ""   # the comment and its spacing kept
-        if value.startswith("[") and value.endswith("]"):
-            items = [x.strip() for x in value[1:-1].split(",") if x.strip()]
-            return [*lines[:i], f"{m.group(1)}projects: [{', '.join([*items, project])}]{comment}", *lines[i + 1:]]
-        last = _last_item(lines, i + 1, end) if value == "" else None
-        if last is None:
-            raise ValueError(f"packs.yaml: pack {pack}'s projects is neither a [flow] nor a block list (edit it by "
-                             "hand)")
-        item_pad = lines[last][: len(lines[last]) - len(lines[last].lstrip())]
-        return lines[: last + 1] + [f"{item_pad}- {project}"] + lines[last + 1:]
+        if m and len(m.group(1)) == keys:
+            return _extended(lines, i, end, m, pack, name)
     raise ValueError(f"packs.yaml: pack {pack} has no projects: it applies to every project already")
+
+
+def _extended(lines: list[str], i: int, end: int, m, pack: str, name: str) -> list[str]:
+    value, comment = m.group(2).rstrip(), m.group(3) or ""   # the comment and its spacing kept
+    if value.startswith("[") and value.endswith("]") and not any(q in value for q in "'\""):
+        items = [x.strip() for x in value[1:-1].split(",") if x.strip()]
+        return [*lines[:i], f"{m.group(1)}projects: [{', '.join([*items, name])}]{comment}", *lines[i + 1:]]
+    last = _last_item(lines, i + 1, end) if value == "" else None
+    if last is None:
+        raise ValueError(f"packs.yaml: pack {pack}'s projects is not a plain [flow] or block list (edit it by hand)")
+    return lines[: last + 1] + [f"{lines[last][: _indent(lines[last])]}- {name}"] + lines[last + 1:]
 
 
 def _last_item(lines: list[str], start: int, end: int) -> int | None:
