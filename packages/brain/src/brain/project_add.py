@@ -323,6 +323,11 @@ def _check_options(args) -> None:
         raise AddError("--store: a read-only project has no store")
     if args.floor and args.floor not in _classes():
         raise AddError(f"--floor {args.floor}: one of {', '.join(_classes())}")
+    _check_qualification(args)
+
+
+def _check_qualification(args) -> None:
+    """The qualification's options where they apply: none on a read-only entry, --team on a new brain only."""
     answered = [f for f, v in (("--kind", getattr(args, "kinds", None)), ("--profile", getattr(args, "profile", None)),
                                ("--stage", getattr(args, "stage", None)), ("--team", getattr(args, "team", False)))
                 if v]
