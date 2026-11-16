@@ -1392,22 +1392,28 @@ The folders say the lifecycle and the class, never the subject; a note's `scope`
 | `sealed/` | sealed | no, and never indexed |
 | `_brain/`, `_maps/` | generated | no |
 
-`config.json` `knowledge.folders` raises a folder's class (never lowers it); a note's `class` raises its own.
+`config.json` `knowledge.folders` raises a folder's class (never lowers it; a folder of the owner's own named there
+joins with its class, and one above private is kept out of git like `daily/`); a note's `class` raises its own, for
+`check` and `find` alike.
 
-- `brain notes init DIR [--from VAULT] [--apply]` prints the plan: the folders, one template per note type, the
-  `.gitignore` of the folders git must never hold, a README and the agents' rules. `--apply` writes it, each file
-  through a temporary name, never over a file that is there. `--from` copies an existing vault's notes into `inbox/`
-  and its other files into `attachments/` (never `.obsidian/`, `.git/` or `.trash/`): a copy, the vault is left as it
-  was. Creating the repo and choosing its visibility stay the owner's.
+- `brain notes init DIR [--from VAULT] [--apply] [--json]` prints the plan: the folders, one template per note type,
+  the `.gitignore` of the folders git must never hold, a README and the agents' rules. `--apply` writes it, each file
+  through a temporary name, never over a file that is there; a `.gitignore` already there keeps its lines and gets the
+  missing ones appended (a new repo's own one included). A file where the layout puts a folder is refused. `--from`
+  copies an existing vault's notes into `inbox/` and its other files into `attachments/` (never `.obsidian/`, `.git/`,
+  `.trash/`, `_brain/` or `_maps/`); a vault's top folder that the layout names (`daily/`, `people/`, `notes/`...)
+  keeps its place, and so its class: a copy, the vault is left as it was. Creating the repo and choosing its
+  visibility stay the owner's.
 - `brain notes check [--dir DIR] [--json]`: each note's front matter against the schema (an editor's own key is a
-  warning), an id used twice, a cited Brain id (`links`, or a `[[wi-...]]` wikilink) the registered graphs do not hold,
-  a secret pattern (named by its line, never printed), an e-mail address or a phone number outside `people/`, a
-  `share` on a confidential note, a class under its folder's, tags that differ only by case, a line missing from the
-  `.gitignore` and a confidential file git tracks. Exit 1 on an error.
-- `brain notes find WORDS... [--confidential] [--scope ID] [--limit N] [--json]`: the notes that hold every word, best
-  first, by SQLite FTS5 (a plain LIKE search where SQLite lacks it), zero token. Private folders only unless
-  `--confidential`; `sealed/` is never indexed. The index is `$BRAIN_HOME/notes-index` (derived, rebuilt when a note
-  changes).
+  warning; a date written unquoted and a byte order mark are read), an id used twice, a cited Brain id (`links`, or a
+  `[[wi-...]]` wikilink) the registered graphs do not hold, a secret pattern (named by its line, never printed), an
+  e-mail address or a phone number outside `people/`, a `share` on a note above private, a class under its folder's,
+  tags that differ only by case, a line missing from the `.gitignore` and a file git tracks in a folder it must never
+  hold. A value of the wrong shape is reported, never a crash. Exit 1 on an error.
+- `brain notes find WORDS... [--confidential] [--scope ID] [--limit N] [--dir DIR] [--json]`: the notes that hold
+  every word, best first, by SQLite FTS5 (a plain LIKE search where SQLite lacks it), zero token. Private notes only
+  unless `--confidential`; a sealed note, by its folder or its own `class`, is never indexed. The index is
+  `$BRAIN_HOME/notes-index` (derived, rebuilt when a note or a folder's class changes).
 
 The owner commits their own edits (the Obsidian Git plugin, or git); a scheduled commit would be a new scheduled task,
 the owner's to decide. Later items add the setup wizard's step, `brain notes sync` and the Obsidian and Notion

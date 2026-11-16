@@ -67,7 +67,8 @@ TYPES: dict[str, dict] = {
     "tenant": {"en": "Tenant", "fr": "Locataire"},
 }
 LANGS = ("en", "fr")
-KINDS = ("container", "project", "read", "mount")   # read: a read-only project; mount: a tenant (another brain)
+KINDS = ("container", "project", "read", "mount", "knowledge")   # read: a read-only project; mount: a tenant
+# (another brain); knowledge: the owner's notes home (kind: knowledge, brain.knowledge), never loaded as a project
 
 
 class ScopeError(ValueError):
@@ -222,7 +223,8 @@ def _text(value, default: str = "") -> str:
 
 
 def _registry_nodes(root: Path) -> dict[str, Node]:
-    """The registry's entries as nodes: a project, a read-only project (read), a tenant mount (mount)."""
+    """The registry's entries as nodes: a project, a read-only project (read), a tenant mount (mount), a notes home
+    (knowledge)."""
     try:
         reg = projects.raw(root)
     except Exception:  # noqa: BLE001 - a registry that cannot be read is projects.check's to report, never raised here
@@ -232,7 +234,8 @@ def _registry_nodes(root: Path) -> dict[str, Node]:
         if (entry is not None and not isinstance(entry, dict)) or str(name) == GLOBAL:
             continue   # global is the root, never a node: check() refuses a project of that name
         entry = entry or {}
-        kind = "mount" if projects.is_mount(entry) else "read" if projects.is_read_only(entry) else "project"
+        kind = ("mount" if projects.is_mount(entry) else "read" if projects.is_read_only(entry)
+                else "knowledge" if projects.is_knowledge(entry) else "project")
         out[str(name)] = Node(str(name), "tenant" if kind == "mount" else "project", kind,
                               _text(entry.get("parent"), GLOBAL), _text(entry.get("title")), data=entry)
     return out
@@ -580,7 +583,7 @@ def _line(tree: Tree, nid: str, lang: str, link: bool, archived: bool = True) ->
     if n.kind == "container" and n.title and n.title != nid:
         bits.append(f"« {n.title} »")
     what = tree.label(n.type, lang) if n.type else "?"
-    what += {"read": ", read only", "mount": ", mount"}.get(n.kind, "")
+    what += {"read": ", read only", "mount": ", mount", "knowledge": ", notes home"}.get(n.kind, "")
     bits.append(f"({what})")
     under = len([x for x in tree.projects_under(nid, archived) if x != nid])
     if under:

@@ -170,7 +170,7 @@ def test_check_finds_a_missing_ignore_line_and_a_tracked_confidential_file(home,
     (home / ".gitignore").write_text("/sealed/\n", encoding="utf-8")
     monkeypatch.setattr(knowledge, "_git_tracked", lambda root, folder: [f"{folder}/x.md"] if folder == "daily" else [])
     lines = [f.line() for f in knowledge.check(home, known=set())]
-    assert "error  .gitignore: /people/ is missing: git would hold people/" in lines
+    assert "error  .gitignore: /people/ is missing: git would hold people/ (brain notes init adds it)" in lines
     assert "error  daily/x.md: tracked by git, in daily/ (never in git): git rm --cached it" in lines
     assert not any("/sealed/ is missing" in line for line in lines)
 
@@ -301,3 +301,105 @@ def test_the_notes_format_fixtures():
     assert schema.validate("notes", older, schema.STRICT) == ([], [])
     errors, unknown = schema.validate("notes", newer, schema.READ)
     assert errors == [] and len(unknown) == 1 and "cssclasses" in unknown[0]
+
+
+# --- the review's findings: classes, the .gitignore, a vault's folders, odd shapes ---
+
+def test_find_honours_a_note_own_class_and_never_indexes_a_sealed_one(home):
+    note(home, "notes/s.md", front("n-20261116-0001", **{"class": "sealed"}), "secretword")
+    note(home, "notes/c.md", front("n-20261116-0002", **{"class": "confidential"}), "secretword")
+    note(home, "notes/p.md", front("n-20261116-0003"), "secretword")
+    assert [h["path"] for h in knowledge.find(home, "secretword")] == ["notes/p.md"]
+    both = {h["path"]: h["class"] for h in knowledge.find(home, "secretword", confidential=True)}
+    assert both == {"notes/p.md": "private", "notes/c.md": "confidential"}
+
+
+def test_a_class_raised_in_config_after_indexing_rebuilds_the_index(home, tmp_path):
+    note(home, "notes/p.md", front("n-20261116-0001"), "raisedword")
+    assert [h["path"] for h in knowledge.find(home, "raisedword")] == ["notes/p.md"]
+    (tmp_path / "brain" / "config.json").write_text(json.dumps(
+        {"v": 1, "knowledge": {"path": "../notes", "folders": {"notes": "confidential"}}}), encoding="utf-8")
+    assert knowledge.find(home, "raisedword") == []
+    assert [h["class"] for h in knowledge.find(home, "raisedword", confidential=True)] == ["confidential"]
+
+
+def test_init_appends_the_missing_lines_to_a_gitignore_already_there(tmp_path):
+    root = tmp_path / "notes"
+    root.mkdir()
+    (root / ".gitignore").write_text("*.log", encoding="utf-8")         # a new repo's own, no final newline
+    steps = knowledge.plan(root)
+    (step,) = [s for s in steps if s.path == ".gitignore"]
+    assert step.action == "append" and "/daily/" in step.what
+    knowledge.apply(root, steps)
+    lines = (root / ".gitignore").read_text(encoding="utf-8").splitlines()
+    assert lines[0] == "*.log" and {"/daily/", "/people/", "/sealed/"} <= set(lines)
+    assert [s.action for s in knowledge.plan(root) if s.path == ".gitignore"] == ["keep"]
+    assert not [f for f in knowledge.check(root, known=set()) if f.path == ".gitignore"]
+
+
+def test_from_keeps_a_vault_confidential_folders_out_of_inbox(tmp_path):
+    vault = tmp_path / "vault"
+    note(vault, "daily/2026-11-16.md", None, "today")
+    note(vault, "people/ada.md", None, "a person")
+    note(vault, "_maps/x.md", None, "generated")
+    note(vault, "daily.md", None, "a note named daily")
+    root = tmp_path / "notes"
+    copies = {s.path for s in knowledge.plan(root, vault) if s.action == "copy"}
+    assert copies == {"daily/2026-11-16.md", "people/ada.md", "inbox/daily.md"}
+
+
+def test_odd_shapes_are_reported_never_a_crash(home):
+    note(home, "notes/a.md", {"id": "n-20261116-0001", "type": "note", "title": "t", "links": 5, "tags": 5,
+                              "scope": 5, "class": ["a"]}, "oddword")
+    note(home, "notes/bom.md", None, "")
+    (home / "notes" / "bom.md").write_text("\ufeff---\nid: n-20261116-0002\ntype: note\ntitle: t\n"
+                                           "created: 2026-11-16\n---\nbody\n", encoding="utf-8")
+    lines = [f.line() for f in knowledge.check(home, known=set())]
+    assert any(line.startswith("error  notes/a.md: links") for line in lines)
+    assert not any("notes/bom.md" in line for line in lines)                 # a BOM and an unquoted date read
+    assert [h["path"] for h in knowledge.find(home, "oddword")] == ["notes/a.md"]
+
+
+def test_check_covers_a_folder_raised_in_config_and_a_note_raised_share(home, tmp_path, monkeypatch):
+    (tmp_path / "brain" / "config.json").write_text(json.dumps(
+        {"v": 1, "knowledge": {"path": "../notes", "folders": {"journal": "confidential"}}}), encoding="utf-8")
+    monkeypatch.setattr(knowledge, "_git_tracked", lambda root, folder: ["journal/x.md"] if folder == "journal" else [])
+    note(home, "notes/c.md", front("n-20261116-0001", share=["notion"], **{"class": "confidential"}))
+    lines = [f.line() for f in knowledge.check(home, known=set())]
+    assert "error  .gitignore: /journal/ is missing: git would hold journal/ (brain notes init adds it)" in lines
+    assert "error  journal/x.md: tracked by git, in journal/ (never in git): git rm --cached it" in lines
+    assert "error  notes/c.md: share on a confidential note: only a private note is shared" in lines
+
+
+def test_an_unknown_key_that_looks_like_a_secret_is_never_printed(home):
+    note(home, "notes/k.md", None)
+    (home / "notes" / "k.md").write_text(f"---\nid: n-20261116-0001\ntype: note\ntitle: t\n{GH_TOKEN}: 1\n---\n",
+                                         encoding="utf-8")
+    lines = [f.line() for f in knowledge.check(home, known=set())]
+    assert "warn   notes/k.md: an unknown field whose name looks like a secret (not printed)" in lines
+    assert not any(GH_TOKEN in line for line in lines)
+
+
+def test_init_refuses_a_file_where_a_folder_goes(tmp_path):
+    root = tmp_path / "notes"
+    root.mkdir()
+    (root / "notes").write_text("a file", encoding="utf-8")
+    assert "a file where the layout puts a folder" in knowledge.refuse_init(root)
+
+
+def test_a_knowledge_entry_never_claims_a_project_root(tmp_path, monkeypatch):
+    reg = tmp_path / "projects.yaml"
+    monkeypatch.setenv("BRAIN_PROJECTS", str(reg))
+    (tmp_path / "notes" / "graph").mkdir(parents=True)
+    reg.write_text("notes: {kind: knowledge, root: .}\nbrain: {root: .}\n", encoding="utf-8")
+    assert list(projects.load(tmp_path)) == ["brain"]
+
+
+def test_the_like_fallback_takes_an_underscore_literally(home, monkeypatch):
+    def no_fts(con):
+        con.execute("CREATE TABLE notes (path, cls, scope, title, tags, body)")
+        return False
+    monkeypatch.setattr(knowledge, "_table", no_fts)
+    note(home, "notes/a.md", front("n-20261116-0001"), "snake_case here")
+    note(home, "notes/b.md", front("n-20261116-0002"), "snakeXcase there")
+    assert [h["path"] for h in knowledge.find(home, "snake_case")] == ["notes/a.md"]

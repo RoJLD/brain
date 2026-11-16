@@ -395,8 +395,11 @@ def _claimant(name: str, entry, base: Path) -> Project | None:
     ``access: read`` on an entry that still names its ``root`` (both refused by check()). It is never loaded, yet it
     keeps the root it was registered at and the files it would write there, so the next project at that root stays a
     sharer and never becomes its owner (fail closed: a typo never hands another project the owner's views, records or
-    rendered files). None for a tenant mount, a valid read-only entry (no root of its own) or a malformed path."""
-    if not isinstance(entry, dict) or is_mount(entry) or not (bad_access(entry) or "root" in entry):
+    rendered files). None for a tenant mount, a notes home (its root is the notes repo's, never a project's), a valid
+    read-only entry (no root of its own) or a malformed path."""
+    if not isinstance(entry, dict) or is_mount(entry) or is_knowledge(entry):
+        return None
+    if not (bad_access(entry) or "root" in entry):
         return None
     try:
         return _project(name, entry, _resolve_root(str(entry.get("root") or "."), base))
