@@ -330,9 +330,11 @@ def front_matter(text: str) -> tuple[dict | None, str]:
         return {}, text
     import yaml
 
+    from . import graph
+
     try:
-        data = yaml.safe_load(text[3:3 + end.start()])
-    except yaml.YAMLError:
+        data = graph.load_yaml(text[3:3 + end.start()])   # the engine's one YAML reader (wi-brain-yaml-fast-load)
+    except (yaml.YAMLError, ValueError):
         return {}, text[3 + end.end():]
     if not isinstance(data, dict):
         return {}, text[3 + end.end():]
