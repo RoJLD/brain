@@ -685,11 +685,7 @@ def test_backup_home_keeps_the_last_copies_and_skips_the_same_bytes(tmp_path):
 
 
 def test_two_copies_in_one_clock_tick_are_both_kept(tmp_path, monkeypatch):
-    class Frozen(datetime):
-        @classmethod
-        def now(cls, tz=None):
-            return datetime(2026, 11, 11, 12, 0, tzinfo=timezone.utc)
-    monkeypatch.setattr(stateio, "datetime", Frozen)
+    monkeypatch.setenv("BRAIN_NOW", "2026-11-11T12:00:00Z")   # a frozen clock (brain.faults): one tick for both
     f = _write(tmp_path / "settings.json", "a")
     folder = tmp_path / "home"
     stateio.backup_home(f, folder)

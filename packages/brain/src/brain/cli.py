@@ -101,10 +101,9 @@ def main(argv: list[str] | None = None) -> int:
     argv = list(sys.argv[1:] if argv is None else argv)
     parser = build_parser()
     commands = next(a for a in parser._actions if isinstance(a, argparse._SubParsersAction)).choices
-    plugged = plugins.target(argv, commands)   # brain <project> ...: its plugin's subcommands (brain.plugins)
-    if plugged is not None:
-        before, name, ref, after = plugged
-        return plugins.run(before, name, ref, after, _context(), _project_root)
+    code = _plugged(argv, commands)   # brain <project> ...: its plugin's subcommands (brain.plugins)
+    if code is not None:
+        return code
     if plugins.split(argv) is None and {"-h", "--help"} & set(argv):   # brain --help lists the plugged projects
         lines = plugins.help_lines()
         if lines:
@@ -124,6 +123,21 @@ def main(argv: list[str] | None = None) -> int:
             sys.stderr.flush()
             shutdown.die(exc)
         return exc.exit_code
+
+
+def _plugged(argv: list[str], commands) -> int | None:
+    """A plugin's subcommand run (``brain <project> ...``, brain.plugins): its exit code; None when ``argv`` names
+    none. A BRAIN_NOW or BRAIN_FAULT this engine cannot read refuses it as it refuses a command (exit 2)."""
+    plugged = plugins.target(argv, commands)
+    if plugged is None:
+        return None
+    try:
+        faults.check()
+    except faults.FaultError as exc:
+        print(f"brain: {exc}", file=sys.stderr)
+        return 2
+    before, name, ref, after = plugged
+    return plugins.run(before, name, ref, after, _context(), _project_root)
 
 
 def _refusal(argv: list[str]) -> str:

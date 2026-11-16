@@ -20,17 +20,24 @@ is hit. The points and their kinds:
   is left as it was; ``killed`` writes and syncs the temporary file, then ends the process with exit code
   :data:`KILLED_EXIT` before the move, as a kill would: the file is left as it was, the temporary file stays;
 - ``read`` (brain.stateio's reads: :func:`brain.stateio.load`, its set-aside check, :func:`brain.stateio.read_foreign`):
-  ``corrupt`` reads the first half of the file's bytes followed by a byte that is not UTF-8. The file on disk is never
-  changed: a truth-local file is then set aside (the copy holds the real bytes), a foreign one refused;
-- ``net`` (brain.net.call and brain.net.run): ``timeout`` raises the timeout the call would end with
-  (``subprocess.TimeoutExpired`` for a command, ``TimeoutError`` otherwise) without calling: never retried, and the
+  ``corrupt`` reads the first half of the file's bytes followed by a byte that is not UTF-8. The bytes on disk are
+  never changed: a truth-local file is then set aside, moved whole beside itself, a foreign one refused;
+- ``net`` (brain.net.call and brain.net.run): ``timeout`` raises a timeout without calling
+  (``subprocess.TimeoutExpired`` through :func:`brain.net.run`, the caller's ``timeout_error`` through
+  :func:`brain.net.call`, else ``TimeoutError``, an OSError every caller already catches): never retried, and the
   service's breaker opens as after a real one; ``refused`` raises ``ConnectionRefusedError``: retried with backoff,
   then the breaker opens.
 
 Each injected fault says so on stderr (« brain: BRAIN_FAULT write:killed on <path> »). A value this module cannot read
 (an unknown point or kind, a clock that is not a date) raises :class:`FaultError`; the command line refuses to run
-with it (exit 2) rather than play a different failure than the one asked. Both variables belong to the suite and to
-the owner's terminal: the hermetic tests clear every ``BRAIN_*`` variable, so a test sets them itself.
+with it (exit 2) rather than play a different failure than the one asked.
+
+**A scratch home only.** Played on the real home, a date moves for good what the engine keeps there: a clock years
+ahead prunes the monthly logs it would keep, a breaker opened then stays open until that date, a quiet holds the
+notifications as long. So both variables are honoured only when ``$BRAIN_HOME`` names another folder than the
+default ``~/.brain`` (:func:`scratch`): elsewhere the helpers read the real clock and inject nothing, and the command
+line refuses to run (exit 2) and says why. The hermetic tests clear every ``BRAIN_*`` variable and give each test its
+own ``BRAIN_HOME``, so a test sets them itself.
 """
 
 from __future__ import annotations
@@ -85,14 +92,32 @@ def _clock(text: str) -> datetime | timedelta:
     return out
 
 
+def scratch() -> bool:
+    """Whether ``$BRAIN_HOME`` names a scratch home: set, and another folder than the default ``~/.brain``."""
+    env = os.environ.get("BRAIN_HOME", "").strip()
+    if not env:
+        return False
+    try:
+        return Path(env).expanduser().resolve() != (Path.home() / ".brain").resolve()
+    except (OSError, RuntimeError):
+        return False
+
+
+def _value(name: str) -> str:
+    """The variable's text when it is set on a scratch home ('' otherwise: never played on the real one)."""
+    text = os.environ.get(name, "").strip()
+    return text if text and scratch() else ""
+
+
 def virtual() -> bool:
-    """Whether ``$BRAIN_NOW`` sets the clock."""
-    return bool(os.environ.get(NOW_ENV, "").strip())
+    """Whether ``$BRAIN_NOW`` sets the clock (on a scratch home)."""
+    return bool(_value(NOW_ENV))
 
 
 def now() -> datetime:
-    """The engine's now, aware and in UTC: ``$BRAIN_NOW``'s when it is set, else the real clock's."""
-    text = os.environ.get(NOW_ENV, "").strip()
+    """The engine's now, aware and in UTC: ``$BRAIN_NOW``'s when it is set (on a scratch home), else the real
+    clock's."""
+    text = _value(NOW_ENV)
     real = datetime.now(timezone.utc)
     if not text:
         return real
@@ -102,7 +127,7 @@ def now() -> datetime:
 
 def time() -> float:
     """:func:`now` as seconds since the epoch (``time.time()``'s unit)."""
-    text = os.environ.get(NOW_ENV, "").strip()
+    text = _value(NOW_ENV)
     if not text:
         return _time.time()
     v = _clock(text)
@@ -133,14 +158,15 @@ def _faults(text: str) -> list[tuple[str, str, str]]:
 def _matches(glob: str, target: str) -> bool:
     if not glob:
         return True
+    glob = glob.replace("\\", "/")   # a Windows path written with backslashes
     name = target.rsplit("/", 1)[-1]
     return fnmatch.fnmatchcase(target, glob) or fnmatch.fnmatchcase(name, glob)
 
 
 def fault(point: str, target: str | os.PathLike) -> str:
     """The kind of fault ``$BRAIN_FAULT`` injects at ``point`` for ``target`` (a path or a service name); '' when
-    none."""
-    text = os.environ.get(FAULT_ENV, "").strip()
+    none (or not on a scratch home)."""
+    text = _value(FAULT_ENV)
     if not text:
         return ""
     t = Path(target).as_posix() if isinstance(target, os.PathLike) else str(target).replace("\\", "/")
@@ -160,14 +186,17 @@ def say(point: str, kind: str, target) -> None:
 
 
 def check() -> None:
-    """Read both variables once: :class:`FaultError` when one holds a value this module cannot read (the command line
-    calls it before a command runs)."""
-    text = os.environ.get(NOW_ENV, "").strip()
-    if text:
-        _clock(text)
-    text = os.environ.get(FAULT_ENV, "").strip()
-    if text:
-        _faults(text)
+    """Read both variables once: :class:`FaultError` when one holds a value this module cannot read, or is set while
+    ``$BRAIN_HOME`` is the real home (the command line calls it before a command runs)."""
+    for name, parse in ((NOW_ENV, _clock), (FAULT_ENV, _faults)):
+        text = os.environ.get(name, "").strip()
+        if not text:
+            continue
+        if not scratch():
+            raise FaultError(f"{name} plays only on a scratch home: set BRAIN_HOME to another folder than ~/.brain "
+                             "(on the real one a moved clock or a fault would change its logs, breakers and quiet "
+                             "for good)")
+        parse(text)
 
 
 # --- what the shared helpers call ---

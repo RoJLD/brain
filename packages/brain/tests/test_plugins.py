@@ -4,6 +4,7 @@ registry without the key behaves as before; brain --help lists the plugged proje
 plugin that can never run."""
 
 import json
+import sys
 
 import pytest
 
@@ -47,6 +48,8 @@ def plugged(tmp_path, monkeypatch, store):
     (info / "METADATA").write_text("Metadata-Version: 2.1\nName: side-cli\nVersion: 1.0\n", encoding="utf-8")
     (info / "entry_points.txt").write_text("[brain.plugins]\nside = side_cli:main\n", encoding="utf-8")
     monkeypatch.syspath_prepend(str(lib))
+    for mod in ("demo_cli", "side_cli"):   # each test imports its own copy: side_cli.SEEN starts empty
+        monkeypatch.delitem(sys.modules, mod, raising=False)
     reg = tmp_path / "brain" / "projects.yaml"
     reg.parent.mkdir()
     reg.write_text(f"demo: {{root: {root.as_posix()}, title: The demo, plugin: 'demo_cli:'}}\n"

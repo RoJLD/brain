@@ -13,7 +13,7 @@ from pathlib import Path
 
 import pytest
 
-from brain import faults, governor, net, paths, quiet, stateio, usage
+from brain import cli, faults, governor, net, paths, plugins, quiet, stateio, usage
 
 SRC = str(Path(__file__).resolve().parents[1] / "src")
 T = "2030-01-31T22:00:00Z"
@@ -110,6 +110,35 @@ def test_the_glob_narrows_to_a_name_a_path_or_a_service(env, tmp_path):
     assert faults.fault("net", "github") == ""
     env.setenv(faults.FAULT_ENV, "net:refused")
     assert faults.fault("net", "anything") == "refused" and faults.fault("write", "x") == ""
+
+
+def test_a_glob_written_with_backslashes_matches(env, tmp_path):
+    env.setenv(faults.FAULT_ENV, r"write@*\usage\quota.json:disk-full")
+    assert faults.fault("write", tmp_path / "usage" / "quota.json") == "disk-full"
+
+
+def test_never_played_on_the_real_home(env, tmp_path, monkeypatch, capsys):
+    monkeypatch.setattr(Path, "home", lambda: tmp_path)          # the default home, here: tmp_path/.brain
+    env.setenv("BRAIN_HOME", str(tmp_path / ".brain"))
+    env.setenv(faults.NOW_ENV, T)
+    env.setenv(faults.FAULT_ENV, "write:disk-full")
+    assert not faults.scratch() and not faults.virtual()
+    assert abs(faults.now() - datetime.now(timezone.utc)) < timedelta(seconds=5)   # the real clock
+    assert faults.fault("write", tmp_path / "x.json") == ""                        # nothing injected
+    with pytest.raises(faults.FaultError, match="scratch home"):
+        faults.check()
+    assert cli.main(["quiet"]) == 2 and "scratch home" in capsys.readouterr().err
+    assert not (tmp_path / ".brain").exists()
+
+
+def test_a_plugin_command_is_refused_too(env, monkeypatch, capsys):
+    ran = []
+    monkeypatch.setattr(plugins, "target", lambda argv, commands: ([], "demo", "x", ["go"]))
+    monkeypatch.setattr(plugins, "run", lambda *a: ran.append(a) or 0)
+    env.setenv(faults.FAULT_ENV, "disk:full")
+    assert cli.main(["demo", "go"]) == 2 and ran == [] and faults.FAULT_ENV in capsys.readouterr().err
+    env.delenv(faults.FAULT_ENV)
+    assert cli.main(["demo", "go"]) == 0 and len(ran) == 1
 
 
 def test_off_by_default(env, tmp_path):

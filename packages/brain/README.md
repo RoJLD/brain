@@ -2015,8 +2015,8 @@ still scanned.
 
 ### A virtual clock and injected faults
 
-Two variables let a test, or the owner in a terminal, play a date or a failure end to end through the real command
-line, with no mock in the code under test (`brain.faults`, `wi-brain-fault-injection`):
+Two variables let a test, or the owner in a terminal on a scratch home, play a date or a failure end to end through
+the real command line, with no mock in the code under test (`brain.faults`, `wi-brain-fault-injection`):
 
 - `BRAIN_NOW` sets the engine's « now » wherever a shared helper reads it: the stamps and log months of
   `brain.stateio`, the breaker windows of `brain.net`, `brain quiet`, and the `_now` helpers of the modules that keep
@@ -2028,15 +2028,22 @@ line, with no mock in the code under test (`brain.faults`, `wi-brain-fault-injec
   `disk-full` writes half of the temporary file then raises « No space left on device », leaving the file as it was;
   `killed` ends the process (exit 137) after the temporary file is synced and before it is moved, as a kill would.
   `read` (the loads of truth-local and foreign files): `corrupt` reads half of the file's bytes and a byte that is
-  not UTF-8, so a truth-local file is set aside (the copy keeps the real bytes: the disk is never changed) and a
+  not UTF-8, so a truth-local file is set aside (moved whole beside itself: its bytes are never changed) and a
   foreign one refused. `net` (`brain.net`'s calls): `timeout` fails as a timeout without calling (never retried, the
   breaker opens), `refused` as a refused connection (retried, then the breaker opens). The glob narrows a fault to a
   file (its name or its whole path, `write@*/quota.json:disk-full`, `read@*/usage/*:corrupt`) or a service
   (`net@gitnexus:timeout`, `net@http:*:timeout`).
 
-Each injected fault says so on stderr. A value the engine cannot read makes every command refuse to run (exit 2)
-rather than play another failure than the one asked. The hermetic suite clears both, so a test sets them itself:
-`tests/test_faults.py` runs `brain quiet` in a subprocess a month ahead, on a full disk and killed mid-write.
+**A scratch home only.** On the real home a date would move for good what the engine keeps there: a clock years
+ahead prunes the monthly logs it keeps, a breaker opened then stays open until that date, a quiet holds the
+notifications as long. So both variables are honoured only when `BRAIN_HOME` names another folder than `~/.brain`
+(`BRAIN_HOME=C:/brain-tests/home brain quiet --for 2h`, say); with the real home every command refuses to run (exit 2)
+and says why, and a hook or a helper reads the real clock and injects nothing.
+
+Each injected fault says so on stderr. A value the engine cannot read makes every command, a plugin's included,
+refuse to run (exit 2) rather than play another failure than the one asked. The hermetic suite clears both and gives
+each test its own `BRAIN_HOME`, so a test sets them itself:
+`tests/test_faults.py` runs `brain quiet` in a subprocess with its clock in 2030, on a full disk and killed mid-write.
 
 ## Releasing
 

@@ -137,7 +137,7 @@ def needs_run(state: dict, now: float | None = None) -> bool:
     hours = _float_env("BRAIN_MEMORY_PULL_HOURS", DEFAULT_PULL_HOURS)
     if hours <= 0 or mode() == "export":
         return False
-    return (now or time.time()) - float(state.get("fetched_epoch") or 0) > hours * 3600
+    return (now or faults.time()) - float(state.get("fetched_epoch") or 0) > hours * 3600
 
 
 def normalize(data: bytes) -> bytes:
@@ -597,7 +597,7 @@ def sync(*, dry_run: bool = False, offline: bool = False, do_import: bool = True
     if held:
         report.actions["(export)"] = f"held: {held}"
     if not dry_run:
-        state["fetched_epoch"], state["fetched_at"] = time.time(), _now()
+        state["fetched_epoch"], state["fetched_at"] = faults.time(), _now()
         state["remote"] = secretscan.strip_url_credentials(remote)
     on_main = s.main_notes(main)
     history = s.history(main)

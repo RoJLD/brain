@@ -26,7 +26,11 @@ def early(args) -> int:
             print("quiet ended" if ended else "no manual quiet was running")
             _release(args.dry_run, now)
         elif args.for_:
-            until = quiet.start(quiet.duration(args.for_), now)
+            try:
+                until = quiet.start(quiet.duration(args.for_), now)
+            except OSError as exc:   # the state cannot be written (a full disk): the quiet is left as it was
+                print(f"brain: quiet: {exc}; nothing changed", file=sys.stderr)
+                return 1
             print(f"quiet until {until.astimezone():%Y-%m-%d %H:%M}: notifications below critical are held; every "
                   "task, collection included, keeps running; brain quiet --off ends it")
         else:
@@ -36,9 +40,6 @@ def early(args) -> int:
     except (quiet.QuietError, notify.NotifyError) as exc:
         print(f"brain: {exc}", file=sys.stderr)
         return 2
-    except OSError as exc:   # the state cannot be written (a full disk): the quiet is left as it was
-        print(f"brain: quiet: {exc}; nothing changed", file=sys.stderr)
-        return 1
 
 
 def _release(dry_run: bool, now: datetime) -> None:
