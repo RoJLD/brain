@@ -297,7 +297,9 @@ def where(root: Path, home: Path) -> dict[str, list[Path]]:
             "modules": found(root, "notes/graph/modules.yaml")}
 
 
-NOT_STORED = ("template", "status", "docgraph", "catalogue")   # registered formats a brain holds no file of (where())
+# registered formats a brain holds no file of (where()); notes: a note's front matter lives in the notes home, a repo
+# of its own (brain.knowledge)
+NOT_STORED = ("template", "status", "docgraph", "catalogue", "notes")
 
 
 def formats() -> list[tuple[str, int]]:

@@ -5,9 +5,10 @@
   "description": "The YAML front matter of a note of the owner's notes home (brain notes): what brain notes check validates and brain notes find indexes. The folder gives the class; class only raises it. Unknown keys are kept and noted (an editor's own keys).",
   "type": "object",
   "required": ["id", "type", "title"],
+  "additionalProperties": false,
   "properties": {
     "id": {"type": "string", "pattern": "^[a-z][a-z0-9-]*-[0-9A-Za-z][0-9A-Za-z-]*$", "description": "Stable, never reused: n-YYYYMMDD-HHMM (or a ULID after the prefix); the file name may change. brain notes check refuses a duplicate."},
-    "type": {"enum": ["fleeting", "idea", "note", "source", "daily", "weekly", "meeting", "person", "map"], "description": "What the note is; its template and its folder (brain.notes.TYPES)."},
+    "type": {"enum": ["fleeting", "idea", "note", "source", "daily", "weekly", "meeting", "person", "map"], "description": "What the note is; its template and its folder (brain.knowledge.TYPES)."},
     "title": {"type": "string", "minLength": 1},
     "scope": {"type": "array", "items": {"type": "string", "minLength": 1}, "description": "Ids of the scope tree (an id, a path such as pro/acme, or global)."},
     "tags": {"type": "array", "items": {"type": "string", "minLength": 1}, "description": "Free tags; brain notes check says when two differ only by case."},

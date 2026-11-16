@@ -1372,6 +1372,47 @@ and `brain check --all` says what to declare). A first entry the brain skips for
 cover every project registered there, and `--store prog/graph` runs as the project that lists that store.
 `examples/projects.yaml` has both.
 
+### The notes home: `brain notes`
+
+The owner's notes live beside the work brain, in a private repo of their own: Markdown with wikilinks, one idea per
+note (`brain.knowledge`). Any editor works; Obsidian opens the folder as a vault and is never required. The brain
+finds the home through `config.json` `knowledge.path` (relative to the file's folder), else the first `projects.yaml`
+entry with `kind: knowledge` (`title`, `kind`, `root`, `parent` and `classes` only: it is never loaded as a project,
+`--project` refuses it, `brain check --all` checks it), else `--dir`. Both need brain 0.5.1 or later on every machine:
+an older brain notes the config key as unknown (CI refuses it) and loads the entry as a project.
+
+The folders say the lifecycle and the class, never the subject; a note's `scope` (ids of the scope tree), `type` and
+`tags` are properties of its front matter (`schemas/notes.schema.json`):
+
+| Folder | Class | In git |
+|---|---|---|
+| `inbox/` | private | yes: captures; an agent only proposes a note here, by PR |
+| `notes/`, `sources/`, `maps/`, `templates/`, `attachments/` | private | yes |
+| `daily/`, `people/` | confidential | no: on the owner's devices; a person's contact data belongs in `people/` alone |
+| `sealed/` | sealed | no, and never indexed |
+| `_brain/`, `_maps/` | generated | no |
+
+`config.json` `knowledge.folders` raises a folder's class (never lowers it); a note's `class` raises its own.
+
+- `brain notes init DIR [--from VAULT] [--apply]` prints the plan: the folders, one template per note type, the
+  `.gitignore` of the folders git must never hold, a README and the agents' rules. `--apply` writes it, each file
+  through a temporary name, never over a file that is there. `--from` copies an existing vault's notes into `inbox/`
+  and its other files into `attachments/` (never `.obsidian/`, `.git/` or `.trash/`): a copy, the vault is left as it
+  was. Creating the repo and choosing its visibility stay the owner's.
+- `brain notes check [--dir DIR] [--json]`: each note's front matter against the schema (an editor's own key is a
+  warning), an id used twice, a cited Brain id (`links`, or a `[[wi-...]]` wikilink) the registered graphs do not hold,
+  a secret pattern (named by its line, never printed), an e-mail address or a phone number outside `people/`, a
+  `share` on a confidential note, a class under its folder's, tags that differ only by case, a line missing from the
+  `.gitignore` and a confidential file git tracks. Exit 1 on an error.
+- `brain notes find WORDS... [--confidential] [--scope ID] [--limit N] [--json]`: the notes that hold every word, best
+  first, by SQLite FTS5 (a plain LIKE search where SQLite lacks it), zero token. Private folders only unless
+  `--confidential`; `sealed/` is never indexed. The index is `$BRAIN_HOME/notes-index` (derived, rebuilt when a note
+  changes).
+
+The owner commits their own edits (the Obsidian Git plugin, or git); a scheduled commit would be a new scheduled task,
+the owner's to decide. Later items add the setup wizard's step, `brain notes sync` and the Obsidian and Notion
+adapters.
+
 ### The scope tree
 
 Projects can sit in a tree (`brain.scopes`): Global at the root, the brain itself; containers (a sphere, an

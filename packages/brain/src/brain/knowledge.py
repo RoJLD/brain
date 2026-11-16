@@ -67,7 +67,14 @@ FRONT_FREE = {"inbox"}   # a capture may have no front matter yet
 BRAIN_ID = re.compile(r"^(?:wi|adr|spec|feat|ms|ddr|sr|lesson|wave|era)-[a-z0-9][a-z0-9.-]*$")
 WIKILINK = re.compile(r"\[\[([^\]|#]+)(?:[#|][^\]]*)?\]\]")
 EMAIL = re.compile(r"\b[\w.+-]+@[\w-]+\.[\w.-]+\b")
-PHONE = re.compile(r"(?<![\w.])\+?\d[\d .-]{8,}\d(?![\w.])")
+# a run of digits with spaces, dots or dashes, not inside a word, an id (n-20261116-0930) or a path; a phone number
+# once it holds 9 digits or more (contact()), so a date (8) or a year is never one
+PHONE = re.compile(r"(?<![\w.:/-])\+?\d[\d .-]{7,}\d(?![\w.-])")
+
+
+def contact(text: str) -> bool:
+    """True when ``text`` holds an e-mail address or a phone number (a third party's contact data)."""
+    return bool(EMAIL.search(text)) or any(sum(c.isdigit() for c in m.group()) >= 9 for m in PHONE.finditer(text))
 SKIP_IMPORT = {".obsidian", ".git", ".trash"}
 
 _BODIES = {"fleeting": "", "idea": "\n## What\n\n## Why\n\n## For which project\n", "note": "\n",
@@ -81,7 +88,7 @@ def template(type_: str) -> str:
             "scope: []\ntags: []\nstatus: seed\nlinks: []\nshare: []\nsummary: \"\"\n"
             "aliases: [n-{{date:YYYYMMDD}}-{{time:HHmm}}]\ncreated: \"{{date:YYYY-MM-DD}}\"\n")
     if type_ == "source":
-        head += "kind: \"\"\nurl: \"\"\nretrieved: \"\"\n"
+        head += "kind: \"\"\nurl: \"\"\nretrieved: \"{{date:YYYY-MM-DD}}\"\n"
     return head + "---\n" + _BODIES[type_]
 
 
@@ -178,6 +185,22 @@ def plan(target: Path, source: Path | None = None) -> list[Step]:
     file("README.md", README.format(rows=rows), "what this repo is")
     file("CLAUDE.md", AGENTS, "the agents' rules: propose in inbox/ only")
     return steps + (_imports(target, source) if source is not None else [])
+
+
+def refuse_init(target: Path, source: Path | None = None) -> str:
+    """Why ``brain notes init`` refuses ``target`` (and ``--from source``); "" when it may plan. A file in the
+    target's place, a source that is no folder, and a source and a target inside one another are refused: a copy
+    into itself would never end."""
+    if target.exists() and not target.is_dir():
+        return f"{target} is a file, not a folder"
+    if source is None:
+        return ""
+    if not source.is_dir():
+        return f"--from {source}: no such folder"
+    s, t = source.resolve(), target.resolve()
+    if s == t or s in t.parents or t in s.parents:
+        return f"--from {source} and {target} are inside one another: give a vault outside the notes home"
+    return ""
 
 
 def _imports(target: Path, source: Path) -> list[Step]:
@@ -311,7 +334,7 @@ def _note_findings(rel: str, folder: str, cls: str, text: str, known: set[str] |
         out.append(Finding("error", rel, f"class {raised} is under its folder's ({cls}): class only raises it"))
     out += [Finding("error", f"{rel}:{line}", f"a secret pattern ({pattern}): never in a note")
             for line, pattern in secretscan.scan_lines(text)]
-    if folder != "people" and (EMAIL.search(body) or PHONE.search(body)):
+    if folder != "people" and contact(body):
         out.append(Finding("warn", rel, "an e-mail address or a phone number outside people/ (a third party's data "
                                         "goes in people/, at the minimum)"))
     if known is not None:
