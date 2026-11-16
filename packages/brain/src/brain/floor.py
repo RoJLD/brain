@@ -69,6 +69,62 @@ FLOOR_ENV = (r"BRAIN_CONFIG|CLAUDE_BRAIN_DIR|BRAIN_PERSONAL|BRAIN_HOME|CLAUDE_PL
 # the env keys that pick a shell or git.
 SETTINGS_KEYS = (r"(?<![\w$%])(?:PreToolUse|PermissionRequest|CLAUDE_CODE_GIT_BASH_PATH|CLAUDE_CODE_SHELL\w*|SHELL|"
                  r"GIT_EXEC_PATH|ComSpec|PATHEXT|SystemRoot|NoDefaultCurrentDirectoryInExePath|PS4)\s*:")
+# Round 9 #1: settings `env` values reach every command Claude Code starts, after the guard judged it (BASH_FUNC_git%%
+# redefines git in the Bash tool's bash; GIT_EXTERNAL_DIFF, GIT_SSH_COMMAND, GIT_DIR change what git runs). While the
+# floor is on, a settings write adds only these names to `env` (brain.floorguard._edit), each with why it is harmless.
+ENV_ALLOWED = {
+    "CLAUDE_CODE_ENABLE_TELEMETRY": "turns Claude Code's own telemetry on; runs nothing",
+    "OTEL_EXPORTER_OTLP_ENDPOINT": "where Claude Code's telemetry goes; read by Claude Code, not by a command",
+    "OTEL_EXPORTER_OTLP_PROTOCOL": "the telemetry's protocol",
+    "OTEL_LOGS_EXPORTER": "the telemetry's log exporter",
+    "OTEL_METRICS_EXPORTER": "the telemetry's metrics exporter",
+    "OTEL_METRIC_EXPORT_INTERVAL": "the telemetry's interval",
+    "DISABLE_TELEMETRY": "turns telemetry off",
+    "DISABLE_ERROR_REPORTING": "turns error reports off",
+    "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC": "turns Claude Code's optional traffic off",
+    "CLAUDE_CODE_MAX_OUTPUT_TOKENS": "a model limit",
+    "MAX_THINKING_TOKENS": "a model limit",
+    "BASH_DEFAULT_TIMEOUT_MS": "the Bash tool's timeout, read by Claude Code",
+    "BASH_MAX_TIMEOUT_MS": "the Bash tool's longest timeout, read by Claude Code",
+    "BRAIN_READ_HINT": "turns the read hint off (a hint, never a refusal)",
+    "BRAIN_WAIT_HINT": "turns the wait hint off (a hint, never a refusal)",
+    "BRAIN_BUDGET_WATCH": "turns the budget reminder off (a reminder, never a refusal)",
+}
+# Round 9 #2: a skill's, a custom command's or an agent's file, whose frontmatter `hooks:` run beside the guard (project
+# and home .claude folders).
+CUSTOMIZATION = re.compile(r"(?i)[\\/]\.claude[\\/](?:skills|commands|agents)[\\/]")
+FRONTMATTER_HOOKS = re.compile(r"(?m)^[ \t]*['\"]?hooks['\"]?[ \t]*:")
+
+
+def env_added(target, before: str, after: str) -> str:
+    """The first `env` name a settings JSON write adds that ENV_ALLOWED does not hold (round 9 #1); '' when none.
+    A settings file the write leaves unreadable as JSON, with an env, reads as adding one."""
+    import json
+    if not str(target).lower().endswith(".json"):
+        return ""
+
+    def names(text: str):
+        try:
+            data = json.loads(text) if text.strip() else {}
+        except ValueError:
+            return None
+        env = data.get("env") if isinstance(data, dict) else None
+        return set(env) if isinstance(env, dict) else set()
+    now, was = names(after), names(before) or set()
+    if now is None:
+        return "an env the guard cannot read" if re.search(r"(?i)\benv\b", unspelled(after)) else ""
+    return next((n for n in sorted(now - was) if n not in ENV_ALLOWED), "")
+
+
+def frontmatter_hooks(tool: str, target, before: str, after: str) -> str | None:
+    """A write that adds `hooks:` to a skill's, command's or agent's frontmatter (CUSTOMIZATION), else None."""
+    def has(text: str) -> bool:
+        m = re.match(r"﻿?\s*---[ \t]*\r?\n(.*?)\r?\n---", text or "", re.S)
+        return bool(m and FRONTMATTER_HOOKS.search(unspelled(m.group(1))))
+    if has(after) and not has(before):
+        return (f"{tool} refused: it adds hooks to {target}'s frontmatter, which run beside the guard and can change "
+                "the call it judged")
+    return None
 # The variables no command sets while the floor is on, in any form (a prefix NAME=, export, declare, printf -v, read,
 # env, ${NAME:=}, (( NAME = )), PowerShell's $env:, ${env:} and its env: provider, SetEnvironmentVariable): git's that
 # change its configuration, repository or the programs it runs (GIT_EDITOR, GIT_SEQUENCE_EDITOR and GIT_PAGER pass
@@ -346,7 +402,8 @@ def _real(path) -> str:
 
 # Round 8 #2: a network path (\\host\share, //host/share, \\?\UNC\host\share) whose resolution can take tens of seconds
 # (an unreachable host), which a call could use to run the guard past its hook's timeout. \\?\C:\ and \\.\C:\ are local.
-UNC = re.compile(r"^[\\/]{2}(?![?.][\\/])|^[\\/]{2}[?.][\\/]UNC[\\/]", re.I)
+# Round 9 #4: and every \\?\ or \\.\ (//?/, //./) path but a drive letter's: GLOBALROOT, Device\Mup, a volume GUID.
+UNC = re.compile(r"^[\\/]{2}(?![?.][\\/])|^[\\/]{2}[?.][\\/](?![A-Za-z]:(?:[\\/]|$))", re.I)
 
 
 def resolve(path: str) -> str:

@@ -117,9 +117,15 @@ each in a folder whose parents only an administrator writes:
   "block"` (a hook that fails or times out then blocks the call; Claude Code v2.1.295 or later) and a deadline at 60 %
   of their timeout past which they refuse the call themselves. A hint never judges: a failing one lets the call
   through. The other events' hooks (the rules, the announcements, health, resume, memory, capture, budget) run the
-  copy's scripts with the administrators' bash (Git for Windows under Program Files, `/bin/bash`), and those scripts
-  still run the user's engine; with no such bash they are left out, and the apply says so. "`disableAllHooks` set in
-  user, project, or local settings can't disable those managed hooks" (hooks reference, "Disable or remove hooks");
+  copy's scripts with the administrators' bash (Git for Windows under Program Files, `/bin/bash`). On Windows those
+  scripts run the copy's interpreter and engine (`plugin/hooks/locked-python`, read first by `common.sh`, and a `.pth`
+  that puts the copy's `site` on its path), never `BRAIN_PYTHON` or the user's venv; on POSIX they still run the
+  user's engine. The copy carries the rendered plugin's `rules/` and `hooks/contract.txt`, so its `inject-rules.sh`
+  injects the same rules as the plugin. With no such bash they are left out, and the apply says so.
+  `"strictPluginOnlyCustomization": ["hooks"]` also stops the hooks in skills', custom commands' and agents'
+  frontmatter, which `allowManagedHooksOnly` does not name ("Frontmatter hooks in skills, custom commands, and agents",
+  settings reference). "`disableAllHooks` set in user, project, or local settings can't disable those managed hooks"
+  (hooks reference, "Disable or remove hooks");
 - last, **the lock file**, `<ProgramData>/Brain/floor-lock.json` (the folder Windows names, not the environment's
   `ProgramData`; `/etc/brain`): the floor's copy, the config.json and `<BRAIN_HOME>` the guard reads, the copy in use,
   the paths it checks on each call, the manifest's hash, and the administrators' git (and bash) the guard runs.
@@ -137,8 +143,10 @@ holds, the older ones are removed, except the one the apply's own interpreter ru
 The locked guard takes nothing from the environment a session sets: `hook.py` puts the copy's own folders first
 (`python -I`), takes `BRAIN_CONFIG` and `BRAIN_HOME` from the lock file, drops `BRAIN_PYTHON`, `CLAUDE_PLUGIN_ROOT`,
 `CLAUDE_BRAIN_DIR` and `BRAIN_PERSONAL`, sets `NoDefaultCurrentDirectoryInExePath` and runs the git the lock names (a
-`git.exe` in the hook's working directory never runs; `brain.floorhook`, `brain.floor.git`). A network path
-(`\\host\share`, `//host/share`) is judged as written, never resolved (an unreachable host took 21 s). Wherever a lock
+`git.exe` in the hook's working directory never runs; `brain.floorhook`, `brain.floor.git`). A network or device path
+(`\\host\share`, `//host/share`, and every `\\?\`, `\\.\`, `//?/` path but a drive letter's: `GLOBALROOT`, a volume)
+is judged as written, without resolving it (an unreachable host took 21 s); a form the pattern misses still meets the
+deadline, then `onFailure: block`. Wherever a lock
 file exists, `BRAIN_GUARD_ALLOW` lifts none of the floor's checks (`floor`, `floor:*`, `all`), and the refusal says so:
 `brain floor lock --lower` and `brain floor unlock`, elevated, alone change a locked floor.
 
@@ -167,7 +175,9 @@ elevated one reaches everything).
   can write: update it from your own terminal first, and close every Claude Code session before any apply (a process
   keeps what it opened before the lock). POSIX: `/usr/bin/sudo` and the interpreter's absolute path.
 - **Changing a locked machine**: a change of config.json's floor refuses every call until the owner locks again from
-  the copy (`brain floor lock` prints its command line); an engine update changes nothing the locked guard runs until
+  the copy (`brain floor lock` prints its command line). That line is printed by the user's engine, which a session
+  can change: check that it starts with the `interpreter` the lock file names (`<ProgramData>/Brain/floor-lock.json`)
+  and runs that copy's `floor.py`. An engine update changes nothing the locked guard runs until
   the owner locks again with the new engine, from its venv (the first lock's command line, the venv updated from the
   owner's own terminal, sessions closed). The personal brain's checkout and its worktrees stay the user's: nothing
   there is locked.
@@ -291,6 +301,11 @@ Round 7 (the same classes, new spellings; on any machine with the floor on):
   a machine that is not locked (`floor.refuse` without `brain floor lock`), the floor is the parser's alone: a write
   it does not read (a launcher below, code it does not read) lifts it, and so does `BRAIN_GUARD_ALLOW` set for later
   sessions by such a write. A floor-only machine is never in that state: with no lock, every call is refused.
+- **PowerShell's .NET writers on an unlocked `floor.refuse` machine**: a literal `[IO.File]::...` onto a kept path is
+  read; a member reached through anything else (a parenthesised type, a variable, `$_`, `-as`, `GetMethod`,
+  `InvokeMember`, `UnderlyingSystemType`) is refused as a class whatever its path. It stays best-effort: PowerShell has
+  more ways to name a type than a parser reads, so a config.json rewritten floor-off is caught only by the lock (it
+  differs from the lock's floor and every call is refused) or by the backstop below.
 - **Push to main and force-push**: the code host's branch protection on main is the backstop (since 2026-11-14 on
   the engine repo: no force-push, no deletion, a pull request and the required checks, for admins too) for what the
   guard does not read: the code host's other writers (the contents API, other GraphQL mutations, `gh repo sync`, a
@@ -300,11 +315,14 @@ Round 7 (the same classes, new spellings; on any machine with the floor on):
   locked machine the managed hooks hold while Claude Code reads the managed files (no server-managed settings or HKLM
   policy first): `allowManagedHooksOnly` blocks every other hook, no `disableAllHooks` of the user's or a project's
   turns them off, a hook that fails or times out blocks the call (Claude Code v2.1.295 or later; an older one lets it
-  through), and the plugin folder is not what runs them. The managed hooks of other events than PreToolUse run the
-  user's engine: they cannot change a call, but they run code a session may have written, outside the guard's
-  reading. Elsewhere it is the parser's alone, with no backstop (an edit that adds a settings file's PreToolUse or
-  PermissionRequest hook, or an env key that picks a shell or git, is refused; such a write through code the guard does
-  not read is not), open through code the
+  through), and the plugin folder is not what runs them. A SessionStart hook can change every later Bash call of its
+  session (`CLAUDE_ENV_FILE`: "Each Bash command runs the file's contents as shell code before the command itself",
+  hooks reference): on Windows the managed ones run the copy's engine; on POSIX they run the user's, code a session may
+  have written. Settings `env` reaches every command after the guard judged it (`BASH_FUNC_git%%` redefines git in the
+  Bash tool's bash): while the floor is on, a settings write adds only the names of `brain.floor.ENV_ALLOWED`, each with
+  its reason, and a write that adds `hooks:` to a skill's, command's or agent's frontmatter is refused; such a write
+  through code the guard does not read is not. Elsewhere it is the parser's alone, with no backstop (an edit that adds
+  a settings file's PreToolUse or PermissionRequest hook is refused too), open through code the
   guard does not read (a script, a program, a compiled tool, a Python wrapper named like a Python) and through a
   launcher it does not unwrap: `flock`, `chrt`, `script -c`, `watch`, `parallel`, `find -exec`, `busybox`, a program
   named by a variable, PowerShell's `[scriptblock]::Create`, bash's `. <(...)`, `Invoke-CimMethod` or

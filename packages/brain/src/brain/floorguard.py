@@ -145,10 +145,13 @@ def _edit(tool: str, inp: dict, cwd: str, kept: Kept) -> str | None:
         return f"{tool} refused: {target} sets the floor or runs the guard"
     if floor.GIT_CONFIG_FILES.search(real) or floor.GIT_CONFIG_FILES.search(target):
         return f"{tool} refused: {target} is git's configuration (an alias or a mirror there changes what a push does)"
+    if floor.CUSTOMIZATION.search(real) or floor.CUSTOMIZATION.search(target):   # round 9 #2: frontmatter hooks
+        return floor.frontmatter_hooks(tool, target, *g._edit_result(inp, tool, target))
     if not g._override_file(target):
         return None
     before, after = g._edit_result(inp, tool, target)
-    added = g._introduced(floor.FLOOR_ENV, before, after) or g._introduced(floor.SETTINGS_KEYS, before, after)
+    added = g._introduced(floor.FLOOR_ENV, before, after) or g._introduced(floor.SETTINGS_KEYS, before, after) \
+        or floor.env_added(target, before, after)
     if added:
         return f"{tool} refused: it leaves {added} in {target}, which moves or stops the floor"
     if _plugin_off(floor.unspelled(after)) and not _plugin_off(floor.unspelled(before)):

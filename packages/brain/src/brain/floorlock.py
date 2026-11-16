@@ -170,11 +170,14 @@ def render_plan(p: dict) -> list[str]:
 # --- the guard's copy ------------------------------------------------------------------------------------------------
 
 def install_guard(gdir: Path, base: Path | None = None, packages: list[Path] | None = None,
-                  nt: bool | None = None, compile: bool = True, run=subprocess.run) -> Path:
+                  nt: bool | None = None, compile: bool = True, run=subprocess.run, rendered: Path | None = None) -> Path:
     """Write a new copy of the guard into ``gdir`` (which must not exist): the interpreter (``base``: this one's
     installation; POSIX: the system's own, which root must own), the packages, the plugin's hook scripts, the
     launchers, the bytecode (``compile``: compileall by the copy's own interpreter, round 8 #5: under Program Files
-    the hooks cannot write it), the manifest. The interpreter's path."""
+    the hooks cannot write it), the manifest. ``rendered``: the plugin brain sync rendered, whose rules and hook
+    contract the copy's inject-rules.sh reads (round 9 #5). Windows: the copy's own site folder on its interpreter's
+    path (a .pth) and named in plugin/hooks/locked-python, so that every hook of the copy runs the copy's engine. The
+    interpreter's path."""
     nt = os.name == "nt" if nt is None else nt
     if gdir.exists():
         raise LockError(f"{gdir} exists: a copy is installed into a new folder")
@@ -193,6 +196,14 @@ def install_guard(gdir: Path, base: Path | None = None, packages: list[Path] | N
         (shutil.copytree(pkg, site / pkg.name, ignore=no_cache) if pkg.is_dir() else shutil.copy2(pkg, site / pkg.name))
     shutil.copytree(Path(floor.__file__).parent / "adapters" / "claude" / "hooks", gdir / "plugin" / "hooks",
                     ignore=no_cache)
+    for rel in ("rules", "hooks/contract.txt") if rendered else ():
+        src, dst = rendered / rel, gdir / "plugin" / rel
+        (shutil.copytree(src, dst, ignore=no_cache) if src.is_dir() else shutil.copy2(src, dst) if src.is_file() else None)
+    if nt:   # every run of the copy's interpreter imports the copy's engine; the copy's scripts run that interpreter
+        packages_dir = gdir / "python" / "Lib" / "site-packages"
+        packages_dir.mkdir(parents=True, exist_ok=True)
+        (packages_dir / "brain-guard.pth").write_text(str(site) + "\n", encoding="utf-8")
+        (gdir / "plugin" / "hooks" / "locked-python").write_text(interp.as_posix() + "\n", encoding="utf-8")
     for name, entry in (("hook.py", "hook"), ("floor.py", "cli")):
         (gdir / name).write_text(LAUNCHER.format(entry=entry), encoding="utf-8")
     if compile:
@@ -256,7 +267,7 @@ def hooks_settings(interp: Path, gdir: Path, bash: str | None = None, data: dict
                               if x]
             if hooks:
                 out.setdefault(event, []).append({**{k: v for k, v in group.items() if k != "hooks"}, "hooks": hooks})
-    return {"allowManagedHooksOnly": True, "hooks": out}
+    return {"allowManagedHooksOnly": True, "strictPluginOnlyCustomization": ["hooks"], "hooks": out}
 
 
 def _managed_hook(h: dict, event: str, script: str, rest: list[str], interp: Path, gdir: Path,
@@ -480,7 +491,7 @@ def apply(cfg, lower: bool = False, run=subprocess.run, is_elevated=None, instal
     found = (tools or system_tools)(check)
     try:
         root.mkdir(parents=True, exist_ok=True)
-        interp = install(new)
+        interp = install(new, rendered=_rendered(cfg))
         failed = _run_all(lock_commands(root), run)
         wrong = [] if failed else check(root)
         if failed or wrong:
@@ -512,6 +523,13 @@ def apply(cfg, lower: bool = False, run=subprocess.run, is_elevated=None, instal
             f"{new}, its hooks in {managed}. Start Claude Code again (v{MIN_CLAUDE_CODE} or later), then in a normal "
             "terminal brain floor status checks every file", *lost,
             *([f"older copies still there (in use): {', '.join(left)}; the next lock removes them"] if left else [])]
+
+
+def _rendered(cfg) -> Path | None:
+    """The plugin brain sync rendered for this brain (<brain>/plugins/<plugin>), when it holds rules or a contract."""
+    from . import config
+    p = Path(cfg.file).parent / "plugins" / config.claude(cfg)["plugin"]
+    return p if (p / "rules").is_dir() or (p / "hooks" / "contract.txt").is_file() else None
 
 
 def _remove(folder: Path) -> None:

@@ -103,7 +103,7 @@ def test_a_settings_file_s_hook_or_shell_key_is_refused_under_the_floor(repo, tm
                 "NoDefaultCurrentDirectoryInExePath", "CLAUDE_CODE_SHELL_PREFIX"):
         reason = edit(repo, repo / ".claude" / "settings.json", json.dumps({"env": {key: "C:/x/evil.exe"}})) or ""
         assert "moves or stops the floor" in reason, key
-    allow = {"permissions": {"allow": ["Bash(npm test)"]}, "env": {"FOO": "1"}}
+    allow = {"permissions": {"allow": ["Bash(npm test)"]}, "env": {"OTEL_LOGS_EXPORTER": "otlp"}}
     assert edit(repo, repo / ".claude" / "settings.local.json", json.dumps(allow)) is None
 
 
@@ -114,3 +114,44 @@ def test_a_network_path_is_judged_as_written_never_resolved():
         assert "10.255.255." in floor.resolve(path)
     assert time.monotonic() - start < 2
     assert floor.UNC.match("//host/share") and not floor.UNC.match(r"\\?\C:\x") and not floor.UNC.match("C:/x")
+
+
+def test_settings_env_is_an_allowlist_and_frontmatter_hooks_are_refused(repo, tmp_path, monkeypatch):
+    """Review round 9 #1, #2: under the floor a settings write adds only floor.ENV_ALLOWED names to env (BASH_FUNC_git%%
+    redefines git in the Bash tool's bash; GIT_* change what git runs); a skill's, command's or agent's frontmatter
+    hooks run beside the guard."""
+    config(tmp_path, monkeypatch, refuse=True)
+    settings = repo / ".claude" / "settings.json"
+    for key in ("BASH_FUNC_git%%", "BASH_FUNC_git()", "GIT_EXTERNAL_DIFF", "GIT_SSH_COMMAND", "GIT_DIR", "FOO"):
+        reason = edit(repo, settings, json.dumps({"env": {key: "() { git push origin HEAD:main; }"}})) or ""
+        assert "moves or stops the floor" in reason and key in reason, key
+    ok = {"env": {"OTEL_LOGS_EXPORTER": "otlp", "BRAIN_READ_HINT": "0"}, "permissions": {"allow": ["Bash(npm test)"]}}
+    assert edit(repo, settings, json.dumps(ok)) is None
+    hook = "---\nname: x\nhooks:\n  PreToolUse:\n    - matcher: Bash\n---\nbody\n"
+    for path in (repo / ".claude" / "skills" / "x" / "SKILL.md", repo / ".claude" / "commands" / "x.md",
+                 repo / ".claude" / "agents" / "x.md"):
+        assert "adds hooks" in (edit(repo, path, hook) or ""), path
+        assert edit(repo, path, "---\nname: x\ndescription: y\n---\nhooks: in the body is text\n") is None
+
+
+def test_a_type_reached_through_an_expression_is_refused_as_a_class(repo, tmp_path, monkeypatch):
+    """Review round 9 #3: anything but a literal [Type] before ::, and reflection on a type."""
+    config(tmp_path, monkeypatch, refuse=True)
+    _, _, cfg = _r7(repo, tmp_path)
+    for command in (f"$t=([IO.File]); $t::WriteAllText('{cfg}','x')", f"([IO.File])::WriteAllText('{cfg}','x')",
+                    f"$t=[IO.File].UnderlyingSystemType; $t::Delete('{cfg}')",
+                    f"Set-Variable t ([IO.File]); $t::Delete('{cfg}')", f"$t='IO.File' -as 'type'; $t::Delete('{cfg}')",
+                    f"[IO.File] | % {{ $_::WriteAllText('{cfg}','x') }}",
+                    f"[IO.File].GetMethod('WriteAllText',[type[]]@([string],[string])).Invoke($null,@('{cfg}','x'))"):
+        assert "floor" in (pwsh(repo, command) or ""), command
+    for command in ("[IO.Path]::GetTempPath()", "[int]::MaxValue", "[DateTime]::Now.ToString('s')"):
+        assert pwsh(repo, command) is None, command
+
+
+def test_device_and_volume_prefixes_are_judged_as_written():
+    r"""Review round 9 #4: the \\?\ and \\.\ prefixes (//?/, //./) but a drive letter's are judged as written."""
+    for path in (r"\\?\GLOBALROOT\Device\Mup\10.255.255.3\s\a", "//?/GLOBALROOT/Device/Mup/h/s/a",
+                 r"\\.\GLOBALROOT\Device\Mup\h\s", r"\\?\Volume{0b1c}\x"):
+        assert floor.UNC.match(path), path
+    for path in (r"\\?\C:\x", "//?/C:/x", r"\\.\C:\x", "C:/x", "/home/x"):
+        assert not floor.UNC.match(path), path

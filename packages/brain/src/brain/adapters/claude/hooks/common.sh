@@ -39,7 +39,10 @@ selftime_bash() {
 # (WindowsApps) are skipped, and so is a candidate whose file name holds no python (nor is py or pypy*): a
 # BRAIN_PYTHON set to true.exe would make every guard pass (wi-brain-unadopted-floor). Returns 1 when none is.
 brain_python() {
-  local py base
+  local py base locked="${BASH_SOURCE[0]%[!A-Za-z0-9._-]*}/locked-python"
+  # The locked guard's copy (brain floor lock) names its own interpreter beside this file: its hooks run the copy's
+  # engine, never one the environment or the user's venv picks.
+  if [ -f "$locked" ] && IFS= read -r py < "$locked" && [ -x "${py%$'\r'}" ]; then brain_py=${py%$'\r'}; return 0; fi
   for py in "$@"; do
     [ -n "$py" ] || continue
     base=${py##*/}; base=${base##*\\}

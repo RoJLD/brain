@@ -246,13 +246,23 @@ def test_install_guard_copies_the_interpreter_the_code_and_hashes_them(tmp_path)
         (gdir / "site" / "brain" / "__pycache__" / "__init__.cpython-312.pyc").write_text("pyc", encoding="utf-8")
         return Done()
 
-    interp = floorlock.install_guard(gdir, base=base, packages=[pkg], nt=True, run=run)
+    rendered = tmp_path / "plugins" / "core"   # what brain sync rendered: the rules and the hook contract (round 9 #5)
+    (rendered / "rules").mkdir(parents=True)
+    (rendered / "rules" / "global.md").write_text("rules", encoding="utf-8")
+    (rendered / "hooks").mkdir()
+    (rendered / "hooks" / "contract.txt").write_text("contract", encoding="utf-8")
+    interp = floorlock.install_guard(gdir, base=base, packages=[pkg], nt=True, run=run, rendered=rendered)
     assert interp == gdir / "python" / "python.exe"
     assert ran == [[str(interp), "-I", "-m", "compileall", "-q", "-j", "0", str(gdir)]]
     assert (gdir / "python" / "Lib" / "os.py").exists() and (gdir / "python" / "DLLs" / "x.pyd").exists()
     assert (gdir / "python" / "Lib" / "__pycache__").exists()   # the standard library's bytecode kept
-    assert not (gdir / "python" / "Lib" / "site-packages").exists() and not (gdir / "python" / "Lib" / "test").exists()
-    assert (gdir / "site" / "brain" / "__init__.py").exists() and (gdir / "plugin" / "hooks" / "budget.sh").exists()
+    packages_dir = gdir / "python" / "Lib" / "site-packages"   # none of the base's packages: the copy's site alone
+    assert [p.name for p in packages_dir.iterdir()] == ["brain-guard.pth"] and not (gdir / "python" / "Lib" / "test").exists()
+    assert (packages_dir / "brain-guard.pth").read_text(encoding="utf-8").strip() == str(gdir / "site")
+    hooks_dir = gdir / "plugin" / "hooks"   # the copy's scripts run the copy's interpreter (common.sh's brain_python)
+    assert (hooks_dir / "locked-python").read_text(encoding="utf-8").strip() == interp.as_posix()
+    assert (gdir / "plugin" / "rules" / "global.md").exists() and (hooks_dir / "contract.txt").exists()
+    assert (gdir / "site" / "brain" / "__init__.py").exists() and (hooks_dir / "budget.sh").exists()
     assert "floorhook.hook(" in (gdir / "hook.py").read_text(encoding="utf-8")
     assert "floorhook.cli(" in (gdir / "floor.py").read_text(encoding="utf-8")
     listed = json.loads((gdir / floor.MANIFEST).read_text(encoding="utf-8"))
@@ -269,6 +279,7 @@ def test_the_managed_settings_block_other_hooks_and_declare_the_plugin_s_in_exec
     gdir, interp = tmp_path / "g1", tmp_path / "g1" / "python" / "python.exe"
     s = floorlock.hooks_settings(interp, gdir)
     assert s["allowManagedHooksOnly"] is True and set(s["hooks"]) == {"PreToolUse"}   # no bash: other events left out
+    assert s["strictPluginOnlyCustomization"] == ["hooks"]   # round 9 #2: skills', commands', agents' hooks stop
     hooks = [h for g in s["hooks"]["PreToolUse"] for h in g["hooks"]]
     assert {h["command"] for h in hooks} == {str(interp)} and not [h for h in hooks if "shell" in h]
     assert {tuple(h["args"][:4]) for h in hooks} == {("-X", "utf8", "-I", str(gdir / "hook.py"))}
@@ -334,7 +345,7 @@ class _Done:
     returncode, stdout, stderr = 0, "", ""
 
 
-def _install(gdir):
+def _install(gdir, **kw):
     gdir.mkdir(parents=True)
     (gdir / floor.MANIFEST).write_text("{}", encoding="utf-8")
     return gdir / "python" / "python.exe"

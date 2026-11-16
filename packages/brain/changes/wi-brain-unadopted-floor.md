@@ -43,7 +43,12 @@ section: Added
   (`CLAUDE_CODE_GIT_BASH_PATH`, `CLAUDE_CODE_SHELL*`, `SHELL`, `GIT_EXEC_PATH`, `ComSpec`, `PATHEXT`...), is refused;
   a static member called through a .NET type held in a variable (`$t = [type]'IO.File'; $t::...`) and `Set-Content`
   on the `function:` and `alias:` drives are refused; a network path is judged as written, never resolved; the guard
-  runs git by the path the lock names, never from the working directory.
+  runs git by the path the lock names, never from the working directory. While the floor is on, a settings write adds
+  only the `env` names of `brain.floor.ENV_ALLOWED` (each with its reason; `BASH_FUNC_*`, `GIT_*` and the rest are
+  refused), a write that adds `hooks:` to a skill's, command's or agent's frontmatter is refused, a .NET member reached
+  through anything but a literal `[Type]` is refused, and `\\?\` and `\\.\` paths but a drive letter's are judged as
+  written. The managed settings also set `strictPluginOnlyCustomization: ["hooks"]`; the guard's copy carries the
+  rendered rules and hook contract, and on Windows its hooks run the copy's own engine.
 - Under a lock, the guard's refusal names the elevated `brain floor lock --lower` and `brain floor unlock` instead of
   `BRAIN_GUARD_ALLOW`, and `guard.sh` no longer steps aside for the managed file (it judges where the managed
   settings are not in force: Claude Code's managed sources are first-wins).

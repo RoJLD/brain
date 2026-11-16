@@ -36,6 +36,10 @@ NET_WRITERS = re.compile(r"(?i)\.(?:MoveTo|CopyTo|Replace|Delete|SetAccessContro
 # tie to a type: refused under the floor whatever the member.
 TYPE_VAR = re.compile(r"(?i)\$(?:\{)?(\w+)\}?\s*=\s*(?:\[type\]|\[[\w.]+\]\s*(?=$|[;|\n)}])|\S+\s+-as\s+\[type\]|"
                       r"\[(?:system\.)?type\]::gettype\s*\()")
+# Round 9 #3, as a class: a static member whose receiver is not a literal [Type] (a parenthesised expression, a
+# variable, $_, ${...}), and reflection on a type (GetMethod, InvokeMember, UnderlyingSystemType...). Best-effort.
+TYPE_CALL = re.compile(r"(?i)(?:\)|\}|\$[\w:]+)\s*::\s*\w|\]\s*\.\s*(?:GetMethods?|GetMembers?|InvokeMember|GetField|"
+                       r"GetProperty|UnderlyingSystemType|GetType)\b|\.Invoke\s*\(\s*\$null\b")
 HOME_VARS = re.compile(r"(?i)^(?:\$env:(?:USERPROFILE|HOME)|\$\{env:(?:USERPROFILE|HOME)\}|\$HOME|~)(?=$|[\\/])")
 
 
@@ -71,7 +75,12 @@ def piped(command: str, acts, kept) -> str | None:
 
 
 def typed(plain: str) -> str | None:
-    """A static member called through a variable that holds a .NET type (TYPE_VAR)."""
+    """A static member reached through anything but a literal [Type] (TYPE_CALL), or through a variable that holds a
+    .NET type (TYPE_VAR)."""
+    m = TYPE_CALL.search(plain)
+    if m:
+        return (f"{m.group(0).strip()} refused: a .NET member reached through a type the floor cannot read (name the "
+                "type: [IO.File]::...)")
     for name in {m.group(1) for m in TYPE_VAR.finditer(plain)}:
         if re.search(r"(?i)\$(?:\{" + re.escape(name) + r"\}|" + re.escape(name) + r"\b)\s*::", plain):
             return (f"${name}:: refused: a .NET type held in a variable, whose static members the floor cannot read "
