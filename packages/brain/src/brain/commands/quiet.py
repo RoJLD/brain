@@ -4,9 +4,9 @@
 from __future__ import annotations
 
 import sys
-from datetime import datetime, timezone
+from datetime import datetime
 
-from .. import notify, projects, quiet
+from .. import faults, notify, projects, quiet
 
 ORDER = 485   # its place in brain --help's list of commands (brain.commands)
 USAGE_ORDER = 365   # its usage lines' place in brain --help's epilog
@@ -20,13 +20,17 @@ USAGE = """\
 
 def early(args) -> int:
     try:
-        now = datetime.now(timezone.utc)
+        now = faults.now()   # $BRAIN_NOW moves it (brain.faults)
         if args.off:
             ended = quiet.stop()
             print("quiet ended" if ended else "no manual quiet was running")
             _release(args.dry_run, now)
         elif args.for_:
-            until = quiet.start(quiet.duration(args.for_), now)
+            try:
+                until = quiet.start(quiet.duration(args.for_), now)
+            except OSError as exc:   # the state cannot be written (a full disk): the quiet is left as it was
+                print(f"brain: quiet: {exc}; nothing changed", file=sys.stderr)
+                return 1
             print(f"quiet until {until.astimezone():%Y-%m-%d %H:%M}: notifications below critical are held; every "
                   "task, collection included, keeps running; brain quiet --off ends it")
         else:

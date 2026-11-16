@@ -100,12 +100,14 @@ from .tui_side import DetailBeside, DetailPane
 
 INTERVALS = (0.5, 1.0, 2.0, 5.0, 10.0)
 TEXTS = {"audit": cockpit.audit_lines, "health": cockpit.health_lines, "exec": cockpit.exec_lines,
+         "impact": cockpit.impact_lines,
          "digest": lambda panel: cockpit.digest_lines(panel, width=1000, lines_max=0, titled=False)}  # it scrolls: all of it
 PANEL_ACTIONS = ("tab", "next_tab", "prev_tab", "next_view", "set_view", "back", "toggle_max", "pick_scope", "search",
                  "next_sort", "reverse", "filters", "panel_help", "toggle_tz", "update", "side_act", "side_open",
                  "columns")  # the panels' keys, off while a dialog or a detail is on top of them
 # every panel and frame, as the grid places them (open alerts: a whole row, L11); the plugged projects' panels after them
-EVERY_FRAME = ("sessions", "alerts", "queue", "milestones", "frontier", "audit", "health", "digest", "exec", "settings")
+EVERY_FRAME = ("sessions", "alerts", "queue", "milestones", "frontier", "audit", "health", "digest", "exec", "impact",
+               "settings")
 CARD_COLUMNS = 3
 STATUS_COLUMNS = 100  # narrower, the global bar keeps its width for the search: the subtitle has the times
 

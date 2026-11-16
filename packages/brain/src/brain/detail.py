@@ -51,7 +51,7 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
 
-from . import (cockpit, config, decisions, paths, plan, queue, resume, secretscan, status, timing, transcript,
+from . import (cockpit, config, decisions, graph, paths, plan, queue, resume, secretscan, status, timing, transcript,
                update)
 
 LOG = "cockpit"  # <BRAIN_HOME>/ledger/cockpit-<month>.jsonl
@@ -493,6 +493,7 @@ def item(nid: str, p, st, row: dict | None = None) -> dict:
     _section(d, "ADRs (decided_by)", _titled(st, adrs))
     pr = props.get("pr")
     _section(d, "PR", [_flat(pr)])
+    _section(d, "Evidence", [graph.one_line(props.get("evidence"))])   # what proves it without a PR (brain item close)
     code = _edges(st, nid, "implemented_by")
     tests = _edges(st, nid, "tested_by")
     _section(d, "Code and tests", [*code, *tests])

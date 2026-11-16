@@ -39,7 +39,7 @@ def cmd_projects(args, root: Path) -> int:
         print(f"{d['name']} ({d['root']}" + ("" if d["found"] else ", not found on this machine") + ")"
               + (f": {d['title']}" if d["title"] else ""))
         rows = [("shares_root_with", "shares root")] if d["shares_root_with"] else []
-        for key, label in rows + [("stores", "stores"), ("journals", "journals"), ("decisions", "decisions"),
+        for key, label in rows + [("stores", "stores"), ("overlays", "overlays"), ("journals", "journals"), ("decisions", "decisions"),
                                   ("ledgers", "ledgers"), ("repos", "repos"), ("production", "production"),
                                   ("code_index", "code index"), ("stacks", "stacks"), ("shared_ids", "shared ids"),
                                   ("plugin", "plugin")]:

@@ -58,11 +58,11 @@ import shutil
 import sys
 import time
 from dataclasses import dataclass, field
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Callable, Iterable
 
-from . import paths, shutdown
+from . import faults, paths, shutdown
 
 VKEY = "v"
 BACKUP = ".bak"
@@ -219,9 +219,9 @@ def _version(raw: dict) -> object:
 def set_aside(path: Path, why: str, seen: bytes | None = None) -> Path | None:
     """Move an unreadable file beside itself, under a name no later load reads; the copy's path. With ``seen`` (the
     bytes judged unreadable), None when the file changed since: a writer replaced it, and its record is kept."""
-    if seen is not None and path.read_bytes() != seen:
+    if seen is not None and faults.on_read(path, path.read_bytes()) != seen:
         return None
-    stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+    stamp = faults.now().strftime("%Y%m%dT%H%M%SZ")
     target = path.with_name(f"{path.name}{ASIDE}{stamp}")
     n = 1
     while target.exists():
@@ -252,6 +252,7 @@ def load(path: Path, *, known: int = 1, check: Callable[[dict], str] | None = No
     except OSError as exc:
         st.status, st.why = "unreadable", exc.__class__.__name__
         return st
+    blob = faults.on_read(st.path, blob)   # BRAIN_FAULT read:corrupt (brain.faults)
     why = _check_sidecar(st.path, blob, stat) if on else ""
     try:
         raw = json.loads(blob.decode("utf-8"))
@@ -333,18 +334,28 @@ def backup(path: Path) -> Path | None:
 
 def write_atomic(path: Path, text: str) -> None:
     """``text`` into ``path`` through a temporary file beside it, synced, then moved over it. A symbolic link is
-    written through (the file it points to, a temporary file beside that one): the link stays a link."""
+    written through (the file it points to, a temporary file beside that one): the link stays a link. Under
+    ``BRAIN_FAULT`` write:disk-full or write:killed (brain.faults), the write fails or the process ends before the
+    move: the file is left as it was."""
     path = Path(path)
     if path.is_symlink():
         path = Path(os.path.realpath(path))
     path.parent.mkdir(parents=True, exist_ok=True)
     tmp = path.with_name(f"{path.name}.{os.getpid()}.tmp")
+    fault = faults.fault("write", path)
     try:
         with shutdown.critical():   # a signal waits for the file to be replaced (brain.shutdown)
             with open(tmp, "w", encoding="utf-8", newline="\n") as fh:
+                if fault == "disk-full":   # half of it written, then no room left
+                    fh.write(text[: len(text) // 2])
+                    fh.flush()
+                    faults.say("write", fault, path)
+                    raise faults.disk_full(tmp)
                 fh.write(text)
                 fh.flush()
                 os.fsync(fh.fileno())
+            if fault == "killed":   # whole and synced, never moved: what a kill leaves
+                faults.killed(path)
             os.replace(tmp, path)
     finally:
         if tmp.exists():
@@ -389,7 +400,7 @@ def read_foreign(path: Path) -> tuple[dict, bytes | None]:
     fixes it by hand; it is never set aside nor replaced."""
     path = Path(path)
     try:
-        blob = path.read_bytes()
+        blob = faults.on_read(path, path.read_bytes())
     except FileNotFoundError:
         return {}, None
     except OSError as exc:
@@ -420,7 +431,7 @@ def backup_home(path: Path, folder: Path, keep: int = HOME_BACKUPS) -> Path | No
         olds = sorted(p for p in folder.iterdir() if _home_copy_of(p.name, path.name))
         if olds and olds[-1].read_bytes() == blob:
             return olds[-1]
-        t = datetime.now(timezone.utc)
+        t = faults.now()
         dst = folder / f"{path.name}.{t:%Y%m%dT%H%M%S%fZ}{BACKUP}"
         while dst.exists():   # a coarse clock (about 16 ms on Windows): never over another copy
             t += timedelta(microseconds=1)
@@ -487,7 +498,7 @@ def prune_months(files: Iterable[Path], keep: int | None, now: datetime | None =
     name has no month is kept); the removed."""
     if keep is None:
         return []
-    oldest, gone = oldest_kept(now or datetime.now(timezone.utc), keep), []
+    oldest, gone = oldest_kept(now or faults.now(), keep), []
     for f in files:
         month = month_of(f.name)
         if month and month < oldest:
@@ -510,7 +521,7 @@ def rotate_log(path: Path, now: datetime | None = None, *, keep: int | None = LO
     name was taken meanwhile the file is looked at again (another hook may have rotated it and a fresh one started),
     so a rotated month is never written over."""
     path = Path(path)
-    now = now or datetime.now(timezone.utc)
+    now = now or faults.now()
     this, n = f"{now:%Y-%m}", 1
     for _ in range(_ROTATE_TRIES):
         try:

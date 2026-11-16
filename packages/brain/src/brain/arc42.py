@@ -141,10 +141,11 @@ def _repo_names(name: str, entry: dict) -> list[str]:
 
 
 def registry(raw: dict) -> dict[str, dict]:
-    """{project: {access, repos, title}} of a declared registry, in its order (a mount or an invalid entry left out)."""
+    """{project: {access, repos, title}} of a declared registry, in its order (a mount, a notes home or an invalid
+    entry left out)."""
     out: dict[str, dict] = {}
     for name, entry in raw.items():
-        if not isinstance(entry, dict) or "tenant" in entry:
+        if not isinstance(entry, dict) or "tenant" in entry or projects.is_knowledge(entry):
             continue
         read = projects.is_read_only(entry)
         out[str(name)] = {"access": "read" if read else "write", "repos": [] if read else _repo_names(str(name), entry),

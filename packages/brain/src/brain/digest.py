@@ -45,7 +45,7 @@ from dataclasses import dataclass, field
 from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 
-from . import actions, cost, decisions, diffs, notes, paths, projects, resume
+from . import actions, cost, decisions, diffs, graph, notes, paths, projects, resume
 
 BUDGET = 4000  # tokens; 0: no limit
 WIDTH = resume.WIDTH
@@ -193,12 +193,21 @@ def closures(project: projects.Project, st: resume.Store, w: Window) -> tuple[li
             day, source = git[n["id"]][0], "git"
         if not w.has(day):
             continue
-        props = n.get("props") or {}
-        row = {"id": n["id"], "type": n["type"], "status": n["status"], "day": day, "day_from": source,
-               "title": " ".join(str(n.get("title") or "").split()), "priority": resume._priority(n),
-               "pr": " ".join(str(props.get("pr") or "").split()), "outcome": text}
-        (miles if n["type"] == "Milestone" else items).append(row)
+        (miles if n["type"] == "Milestone" else items).append(_closed_row(n, day, source, text))
     return _newest_first(miles), _newest_first(items)
+
+
+PROOF_W = 48   # a closed item's proof in its head line, cut there: the title keeps its room (resume._row)
+
+
+def _closed_row(n: dict, day: str, source: str, text: str) -> dict:
+    """A closed node's row: its PR, its evidence and their one-line proof (wi-brain-evidence-views)."""
+    props = n.get("props") or {}
+    return {"id": n["id"], "type": n["type"], "status": n["status"], "day": day, "day_from": source,
+            "title": " ".join(str(n.get("title") or "").split()), "priority": resume._priority(n),
+            "pr": " ".join(str(props.get("pr") or "").split()),
+            "evidence": graph.one_line(props.get("evidence")), "proof": graph.proof(props),
+            "outcome": text}
 
 
 def _paragraphs(lines: list[str]) -> list[str]:
@@ -402,7 +411,7 @@ def _items(rows: list[dict]) -> Part | None:
     full, one = [], []
     for i in rows:
         head = f"- {i['id']}{'' if i['status'] == 'done' else ' ' + i['status']} {i['day']}" + \
-            (f" [{i['priority']}]" if i["priority"] else "") + (f" ({i['pr']})" if i["pr"] else "")
+            (f" [{i['priority']}]" if i["priority"] else "") + (f" ({decisions._short(i['proof'], PROOF_W)})" if i.get("proof") else "")
         row = resume._row(head, i["title"])
         one.append(row)
         full += [row] + (_detail(i["outcome"]) if i["outcome"] else [])

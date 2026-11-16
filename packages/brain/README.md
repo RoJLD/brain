@@ -146,7 +146,8 @@ resources tab comes, `9` opens the resources' detail (`brain resources`, below).
 Sessions 1! » the sessions asking, « 8 Health 2 » the open alerts. A click on it, `ctrl+pageup` and
 `ctrl+pagedown` also change tab, and Escape goes back one step at a time: the search, a full view, then the overview. A tab with several views says so in its toolbar:
 `v` or a click changes it, and the overview's other views are the grid of every panel, where open alerts take a whole
-row, and the digest. `--tab NAME` starts on a tab, and with `--once` or `--plain` prints its panels alone (the overview:
+row, and the digest; the health tab's other view, Impact, is `brain impact --diff` of the branch of the checkout the
+cockpit runs from, read at each probe. `--tab NAME` starts on a tab, and with `--once` or `--plain` prints its panels alone (the overview:
 its cards). Under 120 columns or 30 rows the bar is reduced to its numbers (`0 1 Ada's queue 3 2 3 4 8`), the cards take
 one column, the grid is not offered and the health frames stack. The last tab and each tab's view are kept
 in `<BRAIN_HOME>/tui.json`.
@@ -477,6 +478,9 @@ change, the docs to update, the ADRs and specs to re-read, the tests to run (one
 run them, the open items that deliver those features and the decisions pending on them. Without GitNexus it works at
 the file level, a Python symbol looked up by the AST, and says so on its second line. `brain code-map` resolves
 each active CodeRef to its GitNexus node and reports the coverage: symbols and files with a CodeRef.
+`brain impact --markdown` prints the checklist as a PR body's section (tasks ticked by hand, every text escaped);
+the cockpit's Health tab shows the impact of the branch it runs from (its Impact view); a project's `overlays:` (another
+repo's store read with its own, read-only) are walked too.
 
 A decision can be pinned to the code it governs ([`docs/pins.md`](docs/pins.md)): `brain adr pin ID --touches
 PATH|CODEREF --holds LINE` writes `pins.yaml` beside the decision log (an ADR, an SDR or an answered DDR; the `holds`
@@ -650,6 +654,10 @@ An item closes with its evidence: `brain item close ID --pr "repo #N"` for a cod
 then the clauses of its typologies ([docs/typologies.md](docs/typologies.md)): its `props.typology`, else its
 project's `lifecycle.typologies` in `projects.yaml`. `brain item clauses ID [--json]` prints them; `--pr` is required
 for an item that takes a PR clause (the software pack's), and for a project that declares no typology, as before.
+The evidence is shown where the PR is (`wi-brain-evidence-views`): the cockpit's item detail (an Evidence section
+beside the PR), the digest's closed items, the items a lesson led to, `research_graph closed` (`evidence ...` beside
+`pr ...`, and in its `--json` when there is one), and the journal's line that `brain item close` prints for `brain
+journal add`: `- ID STATUS (PR; evidence TEXT): outcome`. `brain item show` prints it with the other props.
 
 `brain items --wave` takes a wave's release or id: the items whose wave it is now (carried in included), and those in
 no wave whose free-text `props.wave` names that release. `brain spec show --section` takes a heading's number (`2.1`),
@@ -777,8 +785,8 @@ offers it as « A new project » (without `--owner`, the owner of this machine's
 will propose are its later slices.
 
 `brain project add NAME (--read | --existing DIR [--store PATH] | --template T --dir DIR) [--parent NODE] [--floor
-CLASS] [--title TEXT] [--apply]` registers a project in a brain's `projects.yaml` (`wi-brain-project-add`), a plan
-then `--apply`, instead of a hand edit of the file:
+CLASS] [--title TEXT] [--no-notes] [--apply]` registers a project in a brain's `projects.yaml` (`wi-brain-project-add`),
+a plan then `--apply`, instead of a hand edit of the file:
 - `--read`: a project the brain reads and never writes (its entry: `title`, `access: read`, `parent`, `classes`);
 - `--existing DIR`: an instance that has its own brain, registered without a copy: its `root` and `stores` when
   `--store` names another than `notes/graph`; a folder without that store, or the root of a registered project, is
@@ -803,6 +811,14 @@ flow mapping or a document end marker, is refused), and the write is logged as t
 folder; its config.json and scopes.yaml are read beside it, whatever `$CLAUDE_BRAIN_DIR`, `$BRAIN_PERSONAL` or
 `$BRAIN_CONFIG` name. `--project` is refused: a brain's registry changes by a branch and a PR of that brain, so run it
 in a worktree of it, then `brain sync` and `brain check`.
+
+When the brain has a notes home (« The notes home », below: its own config.json's `knowledge.path`, else its
+registry's `kind: knowledge` entry, never another brain's), the plan also shows the project's map there,
+`maps/NAME.md` (`type: map`, `scope: [NAME]`, its id `n-map-NAME`), and `--apply` writes it after the entry, through a
+temporary name, never over a file (`wi-brain-project-add-notes`). The project gets a map, not a folder: the notes
+home's folders say the lifecycle and the class, never the subject, and a note joins the project by its `scope`. The
+step is optional: without a notes home, or with `--no-notes`, the plan says why there is no map; a map that cannot be
+written leaves the entry registered and says so. The owner commits the map in the notes repo.
 
 It also writes `<BRAIN_HOME>/personal.json` when the machine has none, so that the hooks and commands run from any
 folder find this brain. The brain is the owner's private repo: push it to their own account, never to a public one.
@@ -1425,6 +1441,53 @@ and `brain check --all` says what to declare). A first entry the brain skips for
 `prog/kanban_graph.md`), as do those of a project's second store. At such a root, `brain sync`, `check` and `refresh`
 cover every project registered there, and `--store prog/graph` runs as the project that lists that store.
 `examples/projects.yaml` has both.
+
+### The notes home: `brain notes`
+
+The owner's notes live beside the work brain, in a private repo of their own: Markdown with wikilinks, one idea per
+note (`brain.knowledge`). Any editor works; Obsidian opens the folder as a vault and is never required. The brain
+finds the home through `config.json` `knowledge.path` (relative to the file's folder), else the first `projects.yaml`
+entry with `kind: knowledge` (`title`, `kind`, `root`, `parent` and `classes` only: it is never loaded as a project,
+`--project` refuses it, `brain check --all` checks it), else `--dir`. Both need brain 0.5.1 or later on every machine:
+an older brain notes the config key as unknown (CI refuses it) and loads the entry as a project.
+
+The folders say the lifecycle and the class, never the subject; a note's `scope` (ids of the scope tree), `type` and
+`tags` are properties of its front matter (`schemas/notes.schema.json`):
+
+| Folder | Class | In git |
+|---|---|---|
+| `inbox/` | private | yes: captures; an agent only proposes a note here, by PR |
+| `notes/`, `sources/`, `maps/`, `templates/`, `attachments/` | private | yes |
+| `daily/`, `people/` | confidential | no: on the owner's devices; a person's contact data belongs in `people/` alone |
+| `sealed/` | sealed | no, and never indexed |
+| `_brain/`, `_maps/` | generated | no |
+
+`config.json` `knowledge.folders` raises a folder's class (never lowers it; a folder of the owner's own named there
+joins with its class, and one above private is kept out of git like `daily/`); a note's `class` raises its own, for
+`check` and `find` alike.
+
+- `brain notes init DIR [--from VAULT] [--apply] [--json]` prints the plan: the folders, one template per note type,
+  the `.gitignore` of the folders git must never hold, a README and the agents' rules. `--apply` writes it, each file
+  through a temporary name, never over a file that is there; a `.gitignore` already there keeps its lines and gets the
+  missing ones appended (a new repo's own one included). A file where the layout puts a folder is refused. `--from`
+  copies an existing vault's notes into `inbox/` and its other files into `attachments/` (never `.obsidian/`, `.git/`,
+  `.trash/`, `_brain/` or `_maps/`); a vault's top folder that the layout names (`daily/`, `people/`, `notes/`...)
+  keeps its place, and so its class: a copy, the vault is left as it was. Creating the repo and choosing its
+  visibility stay the owner's.
+- `brain notes check [--dir DIR] [--json]`: each note's front matter against the schema (an editor's own key is a
+  warning; a date written unquoted and a byte order mark are read), an id used twice, a cited Brain id (`links`, or a
+  `[[wi-...]]` wikilink) the registered graphs do not hold, a secret pattern (named by its line, never printed), an
+  e-mail address or a phone number outside `people/`, a `share` on a note above private, a class under its folder's,
+  tags that differ only by case, a line missing from the `.gitignore` and a file git tracks in a folder it must never
+  hold. A value of the wrong shape is reported, never a crash. Exit 1 on an error.
+- `brain notes find WORDS... [--confidential] [--scope ID] [--limit N] [--dir DIR] [--json]`: the notes that hold
+  every word, best first, by SQLite FTS5 (a plain LIKE search where SQLite lacks it), zero token. Private notes only
+  unless `--confidential`; a sealed note, by its folder or its own `class`, is never indexed. The index is
+  `$BRAIN_HOME/notes-index` (derived, rebuilt when a note or a folder's class changes).
+
+The owner commits their own edits (the Obsidian Git plugin, or git); a scheduled commit would be a new scheduled task,
+the owner's to decide. Later items add the setup wizard's step, `brain notes sync` and the Obsidian and Notion
+adapters.
 
 ### The scope tree
 
@@ -2066,6 +2129,38 @@ exclude from an on-access antivirus scan: the tests write and delete tens of tho
 each one slows the suite (about 10 % measured with pytest's temporary folders excluded). The engine never changes the
 antivirus: the owner adds that exclusion by hand, if wanted, and the processes the tests start (git, bash, python) are
 still scanned.
+
+### A virtual clock and injected faults
+
+Two variables let a test, or the owner in a terminal on a scratch home, play a date or a failure end to end through
+the real command line, with no mock in the code under test (`brain.faults`, `wi-brain-fault-injection`):
+
+- `BRAIN_NOW` sets the engine's « now » wherever a shared helper reads it: the stamps and log months of
+  `brain.stateio`, the breaker windows of `brain.net`, `brain quiet`, and the `_now` helpers of the modules that keep
+  one (the governor, the alerts, usage, the spool, the vault, the session archive, ...). A point in time freezes it
+  (`2030-01-31`, midnight UTC; `2030-01-31T22:00:00Z`; a time without a zone is UTC); a shift moves the real clock,
+  which keeps running (`+3d`, `-2h`, `+90m`, `+30s`, `+1w`). A call that still reads the system's clock directly is
+  not moved: the shared helpers are the contract.
+- `BRAIN_FAULT=<point>[@<glob>]:<kind>[,...]` injects a failure. `write` (every atomic write of `brain.stateio`):
+  `disk-full` writes half of the temporary file then raises « No space left on device », leaving the file as it was;
+  `killed` ends the process (exit 137) after the temporary file is synced and before it is moved, as a kill would.
+  `read` (the loads of truth-local and foreign files): `corrupt` reads half of the file's bytes and a byte that is
+  not UTF-8, so a truth-local file is set aside (moved whole beside itself: its bytes are never changed) and a
+  foreign one refused. `net` (`brain.net`'s calls): `timeout` fails as a timeout without calling (never retried, the
+  breaker opens), `refused` as a refused connection (retried, then the breaker opens). The glob narrows a fault to a
+  file (its name or its whole path, `write@*/quota.json:disk-full`, `read@*/usage/*:corrupt`) or a service
+  (`net@gitnexus:timeout`, `net@http:*:timeout`).
+
+**A scratch home only.** On the real home a date would move for good what the engine keeps there: a clock years
+ahead prunes the monthly logs it keeps, a breaker opened then stays open until that date, a quiet holds the
+notifications as long. So both variables are honoured only when `BRAIN_HOME` names another folder than `~/.brain`
+(`BRAIN_HOME=C:/brain-tests/home brain quiet --for 2h`, say); with the real home every command refuses to run (exit 2)
+and says why, and a hook or a helper reads the real clock and injects nothing.
+
+Each injected fault says so on stderr. A value the engine cannot read makes every command, a plugin's included,
+refuse to run (exit 2) rather than play another failure than the one asked. The hermetic suite clears both and gives
+each test its own `BRAIN_HOME`, so a test sets them itself:
+`tests/test_faults.py` runs `brain quiet` in a subprocess with its clock in 2030, on a full disk and killed mid-write.
 
 ## Releasing
 

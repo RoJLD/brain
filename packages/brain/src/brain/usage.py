@@ -55,7 +55,7 @@ from collections import Counter
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
-from . import paths, secretscan, stateio, toolids, transcript
+from . import faults, paths, secretscan, stateio, toolids, transcript
 
 SCAN_V = 4  # a row scanned by an older scanner is scanned again while its transcript exists (2: the hours; 3: the
 #            subagents and workflow runs apart, ``agents``; 4: the usage counters by tool id, ``tooling``, ``refused``)
@@ -988,4 +988,4 @@ def hours(s) -> str:
 
 
 def now_utc() -> datetime:
-    return datetime.now(timezone.utc)
+    return faults.now()

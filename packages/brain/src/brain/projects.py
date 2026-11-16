@@ -89,8 +89,14 @@ DEFAULTS = {"stores": ["notes/graph"], "journal": "notes/journal.md", "decisions
 # Every key of a project's entry, with what it holds: brain projects --keys prints them, check() refuses another one.
 KEYS = {
     "root": "the project's main checkout, relative to the registry's folder (default: .)",
+    "kind": "knowledge: the owner's notes home (brain notes, brain.knowledge), an entry of title, kind, root, parent and classes "
+            "only, never loaded as a project (no backlog, no journal, no store the brain writes); any other value "
+            "is an error",
     "title": "one line saying what the project is, for the views",
     "stores": "its graph stores, relative to the root (default [notes/graph]); brain item writes the first",
+    "overlays": "other repos' graph stores read with its first store, read-only (research_graph's --overlay: their own "
+                "schema.yaml, nodes, edges and external.yaml), relative to the root: a path or a list; brain impact "
+                "walks them and the code map places their CodeRefs; never written",
     "journal": "its journals: a path or a list (default notes/journal.md); brain journal add writes the first",
     "decisions": "its decision logs (ADR, SDR): a path or a list (default notes/decisions.md); brain adr new writes "
                  "the first",
@@ -148,6 +154,8 @@ KEYS = {
 LIFECYCLE_KEYS = ("typologies", "stage", "shape", "profile", "since", "paused")   # LC-1; typologies read so far
 ACCESS = ("write", "read")
 READ_ONLY_KEYS = {"title", "access", "parent", "classes"}
+KNOWLEDGE = "knowledge"
+KNOWLEDGE_KEYS = {"title", "kind", "root", "parent", "classes"}   # a notes home: the folder brain notes reads
 # the decision logs research_graph covers for a store given none (research_graph.validate.DEFAULT_DECISIONS; not
 # imported: a guard reads this module on every call)
 GRAPH_DECISIONS = ("notes/scientific_decisions.md", "notes/decisions.md")
@@ -189,6 +197,7 @@ class Project:
     formats: object = None           # its formats: as declared (brain.formats.formats_of)
     migrations: object = None        # its migrations: as declared (brain.formats.migrations_of)
     lifecycle: dict = field(default_factory=dict)   # its lifecycle: as declared (LC-1; typologies read)
+    overlays: list[Path] = field(default_factory=list)   # other repos' stores, read-only over the first store
 
 
 @dataclass
@@ -255,6 +264,7 @@ def _project(name: str, entry: dict, root: Path) -> Project:
                    title=str(e.get("title") or ""), journals=journals, decision_logs=logs,
                    ledgers={str(k): root / v for k, v in ledgers.items() if isinstance(v, str) and v},
                    shared_ids=dict(e["shared_ids"]) if isinstance(e.get("shared_ids"), dict) else {},
+                   overlays=[Path(os.path.normpath(root / s)) for s in _paths(e.get("overlays"))],
                    plugin=e.get("plugin"), standards=e.get("standards"), formats=e.get("formats"),
                    migrations=e.get("migrations"),
                    lifecycle=dict(e["lifecycle"]) if isinstance(e.get("lifecycle"), dict) else {})
@@ -291,6 +301,23 @@ def is_read_only(entry) -> bool:
     return isinstance(entry, dict) and entry.get("access") == "read"
 
 
+def is_knowledge(entry) -> bool:
+    """The owner's notes home (``kind: knowledge``, brain.knowledge): never loaded as a project, listed by
+    :func:`knowledge`. Another kind is an error (check()) and is not loaded either."""
+    return isinstance(entry, dict) and "kind" in entry
+
+
+def knowledge(root: Path | None = None) -> dict[str, Path]:
+    """{name: its folder} of the notes homes (``kind: knowledge``), in the registry's order: the root relative to the
+    registry's folder."""
+    f = registry_file(root)
+    out = {}
+    for name, entry in raw(root).items():
+        if is_knowledge(entry) and entry.get("kind") == KNOWLEDGE and f is not None:
+            out[str(name)] = _resolve_root(str(entry.get("root") or "."), f.parent)
+    return out
+
+
 def bad_access(entry) -> bool:
     """An entry whose ``access`` is neither read nor write: invalid, reported as such (check(), :func:`unloaded`, the
     neutral source), never loaded (the key narrows: a typo never opens a way in) and never shown as read only."""
@@ -305,7 +332,7 @@ def invalid_access(root: Path | None = None) -> dict[str, object]:
 
 def _skipped(entry) -> bool:
     """An entry the registry's walk never loads: a tenant mount, a read-only project, an invalid access."""
-    return is_mount(entry) or is_read_only(entry) or bad_access(entry)
+    return is_mount(entry) or is_read_only(entry) or bad_access(entry) or is_knowledge(entry)
 
 
 def load(root: Path | None = None) -> dict[str, Project]:
@@ -379,8 +406,11 @@ def _claimant(name: str, entry, base: Path) -> Project | None:
     ``access: read`` on an entry that still names its ``root`` (both refused by check()). It is never loaded, yet it
     keeps the root it was registered at and the files it would write there, so the next project at that root stays a
     sharer and never becomes its owner (fail closed: a typo never hands another project the owner's views, records or
-    rendered files). None for a tenant mount, a valid read-only entry (no root of its own) or a malformed path."""
-    if not isinstance(entry, dict) or is_mount(entry) or not (bad_access(entry) or "root" in entry):
+    rendered files). None for a tenant mount, a notes home (its root is the notes repo's, never a project's), a valid
+    read-only entry (no root of its own) or a malformed path."""
+    if not isinstance(entry, dict) or is_mount(entry) or is_knowledge(entry):
+        return None
+    if not (bad_access(entry) or "root" in entry):
         return None
     try:
         return _project(name, entry, _resolve_root(str(entry.get("root") or "."), base))
@@ -488,6 +518,8 @@ def unloaded(name: str, root: Path | None = None) -> str:
         return f"{name!r} is not loaded: access is read or write, not {entry['access']!r}"
     if is_read_only(entry):
         return f"{name!r} is read only: the brain reads it and never writes it"
+    if is_knowledge(entry):
+        return f"{name!r} is a notes home (kind: {entry.get('kind')}): brain notes reads it, it is no project"
     refused = _load(root)[1].get(name)
     return f"{name!r} is not loaded: {'; '.join(refused[1])}" if refused else ""
 
@@ -505,6 +537,7 @@ def get(name: str, root: Path | None = None) -> Project:
     if root is None:
         return reg[name]
     p = _project(name, raw(root).get(name) or {}, root)
+    p.overlays = list(reg[name].overlays)   # another repo's stores: beside the main checkout, never a worktree
     p.shares_root_with = reg[name].shares_root_with
     p.registry_dir = reg[name].registry_dir
     return p
@@ -707,6 +740,18 @@ def _check_read_only(where: str, entry: dict) -> list[str]:
     return errors
 
 
+def _check_knowledge(where: str, entry: dict) -> list[str]:
+    """A notes home holds title, kind, root, parent and classes only, and its kind is knowledge."""
+    errors = []
+    if entry.get("kind") != KNOWLEDGE:
+        errors.append(f"{where}: kind is {KNOWLEDGE}, not {entry.get('kind')!r} (the only kind)")
+    extra = sorted(set(map(str, entry)) - KNOWLEDGE_KEYS)
+    if extra:
+        errors.append(f"{where}: a notes home holds title, kind, root, parent and classes only, not {', '.join(extra)}")
+    errors += [f"{where}: {k} is a string" for k in ("root", "title") if k in entry and not isinstance(entry[k], str)]
+    return errors
+
+
 def view_clashes(projs: list[Project]) -> dict[tuple[str, str], str]:
     """The stores whose views folder (:func:`views_dir`) a store registered before them at the same root uses: brain
     sync would write one's board over the other's. {(project, the store relative to its root): what to say}."""
@@ -760,13 +805,16 @@ def check(root: Path | None = None) -> list[str]:
         if is_read_only(entry):
             errors += _check_read_only(where, entry)
             continue
+        if is_knowledge(entry):
+            errors += _check_knowledge(where, entry)
+            continue
         unknown = sorted(set(map(str, entry)) - set(KEYS))
         if unknown:   # read mode: a newer brain's key, noted and kept; strict (CI): an error
             errors += schema.tolerate(f"{where}: unknown key(s) {', '.join(unknown)} (brain projects --keys lists them)")
         errors += [f"{where}: {k} is a string" for k in ("root", "title") if k in entry
                    and not isinstance(entry[k], str)]
         errors += [f"{where}: {k} is a path or a list of paths" for k in ("stores", "journal", "decisions",
-                                                                         "production") if k in entry
+                                                                         "production", "overlays") if k in entry
                    and not _is_paths(entry[k])]
         listed: set[str] = set()
         for s in _paths(entry.get("stores")):
@@ -853,7 +901,7 @@ def repo_tokens(root: Path | None = None) -> set[str]:
     (wi-brain-audit-unregistered-coderef): every repo of every project the registry loads, cloned on this machine or
     not, by its name and its main checkout's folder; for a project whose ``repos:`` does not read (projects.check says
     it), its name and its declared paths' folders; and the name of each entry the walk skips (a read-only project, a
-    tenant mount), whose repos the brain never audits. ``root``: as :func:`load` takes it (a project's
+    tenant mount, a notes home), whose repos the brain never audits. ``root``: as :func:`load` takes it (a project's
     ``registry_dir`` names the registry it came from)."""
     out: set[str] = set()
     for p in load(root).values():
@@ -866,8 +914,14 @@ def repo_tokens(root: Path | None = None) -> set[str]:
                                                              if isinstance(x, str) and x}
             continue
         out |= {r.name.lower() for r in rs} | {r.folder.lower() for r in rs if r.folder}
-    out |= {str(name).lower() for name, entry in raw(root).items() if is_read_only(entry) or is_mount(entry)}
+    out |= {str(name).lower() for name, entry in raw(root).items() if _repo_only(entry)}
     return out
+
+
+def _repo_only(entry) -> bool:
+    """An entry the walk skips whose name is still a repo a CodeRef may name: a read-only project, a tenant mount, a
+    notes home."""
+    return is_read_only(entry) or is_mount(entry) or is_knowledge(entry)
 
 
 def code_refs(store: Path) -> list[tuple[str, str]]:
@@ -957,6 +1011,14 @@ def _rel(path: Path, root: Path) -> str:
     return path.relative_to(root).as_posix() if path.is_relative_to(root) else path.as_posix()
 
 
+def _up(path: Path, root: Path) -> str:
+    """``path`` relative to ``root``, ``..`` allowed (an overlay in a sibling repo); absolute on another drive."""
+    try:
+        return os.path.relpath(path, root).replace(os.sep, "/")
+    except ValueError:
+        return path.as_posix()
+
+
 def describe(p: Project) -> dict:
     """A project's entry, resolved, with stable keys: what brain projects prints and the views read."""
     try:
@@ -965,7 +1027,8 @@ def describe(p: Project) -> dict:
         repos = [f"error: {exc}"]
     stacks = sorted(map(str, p.stacks)) if isinstance(p.stacks, dict) else ([p.stacks] if p.stacks else [])
     return {"name": p.name, "title": p.title, "root": str(p.root), "found": p.root.is_dir(),
-            "stores": [_rel(s, p.root) for s in p.stores], "journals": [_rel(j, p.root) for j in p.journals],
+            "stores": [_rel(s, p.root) for s in p.stores],
+            "overlays": [_up(o, p.root) for o in p.overlays], "journals": [_rel(j, p.root) for j in p.journals],
             "decisions": [_rel(d, p.root) for d in p.decision_logs],
             "ledgers": {k: _rel(v, p.root) for k, v in p.ledgers.items()},
             "production": [os.path.relpath(x, p.root).replace(os.sep, "/") for x in p.production],

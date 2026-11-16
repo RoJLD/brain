@@ -18,7 +18,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Mapping
 
-from . import paths, timing
+from . import faults, paths, stateio, timing
 
 STATE = "quiet.json"
 HELD = "held.jsonl"
@@ -79,7 +79,7 @@ def _at(text) -> datetime | None:
 
 def manual_until(now: datetime | None = None) -> datetime | None:
     """The end of the manual quiet when it is running, else None."""
-    now = now or datetime.now(timezone.utc)
+    now = now or faults.now()
     try:
         data = json.loads((folder() / STATE).read_text(encoding="utf-8"))
     except (OSError, ValueError):
@@ -89,10 +89,10 @@ def manual_until(now: datetime | None = None) -> datetime | None:
 
 
 def start(span: timedelta, now: datetime | None = None) -> datetime:
-    now = now or datetime.now(timezone.utc)
+    now = now or faults.now()
     until = now + span
-    folder().mkdir(parents=True, exist_ok=True)
-    (folder() / STATE).write_text(json.dumps({"since": _iso(now), "until": _iso(until)}), encoding="utf-8")
+    # atomic (brain.stateio): a write cut short leaves the quiet as it was, never a half file read as no quiet
+    stateio.write_atomic(folder() / STATE, json.dumps({"since": _iso(now), "until": _iso(until)}))
     return until
 
 
@@ -107,7 +107,7 @@ def stop() -> bool:
 
 def active(quiet_hours: str = "", now: datetime | None = None) -> str:
     """Why notifications below critical are held now ('' when they are not)."""
-    now = now or datetime.now(timezone.utc)
+    now = now or faults.now()
     until = manual_until(now)
     if until is not None:
         return f"brain quiet, until {until.astimezone():%H:%M}"
@@ -176,7 +176,7 @@ def release(registry: Mapping, *, now: datetime | None = None, dry_run: bool = F
     """Send the sum-up of what was held to each project whose quiet has ended; the lines to print. A summary that
     failed to send stays held for the next call. Called by ``brain quiet --off`` and by every alerts pass."""
     from . import notify   # here: notify imports this module
-    now = now or datetime.now(timezone.utc)
+    now = now or faults.now()
     rows = held()
     if not rows:
         return []
@@ -212,7 +212,7 @@ def release(registry: Mapping, *, now: datetime | None = None, dry_run: bool = F
 def summary(projs=None, now: datetime | None = None) -> dict:
     """{until, hours: {project: window}, active, held}: what ``brain status`` and the cockpit show."""
     from . import notify, projects
-    now = now or datetime.now(timezone.utc)
+    now = now or faults.now()
     if projs is None:
         try:
             projs = list(projects.load().values())

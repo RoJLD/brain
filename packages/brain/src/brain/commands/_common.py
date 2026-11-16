@@ -5,14 +5,13 @@ from __future__ import annotations
 
 import argparse
 import sys
-from datetime import datetime, timezone
 from pathlib import Path
 
-from .. import actions, decisions, paths, projects, resume, transcript, usage
+from .. import actions, decisions, faults, paths, projects, resume, transcript, usage
 
 
 def _now() -> str:
-    return transcript.iso(datetime.now(timezone.utc))
+    return transcript.iso(faults.now())
 
 
 def _text(value: str | None) -> str:

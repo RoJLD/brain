@@ -51,6 +51,12 @@ asked. Exit 2: report why. Run it again until it exits 0. Its structure lines (`
 `shortcut.marker`, `symptom.cause`) are fixed the same way, or answered in the PR body, passed with `--pr-body FILE`:
 a `Root cause:` line for a symptom fix, a `Justified: <unit>: <reason>` line for the others.
 
+Then the impact, before the PR is opened: run `brain [--project P] impact --diff --markdown` in the PR's worktree
+and append what it prints to the PR body's file (`gh pr create --body-file`, or `gh pr edit --body-file` when the PR
+is open already): the checklist of what the change carries in the graph (the features whose status may change, the
+docs to update, the ADRs and specs to re-read, the tests to run, the open items, the pinned decisions), each a task
+the review ticks. A line that says the file level (no GitNexus) stays in it. Exit 2 (no base): say so in the body.
+
 ## 2. Merged and applied
 
 - The PR is merged with `gh` after local verification (tests, linters), in dependency order for stacked branches,
