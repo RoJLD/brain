@@ -1,17 +1,31 @@
 """``brain project new``: the new-project wizard (wi-brain-project-wizard, spec-brain-client-standards §8, STD-5;
-spec-brain-typology-packs: its kinds are the typology catalog's ids). A first slice: what we produce (``--kind``, one
-or several ids of the catalog), its stage (``--stage``), then, a plan then ``--apply``, the project's brain written by
-``brain init`` from the profile template of its first kind that has one (``--template`` names another), with the
-answers recorded in its registry entry: ``lifecycle: {typologies, stage}`` (brain item clauses reads its typologies).
+spec-brain-typology-packs: its kinds are the typology catalog's ids). What we produce (``--kind``, one or several ids
+of the catalog), its stage (``--stage``), then, a plan then ``--apply``, the project's brain written by ``brain init``
+from the profile template of its first kind that has one (``--template`` names another), with the answers recorded in
+its registry entry: ``lifecycle: {typologies, stage}`` (brain item clauses reads its typologies).
 
 STD-5: code products and research first. A kind whose entry is neither ``software`` nor ``research`` (creation,
 strategy, marketing, hardware-cad, organisation, compliance) is named by the catalog but not offered yet: the plan
 says so and writes nothing.
 
+Slice 2 (wi-brain-project-wizard-tools, §8 questions 3 and 4):
+
+- **the languages and tools**: ``--lang py|ts`` (the brain's own repo's ``lang``) and, per check's slot (lint,
+  typecheck, test, coverage, format), its tool (``--tool SLOT=TOOL``, brain.langs.TOOLS); a slot not named takes
+  the language's usual tool (brain.langs.DEFAULT_TOOLS), shown in the plan, and ``--tool SLOT=none`` leaves it out.
+  A tool that writes a report is written to the repo's ``tools:`` (its report and format); one with an exit code
+  only (``ruff format --check``, ``prettier --check``) is named in the plan and not declared;
+- **the data**: ``--floor CLASS`` the project's class floor (``classes: {floor}``, brain classes), ``--residency``
+  data under a residency clause (the floor ``resident``: its stores never leave the machine), ``--personal-data``
+  the project handles personal data: the privacy rows of the standards (:data:`PERSONAL_DATA`) are added to its
+  selection's ``include``, required from its first stage;
+- **the standards rows they select**: the plan shows the rows its selection makes required at its stage, those whose
+  check runs through a slot it declares, and those whose check does not cover its language (brain.standards.gaps).
+
 A later answer re-runs the same plan: in a folder that already holds the project's brain, the plan shows what the
-answers change in its entry (its lifecycle, its standards' stage) and writes nothing: an existing registry changes
-by a branch and a PR, as the cockpit's wizards say. The languages and tools, the data classes, the packs, procedures,
-hooks and permissions the item names are later slices (its item's split).
+answers change in its entry (its lifecycle, its standards' stage and include, its language and tools, its class
+floor) and writes nothing: an existing registry changes by a branch and a PR, as the cockpit's wizards say. The packs,
+procedures, hooks and permissions the item names are a later slice (its item's split).
 """
 
 from __future__ import annotations
@@ -19,9 +33,16 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from . import config, graph, init, paths, typologies
+import yaml
+
+from . import classes, config, graph, init, langs, paths, standards, typologies
 
 OFFERED = ("software", "research")   # STD-5: the entries the wizard offers first
+# The standards a project that handles personal data follows from its first stage (§8 question 4): privacy by design,
+# a retention per class, erasure, crash reports without personal data. Those the engine's catalogs hold are included.
+PERSONAL_DATA = ("sw-privacy-by-design", "sw-retention", "sw-erasure", "sw-crash-reports")
+NONE = "none"   # --tool SLOT=none: no tool for that slot
+MARK = "# brain project new"
 
 
 class WizardError(ValueError):
@@ -37,9 +58,18 @@ class Answers:
     entries: list[str] = field(default_factory=list)
     layers: list[str] = field(default_factory=list)   # the layers the kinds are proposed at the stage
     missing: list[str] = field(default_factory=list)  # those the template's graph does not hold
+    lang: str = ""                                     # the brain's own repo's language ("" not asked)
+    tools: dict = field(default_factory=dict)          # {slot: langs.Tool} written to its tools:
+    unreported: list = field(default_factory=list)     # the tools named that write no report (not declared)
+    floor: str = ""                                    # its class floor ("" none)
+    include: list[str] = field(default_factory=list)   # the standards rows added to its selection
 
     def lifecycle(self) -> dict:
         return {"typologies": list(self.kinds), "stage": self.lifecycle_stage}
+
+    def repo_tools(self) -> dict:
+        """Its ``tools:`` as written: {slot: {report, format, tool}}, in the slots' order."""
+        return {s: self.tools[s].entry() for s in langs.SLOTS if s in self.tools}
 
 
 def templates_of(cat: typologies.Catalog) -> dict[str, str]:
@@ -100,17 +130,199 @@ def _held(template: str) -> set[str]:
     return set(graphs[0].get("layers") or []) if graphs else set()
 
 
-def summary(cat: typologies.Catalog, a: Answers) -> list[str]:
-    """The answers as the plan shows them, before brain init's own plan."""
+def answer_tools(a: Answers, lang: str | None, specs: list[str] | None) -> Answers:
+    """Question 3, the languages and tools: ``lang`` (py or ts) and ``specs`` (``SLOT=TOOL``, TOOL ``none`` for no
+    tool), each slot not named taking the language's usual tool. Nothing asked (no --lang, no --tool): unchanged."""
+    specs = list(specs or [])
+    if not lang:
+        if specs:
+            raise WizardError("--tool SLOT=TOOL: with --lang py|ts, the language its tools read")
+        return a
+    if lang not in langs.LANGS:
+        raise WizardError(f"--lang {lang}: one of {', '.join(langs.LANGS)}")
+    named: dict[str, str] = {}
+    for spec in specs:
+        slot, sep, name = spec.partition("=")
+        slot, name = slot.strip(), name.strip()
+        if not sep or not slot or not name:
+            raise WizardError(f"--tool {spec}: SLOT=TOOL (slots: {', '.join(langs.SLOTS)}; TOOL {NONE} for none)")
+        if slot not in langs.SLOTS:
+            raise WizardError(f"--tool {spec}: the slot is one of {', '.join(langs.SLOTS)}")
+        if slot in named and named[slot] != name:
+            raise WizardError(f"--tool {slot}: named twice ({named[slot]}, {name})")
+        if name != NONE and langs.tool(lang, slot, name) is None:
+            known = ", ".join(langs.tools_for(lang, slot)) or "none known"
+            raise WizardError(f"--tool {spec}: not a {slot} tool of {lang} the wizard knows ({known}; {NONE} for "
+                              "none); another tool's report is declared by hand in projects.yaml repos[].tools")
+        named[slot] = name
+    a.lang = lang
+    for slot in langs.SLOTS:
+        name = named.get(slot, langs.DEFAULT_TOOLS.get(lang, {}).get(slot, NONE))
+        t = langs.tool(lang, slot, name) if name != NONE else None
+        if t is not None and t.report:
+            a.tools[slot] = t
+        elif t is not None:
+            a.unreported.append(t)
+    return a
+
+
+def answer_data(a: Answers, floor: str | None, residency: bool = False, personal: bool = False) -> Answers:
+    """Question 4, the data: the class floor (``--residency``: ``resident``), and with personal data the privacy rows
+    the engine's catalogs hold (:data:`PERSONAL_DATA`)."""
+    if residency and floor and floor != "resident":
+        raise WizardError(f"--residency is the floor resident; --floor {floor} says otherwise: one of the two")
+    floor = "resident" if residency else (floor or "")
+    if floor and floor not in classes.CLASSES:
+        raise WizardError(f"--floor {floor}: one of {', '.join(classes.CLASSES)} (brain classes)")
+    if floor == "secret":
+        raise WizardError("--floor secret: a secret is never in the brain (a keystore holds it); its stores take a "
+                          "class they may hold")
+    a.floor = floor
+    if personal:
+        held = {r.id for r in standards.rows_of(standards.engine_catalogs())}
+        a.include = [sid for sid in PERSONAL_DATA if sid in held]
+    return a
+
+
+def registry_edit(a: Answers, name: str):
+    """What brain init's projects.yaml gains under the brain's own entry (``name``, the last), as a function of the
+    rendered text (init.files_for's ``registry_edit``): the language and tools under its repo ``path: .``, its
+    ``classes: {floor}``, and the rows its standards selection ``include``. Lines added, the template's comments
+    kept; InitError when a line cannot land where it belongs (a template that writes its entry otherwise)."""
+    def edit(text: str) -> str:
+        if a.lang:
+            text = _repo_lines(text, name, a)
+        if a.floor:
+            text = text.rstrip("\n") + f"\n  classes: {{floor: {a.floor}}}   {MARK}: the data's class floor\n"
+        if a.include:
+            text = _include_line(text, a.include)
+        _landed(text, name, a)
+        return text
+    return edit
+
+
+def _entry_start(lines: list[str], name: str) -> int:
+    starts = [i for i, ln in enumerate(lines) if ln.startswith(f"{name}:")]
+    return starts[-1] if starts else len(lines)
+
+
+def _repo_lines(text: str, name: str, a: Answers) -> str:
+    """The language and tools under the entry's repo ``- path: .`` (the brain's own repo)."""
+    lines = text.splitlines(keepends=True)
+    start = _entry_start(lines, name)
+    at = next((i for i in range(start, len(lines)) if lines[i].split("#")[0].strip() == "- path: ."), None)
+    if at is None:
+        raise init.InitError(f"--template {a.template}: projects.yaml: no repo '- path: .' under {name}: the language "
+                             "and tools go in its repos[].lang and tools by hand")
+    pad = " " * (len(lines[at]) - len(lines[at].lstrip()) + 2)
+    add = [f"{pad}lang: {a.lang}   {MARK}: its language\n"]
+    if a.tools:
+        add.append(f"{pad}tools:   {MARK}: each check's tool and the report it writes (brain audit reads them)\n")
+        add += [f"{pad}  {slot}: {{report: {e['report']}, format: {e['format']}, tool: {e['tool']}}}\n"
+                for slot, e in a.repo_tools().items()]
+    return "".join(lines[:at + 1] + add + lines[at + 1:])
+
+
+def _include_line(text: str, ids: list[str]) -> str:
+    """The rows added to the entry's ``standards: include``: under its block, or a ``standards:`` of their own."""
+    lines = text.splitlines(keepends=True)
+    flow = f"[{', '.join(ids)}]"
+    at = next((i for i in range(len(lines)) if lines[i].split("#")[0].rstrip() == "  standards:"), None)
+    if at is None:
+        return text.rstrip("\n") + f"\n  standards: {{include: {flow}}}   {MARK}: personal data's rows\n"
+    return "".join(lines[:at + 1] + [f"    include: {flow}   {MARK}: personal data's rows\n"] + lines[at + 1:])
+
+
+class _Unique(yaml.SafeLoader):
+    """A YAML loader that refuses a key twice in one mapping: a line the answers add beside the template's own key
+    (a second ``standards:``, ``classes:`` or ``lang:``) would otherwise win silently."""
+
+
+def _unique_mapping(loader, node, deep=False):
+    keys = [loader.construct_object(k, deep=deep) for k, _ in node.value]
+    twice = sorted({str(k) for k in keys if keys.count(k) > 1})
+    if twice:
+        raise yaml.constructor.ConstructorError(None, None, f"key(s) {', '.join(twice)} twice", node.start_mark)
+    return loader.construct_mapping(node, deep=deep)
+
+
+_Unique.add_constructor(yaml.resolver.BaseResolver.DEFAULT_MAPPING_TAG, _unique_mapping)
+
+
+def _landed(text: str, name: str, a: Answers) -> None:
+    try:
+        data = yaml.load(text, Loader=_Unique)  # noqa: S506 - a SafeLoader with one more check
+    except Exception as exc:  # noqa: BLE001 - the template's registry with the answers' lines: one error
+        raise init.InitError(f"--template {a.template}: projects.yaml with the answers is not YAML, or holds a key "
+                             f"twice ({exc}): the answers' lines go in by hand") from exc
+    entry = data.get(name) if isinstance(data, dict) else None
+    entry = entry if isinstance(entry, dict) else {}
+    repo = _own_repo(entry)
+    cls = entry.get("classes") if isinstance(entry.get("classes"), dict) else {}
+    std = entry.get("standards") if isinstance(entry.get("standards"), dict) else {}
+    got = {"lang": repo.get("lang") if a.lang else None, "tools": (repo.get("tools") or {}) if a.lang else None,
+           "floor": cls.get("floor") if a.floor else None, "include": std.get("include") if a.include else None}
+    want = {"lang": a.lang or None, "tools": a.repo_tools() if a.lang else None, "floor": a.floor or None,
+            "include": list(a.include) or None}
+    if list(data or {})[-1:] != [name] or got != want:
+        raise init.InitError(f"--template {a.template}: projects.yaml: the answers' lines go under the brain's own "
+                             f"entry ({name}), the registry's last: its repo '- path: .' and its standards block")
+
+
+def _own_repo(entry: dict) -> dict:
+    """The entry's repo at ``path: .`` (the brain's own); {} when it has none."""
+    repos = entry.get("repos") if isinstance(entry.get("repos"), list) else []
+    return next((r for r in repos if isinstance(r, dict) and str(r.get("path")) == "."), {})
+
+
+def selected(a: Answers, text: str, name: str) -> dict:
+    """The standards rows the answers select, from the registry as brain init would write it (``text``): {required:
+    the rows its selection makes required at its stage, run: those whose check runs through a slot it declares,
+    gaps: those whose check does not cover its language}."""
+    data = graph.load_yaml(text) or {}
+    entry = data.get(name) if isinstance(data, dict) else None
+    entry = entry if isinstance(entry, dict) else {}
+    chosen = standards.applicable(standards.rows_of(standards.engine_catalogs()),
+                                  standards.selection(entry.get("standards")))
+    slots = set(a.tools)
+    return {"required": [r.id for r, _ in chosen],
+            "run": [f"{r.id} ({r.adapter}: {a.tools[r.adapter].name})" for r, _ in chosen if r.adapter in slots],
+            "gaps": standards.gaps(chosen, {name: a.lang}, {name: slots}) if a.lang else []}
+
+
+def summary(cat: typologies.Catalog, a: Answers, rows: dict | None = None) -> list[str]:
+    """The answers as the plan shows them, before brain init's own plan; ``rows``: the standards they select."""
     kinds = ", ".join(f"{k} ({cat.typologies[k].label()}, {cat.entry(k)} "
                       f"[{', '.join(cat.typologies[cat.entry(k)].vision)}])" for k in a.kinds)
-    return [f"brain project new: what it produces: {kinds}",
-            f"  stage: {a.stage} (the lifecycle's {a.lifecycle_stage}); template: {a.template}",
-            f"  layers its kinds are proposed at {a.lifecycle_stage}: {', '.join(a.layers) or 'none'}"
-            + (f"; not in the template's graph: {', '.join(a.missing)} (research_graph layers add, once written)"
-               if a.missing else ""),
-            f"  its registry entry records lifecycle: {{typologies: [{', '.join(a.kinds)}], "
-            f"stage: {a.lifecycle_stage}}} (brain item clauses reads its typologies)"]
+    out = [f"brain project new: what it produces: {kinds}",
+           f"  stage: {a.stage} (the lifecycle's {a.lifecycle_stage}); template: {a.template}",
+           f"  layers its kinds are proposed at {a.lifecycle_stage}: {', '.join(a.layers) or 'none'}"
+           + (f"; not in the template's graph: {', '.join(a.missing)} (research_graph layers add, once written)"
+              if a.missing else ""),
+           f"  its registry entry records lifecycle: {{typologies: [{', '.join(a.kinds)}], "
+           f"stage: {a.lifecycle_stage}}} (brain item clauses reads its typologies)"]
+    if a.lang:
+        out.append(f"  language: {a.lang}; its tools (repos[].tools: the reports the project's CI writes, brain audit "
+                   "reads them):")
+        out += [f"    {slot}: {t.name} -> {t.report} ({t.format}): {t.command}" for slot, t in a.tools.items()]
+        out += [f"    {t.slot}: {t.name}, an exit code only ({t.command}): named, not declared" for t in a.unreported]
+        named = set(a.tools) | {t.slot for t in a.unreported}
+        missing = [s for s in langs.SLOTS if s not in named]
+        if missing:
+            out.append(f"    no tool: {', '.join(missing)} (--tool SLOT=TOOL names one)")
+    if a.floor:
+        out.append(f"  data: class floor {a.floor} ({classes.CLASS_TEXT.get(a.floor, '')}): classes: {{floor: "
+                   f"{a.floor}}}")
+    if a.include:
+        out.append(f"  personal data: its standards include {', '.join(a.include)} (required from its first stage)")
+    if rows is not None:
+        out.append(f"  standards it follows at {a.stage}: {len(rows['required'])} row(s) (brain standards list "
+                   "--applicable, once written)")
+        if rows["run"]:
+            out.append(f"    run by its tools: {', '.join(rows['run'])}")
+        if rows["gaps"]:
+            out.append(f"    not covered on {a.lang}: " + "; ".join(rows["gaps"]))
+    return out
 
 
 def existing(root: Path, name: str) -> dict | None:
@@ -133,7 +345,8 @@ def existing(root: Path, name: str) -> dict | None:
 
 
 def changes(entry: dict, a: Answers) -> list[str]:
-    """What the answers change in an existing entry: its lifecycle's typologies and stage, its standards' stage."""
+    """What the answers change in an existing entry: its lifecycle's typologies and stage, its standards' stage, and
+    what was asked of the rest: its repo's language and tools, its class floor, its standards' include."""
     lc = entry.get("lifecycle") if isinstance(entry.get("lifecycle"), dict) else {}
     std = entry.get("standards") if isinstance(entry.get("standards"), dict) else {}
     pairs = [("lifecycle.typologies", lc.get("typologies"), a.kinds),
@@ -141,8 +354,31 @@ def changes(entry: dict, a: Answers) -> list[str]:
              ("template", entry.get("_template"), a.template)]
     if std:
         pairs.append(("standards.stage", std.get("stage"), a.stage))
-    return [f"  {key}: {old if old is not None else '(none)'} -> {new}" for key, old, new in pairs
-            if (old if not isinstance(old, list) else list(old)) != new]
+    if a.lang:
+        repo = _own_repo(entry)
+        tools = repo.get("tools") if isinstance(repo.get("tools"), dict) else {}
+        pairs.append(("repos[path: .].lang", repo.get("lang"), a.lang))
+        pairs += [(f"repos[path: .].tools.{s}", _tool_of(tools.get(s)), a.tools[s].name if s in a.tools else None)
+                  for s in langs.SLOTS if s in tools or s in a.tools]
+    if a.floor:
+        cls = entry.get("classes") if isinstance(entry.get("classes"), dict) else {}
+        pairs.append(("classes.floor", cls.get("floor"), a.floor))
+    if a.include:
+        have = [str(x) for x in std.get("include") or []] if isinstance(std.get("include"), list) else []
+        pairs.append(("standards.include", have or None, have + [i for i in a.include if i not in have]))
+    return [f"  {key}: {_shown(old)} -> {_shown(new)}" for key, old, new in pairs
+            if (list(old) if isinstance(old, list) else old) != new]
+
+
+def _tool_of(spec) -> str | None:
+    """A declared ``tools.<slot>`` as its tool's name (its report when it names none)."""
+    if not isinstance(spec, dict):
+        return None
+    return str(spec.get("tool") or spec.get("report") or "") or None
+
+
+def _shown(value) -> str:
+    return "(none)" if value is None else str(list(value) if isinstance(value, list) else value)
 
 
 def main(args) -> int:
@@ -150,11 +386,15 @@ def main(args) -> int:
     try:
         cat = typologies.load(config.load(root))
         a = resolve(cat, list(dict.fromkeys(args.kinds or [])), args.stage, args.template)
+        answer_tools(a, getattr(args, "lang", None), getattr(args, "tools", None))
+        answer_data(a, getattr(args, "floor", None), getattr(args, "residency", False),
+                    getattr(args, "personal_data", False))
         entry = existing(root, args.name)
-    except (WizardError, typologies.CatalogError) as exc:
+        rows = _rows(a, args.name) if entry is None and (a.lang or a.floor or a.include) else None
+    except (WizardError, typologies.CatalogError, standards.StandardsError, init.InitError) as exc:
         print(f"brain project new: {exc}")
         return 2
-    print("\n".join(summary(cat, a)))
+    print("\n".join(summary(cat, a, rows)))
     if entry is not None:
         diff = changes(entry, a)
         print(f"{root} already holds the brain of {args.name}: " + ("the answers change its entry in projects.yaml:"
@@ -163,6 +403,14 @@ def main(args) -> int:
         return 2 if args.apply and diff else 0
     ns = _init_args(args, a)
     return init.main(ns)
+
+
+def _rows(a: Answers, name: str) -> dict:
+    """The standards rows the answers select, from the registry brain init would write (its owner aside)."""
+    tpl = init.load_template(a.template)
+    text = init.files_for("owner", "person", None, "lite", name, tpl, a.stage, a.lifecycle(),
+                          registry_edit(a, name))["projects.yaml"]
+    return selected(a, text, name)
 
 
 def owner_of(args) -> str:
@@ -175,12 +423,26 @@ def owner_of(args) -> str:
 
 
 def _init_args(args, a: Answers):
-    """brain init's arguments for the answers: the template, the stage, the name, the owner, and the lifecycle."""
+    """brain init's arguments for the answers: the template, the stage, the name, the owner, the lifecycle and the
+    registry's other answers (the language and tools, the data)."""
     import argparse
     words = ["brain", "project", "new", str(args.dir), *[w for k in a.kinds for w in ("--kind", k)], "--stage",
              a.stage, *(["--template", args.template] if args.template else []),
-             *(["--name", args.name] if args.name != "brain" else [])]
+             *(["--name", args.name] if args.name != "brain" else []), *_answer_words(args)]
+    edit = registry_edit(a, args.name) if (a.lang or a.floor or a.include) else None
     return argparse.Namespace(dir=args.dir, owner=owner_of(args), template=a.template, kind="person", tenant=None,
                               tier=None, name=args.name, stage=a.stage, preset=None, with_=None, without=None,
                               catalogue=None, interactive=False, apply=args.apply, lifecycle=a.lifecycle(),
-                              plan_hint=f"(plan only: {' '.join(words)} --apply writes it)")
+                              registry_edit=edit, plan_hint=f"(plan only: {' '.join(words)} --apply writes it)")
+
+
+def _answer_words(args) -> list[str]:
+    """The slice 2 answers as the plan's apply line repeats them."""
+    out = ["--lang", args.lang] if getattr(args, "lang", None) else []
+    for spec in getattr(args, "tools", None) or []:
+        out += ["--tool", spec]
+    if getattr(args, "floor", None):
+        out += ["--floor", args.floor]
+    out += ["--residency"] if getattr(args, "residency", False) else []
+    out += ["--personal-data"] if getattr(args, "personal_data", False) else []
+    return out

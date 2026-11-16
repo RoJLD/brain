@@ -19,7 +19,9 @@ is read from the repo's registered checkout, relative to it. ``brain audit`` mea
 declares ``tools:`` (a report missing or unreadable, failed tests, lint, type or format findings, coverage under the
 floor); ``brain standards check`` counts a standard whose check runs through a slot the repo declares as covered on
 that repo's language. :data:`DEFAULTS` names the usual tools of each language and how each writes its report, for
-the docs and the messages only: nothing is assumed from them.
+the docs and the messages only: nothing is assumed from them. :data:`TOOLS` is the table ``brain project new``
+(brain.project_new, wi-brain-project-wizard-tools) asks from: a tool by language and slot, the report it writes and
+its format; :data:`DEFAULT_TOOLS` the ones its plan proposes for a language, which the owner applies or changes.
 """
 
 from __future__ import annotations
@@ -64,6 +66,61 @@ DEFAULTS = {
            "coverage": "c8 --reporter=json-summary (coverage/coverage-summary.json) or --reporter=lcov",
            "format": "prettier --check (exit code; no report yet)"},
 }
+
+
+LANGS = ("py", "ts")   # the languages a repo declares (projects.yaml repos[].lang)
+
+
+@dataclass(frozen=True)
+class Tool:
+    """A tool ``brain project new`` writes into a repo's ``tools:``: the slot it fills, the report it writes there
+    (relative to the repo's checkout) and that report's format, and the command that writes it. A tool with no report
+    (an exit code only) is named and never declared: the engine has nothing to read."""
+    name: str
+    lang: str
+    slot: str
+    command: str
+    report: str = ""
+    format: str = ""
+
+    def entry(self) -> dict:
+        """Its ``tools.<slot>`` entry: {report, format, tool}."""
+        return {"report": self.report, "format": self.format, "tool": self.name}
+
+
+# The tools the new-project wizard knows, by language and slot (spec-brain-client-standards §8, question 3). Each
+# writes its report under reports/ (c8 under coverage/), where the project's CI or its developer runs it; the engine
+# only reads the file.
+TOOLS = {(t.lang, t.slot, t.name): t for t in (
+    Tool("ruff", "py", "lint", "ruff check --output-format sarif -o reports/ruff.sarif", "reports/ruff.sarif", "sarif"),
+    Tool("mypy", "py", "typecheck", "mypy --junit-xml reports/mypy.xml", "reports/mypy.xml", "junit"),
+    Tool("pytest", "py", "test", "pytest --junitxml reports/junit.xml", "reports/junit.xml", "junit"),
+    Tool("pytest-cov", "py", "coverage", "pytest --cov --cov-report json:reports/coverage.json",
+         "reports/coverage.json", "coverage-json"),
+    Tool("ruff", "py", "format", "ruff format --check"),
+    Tool("eslint", "ts", "lint", "eslint -f @microsoft/eslint-formatter-sarif -o reports/eslint.sarif",
+         "reports/eslint.sarif", "sarif"),
+    Tool("tsc", "ts", "typecheck", "tsc --noEmit"),
+    Tool("vitest", "ts", "test", "vitest --reporter=junit --outputFile reports/junit.xml", "reports/junit.xml",
+         "junit"),
+    Tool("jest", "ts", "test", "jest --reporters=default --reporters=jest-junit (JEST_JUNIT_OUTPUT_DIR=reports)",
+         "reports/junit.xml", "junit"),
+    Tool("c8", "ts", "coverage", "c8 --reporter=json-summary", "coverage/coverage-summary.json", "istanbul-summary"),
+    Tool("prettier", "ts", "format", "prettier --check"),
+)}
+# The tools proposed for a language's slots when the owner names none (the plan shows them; --tool SLOT=none drops one).
+DEFAULT_TOOLS = {"py": {"lint": "ruff", "test": "pytest", "coverage": "pytest-cov", "format": "ruff"},
+                 "ts": {"lint": "eslint", "test": "vitest", "coverage": "c8", "format": "prettier"}}
+
+
+def tool(lang: str, slot: str, name: str) -> Tool | None:
+    """The known tool ``name`` for ``slot`` in ``lang``; None when the wizard does not know it."""
+    return TOOLS.get((lang, slot, name))
+
+
+def tools_for(lang: str, slot: str) -> list[str]:
+    """The tools the wizard knows for ``slot`` in ``lang``, in the table's order."""
+    return [t.name for (lg, s, _), t in TOOLS.items() if lg == lang and s == slot]
 
 
 class ReportError(ValueError):

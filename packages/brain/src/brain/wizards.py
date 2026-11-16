@@ -206,7 +206,8 @@ def wizards(root: Path | None = None) -> list[Wizard]:
                apply=["brain", "project", "new", ASK_DIR, "--kind", "{choice}", "--apply"],
                choices=_kinds(), placeholder="KIND", ask="the new project's folder (a path; it must not hold a brain "
                                                        "yet)",
-               notes=["--stage prototype|mvp|v1|scale and more --kind: brain project new in a terminal"]),
+               notes=["--stage prototype|mvp|v1|scale, more --kind, --lang py|ts with --tool SLOT=TOOL, --floor CLASS or "
+                      "--residency, --personal-data: brain project new in a terminal"]),
         Wizard("notify-ntfy", "Notifications: ntfy",
                "the ntfy channel's steps: its topic set by the owner as an environment variable, named in "
                "projects.yaml, never typed here", plan=["brain", "notify", "setup", "ntfy"], scoped=True),

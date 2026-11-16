@@ -489,10 +489,13 @@ def _appended_yaml(tpl: Template, rel: str, text: str, name: str) -> None:
 
 
 def files_for(owner: str, kind: str, tenant: str | None, tier: str, name: str,
-              tpl: Template | None = None, stage: str = DEFAULT_STAGE, lifecycle: dict | None = None) -> dict[str, str]:
+              tpl: Template | None = None, stage: str = DEFAULT_STAGE, lifecycle: dict | None = None,
+              registry_edit=None) -> dict[str, str]:
     """{path relative to the brain: text} for every file brain init writes but the store and the Claude files:
     config.json, then the template's files (with what it appends to them) with their variables rendered. A YAML
-    file must read as YAML once rendered (an appended fragment that breaks it is the template's error)."""
+    file must read as YAML once rendered (an appended fragment that breaks it is the template's error).
+    ``registry_edit`` (brain project new's answers: the languages and tools, the data) takes the rendered
+    projects.yaml's text and gives it back with its lines; it raises InitError when they cannot land."""
     tpl = tpl or load_template()
     values = {"owner": owner, "owner_q": json.dumps(owner, ensure_ascii=False), "name": name,
               "title_q": json.dumps(f"{owner}'s brain: rules, decisions, backlog and journal", ensure_ascii=False),
@@ -505,6 +508,8 @@ def files_for(owner: str, kind: str, tenant: str | None, tier: str, name: str,
     if lifecycle and "projects.yaml" in out:   # brain project new's answers, under the brain's own entry (the last)
         out["projects.yaml"] = out["projects.yaml"].rstrip("\n") + "\n" + lifecycle_line(lifecycle)
         _lifecycle_landed(tpl, out["projects.yaml"], name, lifecycle)
+    if registry_edit is not None and "projects.yaml" in out:
+        out["projects.yaml"] = registry_edit(out["projects.yaml"])
     return out
 
 
@@ -594,7 +599,7 @@ def _file_step(path: Path, text: str, appended: str) -> Step:
 
 def plan(root: Path, owner: str, *, kind: str = "person", tenant: str | None = None, tier: str = "lite",
          name: str = "brain", template_spec: str = DEFAULT_TEMPLATE, stage: str = DEFAULT_STAGE,
-         lifecycle: dict | None = None) -> list[Step]:
+         lifecycle: dict | None = None, registry_edit=None) -> list[Step]:
     """What brain init would do in ``root``, file by file, in order (the owner: ``owner``, else the one of the
     config.json already in ``root``)."""
     owner = " ".join((owner or owner_in(root) or "").split())
@@ -612,7 +617,7 @@ def plan(root: Path, owner: str, *, kind: str = "person", tenant: str | None = N
     tpl = load_template(template_spec)
     root = Path(root).resolve()
     steps, created = [], set()
-    for rel, text in files_for(owner, kind, tenant, tier, name, tpl, stage, lifecycle).items():
+    for rel, text in files_for(owner, kind, tenant, tier, name, tpl, stage, lifecycle, registry_edit).items():
         steps.append(_file_step(root / rel, text, tpl.appended(rel)))
         if steps[-1].action == "create":
             created.add(rel)
@@ -837,7 +842,7 @@ def _planned(root: Path, args) -> tuple:
     tier = _tier(args, mod[0].base if mod else None)
     steps = plan(root, args.owner or "", kind=args.kind, tenant=args.tenant, tier=tier, name=args.name,
                  stage=getattr(args, "stage", None) or DEFAULT_STAGE, template_spec=spec,
-                 lifecycle=getattr(args, "lifecycle", None))
+                 lifecycle=getattr(args, "lifecycle", None), registry_edit=getattr(args, "registry_edit", None))
     owner = " ".join((args.owner or owner_in(root)).split())
     return steps, load_template(spec), owner, tier, mod
 

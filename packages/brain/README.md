@@ -748,8 +748,22 @@ profile template (`trading` takes `research`'s; `--template` names another), its
 `lifecycle: {typologies, stage}` (the lifecycle's stage: `mvp` reads as `build`), which `brain item clauses` reads.
 Run again in a folder that holds that brain, the plan shows what the answers change in its entry (typologies, stage,
 the standards' stage, the template) and writes nothing: an existing registry changes by a branch and a PR. The cockpit's Setup page
-offers it as « A new project » (without `--owner`, the owner of this machine's personal brain). The languages and tools, the data classes and the pack, procedures and permissions it
-will propose are its later slices.
+offers it as « A new project » (without `--owner`, the owner of this machine's personal brain).
+
+Its second slice (`wi-brain-project-wizard-tools`) asks the languages and tools and the data:
+`[--lang py|ts [--tool SLOT=TOOL]...] [--floor CLASS | --residency] [--personal-data]`. `--lang` is the language of the
+brain's own repo (`repos[].lang`); each check's slot (`lint`, `typecheck`, `test`, `coverage`, `format`) takes the
+language's usual tool (py: ruff, pytest, pytest-cov, `ruff format`; ts: eslint, vitest, c8, prettier) unless `--tool
+SLOT=TOOL` names another the wizard knows (`brain.langs.TOOLS`: mypy, jest, tsc...) or `none`. A tool that writes a
+report is written to the repo's `tools:` (its report under `reports/` and its format, which `brain audit` and `brain
+standards check` read); one with an exit code only (`ruff format --check`, `prettier --check`, `tsc --noEmit`) is
+named in the plan and not declared. `--floor CLASS` writes `classes: {floor: CLASS}` (`brain classes`; `secret` is
+refused), `--residency` is the floor `resident` (its stores never leave the machine), and `--personal-data` adds the
+privacy rows (`sw-privacy-by-design`, `sw-retention`, `sw-erasure`, `sw-crash-reports`) to its standards selection's
+`include`, required from its first stage. The plan shows the tools with their reports and commands, the standards rows
+the selection makes required at its stage, those its tools run and those whose check does not cover its language; a
+re-run in the folder that holds the brain shows what the answers change (language, tools, floor, include) and writes
+nothing. The pack, procedures and permissions it will propose are its later slice.
 
 `brain project add NAME (--read | --existing DIR [--store PATH] | --template T --dir DIR) [--parent NODE] [--floor
 CLASS] [--title TEXT] [--no-notes] [--apply]` registers a project in a brain's `projects.yaml` (`wi-brain-project-add`),
