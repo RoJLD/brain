@@ -387,8 +387,16 @@ def proof(props) -> str:
     """What proves a closed node, on one line: its ``props.pr`` and its ``props.evidence`` (wi-brain-evidence-views:
     an item closed with --evidence has no PR, and its proof is shown where a PR is); "" when it has neither."""
     props = props if isinstance(props, dict) else {}
-    parts = [(label, " ".join(str(props.get(key) or "").split())) for key, label in (("pr", ""), ("evidence", "evidence "))]
+    parts = [(label, one_line(props.get(key))) for key, label in (("pr", ""), ("evidence", "evidence "))]
     return "; ".join(f"{label}{text}" for label, text in parts if text)
+
+
+def one_line(value) -> str:
+    """A prop's value on one line: a list joined by "; " (an evidence written by hand as a YAML list), whitespace
+    collapsed; "" for None or an empty value."""
+    if isinstance(value, (list, tuple)):
+        value = "; ".join(str(x) for x in value if x not in (None, ""))
+    return " ".join(str(value if value is not None else "").split())
 
 
 def close_line(node: dict) -> str:
@@ -397,7 +405,7 @@ def close_line(node: dict) -> str:
     props = node.get("props") if isinstance(node.get("props"), dict) else {}
     status = str(node.get("status") or "")
     outcome = " ".join(str(props.get("done" if status == "done" else status) or "").split())
-    outcome = re.sub(r"^\d{4}-\d{2}-\d{2}\s*", "", outcome)
+    outcome = re.sub(r"^\d{4}-\d{2}-\d{2}(?:T[\d:.]+Z?)?", "", outcome).lstrip(" :-")   # as research_graph closed
     shown = proof(props)
     return f"- {node.get('id')} {status}" + (f" ({shown})" if shown else "") + (f": {outcome}" if outcome else "")
 

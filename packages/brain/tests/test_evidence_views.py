@@ -91,3 +91,32 @@ def test_research_graph_closed_report_shows_the_evidence():
     lines = report.closed(rows)
     assert lines[1].split() == ["evidence", "memo", "v3", "approved"]
     assert lines[3].split() == ["pr", "demo", "#7"]
+
+
+# --- the review's findings ---
+
+def test_a_hand_written_evidence_list_and_odd_values_read_on_one_line():
+    assert graph.proof({"evidence": ["render r-1", "doc v4"]}) == "evidence render r-1; doc v4"
+    assert graph.one_line(["a", None, ""]) == "a" and graph.one_line(None) == "" and graph.one_line(7) == "7"
+
+
+@pytest.mark.parametrize("done, want", [
+    ("2026-11-16: did x", "- wi-x done: did x"),
+    ("2026-11-16T10:00 did x", "- wi-x done: did x"),
+    ("2026-11-16 - did x", "- wi-x done: did x"),
+])
+def test_the_close_line_strips_a_hand_written_date(done, want):
+    assert graph.close_line({"id": "wi-x", "status": "done", "props": {"done": done}}) == want
+
+
+def test_the_closed_report_keeps_its_layout_with_a_long_or_multiline_evidence():
+    rows = [{"id": "wi-one", "status": "done", "title": "One", "date": "2026-11-16", "date_source": "props.done",
+             "commit": None, "pr": None, "evidence": "a\nb " + "x" * 300, "outcome": None}]
+    line = report.closed(rows)[1]
+    assert "\n" not in line and line.endswith("…") and len(line) < 12 + len("evidence ") + 200
+
+
+def test_the_digest_head_cuts_a_long_proof():
+    proof = "demo #7; evidence render r-123; doc v4 of the strategy memo; ddr-2026-11-16-something-long"
+    head = digest._items([_row(proof=proof)]).levels[0][0]
+    assert proof not in head and "(demo #7; evidence render" in head and "…)" in head

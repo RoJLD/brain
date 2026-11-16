@@ -197,13 +197,16 @@ def closures(project: projects.Project, st: resume.Store, w: Window) -> tuple[li
     return _newest_first(miles), _newest_first(items)
 
 
+PROOF_W = 48   # a closed item's proof in its head line, cut there: the title keeps its room (resume._row)
+
+
 def _closed_row(n: dict, day: str, source: str, text: str) -> dict:
     """A closed node's row: its PR, its evidence and their one-line proof (wi-brain-evidence-views)."""
     props = n.get("props") or {}
     return {"id": n["id"], "type": n["type"], "status": n["status"], "day": day, "day_from": source,
             "title": " ".join(str(n.get("title") or "").split()), "priority": resume._priority(n),
             "pr": " ".join(str(props.get("pr") or "").split()),
-            "evidence": " ".join(str(props.get("evidence") or "").split()), "proof": graph.proof(props),
+            "evidence": graph.one_line(props.get("evidence")), "proof": graph.proof(props),
             "outcome": text}
 
 
@@ -408,7 +411,7 @@ def _items(rows: list[dict]) -> Part | None:
     full, one = [], []
     for i in rows:
         head = f"- {i['id']}{'' if i['status'] == 'done' else ' ' + i['status']} {i['day']}" + \
-            (f" [{i['priority']}]" if i["priority"] else "") + (f" ({i['proof']})" if i.get("proof") else "")
+            (f" [{i['priority']}]" if i["priority"] else "") + (f" ({decisions._short(i['proof'], PROOF_W)})" if i.get("proof") else "")
         row = resume._row(head, i["title"])
         one.append(row)
         full += [row] + (_detail(i["outcome"]) if i["outcome"] else [])
