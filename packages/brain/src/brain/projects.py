@@ -150,7 +150,13 @@ KEYS = {
                  "wi-brain-lifecycle-stage",
     "migrations": "the scout's glob check, a list of {when, add, repo}: a change of a when file comes with a new file "
                   "of each add glob (a migration, a fixture), else brain audit --diff finds it (brain.formats)",
+    "software": "the software pack's keys grouped (wi-brain-software-pack), {repos, audit, code_index, production}: each "
+                "as at the top level, where it stays accepted as an alias; a key given in both places is an error",
 }
+# The software pack's keys (brain.typology_packs, the engine's software pack's registry: part): grouped under
+# ``software:``, read at the top level too (their place before the packs, an alias for era 1).
+SOFTWARE = "software"
+SOFTWARE_KEYS = ("repos", "audit", "code_index", "production")
 LIFECYCLE_KEYS = ("typologies", "stage", "shape", "profile", "since", "paused")   # LC-1; typologies read so far
 ACCESS = ("write", "read")
 READ_ONLY_KEYS = {"title", "access", "parent", "classes"}
@@ -252,7 +258,7 @@ def _paths(value) -> list[str]:
 
 
 def _project(name: str, entry: dict, root: Path) -> Project:
-    e = {**DEFAULTS, **(entry if isinstance(entry, dict) else {})}
+    e = {**DEFAULTS, **lifted(entry if isinstance(entry, dict) else {})}
     journals = [root / j for j in _paths(e["journal"]) or [DEFAULTS["journal"]]]
     logs = [root / d for d in _paths(e["decisions"]) or [DEFAULTS["decisions"]]]
     ledgers = e.get("ledgers") if isinstance(e.get("ledgers"), dict) else {}
@@ -362,7 +368,7 @@ def guarded(root: Path | None = None) -> list[Project]:
     out = list(loaded.values()) + [p for p, _ in refused.values()]
     f = registry_file(root)
     for name, entry in raw(root).items():
-        if is_mount(entry) or not _skipped(entry) or not any(k in entry for k in GUARDED_PATH_KEYS):
+        if is_mount(entry) or not _skipped(entry) or not any(k in lifted(entry) for k in GUARDED_PATH_KEYS):
             continue
         try:
             out.append(_project(str(name), entry, _resolve_root(str(entry.get("root") or "."), f.parent)))
@@ -642,15 +648,44 @@ def _check_audit(p: Project) -> None:
             raise RepoError(f"project {p.name}: audit {key} is a whole number of 1 or more")
 
 
-def repos_of(p: Project) -> list[Repo]:
+def lifted(entry: dict) -> dict:
+    """A registry entry with its ``software:`` keys read as top-level ones (the place each has before the packs); a
+    key given in both places keeps the top level's (check() refuses it). Anything else as given."""
+    soft = entry.get(SOFTWARE) if isinstance(entry, dict) else None
+    if not isinstance(soft, dict):
+        return entry
+    return {**{k: v for k, v in soft.items() if k in SOFTWARE_KEYS}, **entry}
+
+
+def software(p: Project) -> bool:
+    """Whether the software pack's code duties (brain audit's default repo, the scout) apply to ``p`` by its kinds:
+    no typology declared, or one the catalog does not know (the rule before the catalog, as the clauses of done), or
+    a kind that meets the software pack's typologies (a sub-profile its entry's). A project that declares ``repos``
+    opts in whatever its kinds."""
+    from . import config, typologies, typology_packs
+    kinds, _ = typologies.item_typologies({}, p.lifecycle)
+    if not kinds:
+        return True
+    try:
+        cat = typologies.load(config.load(p.registry_dir or p.root))
+        named = typology_packs.engine().get(SOFTWARE, {}).get("typologies") or []
+    except (typologies.CatalogError, typology_packs.PackError):
+        return True
+    return any(not cat.known(k) or cat.meets(k, named) for k in kinds)
+
+
+def repos_of(p: Project, *, audit: bool = False) -> list[Repo]:
     """The repos ``p`` spans, for brain audit: its ``repos:`` entries, then each production checkout not listed (the
     root alone by default; none for a project that shares its root, whose repo is its owner's). A relative path is
-    read from the root, else from its main checkout (a worktree)."""
+    read from the root, else from its main checkout (a worktree). ``audit``: the root is the default only for a
+    project the software pack's code duties apply to (:func:`software`); another kind's root is no code repo to
+    audit unless it declares it in ``repos``."""
     if not isinstance(p.repos, list):
         raise RepoError(f"project {p.name}: repos is a list of paths or mappings")
     _check_audit(p)
     prod = {_norm(_resolve_root(os.path.relpath(x, p.root), p.root)) for x in p.production}
-    declared = p.repos or ([] if p.shares_root_with else ["."])
+    default = not p.shares_root_with and (not audit or software(p))
+    declared = p.repos or (["."] if default else [])
     decl = list(declared)
     decl += [os.path.relpath(x, p.root) for x in p.production]
     out: list[Repo] = []
@@ -811,6 +846,8 @@ def check(root: Path | None = None) -> list[str]:
         unknown = sorted(set(map(str, entry)) - set(KEYS))
         if unknown:   # read mode: a newer brain's key, noted and kept; strict (CI): an error
             errors += schema.tolerate(f"{where}: unknown key(s) {', '.join(unknown)} (brain projects --keys lists them)")
+        errors += _software_errors(where, entry)
+        entry = lifted(entry)
         errors += [f"{where}: {k} is a string" for k in ("root", "title") if k in entry
                    and not isinstance(entry[k], str)]
         errors += [f"{where}: {k} is a path or a list of paths" for k in ("stores", "journal", "decisions",
@@ -854,6 +891,25 @@ def check(root: Path | None = None) -> list[str]:
             errors += formats.check_project(f"project {p.name}", {"formats": p.formats, "migrations": p.migrations},
                                             {r.name: r.path for r in repos}, repos[0].name if repos else "")
     return errors + list(view_clashes(holders(root)).values())
+
+
+def _software_errors(where: str, entry: dict) -> list[str]:
+    """``software:``: a mapping of the software pack's keys (an unknown one a note in read mode), none of them given
+    at the top level too."""
+    soft = entry.get(SOFTWARE)
+    if soft is None:
+        return []
+    if not isinstance(soft, dict):
+        return [f"{where}: software is a mapping of {', '.join(SOFTWARE_KEYS)}"]
+    errors = []
+    unknown = sorted(set(map(str, soft)) - set(SOFTWARE_KEYS))
+    if unknown:
+        errors += schema.tolerate(f"{where}: software: unknown key(s) {', '.join(unknown)} (known: "
+                                  f"{', '.join(SOFTWARE_KEYS)})")
+    both = [k for k in SOFTWARE_KEYS if k in soft and k in entry]
+    errors += [f"{where}: {k} is given twice, at the top level and under software: keep one (software: is its place "
+               "since the software pack; the top level an alias)" for k in both]
+    return errors
 
 
 def _lifecycle_errors(where: str, value, root: Path | None) -> list[str]:

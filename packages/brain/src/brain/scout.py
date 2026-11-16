@@ -331,6 +331,11 @@ def base_of(top: Path, spec: str) -> tuple[str, str]:
 
 def main(args, root: Path | None) -> int:
     p, cfgs, c, top, registered = resolve(args, root)
+    if registered and not p.repos and not projects.software(p):
+        kinds = ", ".join(str(t) for t in p.lifecycle.get("typologies") or [])
+        print(f"scout: {p.name} is of kinds {kinds}, which meet no software pack: the scout is the software pack's "
+              "(declare repos: in its registry entry to audit its code anyway)")
+        return 0
     spec = args.diff or ""
     if ".." in spec:
         a, b = spec.split("..", 1)

@@ -1164,6 +1164,8 @@ def render_text(data: dict, verbose: bool = False) -> list[str]:
                    f"{sum(1 for r in p['repos'] if not r.get('error'))} repo(s)"
                    + (f" (calibrated {CALIBRATED.split(' ', 1)[0]})" if CALIBRATED
                       else " (uncalibrated: wi-brain-scout-rule measures each check's error rate)"))
+        if p.get("not_software"):
+            out.append(f"  {p['not_software']}")
         if p.get("trend"):
             out.append(trend_line(p["trend"]) + (f" (left out: {', '.join(p['trend']['left'])})"
                                                  if p["trend"]["left"] else ""))
@@ -1396,12 +1398,12 @@ def run(args, root: Path | None, today: date | None = None) -> dict:
     trends = {}
     n = args.trend if args.trend else (5 if args.write else 0)
     if args.repo:
-        names = {c.name for p in projs for c in projects.repos_of(p)}
+        names = {c.name for p in projs for c in projects.repos_of(p, audit=True)}
         unknown = sorted(set(args.repo) - names)
         if unknown:
             raise AuditError(f"unknown repo(s) {', '.join(unknown)} (repos: {', '.join(sorted(names))})")
     for p in projs:
-        cfgs = projects.repos_of(p)
+        cfgs = projects.repos_of(p, audit=True)
         only = None
         if args.repo:   # every repo is still read: the closure and cross-repo references span them all
             only = set(args.repo)
@@ -1412,6 +1414,9 @@ def run(args, root: Path | None, today: date | None = None) -> dict:
         res["repos"] += [{"name": k, "path": str(next(c.path for c in cfgs if c.name == k)), "error": v}
                          for k, v in errors.items() if only is None or k in only]
         res["cfgs"], res["project"] = cfgs, p
+        if not cfgs and not p.shares_root_with and not projects.software(p):
+            res["not_software"] = (f"no code repo audited: its kinds ({', '.join(p.lifecycle.get('typologies') or [])})"
+                                   " meet no software pack (repos: in its registry entry audits one anyway)")
         if n:
             res["trend"] = trend(p, cfgs, refs, n, today, only, res["layered"], res["linked"], res["featured"],
                                  res["coverage"])
