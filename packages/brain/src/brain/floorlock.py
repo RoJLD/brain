@@ -267,7 +267,10 @@ def hooks_settings(interp: Path, gdir: Path, bash: str | None = None, data: dict
                               if x]
             if hooks:
                 out.setdefault(event, []).append({**{k: v for k, v in group.items() if k != "hooks"}, "hooks": hooks})
-    return {"allowManagedHooksOnly": True, "strictPluginOnlyCustomization": ["hooks"], "hooks": out}
+    # strictPluginOnlyCustomization: skills', commands' and agents' frontmatter hooks (round 9 #2), and the MCP servers
+    # of ~/.claude.json and .mcp.json (round 10 #4: their stdio commands start with no tool call); managed and plugin
+    # servers keep loading, among them the brain's own (the rendered plugin's .mcp.json).
+    return {"allowManagedHooksOnly": True, "strictPluginOnlyCustomization": ["hooks", "mcp"], "hooks": out}
 
 
 def _managed_hook(h: dict, event: str, script: str, rest: list[str], interp: Path, gdir: Path,

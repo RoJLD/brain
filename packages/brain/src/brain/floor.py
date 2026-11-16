@@ -96,31 +96,77 @@ CUSTOMIZATION = re.compile(r"(?i)[\\/]\.claude[\\/](?:skills|commands|agents)[\\
 FRONTMATTER_HOOKS = re.compile(r"(?m)^[ \t]*['\"]?hooks['\"]?[ \t]*:")
 
 
+# Round 10 #3: the top-level keys a settings write may add or change while the floor is on, each with why it runs
+# nothing; every other key (apiKeyHelper, otelHeadersHelper, awsAuthRefresh, awsCredentialExport, gcpAuthRefresh,
+# statusLine, fileSuggestion: shell command lines Claude Code runs with no tool call; extraKnownMarketplaces and
+# enabledPlugins, which bring a plugin's MCP servers) is refused, a change of its value included.
+SETTINGS_ALLOWED = {
+    "$schema": "the editor's schema link",
+    "permissions": "allow, ask and deny rules: the guard still judges every call they allow",
+    "env": "within ENV_ALLOWED",
+    "model": "the session's model",
+    "effortLevel": "the model's effort",
+    "alwaysThinkingEnabled": "the model's thinking",
+    "outputStyle": "how replies read",
+    "language": "the replies' language",
+    "spinnerTipsEnabled": "a display setting",
+    "agentPushNotifEnabled": "the app's notifications",
+    "skipWorkflowUsageWarning": "a notice the app shows",
+    "cleanupPeriodDays": "how long transcripts are kept",
+}
+
+
 def env_added(target, before: str, after: str) -> str:
-    """The first `env` name a settings JSON write adds that ENV_ALLOWED does not hold (round 9 #1); '' when none.
-    A settings file the write leaves unreadable as JSON, with an env, reads as adding one."""
+    """What a settings JSON write (``target`` resolved: a stream's name dropped) adds that the floor refuses (rounds
+    9 #1, 10 #3): an `env` name ENV_ALLOWED does not hold, or a top-level key SETTINGS_ALLOWED does not hold that it
+    adds or changes; '' when none. A file the write leaves unreadable as JSON reads as adding one."""
     import json
     if not str(target).lower().endswith(".json"):
         return ""
 
-    def names(text: str):
+    def read(text: str):
         try:
             data = json.loads(text) if text.strip() else {}
         except ValueError:
             return None
-        env = data.get("env") if isinstance(data, dict) else None
-        return set(env) if isinstance(env, dict) else set()
-    now, was = names(after), names(before) or set()
+        return data if isinstance(data, dict) else None
+    now, was = read(after), read(before) or {}
     if now is None:
-        return "an env the guard cannot read" if re.search(r"(?i)\benv\b", unspelled(after)) else ""
-    return next((n for n in sorted(now - was) if n not in ENV_ALLOWED), "")
+        return "settings the guard cannot read as a JSON object"
+    key = next((k for k in sorted(now) if k not in SETTINGS_ALLOWED and now[k] != was.get(k, object())
+                and not _plugins_off(now[k] if k == "enabledPlugins" else None, was.get(k))), "")
+    if key:
+        return key
+    env, env_was = now.get("env"), was.get("env") if isinstance(was.get("env"), dict) else {}
+    if env is not None and not isinstance(env, dict):
+        return "env"
+    return next((n for n in sorted(set(env or {}) - set(env_was)) if n not in ENV_ALLOWED), "")
+
+
+def _plugins_off(now, was) -> bool:
+    """Whether an enabledPlugins change only turns plugins off (the core plugin's own check is floorguard's)."""
+    was = was if isinstance(was, dict) else {}
+    return isinstance(now, dict) and all(v is False for k, v in now.items() if was.get(k, object()) != v)
+
+
+def _has_key(node, name: str) -> bool:
+    if isinstance(node, dict):
+        return any(str(k).lower() == name or _has_key(v, name) for k, v in node.items())
+    return isinstance(node, list) and any(_has_key(v, name) for v in node)
 
 
 def frontmatter_hooks(tool: str, target, before: str, after: str) -> str | None:
-    """A write that adds `hooks:` to a skill's, command's or agent's frontmatter (CUSTOMIZATION), else None."""
+    """A write that adds a `hooks` key, at any depth, to a skill's, command's or agent's frontmatter (CUSTOMIZATION;
+    read as YAML: a flow mapping, a merge key; round 10 #5), else None."""
     def has(text: str) -> bool:
         m = re.match(r"﻿?\s*---[ \t]*\r?\n(.*?)\r?\n---", text or "", re.S)
-        return bool(m and FRONTMATTER_HOOKS.search(unspelled(m.group(1))))
+        if not m:
+            return False
+        try:
+            from .graph import load_yaml
+            return _has_key(load_yaml(m.group(1)), "hooks") or bool(FRONTMATTER_HOOKS.search(unspelled(m.group(1))))
+        except Exception:   # noqa: BLE001 - what YAML cannot read is judged on its text: fail closed
+            return bool(re.search(r"(?i)hooks", unspelled(m.group(1))))
     if has(after) and not has(before):
         return (f"{tool} refused: it adds hooks to {target}'s frontmatter, which run beside the guard and can change "
                 "the call it judged")

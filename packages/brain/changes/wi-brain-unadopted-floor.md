@@ -47,7 +47,10 @@ section: Added
   only the `env` names of `brain.floor.ENV_ALLOWED` (each with its reason; `BASH_FUNC_*`, `GIT_*` and the rest are
   refused), a write that adds `hooks:` to a skill's, command's or agent's frontmatter is refused, a .NET member reached
   through anything but a literal `[Type]` is refused, and `\\?\` and `\\.\` paths but a drive letter's are judged as
-  written. The managed settings also set `strictPluginOnlyCustomization: ["hooks"]`; the guard's copy carries the
+  written. A settings write also adds or changes only the top-level keys of `brain.floor.SETTINGS_ALLOWED` (the
+  command-line keys such as `apiKeyHelper`, `otelHeadersHelper` and `statusLine` refused), its path is read with its
+  NTFS stream dropped (a write to a stream is refused), frontmatter is read as YAML, and `git apply`/`git am` from
+  standard input are refused. The managed settings also set `strictPluginOnlyCustomization: ["hooks", "mcp"]`; the guard's copy carries the
   rendered rules and hook contract, and on Windows its hooks run the copy's own engine.
 - Under a lock, the guard's refusal names the elevated `brain floor lock --lower` and `brain floor unlock` instead of
   `BRAIN_GUARD_ALLOW`, and `guard.sh` no longer steps aside for the managed file (it judges where the managed

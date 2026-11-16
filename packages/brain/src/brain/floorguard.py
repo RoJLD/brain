@@ -145,13 +145,14 @@ def _edit(tool: str, inp: dict, cwd: str, kept: Kept) -> str | None:
         return f"{tool} refused: {target} sets the floor or runs the guard"
     if floor.GIT_CONFIG_FILES.search(real) or floor.GIT_CONFIG_FILES.search(target):
         return f"{tool} refused: {target} is git's configuration (an alias or a mirror there changes what a push does)"
-    if floor.CUSTOMIZATION.search(real) or floor.CUSTOMIZATION.search(target):   # round 9 #2: frontmatter hooks
-        return floor.frontmatter_hooks(tool, target, *g._edit_result(inp, tool, target))
+    why = floorpwsh.customized(tool, inp, target, real)
+    if why is not None:
+        return why or None
     if not g._override_file(target):
         return None
     before, after = g._edit_result(inp, tool, target)
     added = g._introduced(floor.FLOOR_ENV, before, after) or g._introduced(floor.SETTINGS_KEYS, before, after) \
-        or floor.env_added(target, before, after)
+        or floor.env_added(real, before, after)
     if added:
         return f"{tool} refused: it leaves {added} in {target}, which moves or stops the floor"
     if _plugin_off(floor.unspelled(after)) and not _plugin_off(floor.unspelled(before)):
@@ -529,7 +530,7 @@ def _brings_settings(d: str, sub: str, args: list[str]) -> str:
     each commit it names or reads by default (the last stash, the upstream for pull) against HEAD, so a local edit
     the command carries over is no change; each patch file of apply or am read as text."""
     if sub in ("apply", "am"):
-        return _patched_settings(d, args)
+        return floorpwsh.patched_settings(d, args)
     if sub in INDEX_RESTORERS or (sub == "checkout" and ("--" in args or "." in args)):
         changed = g._git_out(d, "diff", "--name-only", "HEAD", "--", *SETTINGS_SPEC).split() or \
             g._git_out(d, "diff", "--name-only", "--", *SETTINGS_SPEC).split()
@@ -568,19 +569,6 @@ def _revs(sub: str, args: list[str]) -> list[str]:
     revs += [args[i + 1] for i, a in enumerate(args[:-1]) if a in REV_OPTS]
     revs += {"reset": ["HEAD"], "stash": ["stash@{0}"], "pull": ["@{u}"]}.get(sub, [])
     return list(dict.fromkeys(revs))
-
-
-def _patched_settings(d: str, args: list[str]) -> str:
-    """The settings file a patch of git apply or am writes, '' when none."""
-    for a in (a for a in args if not a.startswith("-")):
-        try:
-            text = Path(g._path(a, d)).read_text(encoding="utf-8", errors="replace")
-        except OSError:
-            continue
-        m = re.search(r"(?m)^(?:\+\+\+|---|diff --git)\s.*?(\S*\.claude/settings(?:\.local)?\.json)", text)
-        if m:
-            return m.group(1)
-    return ""
 
 
 LINK_TYPE = re.compile(r"(?i)^(?:symboliclink|hardlink|junction)$")

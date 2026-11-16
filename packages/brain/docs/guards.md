@@ -122,9 +122,12 @@ each in a folder whose parents only an administrator writes:
   that puts the copy's `site` on its path), never `BRAIN_PYTHON` or the user's venv; on POSIX they still run the
   user's engine. The copy carries the rendered plugin's `rules/` and `hooks/contract.txt`, so its `inject-rules.sh`
   injects the same rules as the plugin. With no such bash they are left out, and the apply says so.
-  `"strictPluginOnlyCustomization": ["hooks"]` also stops the hooks in skills', custom commands' and agents'
+  `"strictPluginOnlyCustomization": ["hooks", "mcp"]`: `hooks` stops the hooks in skills', custom commands' and agents'
   frontmatter, which `allowManagedHooksOnly` does not name ("Frontmatter hooks in skills, custom commands, and agents",
-  settings reference). "`disableAllHooks` set in user, project, or local settings can't disable those managed hooks"
+  settings reference); `mcp` stops loading MCP servers from `~/.claude.json` and `.mcp.json` (a stdio server's command
+  starts with no tool call), and keeps managed and plugin servers. The brain's own MCP server comes from the rendered
+  plugin's `.mcp.json` (`brain sync`), a plugin server, so it keeps working; servers the owner adds at user or project
+  scope stop on a locked machine (declare them in the plugin's pack, or in the managed settings). "`disableAllHooks` set in user, project, or local settings can't disable those managed hooks"
   (hooks reference, "Disable or remove hooks");
 - last, **the lock file**, `<ProgramData>/Brain/floor-lock.json` (the folder Windows names, not the environment's
   `ProgramData`; `/etc/brain`): the floor's copy, the config.json and `<BRAIN_HOME>` the guard reads, the copy in use,
@@ -303,7 +306,8 @@ Round 7 (the same classes, new spellings; on any machine with the floor on):
   sessions by such a write. A floor-only machine is never in that state: with no lock, every call is refused.
 - **PowerShell's .NET writers on an unlocked `floor.refuse` machine**: a literal `[IO.File]::...` onto a kept path is
   read; a member reached through anything else (a parenthesised type, a variable, `$_`, `-as`, `GetMethod`,
-  `InvokeMember`, `UnderlyingSystemType`) is refused as a class whatever its path. It stays best-effort: PowerShell has
+  `InvokeMember`, `UnderlyingSystemType`, a member named by an expression `::(...)`, a method group's `.Invoke(`) is
+  refused as a class whatever its path. It stays best-effort: PowerShell has
   more ways to name a type than a parser reads, so a config.json rewritten floor-off is caught only by the lock (it
   differs from the lock's floor and every call is refused) or by the backstop below.
 - **Push to main and force-push**: the code host's branch protection on main is the backstop (since 2026-11-14 on
@@ -319,9 +323,16 @@ Round 7 (the same classes, new spellings; on any machine with the floor on):
   session (`CLAUDE_ENV_FILE`: "Each Bash command runs the file's contents as shell code before the command itself",
   hooks reference): on Windows the managed ones run the copy's engine; on POSIX they run the user's, code a session may
   have written. Settings `env` reaches every command after the guard judged it (`BASH_FUNC_git%%` redefines git in the
-  Bash tool's bash): while the floor is on, a settings write adds only the names of `brain.floor.ENV_ALLOWED`, each with
-  its reason, and a write that adds `hooks:` to a skill's, command's or agent's frontmatter is refused; such a write
-  through code the guard does not read is not. Elsewhere it is the parser's alone, with no backstop (an edit that adds
+  Bash tool's bash): while the floor is on, a settings write adds only the names of `brain.floor.ENV_ALLOWED`, and adds
+  or changes only the top-level keys of `brain.floor.SETTINGS_ALLOWED`, each with its reason (`apiKeyHelper`,
+  `otelHeadersHelper`, `awsAuthRefresh`, `awsCredentialExport`, `gcpAuthRefresh`, `statusLine`, `fileSuggestion`,
+  which Claude Code runs as shell command lines with no tool call, are refused, and so are the marketplaces and any
+  `enabledPlugins` change but turning a plugin off);
+  the write's path is read with its NTFS stream dropped, and a write to a stream of a settings or customization file is
+  refused; a write that adds a `hooks` key, at any depth, to a skill's, command's or agent's frontmatter (read as YAML)
+  is refused; `git apply` and `git am` reading their patch from standard input are refused. On an unlocked machine the
+  MCP servers of `~/.claude.json` and `.mcp.json` are not judged (`claude mcp add` passes), and a shell write into a
+  skill, a command or an agent file is not read; such a write through code the guard does not read is not either. Elsewhere it is the parser's alone, with no backstop (an edit that adds
   a settings file's PreToolUse or PermissionRequest hook is refused too), open through code the
   guard does not read (a script, a program, a compiled tool, a Python wrapper named like a Python) and through a
   launcher it does not unwrap: `flock`, `chrt`, `script -c`, `watch`, `parallel`, `find -exec`, `busybox`, a program

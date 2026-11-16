@@ -1,6 +1,8 @@
-"""PowerShell's pipelines and .NET's writers under the floor (wi-brain-unadopted-floor, review round 7; brain.floorguard
-calls them): a path piped into a cmdlet that writes is its -Path, a .NET method that writes is refused on what the
-floor keeps, and the environment written through COM or a RegistryKey is refused whatever the statement."""
+"""PowerShell's pipelines and .NET's writers under the floor, and the later rounds' write classes (wi-brain-unadopted-
+floor, review rounds 7-10; brain.floorguard calls them): a path piped into a cmdlet that writes is its -Path, a .NET
+method that writes is refused on what the floor keeps, the environment written through COM or a RegistryKey is refused
+whatever the statement; a stream of a settings or customization file, a frontmatter that adds hooks, and a patch read
+from standard input are refused."""
 
 from __future__ import annotations
 
@@ -39,7 +41,12 @@ TYPE_VAR = re.compile(r"(?i)\$(?:\{)?(\w+)\}?\s*=\s*(?:\[type\]|\[[\w.]+\]\s*(?=
 # Round 9 #3, as a class: a static member whose receiver is not a literal [Type] (a parenthesised expression, a
 # variable, $_, ${...}), and reflection on a type (GetMethod, InvokeMember, UnderlyingSystemType...). Best-effort.
 TYPE_CALL = re.compile(r"(?i)(?:\)|\}|\$[\w:]+)\s*::\s*\w|\]\s*\.\s*(?:GetMethods?|GetMembers?|InvokeMember|GetField|"
-                       r"GetProperty|UnderlyingSystemType|GetType)\b|\.Invoke\s*\(\s*\$null\b")
+                       r"GetProperty|UnderlyingSystemType|GetType)\b|\.Invoke\s*\(\s*\$null\b|"
+                       # round 10 #6: a member named by an expression (::("Write"+"AllText")), a method group invoked
+                       r"::\s*[(\"'$]|::\s*\w+\s*\.\s*Invoke\s*\(")
+# What a patch's headers name that a settings or customization file is (git apply, git am).
+PATCHED = re.compile(r"(?m)^(?:\+\+\+|---|diff --git)\s.*?(\S*(?:\.claude/settings(?:\.local)?\.json|\.mcp\.json|"
+                     r"\.claude/(?:skills|commands|agents)/\S+))")
 HOME_VARS = re.compile(r"(?i)^(?:\$env:(?:USERPROFILE|HOME)|\$\{env:(?:USERPROFILE|HOME)\}|\$HOME|~)(?=$|[\\/])")
 
 
@@ -100,3 +107,32 @@ def methods(command: str, acts, kept) -> str | None:
             return (f"{m.group(0)[1:-1].strip()}( on {w} refused: a .NET method that writes, moves or removes what "
                     "sets the floor or runs the guard")
     return None
+
+
+def customized(tool: str, inp: dict, target: str, real: str) -> str | None:
+    """A tool write to a stream of a settings or customization file (round 10 #1), or one that adds frontmatter hooks
+    to a skill, command or agent (round 9 #2): the refusal; '' for a customization file it lets through; None when
+    the target is neither (the settings checks go on)."""
+    custom = floor.CUSTOMIZATION.search(real) or floor.CUSTOMIZATION.search(target)
+    if g.STREAM.search(str(target)) and (custom or g._override_file(target)):
+        return f"{tool} refused: {target} names a stream of a settings or customization file"
+    if custom:
+        return floor.frontmatter_hooks(tool, target, *g._edit_result(inp, tool, target)) or ""
+    return None
+
+
+def patched_settings(d: str, args: list[str]) -> str:
+    """The settings or customization file a patch of git apply or am writes, '' when none; a patch read from stdin
+    (no file named, or -: a pipe, a redirection) cannot be read and counts as one (round 10 #2)."""
+    files = [a for a in args if not a.startswith("-")]
+    if not files or "-" in args:
+        return "a patch read from standard input (name the patch file)"
+    for a in files:
+        try:
+            text = Path(g._path(a, d)).read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            continue
+        m = PATCHED.search(text)
+        if m:
+            return m.group(1)
+    return ""

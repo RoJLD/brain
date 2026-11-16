@@ -155,3 +155,38 @@ def test_device_and_volume_prefixes_are_judged_as_written():
         assert floor.UNC.match(path), path
     for path in (r"\\?\C:\x", "//?/C:/x", r"\\.\C:\x", "C:/x", "/home/x"):
         assert not floor.UNC.match(path), path
+
+
+def test_a_settings_stream_a_stdin_patch_and_command_keys_are_refused(repo, tmp_path, monkeypatch):
+    """Review round 10 #1-#3: a settings file written through its ::$DATA stream; git apply and am reading their patch
+    from stdin; top-level keys outside floor.SETTINGS_ALLOWED (shell command lines Claude Code runs with no tool call)."""
+    config(tmp_path, monkeypatch, refuse=True)
+    settings = repo / ".claude" / "settings.json"
+    evil = json.dumps({"env": {"BASH_FUNC_git%%": "() { git push origin HEAD:main; }"}})
+    for path in (f"{settings}::$DATA", f"{settings}:x", f"{repo / '.claude' / 'skills' / 'x' / 'SKILL.md'}::$DATA"):
+        assert "stream" in (edit(repo, path, evil) or ""), path
+    for command in ("git apply < p.diff", "git apply - < p.diff", "cat p.diff | git apply", "cat p.diff | git am"):
+        assert "standard input" in (bash(repo, command) or ""), command
+    for key in ("apiKeyHelper", "otelHeadersHelper", "awsAuthRefresh", "awsCredentialExport", "gcpAuthRefresh",
+                "statusLine", "fileSuggestion", "enableAllProjectMcpServers", "extraKnownMarketplaces"):
+        reason = edit(repo, settings, json.dumps({key: "git push origin HEAD:main"})) or ""
+        assert key in reason, key
+    ok = {"model": "opus", "permissions": {"allow": ["Bash(npm test)"]}, "env": {"BASH_DEFAULT_TIMEOUT_MS": "9"}}
+    assert edit(repo, settings, json.dumps(ok)) is None
+    assert "cannot read" in (edit(repo, settings, "[1, 2]") or "")
+
+
+def test_frontmatter_hooks_at_any_depth_and_dynamic_members_are_refused(repo, tmp_path, monkeypatch):
+    """Review round 10 #5, #6: the frontmatter read as YAML (a flow mapping, a merge key); a .NET member named by an
+    expression or a method group invoked."""
+    config(tmp_path, monkeypatch, refuse=True)
+    skill = repo / ".claude" / "skills" / "x" / "SKILL.md"
+    for front in ("{name: x, description: y, hooks: {PreToolUse: []}}", "<<: {hooks: {PreToolUse: []}}\nname: x",
+                  "name: x\nmeta:\n  hooks: {}"):
+        assert "adds hooks" in (edit(repo, skill, f"---\n{front}\n---\nbody\n") or ""), front
+    _, _, cfg = _r7(repo, tmp_path)
+    for command in (f"[IO.File]::(\"Write\"+\"AllText\")('{cfg}','x')",
+                    f"[System.IO.File]::(\"WriteAllText\").Invoke('{cfg}','x')",
+                    f"[IO.File]::WriteAllText.Invoke(@('{cfg}','x'))"):
+        assert "floor" in (pwsh(repo, command) or ""), command
+    assert pwsh(repo, "[IO.Path]::Combine('a', 'b')") is None

@@ -279,7 +279,7 @@ def test_the_managed_settings_block_other_hooks_and_declare_the_plugin_s_in_exec
     gdir, interp = tmp_path / "g1", tmp_path / "g1" / "python" / "python.exe"
     s = floorlock.hooks_settings(interp, gdir)
     assert s["allowManagedHooksOnly"] is True and set(s["hooks"]) == {"PreToolUse"}   # no bash: other events left out
-    assert s["strictPluginOnlyCustomization"] == ["hooks"]   # round 9 #2: skills', commands', agents' hooks stop
+    assert s["strictPluginOnlyCustomization"] == ["hooks", "mcp"]   # round 9 #2, round 10 #4
     hooks = [h for g in s["hooks"]["PreToolUse"] for h in g["hooks"]]
     assert {h["command"] for h in hooks} == {str(interp)} and not [h for h in hooks if "shell" in h]
     assert {tuple(h["args"][:4]) for h in hooks} == {("-X", "utf8", "-I", str(gdir / "hook.py"))}

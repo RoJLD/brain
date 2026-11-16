@@ -684,8 +684,8 @@ def test_an_edit_is_judged_on_the_file_it_leaves(repo, tmp_path, monkeypatch):
     config(tmp_path, monkeypatch, only=True)
     assert decide(payload("Edit", repo, file_path=str(settings), old_string="X", new_string="All"))
     assert decide(payload("Edit", repo, file_path=str(settings), old_string="true}}", new_string="false}}"))
-    assert decide(payload("Edit", repo, file_path=str(settings), old_string="disableXHooks", new_string="other"))\
-        is None                                                                           # nothing added
+    assert decide(payload("Edit", repo, file_path=str(settings), old_string="disableXHooks",
+                          new_string="spinnerTipsEnabled")) is None   # nothing added: a key floor.SETTINGS_ALLOWED holds
 
 
 def test_a_movers_target_is_no_source(repo, tmp_path, monkeypatch):
