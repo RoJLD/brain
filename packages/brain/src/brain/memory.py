@@ -303,7 +303,7 @@ class Sync:
         self.remote = remote
         self.run = Runner(deadline)
         self.machine = machine()
-        self.day = day or date.today().isoformat()
+        self.day = date.fromisoformat(day).isoformat() if day else date.today().isoformat()   # refused before any push
         self.day_branch = f"memory/{self.machine}/{self.day}"
         self.branch = self.day_branch   # the branch this run pushes to (pick_branch: -2, -3... past one someone touched)
         self.heads: dict[str, str] = {}   # this machine's branches on the remote: ref -> commit
@@ -705,7 +705,7 @@ def sync(*, dry_run: bool = False, offline: bool = False, do_import: bool = True
     if not dry_run:
         state["unmapped"] = sorted({k.split("/", 1)[0] for k in notes} - known)
         state["snapshot"] = snap
-        cutoff = _days_ago(14)
+        cutoff = _days_ago(14, s.day)   # counted from the run's day, which is today unless a caller names one
         for k in ("prs", "pushed", "bodies"):  # two weeks of branches
             state[k] = {b: v for b, v in (state.get(k) or {}).items() if _branch_day(b) >= cutoff}
         state["imports"] = {n: v for n, v in (state.get("imports") or {}).items()
@@ -744,8 +744,10 @@ def _import(s: Sync, k: str, mb: str, notes: dict[str, Path], state: dict, snap:
     state.setdefault("imports", {})[k] = rec
 
 
-def _days_ago(n: int) -> str:
-    return date.fromordinal(date.today().toordinal() - n).isoformat()
+def _days_ago(n: int, day: str | None = None) -> str:
+    """The date ``n`` days before ``day`` (ISO, default today)."""
+    base = date.fromisoformat(day) if day else date.today()
+    return date.fromordinal(base.toordinal() - n).isoformat()
 
 
 # --- alert, job, hook ---
