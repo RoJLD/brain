@@ -3,12 +3,13 @@ command, a plan then --apply: read only, an existing instance, or a new one from
 (--parent), marked by a class floor (--floor); the registry as it would be checked before the write, the entry
 appended with the comments kept, the step logged in the setup ledger. Fictitious names only."""
 
+import argparse
 import json
 import subprocess
 
 import pytest
 import yaml
-from brain import __version__, cli, init, knowledge, paths, project_add, projects, schema, skew
+from brain import __version__, cli, config, init, knowledge, paths, project_add, projects, schema, skew
 
 HEADER = "# the registry of a test brain: this comment is kept\nhome:\n  root: .\n  title: the brain itself\n"
 
@@ -361,3 +362,58 @@ def test_the_title_is_escaped_in_the_map(title, tmp_path):
     shown = " ".join(title.split())
     assert front["title"] == shown and body.lstrip("\n").startswith(f"# {shown}\n")
     assert schema.validate("notes", front, schema.STRICT) == ([], [])
+
+
+@pytest.mark.parametrize("title", ["   ", "\n", ""])
+def test_a_blank_title_falls_back_to_the_name(title, tmp_path):
+    front, _ = knowledge.front_matter(knowledge.project_map(tmp_path, "orchard", title).data.decode("utf-8"))
+    assert front["title"] == "orchard" and schema.validate("notes", front, schema.STRICT) == ([], [])
+
+
+def test_an_unreadable_title_is_the_step_reason_never_a_crash(home, tmp_path):
+    """A lone surrogate (Windows argv may hold one; the registry's own step refuses it first, exit 2): the notes step
+    alone says why, it never raises."""
+    with_notes(home, tmp_path)
+    args = argparse.Namespace(no_notes=False, name="orchard", title="a\ud800b")
+    with project_add.this_brain(home / "projects.yaml"):
+        _, step, why = project_add.notes_step(args, config.load(home), home / "projects.yaml")
+    assert step is None and why.startswith("the notes home cannot be read")
+
+
+def test_another_brain_notes_home_is_never_used(home, tmp_path, capsys, monkeypatch):
+    """The registry edited has no config.json: the personal brain's (through $BRAIN_PERSONAL) names a notes home,
+    which is not this brain's."""
+    (home / "config.json").unlink()
+    personal = tmp_path / "personal"
+    personal.mkdir()
+    (personal / "config.json").write_text(json.dumps({"v": 1, "knowledge": {"path": "../pnotes"}}), encoding="utf-8")
+    pnotes = tmp_path / "pnotes"
+    knowledge.apply(pnotes, knowledge.plan(pnotes))
+    monkeypatch.setenv("BRAIN_PERSONAL", str(personal))
+    assert cli.main(["--root", str(home), "project", "add", "orchard", "--read", "--apply"]) == 0
+    assert "no map (this brain has no notes home" in capsys.readouterr().out
+    assert not (pnotes / "maps" / "orchard.md").exists()
+
+
+def test_the_registry_kind_knowledge_entry_is_the_home_without_a_config_key(home, tmp_path, capsys):
+    notes = tmp_path / "notes"
+    knowledge.apply(notes, knowledge.plan(notes))
+    (home / "projects.yaml").write_text(HEADER + "notes:\n  kind: knowledge\n  root: ../notes\n", encoding="utf-8")
+    assert cli.main(["--root", str(home), "project", "add", "orchard", "--read", "--apply"]) == 0
+    out = capsys.readouterr().out
+    assert f"in the notes home {notes}: maps/orchard.md" in out and (notes / "maps" / "orchard.md").is_file()
+    assert "in the notes home" in ledger_rows()[-1]["output"]
+
+
+def test_a_map_written_since_the_plan_is_kept_without_commit_advice(home, tmp_path, capsys, monkeypatch):
+    notes = with_notes(home, tmp_path)
+    real = knowledge.apply
+
+    def racing(target, steps):
+        (target / "maps" / "orchard.md").write_text("someone else's", encoding="utf-8")
+        return real(target, steps)
+    monkeypatch.setattr(knowledge, "apply", racing)
+    assert cli.main(["--root", str(home), "project", "add", "orchard", "--read", "--apply"]) == 0
+    out = capsys.readouterr().out
+    assert "maps/orchard.md kept as it is (written since the plan)" in out and "commit it" not in out
+    assert (notes / "maps" / "orchard.md").read_text(encoding="utf-8") == "someone else's"

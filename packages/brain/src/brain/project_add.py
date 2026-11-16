@@ -306,20 +306,35 @@ def plan(args, registry: Path) -> Plan:
         terms = _template_terms(registry, args.name, entry, cfg)
     else:
         terms = checked(registry, args.name, entry, cfg)
-    home, step, why = notes_step(args, cfg)
+    home, step, why = notes_step(args, cfg, registry)
     return Plan(args.name, registry, entry, init, terms, home, step, why)
 
 
-def notes_step(args, cfg: config.Config) -> tuple[Path | None, knowledge.Step | None, str]:
-    """The notes home, the project's map there (:func:`brain.knowledge.project_map`) and why there is none."""
+def notes_home(cfg: config.Config, registry: Path) -> Path | None:
+    """The notes home of the brain whose registry is edited: its own config.json ``knowledge.path``, else its
+    registry's first ``kind: knowledge`` entry; never another brain's (the personal brain's config.json, found through
+    $BRAIN_PERSONAL or the pointer when this brain has none of its own)."""
+    if cfg.file is not None and _same(cfg.file.parent, registry.parent):
+        home = knowledge.home(cfg)
+    else:
+        home = next(iter(projects.knowledge(registry.parent).values()), None)
+    return Path(os.path.normpath(home)) if home is not None else None
+
+
+def notes_step(args, cfg: config.Config, registry: Path) -> tuple[Path | None, knowledge.Step | None, str]:
+    """The notes home, the project's map there (:func:`brain.knowledge.project_map`) and why there is none. An
+    optional step: what it cannot read is its reason, never the command's failure."""
     if getattr(args, "no_notes", False):
         return None, None, "--no-notes"
-    home = knowledge.home(cfg)
-    if home is None:
-        return None, None, "this brain has no notes home (config.json knowledge, or a kind: knowledge entry)"
-    if not home.is_dir():
-        return home, None, f"the notes home {home} is no folder on this machine (brain notes init lays it out)"
-    return home, knowledge.project_map(home, args.name, args.title or ""), ""
+    try:
+        home = notes_home(cfg, registry)
+        if home is None:
+            return None, None, "this brain has no notes home (config.json knowledge, or a kind: knowledge entry)"
+        if not home.is_dir():
+            return home, None, f"the notes home {home} is no folder on this machine (brain notes init lays it out)"
+        return home, knowledge.project_map(home, args.name, args.title or ""), ""
+    except (OSError, UnicodeError, ValueError) as exc:
+        return None, None, f"the notes home cannot be read ({exc})"
 
 
 def _template_terms(registry: Path, name: str, entry: dict, cfg: config.Config) -> list[str]:
@@ -365,6 +380,8 @@ def write_notes(p: Plan) -> str:
         done = knowledge.apply(p.notes_home, [p.notes])
     except OSError as exc:
         return f"the notes home: {p.notes.path} not written ({exc}); the entry is registered: write it by hand"
+    if done and done[0].startswith("kept"):   # written by someone else since the plan: theirs, kept as it is
+        return f"the notes home: {p.notes.path} kept as it is (written since the plan) in {p.notes_home}"
     return f"the notes home: {done[0].strip()} in {p.notes_home}: commit it in the notes repo"
 
 
@@ -422,7 +439,8 @@ def main(args) -> int:
             print(f"brain project add: {exc}")
             return 2
         noted = write_notes(p)
-        f = log(p.registry, words_of(args), 0, time.monotonic() - t0, p.text() + (noted + "\n" if noted else ""))
+        f = log(p.registry, words_of(args), 0, time.monotonic() - t0,
+                p.text() + notes_line(p).strip() + "\n" + (noted + "\n" if noted else ""))
     print(f"wrote {p.name} in {p.registry}; logged in {f}; then brain sync and brain check (a PR of this brain)")
     if noted:
         print(noted)

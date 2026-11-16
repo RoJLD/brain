@@ -253,7 +253,7 @@ def project_map(home: Path, name: str, title: str = "", today: str = "") -> Step
     if (home / rel).exists():
         return Step("keep", rel, "there already: kept as it is")
     nid = f"n-map-{name}"
-    shown = " ".join(str(title or name).split())   # one line: a heading and a YAML scalar alike
+    shown = " ".join(str(title).split()) or name   # one line, never empty: a heading and a YAML scalar alike
     front = {"id": nid, "type": "map", "title": shown, "scope": [name], "tags": [], "status": "seed", "links": [],
              "share": [], "summary": "", "aliases": [nid], "created": today or _dt.date.today().isoformat()}
     text = ("---\n" + yaml.safe_dump(front, sort_keys=False, allow_unicode=True, width=1000) + "---\n"
