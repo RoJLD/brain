@@ -237,4 +237,6 @@ def test_plugin_installs_are_refused_under_the_floor_and_a_paren_method_group(re
     config(tmp_path, monkeypatch, refuse=True)
     _, _, cfg = _r7(repo, tmp_path)
     assert "floor" in (pwsh(repo, f"([IO.File]::WriteAllText).Invoke('{cfg}','x')") or "")
-    assert floor.resolve("\\\\?\\" + str(tmp_path / "config.json")) == floor.resolve(str(tmp_path / "config.json"))
+    import os
+    if os.name == "nt":   # a drive's \\?\ prefix: Windows only
+        assert floor.resolve("\\\\?\\" + str(tmp_path / "config.json")) == floor.resolve(str(tmp_path / "config.json"))
