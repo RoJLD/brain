@@ -18,10 +18,11 @@ USAGE = """\
                         (its PRs, head, items, DDRs, what it waits on, what comes next); show: one session, by either
                         id (a prefix of 8 or more) or its short name, and what a message would meet (live, idle,
                         archived); --report: its last final message in full, read from its transcript; the options
-                        go before or after tree/show
-  brain sessions self [--json]   this session's own app id (local_..., from $CLAUDE_CODE_HOST_SESSION_ID), the one a
-                        report to a coordinator is signed with; exit 1 outside an app session (the app's get_session
-                        self tells it there)
+                        go before or after tree/show (only --json applies to self, before or after it)
+  brain sessions self [--json]   this session's own app id (local_..., from $CLAUDE_CODE_HOST_SESSION_ID when the app's
+                        file of that id names this transcript), the one a report to a coordinator is signed with;
+                        exit 1 outside an app session, on a malformed id, or on an id inherited from another
+                        session's shell (a claude started there): the app's get_session self tells it then
 """
 NO_PROJECT = {"sessions"}   # its parsers that take no --project after them
 
@@ -32,14 +33,26 @@ def cmd_self(as_json: bool) -> int:
     import json
     import os
     import sys
-    sid = os.environ.get("CLAUDE_CODE_HOST_SESSION_ID", "").strip()
+
+    from .. import sessions
+    raw = os.environ.get(sessions.HOST_ENV, "").strip()
+    why, inherited = "", False
+    if not raw:
+        why = "no app session id here ($CLAUDE_CODE_HOST_SESSION_ID is not set)"
+    elif not sessions.HOST_RE.match(raw):
+        why = "$CLAUDE_CODE_HOST_SESSION_ID is not an app session id (local_ and a uuid)"
+    elif not sessions.host_for(env={**os.environ, sessions.HOST_ENV: raw}):
+        # a claude started from another session's shell inherits that session's id (review of #34, finding 50)
+        why, inherited = ("$CLAUDE_CODE_HOST_SESSION_ID is inherited from another session's shell (its app file "
+                          "names another transcript)"), True
+    sid = "" if why else raw
     if as_json:
-        print(json.dumps({"id": sid, "source": "CLAUDE_CODE_HOST_SESSION_ID" if sid else ""}))
+        print(json.dumps({"id": sid, "source": sessions.HOST_ENV if raw else "", "inherited": inherited}))
     elif sid:
         print(sid)
-    if not sid:
-        print("brain sessions self: no app session id here ($CLAUDE_CODE_HOST_SESSION_ID is not set): in the desktop "
-              "app, its get_session tool with the id self tells it", file=sys.stderr)
+    if why:
+        print(f"brain sessions self: {why}: in the desktop app, its get_session tool with the id self tells it",
+              file=sys.stderr)
         return 1
     return 0
 
