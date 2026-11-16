@@ -543,9 +543,10 @@ def kind_in(root: Path) -> str:
 
 def registry_ids(root: Path) -> set[str]:
     """The entries' ids of the projects.yaml already in ``root`` (none when it has none or it is not readable)."""
+    import yaml
     try:
         data = graph.load_yaml((Path(root) / "projects.yaml").read_text(encoding="utf-8"))
-    except Exception:  # noqa: BLE001 - a registry that cannot be read is brain check's to report; no id is taken here
+    except (OSError, ValueError, yaml.YAMLError):   # none there, or not readable: brain check's to report
         return set()
     return {str(k) for k in data} if isinstance(data, dict) else set()
 
@@ -657,6 +658,13 @@ def plan(root: Path, owner: str, *, kind: str = "person", tenant: str | None = N
     """What brain init would do in ``root``, file by file, in order (the owner: ``owner``, else the one of the
     config.json already in ``root``); ``examples``: a person's default spheres in scopes.yaml (SCOPE-1)."""
     owner = " ".join((owner or owner_in(root) or "").split())
+    _check_plan(owner, kind, tier, name, stage)
+    return _plan_files(Path(root).resolve(), owner, kind, tenant, tier, name, template_spec, stage, lifecycle,
+                       examples)
+
+
+def _check_plan(owner: str, kind: str, tier: str, name: str, stage: str) -> None:
+    """brain init's options, InitError naming the first it does not take."""
     if not owner:
         raise InitError('--owner NAME: the person or team who decides for this brain (brain init --owner "Your Name")')
     if kind not in KINDS:
@@ -668,8 +676,13 @@ def plan(root: Path, owner: str, *, kind: str = "person", tenant: str | None = N
         raise InitError(f"--name {name!r}: lower case letters, digits, '.', '_' and '-'")
     if stage not in STAGES:
         raise InitError(f"--stage {stage!r}: one of {', '.join(STAGES)} (the standards a profile's template selects)")
+
+
+def _plan_files(root: Path, owner: str, kind: str, tenant: str | None, tier: str, name: str, template_spec: str,
+                stage: str, lifecycle: dict | None, examples: bool) -> list[Step]:
+    """:func:`plan`'s steps once its options are checked: the files, the graph stores, the Claude files, the
+    pointer."""
     tpl = load_template(template_spec)
-    root = Path(root).resolve()
     steps, created = [], set()
     spheres = examples_for(root, kind, name)[1] if examples else ()
     for rel, text in files_for(owner, kind, tenant, tier, name, tpl, stage, lifecycle, spheres).items():
