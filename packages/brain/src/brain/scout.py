@@ -49,7 +49,11 @@ def _rank(f: dict) -> tuple:
     return TAGS.index(f["tag"]), f["severity"], ORDER[f["class"]], f["unit"], f["check"]
 
 
-def resolve(args, root: Path | None, warn=None) -> tuple[projects.Project, list[projects.Repo], projects.Repo, Path,
+def _stderr(line: str) -> None:
+    print(line, file=sys.stderr)
+
+
+def resolve(args, root: Path | None, warn=_stderr) -> tuple[projects.Project, list[projects.Repo], projects.Repo, Path,
                                                          bool]:
     """(project, its repos, the repo changed, its checkout, registered) for --repo-dir or the current folder;
     ``warn`` takes the warning of a repo in no registered project (stderr by default; the cockpit keeps it)."""
@@ -71,14 +75,10 @@ def resolve(args, root: Path | None, warn=None) -> tuple[projects.Project, list[
                     cfgs = projects.repos_of(p)
                     c = next(x for x in cfgs if x.path.resolve() == top)
                 return p, cfgs, dataclasses.replace(c, path=top), top, True
-    (warn or _stderr)(f"warning: {top} is in no registered project: audited with the defaults, graph checks N/A")
+    warn(f"warning: {top} is in no registered project: audited with the defaults, graph checks N/A")
     p = projects.for_root(top)
     c = projects.Repo(main.name.lower(), top)
     return p, [c], c, top, False
-
-
-def _stderr(line: str) -> None:
-    print(line, file=sys.stderr)
 
 
 def changed(top: Path, base: str, new: str = "") -> list[tuple[str, str, str]]:

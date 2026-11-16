@@ -592,7 +592,7 @@ def _new_tests(rep: Report, now: set[str]) -> None:
 
 def run(args, root: Path | None, warn=None) -> Report:
     """The impact of the change ``args`` names; ``warn`` takes the warnings (stderr by default, brain.scout)."""
-    p, _, c, top, registered = scout.resolve(args, root, warn)
+    p, _, c, top, registered = scout.resolve(args, root, warn) if warn else scout.resolve(args, root)
     base_ref, base, new = _range(top, args.diff or "")
     main = (paths.main_checkout(top) or top).resolve()
     folder = c.folder or main.name
