@@ -1585,7 +1585,9 @@ def branch_impact(here: Path, root: Path | None = None) -> dict:
         with contextlib.redirect_stderr(err):
             rep = impact.run(args, root)
             branch = impact.git(Path(here), "branch", "--show-current").strip()
-    except Exception as exc:  # noqa: BLE001 (shown in the panel: not a git checkout, no base, a store that fails)
+    # shown in the frame: not a git checkout or no base (AuditError), a registry that fails, git missing; anything
+    # else is the probe's error, shown by the cockpit as any panel's (refresh)
+    except (impact.AuditError, projects.RepoError, OSError, ValueError) as exc:
         return {"error": " ".join(str(exc).split())[:300]}
     return {"repo": rep.repo, "project": rep.project, "branch": branch or "(detached)", "files": len(rep.files),
             "lines": impact.render(rep), "notes": [x for x in err.getvalue().splitlines() if x.strip()]}
