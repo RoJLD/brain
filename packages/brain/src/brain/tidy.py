@@ -14,9 +14,10 @@ For each repo of the project (its ``repos:``, root and production checkouts, eac
   --force), after the junctions and links to folders it holds that git does not track (one into a production checkout
   is named): git's recursive removal never follows them;
 - a local branch merged into the default branch, other than it, main or master, is removed by compare-and-delete
-  (``git update-ref -d refs/heads/<b> <sha>`` once origin/<default> or the local <default> holds ``<sha>``), never -D,
-  unless a worktree that stays has it checked out. ``git branch -d`` judged against the clone's own HEAD or the
-  branch's upstream, so in a clone whose main lags it refused every branch merged since (wi-brain-tidy-branch-delete);
+  (``git branch -d`` first; when it refuses as « not fully merged », ``git update-ref --no-deref -d refs/heads/<b>
+  <sha>`` once origin/<default> or the local <default> holds ``<sha>``: in a clone whose main lags, -d refused every
+  branch merged since; wi-brain-tidy-branch-delete), never -D, never a symbolic branch, unless a worktree that stays
+  has it checked out;
 - a worktree whose folder is gone is pruned (``git worktree prune``) outside production checkouts, which tidy touches
   with ``git worktree remove`` and the branch's compare-and-delete only (it is listed there);
 - with --remote, origin's branches (``git ls-remote --heads``, read only) whose commit origin/<default> holds, other
@@ -460,19 +461,40 @@ def _run(repo, *args: str) -> tuple[bool, str]:
 
 
 def delete_merged(repo, branch: str, holders: list[str]) -> tuple[bool, str]:
-    """Delete the local ``branch`` only while one of ``holders`` (origin/<default>, the local <default>) holds its tip:
-    the tip is read, checked, then removed by ``git update-ref -d`` with that value, so a branch moved in between is
-    left alone. Never -D."""
-    sha = _out(repo, "rev-parse", "--verify", "--quiet", f"refs/heads/{branch}").strip()
-    if not sha:
-        return False, "no such branch"
+    """Delete the local ``branch`` once one of ``holders`` (origin/<default>, the local <default>) holds its tip.
+
+    ``git branch -d`` goes first: it refuses a branch checked out in any worktree, being rebased or bisected, and
+    removes the branch's config. Only when it refuses for « not fully merged » (it judged against the clone's own HEAD
+    or the branch's upstream, so a clone whose main lags refused every branch merged since) is the tip read, checked
+    against the holders and removed by ``git update-ref --no-deref -d`` with that value: a branch moved in between is
+    kept, a symbolic branch is never followed to its target. Never -D."""
+    ref = f"refs/heads/{branch}"
+    if _git_ok(repo, "symbolic-ref", "-q", ref):
+        return False, "a symbolic branch, left alone"
     try:
-        held_by = any(_git(repo, "merge-base", "--is-ancestor", sha, h).returncode == 0 for h in holders)
+        r = _git(repo, "-c", "advice.forceDeleteBranch=false", "branch", "-d", branch, timeout=120)
     except (OSError, subprocess.SubprocessError) as exc:
         return False, str(exc)
-    if not held_by:
-        return False, f"not merged into {' or '.join(holders) or 'a default branch'}"
-    return _run(repo, "update-ref", "-d", f"refs/heads/{branch}", sha)
+    err = (r.stderr or r.stdout).strip()
+    if r.returncode == 0 or "not fully merged" not in err:
+        return r.returncode == 0, (err.splitlines() or [""])[0]
+    sha = _out(repo, "rev-parse", "--verify", "--quiet", ref).strip()
+    if not sha:
+        return False, "no such branch"
+    if not any(_git_ok(repo, "merge-base", "--is-ancestor", sha, h) for h in holders):
+        names = [h.removeprefix("refs/remotes/").removeprefix("refs/heads/") for h in holders]
+        return False, f"not merged into {' or '.join(names) or 'a default branch'}"
+    ok, msg = _run(repo, "update-ref", "--no-deref", "-d", ref, sha)
+    if ok:
+        _git_ok(repo, "config", "--remove-section", f"branch.{branch}")   # none is fine
+    return ok, msg
+
+
+def _git_ok(repo, *args: str) -> bool:
+    try:
+        return _git(repo, *args).returncode == 0
+    except (OSError, subprocess.SubprocessError):
+        return False
 
 
 def apply_repo(rp: RepoPlan, *, remote: bool = False, env: dict | None = None) -> list[str]:

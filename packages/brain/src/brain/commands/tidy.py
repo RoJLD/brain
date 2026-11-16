@@ -37,7 +37,8 @@ def register(sub, ctx) -> None:
     td.add_argument("--all", action="store_true", help="every project of the registry")
     td.add_argument("--remote", action="store_true", help="also origin's branches merged into the default branch "
                                                           f"(git ls-remote; deleting them is {who}'s)")
-    td.add_argument("--apply", action="store_true", help="remove them: git worktree remove, the merged branch's compare-and-delete; with "
+    td.add_argument("--apply", action="store_true", help="remove them: git worktree remove, git branch -d (compare-and-delete when the "
+                                                         "local main lags); with "
                                                          "--remote, git push origin --delete outside a Claude Code "
                                                          f"session only (in one: the brain queue add for {who})")
     td.add_argument("--json", action="store_true", help="the plan as JSON (no --apply)")

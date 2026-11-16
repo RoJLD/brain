@@ -3,6 +3,7 @@
 import json
 import os
 import shutil
+import subprocess
 import sys
 import time
 
@@ -133,6 +134,27 @@ def test_a_branch_that_moved_after_the_plan_is_kept(repo):
     run_git(repo, "checkout", "-q", "main")
     ok, why = tidy.delete_merged(rp.path, "feat/a", tidy.default_branch(rp.path)[1])
     assert not ok and "not merged" in why and "feat/a" in branches(repo)
+
+
+def test_a_symbolic_branch_is_never_followed_to_its_target(repo):
+    merged(repo, "feat/a")
+    run_git(repo, "symbolic-ref", "refs/heads/alias", "refs/heads/main")
+    rp = one()
+    ok, why = tidy.delete_merged(rp.path, "alias", tidy.default_branch(rp.path)[1])
+    assert not ok and "symbolic" in why and "main" in branches(repo)
+
+
+def test_the_compare_and_delete_drops_the_branch_config(repo):
+    """No upstream and a lagging local main: git branch -d refuses, the compare-and-delete runs and drops the config."""
+    merged(repo, "feat/a", push=True)
+    run_git(repo, "config", "branch.feat/a.description", "stale")
+    run_git(repo, "reset", "-q", "--hard", "HEAD~1")
+    rp = one()
+    assert tidy.delete_merged(rp.path, "feat/a", tidy.default_branch(rp.path)[1])[0]
+    assert "feat/a" not in branches(repo)
+    left = subprocess.run(["git", "-C", str(repo), "config", "--get", "branch.feat/a.description"],
+                          capture_output=True, text=True)
+    assert left.returncode == 1 and left.stdout == ""
 
 
 # --- worktrees ---------------------------------------------------------------------------------------------------
