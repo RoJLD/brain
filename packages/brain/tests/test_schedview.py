@@ -303,3 +303,84 @@ def test_the_newer_keys_are_said_to_need_every_machine_on_0_5_1(tmp_path, monkey
     assert cli.main(["schedule", "set", "x", "--hidden", "--every", "30m"]) == 0
     assert "note" not in capsys.readouterr().out   # no newer key left in the entry
     assert "visible: true" in f.read_text(encoding="utf-8")
+
+
+# --- the owner of the found tasks (SCHED-1, Pointer) ---
+
+OWNER = "  schedules_owner: {file: setup/settings.psd1, apply: pwsh -File setup.ps1 -Apply, floors: %s}\r\n"
+
+
+def _owned(reg, floors: str):
+    reg.write_bytes(reg.read_bytes() + (OWNER % floors).encode("utf-8"))   # demo is the registry's last entry
+
+
+def test_a_found_task_says_its_owners_file_and_apply_command(reg):
+    _owned(reg, "{}")
+    rows, _ = schedview.rows(projects.load(), here="box1")
+    scan = next(r for r in rows if r["name"] == "demo-scan")
+    root = projects.load()["demo"].root.as_posix()
+    assert scan["change"] == f"{root}/setup/settings.psd1, then pwsh -File setup.ps1 -Apply"
+    assert scan["floor"] is None and scan["below_floor"] == ""
+    declared = next(r for r in rows if r["kind"] == "declared")
+    assert declared["change"].startswith("brain schedule set ")   # a declared schedule keeps its own route
+
+
+def test_a_floored_found_task_is_flagged_below_its_floor(reg):
+    # demo-scan every 15m under a 5m floor, demo-report disabled, collect (found) with no cadence
+    _owned(reg, "{demo-scan: 5m, Demo-Report: 1d, collect: 1h}")
+    rows, _ = schedview.rows(projects.load(), here="box1")
+    by = {r["name"]: r for r in rows if r["kind"] == "found"}
+    assert by["demo-scan"]["floor"] == 300 and by["demo-scan"]["below_floor"] == "every 15m is slower"
+    assert by["demo-report"]["below_floor"] == "disabled"   # a floor's name matches the task's whatever its case
+    assert by["collect"]["below_floor"] == "no cadence (started by an event only)"
+    line = schedview.settings_line(by["demo-scan"])
+    assert "collector, floor 5m, BELOW FLOOR: every 15m is slower" in line
+
+
+def test_a_found_task_at_its_floor_is_not_flagged(reg):
+    _owned(reg, "{demo-scan: 15m}")
+    rows, _ = schedview.rows(projects.load(), here="box1")
+    scan = next(r for r in rows if r["name"] == "demo-scan")
+    assert scan["below_floor"] == "" and "BELOW FLOOR" not in schedview.settings_line(scan)
+
+
+def test_a_floored_task_missing_from_the_scheduler_is_said(reg, capsys):
+    _owned(reg, "{demo-scan: 15m, gone: 1h}")
+    assert cli.main(["schedule", "list"]) == 0
+    out = capsys.readouterr().out
+    assert ("note     gone (demo): a collector of its schedules_owner (floor 1h), not found under its scheduler "
+            "folders: BELOW FLOOR") in out
+    assert "change: " + projects.load()["demo"].root.as_posix() + "/setup/settings.psd1, then pwsh" in out
+    assert cli.main(["schedule", "list", "--json"]) == 0
+    data = json.loads(capsys.readouterr().out)
+    assert data["floors_missing"] == [{"project": "demo", "name": "gone", "floor": 3600.0}]
+
+
+def test_an_unreadable_scheduler_says_no_floor_missing(reg, monkeypatch, capsys):
+    _owned(reg, "{gone: 1h}")
+    monkeypatch.setattr(alerts, "_scheduler", lambda folders: ([], "the scheduler could not be read: denied"))
+    assert cli.main(["schedule", "list"]) == 0
+    assert "gone (demo)" not in capsys.readouterr().out   # not read is not missing
+
+
+@pytest.mark.parametrize("value, error", [
+    ("[a]", "is a mapping of file, apply, floors"),
+    ("{apply: x}", "file is the settings file its installer reads"),
+    ("{file: f, apply: 3}", "apply is the command that applies the file, a string"),
+    ("{file: f, floors: [a]}", "floors is a mapping of task -> cadence"),
+    ("{file: f, floors: {a: soon}}", "floors a: 'soon' is not a duration"),
+    ("{file: f, floors: {a: 2d}}", "floors a: a floor is 1m to 1d"),
+])
+def test_check_refuses_a_wrong_schedules_owner(reg, value, error):
+    reg.write_bytes(reg.read_bytes() + f"  schedules_owner: {value}\r\n".encode("utf-8"))
+    errors = schedview.check(projects.load())
+    assert any(e.startswith("project demo: schedules_owner: ") and error in e for e in errors), errors
+    rows, _ = schedview.rows(projects.load(), here="box1")   # the view still shows the found tasks, unowned
+    assert "where demo registers it" in next(r for r in rows if r["name"] == "demo-scan")["change"]
+
+
+def test_a_right_schedules_owner_passes_the_registry_check_and_is_a_listed_key(reg):
+    _owned(reg, "{demo-scan: 15m}")
+    assert schedview.check(projects.load()) == []
+    assert not [e for e in projects.check() if "schedules_owner" in e]
+    assert "schedules_owner" in projects.KEYS
