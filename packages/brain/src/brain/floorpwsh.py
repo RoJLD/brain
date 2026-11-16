@@ -452,8 +452,9 @@ def _ln_words(args: list[str]) -> list[str]:
 
 
 def _operands(args: list[str]) -> list[str]:
-    """The words that are not options (mklink's /D /H /J, junction's -s, subst's /D)."""
-    return [a for a in args if not a.startswith(("-", "/"))]
+    """The words that are not options (mklink's /D /H /J, junction's -s, subst's /D): a switch is / and one letter, so
+    a POSIX absolute path (/tmp/x) stays a path word."""
+    return [a for a in args if not a.startswith("-") and not re.fullmatch(r"/[A-Za-z?]", a)]
 
 
 def _fsutil_words(args: list[str]) -> list[str] | None:

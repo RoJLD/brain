@@ -237,3 +237,12 @@ def test_globs_and_braces_are_read_as_the_shell_expands_them(tmp_path):
     assert len(fp.expand("*", str(tmp_path), "ps")) == 2
     assert fp.expand("x{a,b}", str(tmp_path), "bash") == ["xb", "xa"] and fp.expand("$x", ".", "bash") is None
     assert fp.expand("@p", ".", "ps") is None and fp.expand("q*", str(tmp_path), "bash") == ["q*"]
+
+
+def test_a_posix_absolute_path_is_a_link_operand_not_a_switch():
+    """CI's Linux runner: cmd /c mklink /H y.txt /tmp/.../.claude/settings.json was not refused, the POSIX path read
+    as a cmd switch."""
+    from brain import floorpwsh as fp
+    assert fp._operands(["/H", "y.txt", "/tmp/r/.claude/settings.json"]) == ["y.txt", "/tmp/r/.claude/settings.json"]
+    assert fp._operands(["/D", "/J", "-s", "k", "t"]) == ["k", "t"]
+    assert fp.link_words("mklink", ["/H", "y.txt", "/tmp/r/.claude/settings.json"])[-1].endswith("settings.json")
