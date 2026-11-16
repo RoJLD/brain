@@ -135,7 +135,8 @@ def test_keeps_for_a_decision_in_force_overrides_with_its_reason_for_a_supersede
     blocks = pins.verdict(proj, touched, "A change.\n")
     assert len(blocks) == 2 and f"says neither Keeps {RETRY}" in blocks[0] and f"superseded by {rev}" in blocks[1]
     assert pins.verdict(proj, touched, f"Keeps {RETRY}\nKeeps {cache}\n") == [
-        f"{cache} is superseded by {rev}: the PR body says Overrides {cache}: <why>"]
+        f"{cache} is superseded by {rev}: the PR body says Overrides {cache}: <why> (in a public repo's PR, by its "
+        f"alias: {pins.alias_of({'decision': cache})})"]
     assert pins.verdict(proj, touched, f"Keeps {RETRY}\nOverrides {cache}\n") == [
         f"Overrides {cache}: the reason is missing"]
     assert pins.verdict(proj, touched, f"Overrides {RETRY}: five now\nOverrides {cache}: per machine\n") == [
@@ -257,3 +258,52 @@ def test_impact_lists_the_pinned_decisions_in_its_checklist():
     text = "\n".join(impact.render(rep))
     assert "[ ] pinned decisions this change touches (1): the PR body says Keeps <id> or Overrides <id>: why" in text
     assert f"    {RETRY} (2026-11-01): holds retries stay at 4 (src/net.py)" in text
+
+
+def test_a_public_repos_pr_answers_a_pin_by_its_alias_never_its_private_id(proj, capsys):
+    """wi-brain-pins-private-ids: a public repo's PR body cannot name a private decision (brain check --public refuses
+    the id), so the pin's public alias answers as its id does: given (brain adr pin --alias), else pin-<8 hex>."""
+    cache = proj.ids["cache"]
+    touched = _pinned(proj)
+    auto = pins.alias_of({"decision": RETRY})
+    assert auto.startswith("pin-") and len(auto) == 12 and RETRY not in auto and auto == touched[0]["alias"]
+    assert pins.alias_of({"decision": RETRY, "alias": "retry-count"}) == "retry-count"
+    blocks = pins.verdict(proj, touched, "A change.\n")
+    assert blocks[0].endswith(f"(in a public repo's PR, by its alias: {auto})")   # the gate says which alias
+    over = pins.alias_of({"decision": cache})
+    assert pins.verdict(proj, touched, f"Keeps {auto}\nOverrides {over}: per machine\n") == []
+    assert pins.verdict(proj, touched, f"Keeps {auto}\nOverrides {cache}: per machine\nKeeps {over}\n") == [
+        f"{cache}: the PR body both keeps and overrides it"]   # the alias and the id are one decision
+    root = str(proj.root)
+    assert cli.main(["--root", root, "adr", "pin", RETRY, "--touches", "src/net.py", "--holds", "retries stay at 4",
+                     "--alias", "retry-count"]) == 0
+    assert "public alias retry-count" in capsys.readouterr().out
+    assert pins.load(proj)[0] == {"decision": RETRY, "holds": "retries stay at 4", "touches": ["src/net.py"],
+                                  "alias": "retry-count"}
+    assert pins.touched(proj, {"src/net.py"}, {"demo"})[0]["alias"] == "retry-count"
+    assert pins.verdict(proj, pins.touched(proj, {"src/net.py"}, {"demo"}), "- Keeps `retry-count`: kept\n") == []
+    assert cli.main(["--root", root, "adr", "pin", RETRY]) == 0   # an existing pin: --touches may be left out
+    assert cli.main(["--root", root, "adr", "pin", proj.ids["answered"], "--holds", "h"]) == 1   # a new one needs it
+    assert "touches is a list" in capsys.readouterr().err
+    for bad, why in (("adr-2026-x", "the shape of a private graph id"), ("Retry Count", "lower-case letters"),
+                     ("retry-count", "is adr-2026-11-01-retries-stay-at-four's already")):
+        assert cli.main(["--root", root, "adr", "pin", proj.ids["answered"], "--touches", "docs/", "--holds", "h",
+                         "--alias", bad]) == 1
+        assert why in capsys.readouterr().err, bad
+    pins.path_of(proj).write_text(
+        f"- {{decision: {RETRY}, holds: four, touches: [a.py], alias: same}}\n"
+        f"- {{decision: {proj.ids['answered']}, holds: h, touches: [b.py], alias: same}}\n"
+        f"- {{decision: {proj.ids['reversal']}, holds: h, touches: [c.py], alias: wi-x}}\n", encoding="utf-8")
+    lines = pins.check_lines(proj)
+    assert "alias wi-x: the shape of a private graph id" in lines[0]
+    assert any("gives one alias to several decisions: same (" in ln for ln in lines)
+
+
+def test_impact_gives_each_pins_alias():
+    from brain import impact
+    rep = impact.Report("demo", "demo", "a" * 40, "origin/main", "worktree", mode="files", files=[{"status": "M"}],
+                        pins=[{"id": RETRY, "day": "2026-11-01", "holds": "retries stay at 4", "hits": ["src/net.py"],
+                               "since": "", "title": "Retries stay at four", "alias": "pin-0123abcd"}])
+    text = "\n".join(impact.render(rep))
+    assert "a public repo's PR says the alias in place of the id" in text
+    assert f"    {RETRY} (2026-11-01): holds retries stay at 4 (src/net.py); alias pin-0123abcd" in text

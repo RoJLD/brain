@@ -9,6 +9,7 @@ A pin is one row of ``pins.yaml`` beside the project's decision log (``notes/pin
         - packages/brain/src/brain/net.py
         - code:brain:packages/brain/src/brain/net.py::backoff
       since: 2026-11-12
+      alias: retry-count                # optional: the pin's public name (default pin-<8 hex of the decision id>)
 
 The decision log is append-only and its ADR nodes are generated from it, so a pin cannot live in the ADR's entry or
 on its node: it lives here, written by ``brain adr pin`` (which rewrites the file: no hand comment survives). A pin's
@@ -23,10 +24,15 @@ What reads the pins:
   in the log at the head); a change of a pin's own row counts as touching it;
 - ``brain check`` warns on a pin of an unknown or pending decision, a superseded decision still pinned, a malformed
   row and two rows of one decision.
+
+A PR of a public repo cannot name a private decision's id (``brain check --public`` refuses it): each pin has a public
+alias, its ``alias`` or ``pin-<8 hex of the decision id's sha-256>``, and ``Keeps <alias>`` answers it as
+``Keeps <id>`` does (wi-brain-pins-private-ids).
 """
 
 from __future__ import annotations
 
+import hashlib
 import re
 from dataclasses import dataclass
 from pathlib import Path
@@ -47,6 +53,8 @@ _SUPERSEDES_RE = re.compile(r"\*\*Supersedes\.\*\*(.*?)(?=\n[ \t]*\n|\n\*\*|\Z)"
 _ID_IN_RE = re.compile(r"\(`([A-Za-z0-9_.-]+)`\)")
 _GLOB = set("*?[")
 ANSWERED = ("answered", "integrated", "archived")   # a DDR's statuses once the owner answered it
+ALIAS_RE = re.compile(r"[a-z0-9][a-z0-9-]*[a-z0-9]\Z")
+PRIVATE_SHAPES = ("wi-", "adr-", "feat-", "ddr-", "spec-", "les-")   # brain.privateids: a public repo refuses them
 
 
 class PinError(ValueError):
@@ -116,11 +124,35 @@ def _touch_problem(t) -> str:
     return ""
 
 
+def alias_of(pin: dict) -> str:
+    """The pin's public name, what a public repo's PR body says in place of the decision's private id: its ``alias``,
+    else ``pin-`` and the first 8 hex digits of the decision id's sha-256 (stable, and naming nothing private)."""
+    given = pin.get("alias")
+    if isinstance(given, str) and given.strip():
+        return given.strip()
+    return "pin-" + hashlib.sha256(str(pin.get("decision") or "").strip().encode("utf-8")).hexdigest()[:8]
+
+
+def alias_problem(alias) -> str:
+    """What is wrong with a given alias, '' when nothing: lower-case letters, digits and dashes, and not the shape of
+    a private graph id (a public repo refuses those)."""
+    if alias is None:
+        return ""
+    if not isinstance(alias, str) or not ALIAS_RE.match(alias):
+        return f"alias {alias!r}: lower-case letters, digits and dashes (retry-count)"
+    if alias.startswith(PRIVATE_SHAPES):
+        return (f"alias {alias}: the shape of a private graph id ({', '.join(PRIVATE_SHAPES)}), which a public repo "
+                "refuses")
+    return ""
+
+
 def problems(pin: dict) -> list[str]:
     """What is wrong with one pin's shape ([] when well formed); the decision is resolved apart."""
     out = []
     if not str(pin.get("decision") or "").strip():
         out.append("no decision")
+    if alias_problem(pin.get("alias")):
+        out.append(alias_problem(pin.get("alias")))
     holds = pin.get("holds")
     if not isinstance(holds, str) or not holds.strip() or "\n" in holds.strip():
         out.append("holds is one line: the invariant the decision keeps")
@@ -200,38 +232,46 @@ def _unpinnable(pin: dict, known: dict[str, Decision]) -> bool:
 
 def _dump(pins: list[dict]) -> str:
     yaml = graph._yaml()
-    rows = [{k: p[k] for k in ("decision", "holds", "touches", "since") if k in p} |
-            {k: v for k, v in p.items() if k not in ("decision", "holds", "touches", "since")} for p in pins]
+    first = ("decision", "holds", "touches", "since", "alias")
+    rows = [{k: p[k] for k in first if k in p} | {k: v for k, v in p.items() if k not in first} for p in pins]
     body = yaml.safe_dump(sorted(rows, key=lambda p: str(p.get("decision"))), sort_keys=False, allow_unicode=True,
                           width=118, default_flow_style=False)
     return HEAD + body
 
 
-def _row(decision: str, mine: list[dict], touches: list[str], holds: str, day: str) -> tuple[dict, str]:
-    """(the decision's row, 'pinned' or 'extended'): a new one, or its rows merged with ``touches`` added; a holds
-    line that differs is refused (an override is a new ADR)."""
+def _row(decision: str, mine: list[dict], touches: list[str], holds: str, day: str,
+         alias: str = "") -> tuple[dict, str]:
+    """(the decision's row, 'pinned' or 'extended'): a new one, or its rows merged with ``touches`` added and its
+    alias set when given; a holds line that differs is refused (an override is a new ADR)."""
     if not mine:
-        return {"decision": decision, "holds": " ".join(str(holds).split()), "touches": list(dict.fromkeys(touches)),
-                "since": day}, "pinned"
+        row = {"decision": decision, "holds": " ".join(str(holds).split()), "touches": list(dict.fromkeys(touches)),
+               "since": day}
+        return (dict(row, alias=alias) if alias else row), "pinned"
     old = str(mine[0].get("holds") or "").strip()
     if holds and " ".join(holds.split()) != " ".join(old.split()):
         raise PinError(f"{decision} holds {old!r}: a holds line is never edited; an override is a new ADR (brain adr "
                        f"new --reverses {decision}), pinned in its turn")
     merged = [t for p in mine for t in (p.get("touches") or [])]
-    return dict(mine[0], touches=list(dict.fromkeys([*merged, *touches]))), "extended"
+    row = dict(mine[0], touches=list(dict.fromkeys([*merged, *touches])))
+    return (dict(row, alias=alias) if alias else row), "extended"
 
 
-def add(project, decision: str, touches: list[str], holds: str = "", day: str = "") -> tuple[dict, str]:
-    """Pin ``decision`` (or add ``touches`` to its pin, every row of it merged into one); returns (the pin, 'pinned'
-    or 'extended'). :class:`PinError` on a decision that cannot be pinned, a malformed row, a file with entries that
-    are not pins (it is not rewritten), or a ``holds`` that differs from the pin's (an override: a new ADR)."""
+def add(project, decision: str, touches: list[str], holds: str = "", day: str = "",
+        alias: str = "") -> tuple[dict, str]:
+    """Pin ``decision`` (or add ``touches`` to its pin, every row of it merged into one, ``alias`` set when given);
+    returns (the pin, 'pinned' or 'extended'). :class:`PinError` on a decision that cannot be pinned, a malformed row,
+    a file with entries that are not pins (it is not rewritten), a ``holds`` that differs from the pin's (an
+    override: a new ADR), or an alias another pin has."""
     dropped: list[int] = []
     pins = load(project, dropped)
     if dropped and dropped[0]:
         raise PinError(f"{path_of(project)}: {dropped[0]} entry(ies) that are not pins: fix the file by hand first")
     known = decisions_of(project)
-    new, verb = _row(decision, [p for p in pins if p.get("decision") == decision], touches, holds, day)
+    new, verb = _row(decision, [p for p in pins if p.get("decision") == decision], touches, holds, day, alias)
     bad = problems(new) or ([why_not(new, known)] if why_not(new, known) else [])
+    taken = [str(p.get("decision")) for p in pins if p.get("decision") != decision and alias_of(p) == alias_of(new)]
+    if taken and not bad:
+        bad = [f"alias {alias_of(new)} is {taken[0]}'s already"]
     if bad:
         raise PinError(f"{decision}: {'; '.join(bad)}")
     rest = [p for p in pins if p.get("decision") != decision]
@@ -311,8 +351,8 @@ def hits(pin: dict, files: set[str], repos: set[str], refs: set[str] | None = No
 def touched(project, files, repos, refs: set[str] | None = None, known: set[str] = frozenset(),
             pins: list[dict] | None = None, decided: dict[str, Decision] | None = None,
             changed_rows: set[str] = frozenset()) -> list[dict]:
-    """The pinned decisions a change touches: [{id, holds, day, since, hits, title, superseded_by}], by id. ``pins``
-    and ``decided`` (default: the project's files) are a change's own, read at its base and head; ``changed_rows``:
+    """The pinned decisions a change touches: [{id, holds, day, since, hits, title, superseded_by, alias}], by id.
+    ``pins`` and ``decided`` (default: the project's files) are a change's own, read at its base and head; ``changed_rows``:
     the decisions whose row the change edits or removes, touched as such. The pins that are malformed or name no
     decision, or a DDR not answered, are left out (brain check names them); a superseded one stays."""
     if pins is None:
@@ -333,7 +373,7 @@ def touched(project, files, repos, refs: set[str] | None = None, known: set[str]
         if h:
             d = decided[did]
             out.append({"id": d.id, "holds": str(p["holds"]).strip(), "day": d.day, "since": str(p.get("since") or ""),
-                        "hits": h, "title": d.title, "superseded_by": d.superseded_by})
+                        "hits": h, "title": d.title, "superseded_by": d.superseded_by, "alias": alias_of(p)})
     return sorted(out, key=lambda x: x["id"])
 
 
@@ -359,7 +399,8 @@ def answers(body: str) -> dict[str, dict[str, str]]:
 def verdict(project, pinned: list[dict], body: str | None) -> list[str]:
     """What blocks the merge ([] when nothing): each pinned decision the change touches needs, in the PR body,
     ``Keeps <id>`` when it is in force, ``Overrides <id>: <why>`` when a later ADR supersedes it (the override written
-    first, as a new ADR); one id both kept and overridden blocks."""
+    first, as a new ADR); one id both kept and overridden blocks. The pin's public alias answers as its id does: a
+    public repo's PR names no private decision (:func:`alias_of`)."""
     if not pinned:
         return []
     if body is None:
@@ -368,20 +409,22 @@ def verdict(project, pinned: list[dict], body: str | None) -> list[str]:
     said = answers(body)
     out = []
     for p in pinned:
-        words = said.get(p["id"].lower(), {})
+        alias = p.get("alias") or alias_of({"decision": p["id"]})
+        words = {**said.get(alias.lower(), {}), **said.get(p["id"].lower(), {})}
+        public = f" (in a public repo's PR, by its alias: {alias})"
         if "keeps" in words and "overrides" in words:
             out.append(f"{p['id']}: the PR body both keeps and overrides it")
         elif p.get("superseded_by"):
             if "overrides" not in words:
                 out.append(f"{p['id']} is superseded by {p['superseded_by']}: the PR body says Overrides {p['id']}: "
-                           "<why>")
+                           f"<why>{public}")
             elif not words["overrides"]:
                 out.append(f"Overrides {p['id']}: the reason is missing")
         elif "overrides" in words:
             out.append(f"Overrides {p['id']}: no later ADR supersedes it yet (brain adr new --reverses {p['id']})")
         elif "keeps" not in words:
             out.append(f"{p['id']} ({p['holds']}): the PR body says neither Keeps {p['id']} nor Overrides "
-                       f"{p['id']}: <why>")
+                       f"{p['id']}: <why>{public}")
     return out
 
 
@@ -398,9 +441,11 @@ def check_lines(project) -> list[str]:
     if not pins and not (dropped and dropped[0]):
         return []
     known = decisions_of(project)
-    bad, seen, twice = [], set(), []
+    bad, seen, twice, aliases = [], set(), [], {}
     for p in pins:
         did = str(p.get("decision") or "?")
+        if did not in seen:
+            aliases.setdefault(alias_of(p), []).append(did)
         why = "; ".join(problems(p)) or why_not(p, known)
         if why:
             bad.append(f"{did} ({why})")
@@ -413,6 +458,9 @@ def check_lines(project) -> list[str]:
     out = [f"warning: {len(bad)} pin(s) in {rel} to fix (docs/pins.md): {', '.join(bad[:10])}"] if bad else []
     if twice:
         out.append(f"warning: {rel} pins one decision twice: {', '.join(sorted(set(twice)))}")
+    shared = sorted(f"{a} ({', '.join(ds)})" for a, ds in aliases.items() if len(ds) > 1)
+    if shared:
+        out.append(f"warning: {rel} gives one alias to several decisions: {', '.join(shared)}")
     return out
 
 

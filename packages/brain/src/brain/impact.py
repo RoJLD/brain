@@ -670,8 +670,9 @@ def _pin_lines(rep: Report) -> list[str]:
     if not rep.pins:
         return []
     return [f"[ ] pinned decisions this change touches ({len(rep.pins)}): the PR body says Keeps <id> or "
-            "Overrides <id>: why (an override is a new ADR)"] + [
-        f"    {x['id']} ({x['day'] or '?'}): holds {x['holds']} ({', '.join(x['hits'][:3])})" for x in rep.pins]
+            "Overrides <id>: why (an override is a new ADR); a public repo's PR says the alias in place of the id"] + [
+        f"    {x['id']} ({x['day'] or '?'}): holds {x['holds']} ({', '.join(x['hits'][:3])})"
+        + (f"; alias {x['alias']}" if x.get("alias") else "") for x in rep.pins]
 
 
 def render(rep: Report) -> list[str]:

@@ -20,6 +20,7 @@ A pin is one row of `pins.yaml`, beside the project's decision log (`notes/pins.
     - tests/test_retry_*.py                       # a glob: * and ? within a folder, ** across folders
     - code:demo:src/retry.py::backoff             # a CodeRef (a symbol: precise once GitNexus says which changed)
   since: 2026-11-12
+  alias: retry-count                              # optional: its public name (below)
 ```
 
 Why a file and not the ADR's own fields: the decision log is append-only and its ADR nodes are generated from it, so
@@ -51,9 +52,17 @@ brain adr pin adr-2026-11-01-retries-stay-at-four --touches code:demo:src/retry.
   bold; lines inside fenced code or an HTML comment do not count, and one id both kept and overridden blocks.
   Without a body, the pins touched are listed and the stamp alone decides; a pin that cannot be read is a note then.
 - **`brain merge-ready N`**: its `pins` check (the last one) asks the same of the PR's body.
+- **A public repo's PR** cannot name a private decision: `brain check --public` and the public commit guard refuse
+  an ADR's or a DDR's id of the owner's graph in a public repo's lines, its PR body included. Each pin has a public
+  alias, which answers as its id does (`Keeps retry-count`, `Overrides retry-count: why`): its `alias`
+  (`brain adr pin ID --alias NAME`: lower-case letters, digits and dashes, never the shape of a graph id such as
+  `adr-` or `wi-`, one decision each), else `pin-` and the first 8 hex digits of the sha-256 of the decision's id
+  (`pin-3fa9c1d2`), which names nothing private. The gate's message and `brain impact --diff` give it; the gate
+  itself runs where the pins and the decisions are, in the private brain, so the public body never needs the id.
 - **`brain check`** warns, once a project, on a pin of an unknown, pending or superseded decision, a malformed row
-  (no `holds`, a `holds` on several lines, no `touches`, a touch that is neither a relative path nor a CodeRef), an
-  entry that is not a pin, and a decision pinned twice.
+  (no `holds`, a `holds` on several lines, no `touches`, a touch that is neither a relative path nor a CodeRef, an
+  alias of the wrong shape), an entry that is not a pin, a decision pinned twice and one alias given to two
+  decisions.
 
 When the pins file lives in the changed repo (a brain's own PR), the gate reads the pins at the merge base, with the
 head's new ones, and the decision logs at the head: a PR cannot drop its own pin (a row it edits or removes counts as
