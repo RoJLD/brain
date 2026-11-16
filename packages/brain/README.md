@@ -1156,6 +1156,27 @@ result must read back as the same file with that one entry changed and pass the 
 slower `every` and a `--disable`; a block entry is shown as the change to make by hand; a found task changes where its
 project registers it. Writing the file installs nothing: `brain schedule install --apply`, the owner's, applies it.
 
+A project whose own installer registers tasks names where they change in its registry entry:
+
+```yaml
+demo:
+  alerts:
+    scheduler: ['\Demo\']
+  schedules_owner:
+    file: setup/settings.psd1          # the settings file its installer reads, relative to the project's root
+    apply: pwsh -File setup.ps1 -Apply # the command that applies it (optional)
+    floors: {collect-prices: 15m}      # a collector's slowest cadence, 1m to 1d
+```
+
+Each of its found tasks then says `change: <root>/<file>, then <apply>` (`(no apply command declared)` without one);
+a task named in `floors` shows its floor and `BELOW FLOOR` when its cadence is slower, it has none (an event starts
+it) or it is disabled, and a floored task the scheduler does not show is said under the list (`floors_missing` in
+`--json`; never when the scheduler was not read, off Windows or on an error). A folder two projects name lists its
+tasks under the first; a task the other one floors takes its owner and floor. `brain check --all` checks the key's
+shape, each floor (a name once whatever its case, not a declared schedule's, which has its own `floor:`) and that
+floors come with the project's `alerts: scheduler:` folders. The engine never writes that file: the value changes
+there, by the project's own command.
+
 ### Dependency probes: loud fallbacks
 
 A capability that relies on something outside the brain (a CLI's login, a tool's last output, an index's freshness,
