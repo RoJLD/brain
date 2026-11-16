@@ -504,6 +504,7 @@ def get(name: str, root: Path | None = None) -> Project:
     if root is None:
         return reg[name]
     p = _project(name, raw(root).get(name) or {}, root)
+    p.overlays = list(reg[name].overlays)   # another repo's stores: beside the main checkout, never a worktree
     p.shares_root_with = reg[name].shares_root_with
     p.registry_dir = reg[name].registry_dir
     return p

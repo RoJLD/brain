@@ -30,6 +30,7 @@ from __future__ import annotations
 
 import ast
 import json
+import re
 import sys
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
@@ -315,6 +316,7 @@ def _overlaid(g, p: projects.Project) -> tuple[object, list[str]]:
     """``g`` (the project's first store) with its overlays applied, read-only (research_graph's apply_overlay; the
     registry's ``overlays``), and why each that could not be read was left out: an overlay that fails leaves ``g``
     as it was, never half applied."""
+    import yaml
     from research_graph.loader import ValidationError, apply_overlay
     problems = []
     for o in p.overlays:
@@ -324,7 +326,8 @@ def _overlaid(g, p: projects.Project) -> tuple[object, list[str]]:
         h = g.copy()
         try:
             apply_overlay(h, o, p.root)
-        except (ValidationError, OSError, ValueError) as exc:
+        except (ValidationError, OSError, ValueError, yaml.YAMLError, TypeError, AttributeError, KeyError,
+                IndexError) as exc:   # another repo's files: a malformed one is said, never a crash
             errors = getattr(exc, "errors", None) or [str(exc)]
             more = f" (and {len(errors) - 3} more)" if len(errors) > 3 else ""
             problems.append(f"overlay {o.as_posix()} does not load: {'; '.join(map(str, errors[:3]))}{more}; left out")
@@ -587,8 +590,9 @@ def _new_tests(rep: Report, now: set[str]) -> None:
                    "repo": ""} for f in sorted(now) if inventory.is_test(f) and f not in known]
 
 
-def run(args, root: Path | None) -> Report:
-    p, _, c, top, registered = scout.resolve(args, root)
+def run(args, root: Path | None, warn=None) -> Report:
+    """The impact of the change ``args`` names; ``warn`` takes the warnings (stderr by default, brain.scout)."""
+    p, _, c, top, registered = scout.resolve(args, root, warn)
     base_ref, base, new = _range(top, args.diff or "")
     main = (paths.main_checkout(top) or top).resolve()
     folder = c.folder or main.name
@@ -699,15 +703,21 @@ def render(rep: Report) -> list[str]:
 # --- the Markdown view: the checklist as a PR body's section (close-item, wi-brain-impact-surfaces) ---
 
 MD_HEADING = "### Impact (brain impact --diff)"
-_MD_SPECIAL = frozenset("\\`*_[]<>#|~$&")   # what GitHub's Markdown would read as markup, math or an entity
+_MD_SPECIAL = frozenset("\\`*_[]<>|~$&")   # what GitHub's Markdown would read as markup, math or an entity
+_MD_JOINED = frozenset("@#")   # a mention (@name), an issue (#12) or a commit (owner/repo@sha) GitHub would link
+_WORD_JOINER = "⁠"        # invisible: it keeps the character, breaks the link
+_LIST_START = re.compile(r"^(?:[-+]|\d+[.)])(?=\s|$)")   # a list marker at the start of an item: a nested list
 
 
 def md(text: str) -> str:
     """``text`` as one line of literal Markdown: every character GitHub would read as markup, math (``$``) or an
-    HTML entity or tag (``&``, ``<``) escaped with a backslash, the line breaks folded into spaces (a newline would
-    end the list item)."""
+    HTML entity or tag (``&``, ``<``) escaped with a backslash, ``@`` and ``#`` followed by a word joiner (no mention,
+    no issue or commit link), a list marker at its start escaped (no nested list), the line breaks folded into spaces
+    (a newline would end the list item)."""
     flat = " ".join(str(text).split())
-    return "".join(f"\\{c}" if c in _MD_SPECIAL else c for c in flat)
+    out = "".join(f"\\{c}" if c in _MD_SPECIAL else f"{c}{_WORD_JOINER}" if c in _MD_JOINED else c for c in flat)
+    m = _LIST_START.match(out)
+    return f"{out[:m.end() - 1]}\\{out[m.end() - 1:]}" if m else out
 
 
 def markdown(rep: Report) -> list[str]:

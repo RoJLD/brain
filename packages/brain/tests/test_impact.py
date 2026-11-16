@@ -308,8 +308,11 @@ def test_no_base_exits_2(lab, capsys):
 
 def test_md_escapes_markup_math_entities_and_folds_the_lines():
     assert impact.md('a_b *c* [x](y) <b> &amp; $x$ 50% "q" \'q\'\nnext `t` #h | ~s \\') == (
-        'a\\_b \\*c\\* \\[x\\](y) \\<b\\> \\&amp; \\$x\\$ 50% "q" \'q\' next \\`t\\` \\#h \\| \\~s \\\\')
+        'a\\_b \\*c\\* \\[x\\](y) \\<b\\> \\&amp; \\$x\\$ 50% "q" \'q\' next \\`t\\` #⁠h \\| \\~s \\\\')
     assert impact.md("  two\n\nlines  ") == "two lines"
+    assert impact.md("ping @ada about #12 at main@abc1234") == "ping @⁠ada about #⁠12 at main@⁠abc1234"
+    assert [impact.md(x) for x in ("- a", "+ b", "12. c", "3) d", "-x", "12.5 e")] == [
+        "\\- a", "\\+ b", "12\\. c", "3\\) d", "-x", "12.5 e"]   # a leading list marker would nest a list
 
 
 def test_the_markdown_view_is_the_checklist_as_tasks(lab, make_repo, monkeypatch, capsys):
@@ -403,3 +406,28 @@ def test_the_cockpit_frame_reads_the_branch_of_its_checkout(lab, make_repo, monk
     bad = cockpit.branch_impact(tmp_path / "nowhere")                       # never raised: said in the frame
     assert "error" in bad and cockpit.impact_lines({"impact": bad})[0].endswith("not read")
     assert cockpit.tab_panels("health", "impact") == ("impact",) and cockpit.FRAMES["impact"] == "health"
+
+
+def test_the_cockpit_frame_never_fails_the_probe_and_prints_nothing(lab, make_repo, monkeypatch, capsys, tmp_path):
+    from brain import cockpit
+
+    def boom(*a, **k):
+        raise RuntimeError("a bug")
+    real = impact.run
+    monkeypatch.setattr(impact, "run", boom)
+    assert cockpit.branch_impact(lab) == {"error": "RuntimeError: a bug"}
+    monkeypatch.setattr(impact, "run", real)
+    loose = make_repo("loose", {"a.py": "x = 1\n"})                       # in no registered project
+    got = cockpit.branch_impact(loose)
+    assert any("is in no registered project" in n for n in got["notes"]) and capsys.readouterr().err == ""
+
+
+def test_an_overlay_is_read_from_a_worktree_of_the_project(lab, make_repo, monkeypatch, capsys, tmp_path):
+    """A worktree's project keeps the registry's overlays: they sit beside the main checkout, not the worktree."""
+    _overlay(lab)
+    wt = tmp_path / "wt"
+    run_git(lab, "worktree", "add", "-q", "-b", "side", str(wt))
+    FakeGitNexus(monkeypatch, {}, up=False)
+    make_repo.write(wt, {"src/lab/core.py": GO2})
+    d = _impact(capsys, wt)[1]
+    assert d["stores"] == [] and "feat-ops-go" in _ids(d["features"])

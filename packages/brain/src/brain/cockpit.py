@@ -1570,27 +1570,24 @@ def exec_lines(panel: dict | None, width: int = WIDTH) -> list[str]:
 
 
 def branch_impact(here: Path, root: Path | None = None) -> dict:
-    """{repo, branch, files, lines} of ``brain impact --diff`` for the checkout at ``here`` (the cockpit's own
-    folder), else {error}: never raised, and nothing printed (a warning of brain.scout is kept in ``notes``: the
-    cockpit owns the screen)."""
+    """{repo, branch, files, lines, notes} of ``brain impact --diff`` for the checkout at ``here`` (the cockpit's own
+    folder), else {error}: never raised and nothing printed (the cockpit owns the screen: brain.scout's warning of an
+    unregistered repo is kept in ``notes``). A failure of this frame is the frame's, never the probe's: the alerts,
+    the audit and the health read in the same probe go on."""
     import argparse
-    import contextlib
-    import io
 
     from . import impact
     args = argparse.Namespace(diff="", repo_dir=str(here), depth=None, json=False, markdown=False, project=None,
                               root=None)
-    err = io.StringIO()
+    notes: list[str] = []
     try:
-        with contextlib.redirect_stderr(err):
-            rep = impact.run(args, root)
-            branch = impact.git(Path(here), "branch", "--show-current").strip()
-    # shown in the frame: not a git checkout or no base (AuditError), a registry that fails, git missing; anything
-    # else is the probe's error, shown by the cockpit as any panel's (refresh)
-    except (impact.AuditError, projects.RepoError, OSError, ValueError) as exc:
-        return {"error": " ".join(str(exc).split())[:300]}
+        rep = impact.run(args, root, warn=notes.append)
+        branch = impact.git(Path(here), "branch", "--show-current").strip()
+    except Exception as exc:  # noqa: BLE001 (a side frame: its error is its own line, see the docstring)
+        why = " ".join(str(exc).split())[:300] or type(exc).__name__
+        return {"error": why if isinstance(exc, (impact.AuditError, OSError)) else f"{type(exc).__name__}: {why}"}
     return {"repo": rep.repo, "project": rep.project, "branch": branch or "(detached)", "files": len(rep.files),
-            "lines": impact.render(rep), "notes": [x for x in err.getvalue().splitlines() if x.strip()]}
+            "lines": impact.render(rep), "notes": notes}
 
 
 def impact_lines(panel: dict | None, width: int = WIDTH) -> list[str]:
