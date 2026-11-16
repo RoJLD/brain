@@ -771,7 +771,8 @@ folder; its config.json and scopes.yaml are read beside it, whatever `$CLAUDE_BR
 `$BRAIN_CONFIG` name. `--project` is refused: a brain's registry changes by a branch and a PR of that brain, so run it
 in a worktree of it, then `brain sync` and `brain check`.
 
-When the brain has a notes home (« The notes home », below), the plan also shows the project's map there,
+When the brain has a notes home (« The notes home », below: its own config.json's `knowledge.path`, else its
+registry's `kind: knowledge` entry, never another brain's), the plan also shows the project's map there,
 `maps/NAME.md` (`type: map`, `scope: [NAME]`, its id `n-map-NAME`), and `--apply` writes it after the entry, through a
 temporary name, never over a file (`wi-brain-project-add-notes`). The project gets a map, not a folder: the notes
 home's folders say the lifecycle and the class, never the subject, and a note joins the project by its `scope`. The
