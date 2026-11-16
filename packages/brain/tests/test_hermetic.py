@@ -26,6 +26,8 @@ SHELL_VAR = re.compile(r"\$\{?([A-Z][A-Z0-9_]*)")
 PASSTHROUGH = {
     "PATH": "where git, bash and python are found: the tests need them",
     "PATHEXT": "Windows' executable suffixes, for shutil.which",
+    "NODEFAULTCURRENTDIRECTORYINEXEPATH": "set, never read for a decision: the guard sets it so that no program comes "
+                                          "from the working directory (brain.floor.git, brain.floorhook.pin)",
     "HOME": "the user's home: every path the engine derives from it is pinned (BRAIN_HOME, CLAUDE_CONFIG_DIR, ...)",
     "USERPROFILE": "the same on Windows",
     "APPDATA": "Windows' roaming folder: the keystore's and the cockpit's defaults, overridden where a test reads them",
@@ -37,6 +39,7 @@ PASSTHROUGH = {
     "COMPUTERNAME": "the machine's name (brain.machine): the tests pass their own where they compare it",
     "HOSTNAME": "the same in bash (the hooks)",
     "PROGRAMFILES": "where the stranger test finds Git for Windows' bash",
+    "PROGRAMDATA": "where guard.sh's fallback looks for the machine's floor lock: a lock found only adds refusals",
     "SYSTEMROOT": "Windows' own folder, for a child process (brain.depprobes, the stranger test)",
     "GITHUB_STEP_SUMMARY": "the CI's step summary (release_check): the tests pass --summary",
     "CI": "the read mode's default: BRAIN_STRICT, pinned, wins over it; the tests about it set it themselves",
