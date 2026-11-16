@@ -325,6 +325,14 @@
         "owner_strict": {"type": "boolean", "description": "true: the owner's gestures brain.gestures marks strict are refused too (docs/guards.md, the owner's gestures): at the guard brain vault reseal --apply, and vault open, drill, device init and forget-previous, update, uninstall --apply and queue apply, which their commands refuse in an agent's session already; at the command line itself brain usage allow, brain schedule install --apply and brain vault reseal --apply in an agent's session (CLAUDECODE, CLAUDE_CODE_ENTRYPOINT or BRAIN_AGENT_SESSION set), past the hook. Default false: the guard refuses what 0.5.0 refused."}
       }
     },
+    "floor": {
+      "type": "object", "additionalProperties": false,
+      "description": "The locked floor (brain.floor, the owner's R21): the rules marked <!-- lock --> and the guard's refusals that hold them.",
+      "properties": {
+        "refuse": {"type": "boolean", "description": "true: the guard refuses a session's git push to main or master and a forced push (guard floor, checks main and force; BRAIN_GUARD_ALLOW=floor lifts them). Default false: refusals 0.5.1 adds."},
+        "only": {"type": "boolean", "description": "true: this machine gets the floor alone until it is adopted: inject-rules.sh injects the locked rules only, the guard runs only the floor's refusals and the secrets check, the memory notes are not synced either way. Default false."}
+      }
+    },
     "ipc": {
       "type": "object", "additionalProperties": false,
       "description": "The Brain's local services and the machine's token (brain.ipcauth, brain.ipchealth; brain ipc token). docs/mcp.md.",
