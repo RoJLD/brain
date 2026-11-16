@@ -244,7 +244,7 @@ def alerts_of(p: projects.Project, out: dict, stack_reg, sched: dict | None, las
     try:
         found = alerts.of_project(p, stacks_rows=rows("stacks"), index_rows=rows("code_index"),
                                   audit=out.get("audit") if "counts" in (out.get("audit") or {}) else None,
-                                  sched=sched, watched=watched)
+                                  sched=sched, watched=watched, checkout_rows=rows("checkouts"))
     except alerts.AlertsError as exc:
         return {"error": str(exc)}
     d = alerts.summary(found, (last.get(p.name) or {}).get("last_pass"))
@@ -273,6 +273,7 @@ def collect(p: projects.Project, *, quick: bool = False, stack_reg: dict | None 
     else:
         out["audit"] = audit_of(p)
         out.update(probed(p, stack_reg, index))
+        out["checkouts"] = alerts.checkout_rows(p)   # a dirty main checkout (wi-brain-main-checkout-clean)
     out["alerts"] = alerts_of(p, out, stack_reg, sched, alerts.state_load())
     out.update(records_of(p))
     out["tokens"] = cost.status_of(p, None, datetime.now(timezone.utc), quick=quick)

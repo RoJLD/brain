@@ -26,6 +26,12 @@ through the notification channels (brain.notify) per level. Every source is read
   probe      this machine's dependency probes (brain.depprobes, config.json ``probes``) that are not OK: key
              ``probe:<name>``, at the probe's level; carried as engine is. The pass (``brain alerts`` without
              ``--quick``) runs them; a view reads their last run.
+  checkout   each main checkout of the project's repos (a worktree's: its main checkout) with modified or untracked
+             files (``git status --porcelain``, CHECKOUT_TIMEOUT): warn, key ``checkout:<repo>:dirty``, naming the
+             first files and the last session whose working folder it was (the ledger's SessionStart events); one
+             git cannot read is info. Sessions write in worktrees: a file left in a main checkout trips the next pull
+             or merge there (wi-brain-main-checkout-clean). Probed by ``brain alerts`` and ``brain status`` without
+             ``--quick``.
 
 A task alerts after MISSED (2) missed passes (the owner, 2026-10-30: a 15-minute task after 30 minutes), its own
 ``missed:`` otherwise: a pass is missed when no run started within the cadence plus a grace (a tenth of it, 1 to 15
@@ -81,7 +87,10 @@ ERROR_HOURS = 24      # an error event without a later successful run of its tas
 ENGINE_FAILS = 3      # the engine's errors of one task and class in ERROR_HOURS that raise an alert
 MONTHS = 2            # the event files read: this month's and the one before
 SHOWN = 3             # alerts named in brain status's row
-SOURCES = ("scheduler", "ledger", "stack", "code-index", "audit", "events", "file", "engine", "session", "probe")
+SOURCES = ("scheduler", "ledger", "stack", "code-index", "audit", "events", "file", "engine", "session", "probe",
+           "checkout")
+CHECKOUT_TIMEOUT = 10.0   # seconds a main checkout's git status may take
+CHECKOUT_SHOWN = 3        # the files a dirty checkout's alert names
 MASTER_HOURS = 6      # a master the session tree does not know: its watch state written this recently is a live one's
 KEYS = {"scheduler", "exits", "tasks", "stacks", "files", "events", "levels"}
 TASK_KEYS = {"every", "missed", "level", "ledger", "running"}
@@ -800,6 +809,87 @@ def file_alerts(cfg: Config, root: Path, now: datetime) -> list[Alert]:
     return list(out.values())
 
 
+# --- the main checkouts (wi-brain-main-checkout-clean) ---
+
+def _porcelain(path: Path) -> tuple[list[str] | None, str]:
+    """(the lines of ``git status --porcelain`` in ``path``, '' ) or (None, why it could not be read): git missing,
+    slow (CHECKOUT_TIMEOUT), or failing."""
+    try:
+        r = subprocess.run(["git", "-C", str(path), "status", "--porcelain=v1", "--untracked-files=normal"],
+                           capture_output=True, text=True, encoding="utf-8", errors="replace",
+                           timeout=CHECKOUT_TIMEOUT, stdin=subprocess.DEVNULL,
+                           creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+    except subprocess.TimeoutExpired:
+        return None, f"git status took over {CHECKOUT_TIMEOUT:g} s"
+    except (OSError, subprocess.SubprocessError) as exc:
+        return None, f"git status: {type(exc).__name__}"
+    if r.returncode != 0:
+        err = (r.stderr or "").strip().splitlines()
+        return None, f"git status: {err[-1] if err else f'exit {r.returncode}'}"
+    return [ln for ln in r.stdout.splitlines() if ln.strip()], ""
+
+
+def checkout_rows(p: projects.Project) -> list[dict]:
+    """Each main checkout of ``p``'s repos (a worktree's repo: its main checkout), with what ``git status
+    --porcelain`` lists there: [{repo, path, files} or {repo, path, error}]. A main checkout is where the services
+    and scheduled tasks run and the owner pulls: a session writes in a worktree, never there. Zero token: git only."""
+    try:
+        repos = projects.repos_of(p)
+    except projects.RepoError:
+        return []   # brain check says it
+    out, seen = [], set()
+    for r in repos:
+        main = paths.main_checkout(r.path) if r.path.exists() else None
+        if main is None or not main.is_dir():
+            continue
+        key = os.path.normcase(os.path.normpath(str(main)))
+        if key in seen:
+            continue
+        seen.add(key)
+        lines, why = _porcelain(main)
+        out.append({"repo": r.name, "path": main.as_posix(), **({"files": lines} if lines is not None
+                                                                 else {"error": why})})
+    return out
+
+
+def last_session_in(path: str, starts: dict[str, dict] | None = None) -> dict:
+    """The last session whose working folder was ``path`` (the ledger's SessionStart events, brain.sessions), {} when
+    none: who to ask about the files left there."""
+    if starts is None:
+        from . import sessions
+        starts, _ = sessions.ledger_events()
+    key = os.path.normcase(os.path.normpath(path))
+    there = [s for s in starts.values()
+             if s.get("cwd") and os.path.normcase(os.path.normpath(str(s["cwd"]))) == key]
+    return max(there, key=lambda s: str(s.get("started") or ""), default={})
+
+
+def checkout_alerts(cfg: Config, rows, starts: dict[str, dict] | None = None) -> list[Alert]:
+    """A main checkout with modified or untracked files: a warn (the files a merge or a pull trips on, and that the
+    owner did not leave), with the last session that worked there; one that cannot be read is said too (info).
+    ``rows``: :func:`checkout_rows`, None when not probed."""
+    out = []
+    for row in rows or []:
+        repo, where = row["repo"], row["path"]
+        if row.get("error"):
+            out.append(Alert(cfg.project, f"checkout:{repo}:unread", cfg.levels.get("checkout") or "info",
+                             "checkout", repo, f"main checkout {where}: cannot tell whether it is clean "
+                                               f"({row['error']})"))
+            continue
+        files = row.get("files") or []
+        if not files:
+            continue
+        shown = ", ".join(json.dumps(ln[3:].strip(), ensure_ascii=False) for ln in files[:CHECKOUT_SHOWN])
+        more = f" and {len(files) - CHECKOUT_SHOWN} more" if len(files) > CHECKOUT_SHOWN else ""
+        who = last_session_in(where, starts)
+        by = (f"; the last session there: {who.get('name') or who.get('host_id') or who.get('session')} "
+              f"(started {who.get('started') or '?'})" if who else "; no session of the ledger worked there")
+        out.append(Alert(cfg.project, f"checkout:{repo}:dirty", cfg.levels.get("checkout") or "warn", "checkout",
+                         repo, f"main checkout {where} holds {len(files)} modified or untracked file(s): {shown}"
+                               f"{more}: work belongs in a worktree (git status there, then restore or move it){by}"))
+    return out
+
+
 # --- one project ---
 
 def _sorted(alerts: list[Alert]) -> list[Alert]:
@@ -807,10 +897,11 @@ def _sorted(alerts: list[Alert]) -> list[Alert]:
 
 
 def of_project(p: projects.Project, *, stacks_rows=None, index_rows=None, audit=None, sched: dict | None = None,
-               watched: set[str] | None = None, now: datetime | None = None, probe_rows=None) -> list[Alert]:
-    """The open alerts of ``p`` from what was measured (brain.status's stacks, code index and audit rows; None when
-    not probed), the scheduler's rows (read_scheduler; None or {} when not read) and, for the brain's own project,
-    the dependency probes' rows (None: their last run, brain.depprobes.last). Raises AlertsError."""
+               watched: set[str] | None = None, now: datetime | None = None, probe_rows=None,
+               checkout_rows=None) -> list[Alert]:
+    """The open alerts of ``p`` from what was measured (brain.status's stacks, code index, audit and main checkout
+    rows; None when not probed), the scheduler's rows (read_scheduler; None or {} when not read) and, for the brain's
+    own project, the dependency probes' rows (None: their last run, brain.depprobes.last). Raises AlertsError."""
     now = now or _now()
     cfg = config(p)
     events = read_events(p.name, cfg.events, now)
@@ -820,6 +911,7 @@ def of_project(p: projects.Project, *, stacks_rows=None, index_rows=None, audit=
     out += audit_alerts(cfg, audit, audit_baseline(p.root) if audit else None)
     out += event_alerts(cfg, events, now)
     out += file_alerts(cfg, p.root, now)
+    out += checkout_alerts(cfg, checkout_rows)
     if carries_engine(p):
         out += engine_alerts(cfg, now)
         out += master_alerts(cfg, now)
@@ -867,6 +959,7 @@ def run(projs: list[projects.Project], *, quick: bool = False, root: Path | None
                     measured["stacks"] = status.stacks_of(p, stack_reg or {})
                 if index and not isinstance(index, Exception) and index[0]:
                     measured["code_index"] = status.code_index_of(p, *index)
+                measured["checkouts"] = checkout_rows(p)
             d.update(status.alerts_of(p, measured, stack_reg, sched, last))
         out.append(d)
     return {"projects": out, "quick": quick}

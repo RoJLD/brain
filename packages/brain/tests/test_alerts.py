@@ -418,3 +418,70 @@ def test_cli_view_fail_on_raise_resolve_and_notify(tmp_path, monkeypatch, capsys
     with pytest.raises(SystemExit):
         cli.main(["alerts", "--project", "demo", "--dry-run"])
     assert p.name == "demo"
+
+
+# --- the main checkouts (wi-brain-main-checkout-clean) ---
+
+def _git(cwd, *args):
+    import subprocess
+    subprocess.run(["git", "-C", str(cwd), *args], check=True, capture_output=True, stdin=subprocess.DEVNULL)
+
+
+def test_a_dirty_main_checkout_is_a_warn_with_the_last_session_there(tmp_path, monkeypatch):
+    root = tmp_path / "demo"
+    root.mkdir()
+    _git(root, "init", "-q")
+    _git(root, "-c", "user.name=Ada", "-c", "user.email=ada@example.invalid", "commit", "-q", "--allow-empty",
+         "-m", "init")
+    p = _project(tmp_path, monkeypatch, root=root)
+    rows = alerts.checkout_rows(p)
+    assert rows == [{"repo": "demo", "path": root.resolve().as_posix(), "files": []}]
+    assert alerts.checkout_alerts(alerts.config(p), rows) == []   # clean: nothing
+    (root / ".merge_file_a1").write_text("x", encoding="utf-8")
+    (root / "it's 100% $HOME.txt").write_text("y", encoding="utf-8")
+    rows = alerts.checkout_rows(p)
+    assert len(rows[0]["files"]) == 2
+    starts = {"s1": {"session": "s1", "started": "2026-11-02T10:00:00Z", "cwd": str(root), "name": "replay"},
+              "s0": {"session": "s0", "started": "2026-11-01T10:00:00Z", "cwd": str(root), "name": "older"},
+              "s2": {"session": "s2", "started": "2026-11-02T11:00:00Z", "cwd": str(tmp_path / "wt"), "name": "wt"}}
+    found = alerts.checkout_alerts(alerts.config(p), rows, starts)
+    assert _keys(found) == {"checkout:demo:dirty": "warn"}
+    msg = found[0].message
+    assert msg.startswith(f"main checkout {root.resolve().as_posix()} holds 2 modified or untracked file(s): ")
+    assert '".merge_file_a1"' in msg and "work belongs in a worktree" in msg
+    assert msg.endswith("; the last session there: replay (started 2026-11-02T10:00:00Z)")
+    assert alerts.checkout_alerts(alerts.config(p), rows, {})[0].message.endswith(
+        "; no session of the ledger worked there")
+    many = [{"repo": "demo", "path": "/x", "files": [f"?? f{i}" for i in range(5)]}]
+    assert '"f0", "f1", "f2" and 2 more' in alerts.checkout_alerts(alerts.config(p), many, {})[0].message
+    # through of_project, at the project's own level; not probed (None): nothing
+    p = _project(tmp_path, monkeypatch, "levels: {checkout: error}", root=root)
+    assert _keys(alerts.of_project(p, checkout_rows=rows)) == {"checkout:demo:dirty": "error"}
+    assert "checkout:demo:dirty" not in _keys(alerts.of_project(p))
+
+
+def test_a_main_checkout_git_cannot_read_is_said_never_raised(tmp_path, monkeypatch):
+    import subprocess
+    p = _project(tmp_path, monkeypatch)
+
+    def fake(result):
+        def run(*a, **k):
+            if isinstance(result, BaseException):
+                raise result
+            return result
+        return run
+
+    for result, why in ((subprocess.TimeoutExpired(["git"], 10), "git status took over 10 s"),
+                        (FileNotFoundError("git"), "git status: FileNotFoundError"),
+                        (subprocess.CompletedProcess(["git"], 128, "", "fatal: not a git repository\n"),
+                         "git status: fatal: not a git repository")):
+        monkeypatch.setattr(alerts.subprocess, "run", fake(result))
+        lines, said = alerts._porcelain(tmp_path)
+        assert lines is None and why in said, said
+    rows = [{"repo": "demo", "path": "/x", "error": "git status took over 10 s"}]
+    found = alerts.checkout_alerts(alerts.config(p), rows, {})
+    assert _keys(found) == {"checkout:demo:unread": "info"}
+    assert "cannot tell whether it is clean (git status took over 10 s)" in found[0].message
+    garbage = subprocess.CompletedProcess(["git"], 0, "\n  \n?? a.txt\n", "")
+    monkeypatch.setattr(alerts.subprocess, "run", fake(garbage))
+    assert alerts._porcelain(tmp_path) == (["?? a.txt"], "")

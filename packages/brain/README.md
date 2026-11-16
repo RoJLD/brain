@@ -1269,6 +1269,13 @@ state, why, when it ran, the last OK and since when. `brain status` shows a prob
 OK, 2 for a bad declaration); `--last` shows the last run, `--list` every declared probe and its machines, `--kinds`
 the kinds and their keys.
 
+The alerts pass and `brain status` (both without `--quick`) also read each registered repo's main checkout (a
+worktree's repo: its main checkout) with `git status --porcelain`, 10 s at most: modified or untracked files there are
+`checkout:<repo>:dirty` at warn (a project's `levels: {checkout: ...}` changes it), naming the first files and the
+last session whose working folder it was (the ledger's SessionStart events), since sessions write in worktrees and a
+file left in a main checkout trips the next pull or merge there; a checkout git cannot read is
+`checkout:<repo>:unread` at info. Zero token: git only.
+
 ### External calls: retries and breakers
 
 The engine's calls to services it does not run (GitNexus's API and MCP endpoint, docker in `brain index`, the ntfy
