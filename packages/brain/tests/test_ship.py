@@ -128,6 +128,18 @@ def test_an_unreadable_queue_reads_empty_and_the_next_write_sets_it_aside(tmp_pa
     assert any(".unreadable-" in p.name for p in ship.queue_path().parent.iterdir())
 
 
+def test_a_queue_a_newer_brain_wrote_is_read_but_never_written(tmp_path, capsys, monkeypatch):
+    ship.queue_path().parent.mkdir(parents=True)
+    ship.queue_path().write_text(json.dumps({"v": 2, "entries": [{"repo": "acme/lab", "pr": 1, "status": "queued",
+                                                                  "lane": "a newer key"}]}), encoding="utf-8")
+    assert [e["pr"] for e in ship.entries()] == [1]
+    with pytest.raises(ship.stateio.StateError):
+        ship.enqueue("acme/lab", 2, str(tmp_path))
+    monkeypatch.setattr(ship, "merge_queue", lambda *a, **k: (_ for _ in ()).throw(ship.stateio.StateError("newer")))
+    assert cli.main(["ship", "--run"]) == 1 and "newer" in capsys.readouterr().err
+    assert json.loads(ship.queue_path().read_text(encoding="utf-8"))["v"] == 2
+
+
 def _locate_rules(tmp_path, remote_url="https://github.com/acme/lab.git"):
     git_dir = tmp_path / "lab" / ".git"
     git_dir.mkdir(parents=True, exist_ok=True)

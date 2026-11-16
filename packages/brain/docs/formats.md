@@ -158,6 +158,7 @@ projects) keeps its `v` 1 unwritten, so that brain 0.2.5, which reads every key 
 | `usage/sessions.json` | `v` 2 (`LEDGER_V`, apart from the scanner's `SCAN_V`, which only rescans rows; `SCAN_V` 4 adds a row's `tooling` and `refused`, the usage counters by tool id: additive, a row without them, its transcript gone, is read from its `tools`, `commands` and `skills`; an engine of `SCAN_V` 3 rescans a v4 row whose transcript exists and writes it back as v3, so the newer engine rescans it once more: run one engine per machine; from `SCAN_V` 4 on, a newer scanner's row is kept) | `brain usage` brings the rows up to date in memory and says on stderr that it saved nothing |
 | `tui.json` | `v` 1 (beside the older `cockpit: 1`, kept) | the cockpit shows the saved views but does not remember new ones (« brain tui: ... written by a newer brain ... the views are not remembered ») |
 | `memory-sync/state.json` | `v` 1 | the memory sync refuses before any fetch: `last.json` says « failed » and the alert names brain update |
+| `ship/queue.json` | `v` 1 | `brain ship` refuses to queue a PR or to run the merger (exit 1, the refusal said); `--list` still reads it |
 | `formats/<project>.json` | `v` 1 | `brain formats check` runs and reports as usual, and remembers no result: each check runs again next time |
 | `vault/device.json` | `v` 1 | `brain vault device init` (`--rotate` too) and `device forget-previous` refuse before the keystore is touched |
 | `sessions/<id>.json`, `<id>.state.json` | `v` 1 (the SR's schema, `capture.SR_V`; `STATS_V`) | the Stop hook writes neither (a newer brain's session) and logs nothing |
@@ -260,6 +261,7 @@ foreign one is never written here.
 | `update._read_cache` | `update.json` | derived (local) | `{}` is right: the tags are asked again |
 | `net.blocked`, `net.failed` | `net/breakers.json` | truth-local | through `brain.stateio`; losing it costs one timeout per service |
 | `outbox.put`, `outbox.replay` | `outbox/queue.json` | truth-local | through `brain.stateio`; a newer brain's is read-only (nothing queued, said) |
+| `ship.entries`, `ship.enqueue`, `ship.update` | `ship/queue.json` | truth-local | through `brain.stateio`, each write under the lock `ship-queue.lock`; an entry keeps the keys it does not know |
 
 ## The hook contract
 
