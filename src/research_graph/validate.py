@@ -6,6 +6,9 @@ from collections.abc import Iterable
 from pathlib import Path
 
 import networkx as nx
+import yaml  # noqa: F401 - kept importable as validate.yaml, as before the research pack's move
+
+from . import yamlio  # noqa: F401 - kept importable as validate.yamlio
 
 _DECISION_FILES = ("scientific_decisions.md", "decisions.md")
 # the decision logs a store covers when none is given (--decisions): an SDR log, then an ADR log
@@ -197,9 +200,31 @@ def staged_module_without_test(staged_files: list[str], repo_root: str | Path) -
     return problems
 
 
+def empty_decision_bodies(repo_root: str | Path) -> list[str]:
+    """Every dated ## heading in scientific_decisions.md / decisions.md must have a non-empty body."""
+    repo = Path(repo_root)
+    problems: list[str] = []
+    for fname in _DECISION_FILES:
+        f = repo / "notes" / fname
+        if not f.exists():
+            continue
+        lines = f.read_text(encoding="utf-8").splitlines()
+        heads = [
+            (i, m.group(1)) for i, line in enumerate(lines) for m in [_HEADING_RE.match(line)] if m
+        ]
+        for k, (i, date) in enumerate(heads):
+            end = heads[k + 1][0] if k + 1 < len(heads) else len(lines)
+            body = "\n".join(lines[i + 1 : end]).strip()
+            if not body:
+                problems.append(f"notes/{fname}: heading {date} (line {i + 1}) has an empty body")
+    return problems
+
+
 # The research pack's gates (wi-brain-research-pack): moved to research_graph.research_pack, importable from here as
-# before (a research project's own checks import them from validate).
-from .research_pack import (  # noqa: E402,F401 - re-exported names, after the core's own (no import cycle)
+# before (a research project's own checks import them from validate). A monkeypatch on validate's name no
+# longer reaches the moved callers: patch research_graph.research_pack's.
+from .research_pack import (  # noqa: E402,F401 - re-exported names, after the core's own
+    # (research_pack never imports validate at module level: keep it so, or the import cycles)
     _EDGE_ASSERTED,
     _EXP_PATH_RE,
     _edge_nodes,
@@ -215,7 +240,6 @@ from .research_pack import (  # noqa: E402,F401 - re-exported names, after the c
     edge_coverage,
     edge_drift,
     edge_predictive_on_contemporaneous,
-    empty_decision_bodies,
     experiment_tests_no_hypothesis,
     experiments_missing_from_kanban,
     hypothesis_stub_needs_prose,

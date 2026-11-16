@@ -1,12 +1,14 @@
 """The research pack's gates (wi-brain-research-pack, spec-brain-typology-packs E5, TYPO-1): what a research project
 adds to the graph's generic checks, moved out of :mod:`research_graph.validate`'s core. The experiments' folders
-(``experiments/exp*``) and their Experiment nodes, the lab notebook and the kanban, the pre-registration of a staged
-experiment (an SDR), the hypothesis graph's wiring (an Experiment tests a Hypothesis, a validated Hypothesis has its
+(``experiments/exp*``) and their Experiment nodes, the kanban, the pre-registration of a staged
+experiment (its spec:, or a legacy SDR), the hypothesis graph's wiring (an Experiment tests a Hypothesis, a validated Hypothesis has its
 Verdict) and its advisories, and the Edge gates (drift, coverage, a predictive edge on contemporaneous data).
 
 Their behaviour is unchanged and is a contract a research project's own checks rely on (spec-brain-typology-packs
-§4, door 10): ``research_graph check`` runs them as before, each silent on a store without their nodes or folders,
-and :mod:`research_graph.validate` keeps every name importable. A new research rule lands here, never in the core.
+§4, door 10): ``research_graph check`` runs the coverage, wiring and advisory kinds as before, a project's own
+pre-commit the notebook kind, each silent on a store without their nodes or folders, and
+:mod:`research_graph.validate` keeps every name importable (a monkeypatch reaches the moved callers through this
+module's names, no longer validate's). A new research rule lands here, never in the core.
 :data:`GATES` names them, by kind, for the engine's research typology pack (brain typologies packs).
 """
 
@@ -46,25 +48,7 @@ def experiments_missing_from_kanban(repo_root: str | Path) -> list[str]:
     return problems
 
 
-def empty_decision_bodies(repo_root: str | Path) -> list[str]:
-    """Every dated ## heading in scientific_decisions.md / decisions.md must have a non-empty body."""
-    from .validate import _DECISION_FILES, _HEADING_RE  # the core's decision logs (validate imports this module)
-    repo = Path(repo_root)
-    problems: list[str] = []
-    for fname in _DECISION_FILES:
-        f = repo / "notes" / fname
-        if not f.exists():
-            continue
-        lines = f.read_text(encoding="utf-8").splitlines()
-        heads = [
-            (i, m.group(1)) for i, line in enumerate(lines) for m in [_HEADING_RE.match(line)] if m
-        ]
-        for k, (i, date) in enumerate(heads):
-            end = heads[k + 1][0] if k + 1 < len(heads) else len(lines)
-            body = "\n".join(lines[i + 1 : end]).strip()
-            if not body:
-                problems.append(f"notes/{fname}: heading {date} (line {i + 1}) has an empty body")
-    return problems
+
 
 
 _EXP_PATH_RE = re.compile(r"experiments/(exp\d+_[a-z0-9_]+)/")
@@ -411,11 +395,11 @@ def edge_predictive_on_contemporaneous(graph: nx.DiGraph) -> list[str]:
     return problems
 
 
-# The gates by kind, as research_graph check runs them (the engine's research typology pack names them).
+# The gates by kind: research_graph check runs coverage, wiring and advisories; a research project's own
+# pre-commit runs the notebook kind.
 GATES = {
     "coverage": ("missing_experiment_nodes",),
-    "notebook": ("experiments_missing_from_kanban", "empty_decision_bodies", "staged_experiment_gaps",
-                 "all_experiment_gaps"),
+    "notebook": ("experiments_missing_from_kanban", "staged_experiment_gaps", "all_experiment_gaps"),
     "wiring": ("experiment_tests_no_hypothesis", "hypothesis_validated_without_support", "edge_drift",
                "edge_predictive_on_contemporaneous"),
     "advisories": ("l2_without_parent", "hypothesis_stub_needs_prose", "edge_coverage"),
