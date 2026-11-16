@@ -91,25 +91,31 @@ def early(args) -> int:
         print("brain notes: no notes home: give --dir, set config.json knowledge.path, or register one in "
               "projects.yaml with kind: knowledge" + (f" ({root} is no folder)" if root else ""), file=sys.stderr)
         return 2
-    if args.notes_cmd == "check":
-        found = knowledge.check(root, knowledge.brain_ids())
-        errors = [f for f in found if f.level == "error"]
-        if args.json:
-            print(json.dumps([vars(f) for f in found], indent=2))
-        else:
-            print("\n".join(f.line() for f in found) or f"{root}: no finding")
-            if found:
-                print(f"{len(errors)} error(s), {len(found) - len(errors)} warning(s)")
-        return 1 if errors else 0
+    return _check(args, root) if args.notes_cmd == "check" else _find(args, root)
+
+
+def _check(args, root: Path) -> int:
+    found = knowledge.check(root, knowledge.brain_ids())
+    errors = [f for f in found if f.level == "error"]
+    if args.json:
+        print(json.dumps([vars(f) for f in found], indent=2))
+    else:
+        print("\n".join(f.line() for f in found) or f"{root}: no finding")
+        if found:
+            print(f"{len(errors)} error(s), {len(found) - len(errors)} warning(s)")
+    return 1 if errors else 0
+
+
+def _find(args, root: Path) -> int:
     hits = knowledge.find(root, " ".join(args.words), confidential=args.confidential, scope=args.scope,
                           limit=max(args.limit, 1))
     if args.json:
         print(json.dumps(hits, indent=2))
-    else:
-        for h in hits:
-            print(f"{h['path']}  {h['title']}" + (f"  [{h['class']}]" if h["class"] != "private" else ""))
-            if h["snippet"]:
-                print(f"    {h['snippet']}")
-        if not hits:
-            print("no note holds every word")
+        return 0
+    for h in hits:
+        print(f"{h['path']}  {h['title']}" + (f"  [{h['class']}]" if h["class"] != "private" else ""))
+        if h["snippet"]:
+            print(f"    {h['snippet']}")
+    if not hits:
+        print("no note holds every word")
     return 0
