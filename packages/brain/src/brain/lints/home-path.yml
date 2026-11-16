@@ -1,0 +1,28 @@
+# format.home-path (brain.formatlint): a path into the brain's home built by hand outside brain.paths.
+# The python backend reads the same rule in the AST; brain lint formats --compare shows where they differ.
+id: format.home-path
+language: python
+severity: warning
+message: a path into the brain's home built outside brain.paths
+rule:
+  any:
+    - all:
+        - any:
+            - pattern: Path.home() / $S
+            - pattern: pathlib.Path.home() / $S
+        - has:
+            kind: string
+            regex: '^[rbuRBU]*["'']\.brain(["''/\\])'
+    - all:
+        - any:
+            - pattern: os.path.expanduser($S)
+            - pattern: expanduser($S)
+            - pattern: Path($S).expanduser()
+            - pattern: pathlib.Path($S).expanduser()
+        # the literal argument itself (a child of the argument list), never a string deeper in an expression
+        - has:
+            kind: argument_list
+            stopBy: end
+            has:
+              kind: string
+              regex: '^[rbuRBU]*["'']~[/\\]+\.brain(["''/\\])'
