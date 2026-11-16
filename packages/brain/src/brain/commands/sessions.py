@@ -19,13 +19,36 @@ USAGE = """\
                         id (a prefix of 8 or more) or its short name, and what a message would meet (live, idle,
                         archived); --report: its last final message in full, read from its transcript; the options
                         go before or after tree/show
+  brain sessions self [--json]   this session's own app id (local_..., from $CLAUDE_CODE_HOST_SESSION_ID), the one a
+                        report to a coordinator is signed with; exit 1 outside an app session (the app's get_session
+                        self tells it there)
 """
 NO_PROJECT = {"sessions"}   # its parsers that take no --project after them
 
 
+def cmd_self(as_json: bool) -> int:
+    """brain sessions self: this session's app id, the one its reports are signed with (wi-brain-brief-own-id): never
+    the coordinator's, nor the shared notes folder's, which names the first coordinator."""
+    import json
+    import os
+    import sys
+    sid = os.environ.get("CLAUDE_CODE_HOST_SESSION_ID", "").strip()
+    if as_json:
+        print(json.dumps({"id": sid, "source": "CLAUDE_CODE_HOST_SESSION_ID" if sid else ""}))
+    elif sid:
+        print(sid)
+    if not sid:
+        print("brain sessions self: no app session id here ($CLAUDE_CODE_HOST_SESSION_ID is not set): in the desktop "
+              "app, its get_session tool with the id self tells it", file=sys.stderr)
+        return 1
+    return 0
+
+
 def cmd_sessions(args) -> int:
-    """brain sessions [tree [ID] | show ID] (brain.sessions): machine-wide, no graph store."""
+    """brain sessions [tree [ID] | show ID | self] (brain.sessions): machine-wide, no graph store."""
     from .. import sessions
+    if args.sessions_cmd == "self":
+        return cmd_self(args.json)
     try:
         print(sessions.main(args.sessions_cmd or "list", getattr(args, "ref", "") or "", hours=args.hours,
                             every=args.all, briefs=not args.no_briefs, as_json=args.json,
@@ -47,7 +70,9 @@ def register(sub, ctx) -> None:
         if name == "show":
             sp_.add_argument("--report", action="store_true", help="its last final message in full, from its "
                                                                    "transcript (never stored)")
-    for sp_ in (ses, *ses_sub.choices.values()):
+    me = ses_sub.add_parser("self", help="this session's own app id (local_...), the one its reports are signed with")
+    me.add_argument("--json", action="store_true", default=argparse.SUPPRESS)
+    for sp_ in (ses, *(p for n, p in ses_sub.choices.items() if n != "self")):
         # the subcommands' own copies default to SUPPRESS: given before tree/show, an option is not reset by the
         # subparser's default (review of #34, finding 56)
         keep = {} if sp_ is ses else {"default": argparse.SUPPRESS}

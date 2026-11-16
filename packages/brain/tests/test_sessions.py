@@ -764,3 +764,18 @@ def test_check_warns_on_an_old_stamp_whose_session_left_the_app_and_the_ledger(a
     assert "stamped over 7 days ago" in warned[0]
     recent = {**old, "at": _iso_ago(86400)}
     assert sessions.unknown_ids([(Path("e.yaml"), {"id": "ddr-e", "asked": recent})])[0]
+
+
+def test_sessions_self_prints_this_sessions_own_app_id(monkeypatch, capsys):
+    """wi-brain-brief-own-id: the id a report is signed with, read from the app's environment; exit 1 without it."""
+    me = "local_a0000000-0000-4000-8000-00000000000a"
+    monkeypatch.setenv("CLAUDE_CODE_HOST_SESSION_ID", me)
+    assert cli.main(["sessions", "self"]) == 0 and capsys.readouterr().out.strip() == me
+    for argv in (["sessions", "self", "--json"], ["sessions", "--json", "self"]):
+        assert cli.main(argv) == 0
+        assert json.loads(capsys.readouterr().out) == {"id": me, "source": "CLAUDE_CODE_HOST_SESSION_ID"}
+    monkeypatch.delenv("CLAUDE_CODE_HOST_SESSION_ID")
+    assert cli.main(["sessions", "self"]) == 1
+    out = capsys.readouterr()
+    assert out.out == "" and "get_session tool with the id self" in out.err
+    assert cli.main(["sessions", "self", "--json"]) == 1 and json.loads(capsys.readouterr().out)["id"] == ""

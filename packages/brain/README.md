@@ -974,6 +974,9 @@ and its recap.
 - **`brain sessions show ID [--report]`**: one session by either id (a prefix of 8 or more) or its short name, its
   family, and what a message would meet: live and working (it waits in the queue), idle (it starts a turn), archived
   (lost). `--report` prints its last final message in full, read from its transcript, never stored.
+- **`brain sessions self [--json]`**: this session's own app id (`local_...`, from `$CLAUDE_CODE_HOST_SESSION_ID`),
+  the one a report to its coordinator is signed with, never the coordinator's nor the shared notes folder's (`brain
+  brief` says so); exit 1 outside an app session, where the app's get_session tool with the id `self` tells it.
 
 `brain decision ask`, `answer`, `ack` and `archive` (and the question-tool capture) stamp the session's transcript id
 and its app id with the machine (`host_id`, `machine`), the app id only when the app's own file of it names this

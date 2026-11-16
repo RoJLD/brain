@@ -393,7 +393,8 @@ def render(b: Brief) -> str:
              f"- **Cost estimate:** {b.estimate}",
              *([f"- **Streams that fit now:** {b.streams}"] if b.streams else []),
              f"- **Coordinator:** {who(b.coordinator, 'unknown (--coordinator)')}: report to it by SendMessage, "
-             "signed with your own `local_` id; give your PR numbers and head shas.",
+             "signed with your own `local_` id (`brain sessions self` prints it; or the app's get_session with the id "
+             "self), never the coordinator's nor the notes folder's; give your PR numbers and head shas.",
              f"- **Shared notes folder:** {who(b.notes, 'none found (--notes)')}"]
     if b.warnings:
         lines += ["", "**Check:** " + "; ".join(b.warnings) + "."]
