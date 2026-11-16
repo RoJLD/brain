@@ -490,11 +490,12 @@ def _appended_yaml(tpl: Template, rel: str, text: str, name: str) -> None:
 
 def files_for(owner: str, kind: str, tenant: str | None, tier: str, name: str,
               tpl: Template | None = None, stage: str = DEFAULT_STAGE, lifecycle: dict | None = None,
-              examples: bool = False) -> dict[str, str]:
+              spheres: tuple[str, ...] = ()) -> dict[str, str]:
     """{path relative to the brain: text} for every file brain init writes but the store and the Claude files:
     config.json, then the template's files (with what it appends to them) with their variables rendered. A YAML
     file must read as YAML once rendered (an appended fragment that breaks it is the template's error). With
-    ``examples`` and a person, scopes.yaml with the default spheres (SCOPE-1), unless the template writes one."""
+    ``spheres`` (:func:`examples_for`), scopes.yaml with those default spheres (SCOPE-1), unless the template writes
+    one."""
     tpl = tpl or load_template()
     values = {"owner": owner, "owner_q": json.dumps(owner, ensure_ascii=False), "name": name,
               "title_q": json.dumps(f"{owner}'s brain: rules, decisions, backlog and journal", ensure_ascii=False),
@@ -507,10 +508,10 @@ def files_for(owner: str, kind: str, tenant: str | None, tier: str, name: str,
     if lifecycle and "projects.yaml" in out:   # brain project new's answers, under the brain's own entry (the last)
         out["projects.yaml"] = out["projects.yaml"].rstrip("\n") + "\n" + lifecycle_line(lifecycle)
         _lifecycle_landed(tpl, out["projects.yaml"], name, lifecycle)
-    if examples and kind == "person":
+    if spheres:
         from . import scopes
         if scopes.FILE not in out:
-            out[scopes.FILE] = scopes.default_spheres_text()
+            out[scopes.FILE] = scopes.default_spheres_text(spheres)
     return out
 
 
@@ -529,13 +530,56 @@ def _lifecycle_landed(tpl: Template, text: str, name: str, lifecycle: dict) -> N
                         f"({name}), indented two spaces, which must be the registry's last")
 
 
-def examples_line(kind: str) -> str:
-    """What --examples adds, said in the plan: a person's default spheres (SCOPE-1), none for a team."""
+def kind_in(root: Path) -> str:
+    """identity.kind of the config.json already in ``root`` ('' when it has none): a re-run keeps that file."""
+    try:
+        data = json.loads((Path(root) / config.FILE).read_text(encoding="utf-8-sig"))
+    except (OSError, ValueError):
+        return ""
+    ident = data.get("identity") if isinstance(data, dict) else None
+    kind = ident.get("kind") if isinstance(ident, dict) else None
+    return kind if isinstance(kind, str) else ""
+
+
+def registry_ids(root: Path) -> set[str]:
+    """The entries' ids of the projects.yaml already in ``root`` (none when it has none or it is not readable)."""
+    try:
+        data = graph.load_yaml((Path(root) / "projects.yaml").read_text(encoding="utf-8"))
+    except Exception:  # noqa: BLE001 - a registry that cannot be read is brain check's to report; no id is taken here
+        return set()
+    return {str(k) for k in data} if isinstance(data, dict) else set()
+
+
+def examples_for(root: Path, kind: str, name: str) -> tuple[str, tuple[str, ...], tuple[str, ...]]:
+    """(the brain's kind, the default spheres --examples writes, those left out) for brain init in ``root``: the kind
+    is the identity.kind of a config.json already there (a re-run keeps it), else ``kind``; a team has none; a sphere
+    whose id is a project's of the registry (the brain's own ``name``, an entry of a projects.yaml already there) is
+    left out, the tree's ids being unique."""
     from . import scopes
+    kind = kind_in(root) or kind
     if kind != "person":
-        return "--examples: a team has no default spheres (SCOPE-1): scopes.yaml is left out"
-    return (f"--examples: scopes.yaml holds the default spheres of a person ({', '.join(scopes.DEFAULT_SPHERES)}; "
-            "brain scopes shows them, brain project add NAME --parent pro places a project under one)")
+        return kind, (), ()
+    taken = {name} | registry_ids(root)
+    return (kind, tuple(s for s in scopes.DEFAULT_SPHERES if s not in taken),
+            tuple(s for s in scopes.DEFAULT_SPHERES if s in taken))
+
+
+def examples_line(root: Path, kind: str, name: str) -> str:
+    """What --examples adds, said in the plan: a person's default spheres (SCOPE-1), none for a team, a sphere whose
+    id a project holds left out and named."""
+    kind, spheres, left = examples_for(root, kind, name)
+    if kind != "person":
+        return f"--examples: a {kind} has no default spheres (SCOPE-1): scopes.yaml is left out"
+    out = "--examples: "
+    if spheres:
+        out += (f"scopes.yaml holds the default spheres of a person ({', '.join(spheres)}; brain scopes shows them, "
+                f"brain project add NAME --parent {spheres[0]} places a project under one)")
+    else:
+        out += "no default sphere is written"
+    if left:
+        out += (f"; left out: {', '.join(left)} (a project of the registry has that id; a scope id is unique: "
+                "brain init --name names the brain's own another way)")
+    return out
 
 
 def lifecycle_line(lifecycle: dict) -> str:
@@ -627,7 +671,8 @@ def plan(root: Path, owner: str, *, kind: str = "person", tenant: str | None = N
     tpl = load_template(template_spec)
     root = Path(root).resolve()
     steps, created = [], set()
-    for rel, text in files_for(owner, kind, tenant, tier, name, tpl, stage, lifecycle, examples).items():
+    spheres = examples_for(root, kind, name)[1] if examples else ()
+    for rel, text in files_for(owner, kind, tenant, tier, name, tpl, stage, lifecycle, spheres).items():
         steps.append(_file_step(root / rel, text, tpl.appended(rel)))
         if steps[-1].action == "create":
             created.add(rel)
@@ -849,13 +894,16 @@ def _apply_files(root: Path, steps: list[Step], owner: str, same: list[str]) -> 
 
 def _scopes_view(root: Path, steps: list[Step]) -> None:
     """The scope tree's view (notes/scopes_graph.md) beside a scopes.yaml brain init wrote (--examples), so the new
-    brain's first brain check finds it current; brain sync writes it otherwise."""
-    from . import scopes
+    brain's first brain check finds it current; brain sync writes it otherwise. Read as the new brain sees itself
+    (brain.project_add.this_brain): never the registry or tree another brain's $BRAIN_PROJECTS, $BRAIN_SCOPES,
+    $BRAIN_CONFIG or $CLAUDE_BRAIN_DIR name."""
+    from . import project_add, projects, scopes
     if not any(s.action == "create" and s.path.name == scopes.FILE for s in steps):
         return
-    cfg = config.load(root)
-    if scopes.view_applies(root, cfg):
-        scopes.write_view(root, cfg)
+    with project_add.this_brain(Path(root) / projects.REGISTRY):
+        cfg = config.load(root)
+        if scopes.view_applies(root, cfg):
+            scopes.write_view(root, cfg)
 
 
 def _planned(root: Path, args) -> tuple:
@@ -891,7 +939,7 @@ def main(args) -> int:
           f"{ENGINE_REPO}@v{__version__}")
     print("\n".join(show(root, steps)))
     if getattr(args, "examples", False):
-        print(examples_line(args.kind))
+        print(examples_line(root, args.kind, args.name))
     same = _show_modules(root, args, owner, tier, mod) if mod else []
     if not args.apply:
         if getattr(args, "plan_hint", ""):   # brain project new's own words

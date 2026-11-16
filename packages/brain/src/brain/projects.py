@@ -880,13 +880,20 @@ def _lifecycle_errors(where: str, value, root: Path | None) -> list[str]:
             cat = cat or typologies.load(config.load(root))
             known = tuple(cat.stages)
         if got not in known:
-            errors += schema.tolerate(f"{where}: {key} {got!r} is not one of {', '.join(known)}")
+            errors += schema.tolerate(f"{where}: {key} {got!r} is not one of {', '.join(known)}"
+                                      + _standards_hint(key, got, cat))
     typs = value.get("typologies")
     if typs is None:
         return errors
     if not (isinstance(typs, list) and all(isinstance(t, str) and t for t in typs)):
         return errors + [f"{where}: typologies is a list of typology ids (brain typologies)"]
     return errors + typologies.unknown(f"{where}.typologies", typs, cat or typologies.load(config.load(root)))
+
+
+def _standards_hint(key: str, got, cat) -> str:
+    """For a standards stage written as lifecycle.stage (mvp), the lifecycle stage it reads as (build), "" else."""
+    mapped = cat.standards_stages.get(got) if key == "stage" and cat is not None and isinstance(got, str) else None
+    return f" (a standards stage: write {mapped}, the lifecycle stage {got} reads as)" if mapped else ""
 
 
 def _standards_errors(where: str, value, registry: Path | None, engine: list) -> list[str]:

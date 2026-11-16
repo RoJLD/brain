@@ -19,15 +19,16 @@ stays and the line says why.
 names join ``public.deny.repos`` when ``public.deny_from_tree`` is on), ``--title`` gives its one line.
 
 **The qualification** (spec-brain-product-lifecycle 3.10, LC-1): five questions, each a setting of the Brain, asked
-by the plan (each one unanswered is named with its option) or in the terminal with ``--interactive``, never by a
-model. Their answers go to the entry's ``lifecycle`` (an instance or a template's project; a read-only entry holds
-none):
+by the plan (each one unanswered is named with its option) or in the terminal with ``--interactive`` (once the
+options are checked), never by a model. Their answers go to the entry's ``lifecycle`` (an instance or a template's
+project; a read-only entry holds none, its criticity ``--floor`` only):
 
 1. the purpose and the audience: ``--profile`` (:data:`brain.projects.LIFECYCLE_PROFILES`) -> ``lifecycle.profile``;
 2. what it produces: ``--kind K`` (repeatable, ids of the typology catalog, brain typologies) ->
    ``lifecycle.typologies`` (its items' clauses of done);
 3. its stage, the entry point: ``--stage S`` (a lifecycle stage, or a standards stage read as one: mvp -> build) ->
-   ``lifecycle.stage``, with ``since`` the day it is written;
+   ``lifecycle.stage``, with ``since`` the local day it is written; with ``--template``, ``brain init --stage`` takes
+   the standards stage it reads back as (build -> mvp, launch -> v1, grow -> scale; none: its default);
 4. its criticity: ``--floor CLASS`` -> ``classes.floor`` (the class floor of its node);
 5. who works on it: ``--team`` (with ``--template``: the new brain is a team's, ``brain init --kind team``; an
    instance keeps the ``identity.kind`` of its own config.json, shown).
@@ -53,7 +54,7 @@ import os
 import re
 import time
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 from pathlib import Path
 
 import yaml
@@ -194,7 +195,7 @@ def lifecycle_of(args, cat: typologies.Catalog | None = None, today: str | None 
             raise AddError(f"--stage {stage}: one of the lifecycle's stages ({', '.join(cat.stages)}) or the "
                            f"standards' ({', '.join(cat.standards_stages)})")
         lc["stage"] = mapped
-        lc["since"] = today or datetime.now(timezone.utc).strftime("%Y-%m-%d")
+        lc["since"] = today or date.today().isoformat()   # the local day, as every brain command dates
     if profile:
         if profile not in projects.LIFECYCLE_PROFILES:
             raise AddError(f"--profile {profile}: one of {', '.join(projects.LIFECYCLE_PROFILES)}")
@@ -246,8 +247,10 @@ def _env(**values):
 
 def this_brain(registry: Path):
     """The brain being edited as every read of the command sees it: its folder first among the bases (its
-    config.json, its scopes.yaml), its registry, whatever $CLAUDE_BRAIN_DIR, $BRAIN_PERSONAL or $BRAIN_CONFIG name."""
-    return _env(CLAUDE_BRAIN_DIR=str(registry.parent), BRAIN_PROJECTS=str(registry), BRAIN_CONFIG=None)
+    config.json, its scopes.yaml), its registry, whatever $CLAUDE_BRAIN_DIR, $BRAIN_PERSONAL, $BRAIN_CONFIG or
+    $BRAIN_SCOPES name (another brain's: its tree is read from its own config.json's scopes, else scopes.yaml)."""
+    return _env(CLAUDE_BRAIN_DIR=str(registry.parent), BRAIN_PROJECTS=str(registry), BRAIN_CONFIG=None,
+                BRAIN_SCOPES=None)
 
 
 def _registry_as(path: Path):
@@ -359,14 +362,15 @@ def plan(args, registry: Path) -> Plan:
     cfg = config.load(registry.parent)
     _check_name(args.name, registry, cfg)
     _check_target(args, registry)
-    entry = entry_for(args, registry, lifecycle_of(args, typologies.load(cfg)))
+    cat = typologies.load(cfg)
+    entry = entry_for(args, registry, lifecycle_of(args, cat))
     init = None
     if args.template:
         init = ["brain", "init", str(Path(args.dir)), "--template", args.template, "--name", args.name,
                 "--owner", config.owner_of(registry.parent)]
-        from . import init as init_mod
-        if getattr(args, "stage", None) in init_mod.STAGES:   # a standards stage: the standards its template selects
-            init += ["--stage", args.stage]
+        std = standards_stage((entry.get("lifecycle") or {}).get("stage"), cat)
+        if std:   # the standards its template selects, at the stage the entry records
+            init += ["--stage", std]
         if getattr(args, "team", False):
             init += ["--kind", "team"]
         terms = _template_terms(registry, args.name, entry, cfg)
@@ -374,6 +378,16 @@ def plan(args, registry: Path) -> Plan:
         terms = checked(registry, args.name, entry, cfg)
     home, step, why = notes_step(args, cfg, registry)
     return Plan(args.name, registry, entry, init, terms, home, step, why, who_of(args))
+
+
+def standards_stage(stage: str | None, cat: typologies.Catalog) -> str | None:
+    """The standards stage (brain init --stage) a lifecycle stage reads as, typologies.yaml standards_stages read
+    back (build -> mvp, launch -> v1, grow -> scale): brain init's standards then agree with the entry's
+    lifecycle.stage; None for a stage none maps to (mature, deliver...: brain init's default)."""
+    if not stage:
+        return None
+    from . import init as init_mod
+    return next((std for std, lc in cat.standards_stages.items() if lc == stage and std in init_mod.STAGES), None)
 
 
 def who_of(args) -> str:
@@ -445,6 +459,10 @@ def render(p: Plan, apply: bool) -> list[str]:
     if p.new_terms:
         lines.append(f"  public.deny.repos gains (public.deny_from_tree): {', '.join(p.new_terms)}")
     lines += qualification_lines(p)
+    stage = (p.entry.get("lifecycle") or {}).get("stage")
+    if p.init and stage and "--stage" not in p.init:
+        lines.append(f"  brain init's standards: its default stage ({stage} reads as no standards stage: "
+                     "brain typologies)")
     lines.append(notes_line(p))
     return lines
 
@@ -452,10 +470,12 @@ def render(p: Plan, apply: bool) -> list[str]:
 def qualification_lines(p: Plan) -> list[str]:
     """The five questions of the qualification (spec-brain-product-lifecycle 3.10), each with its answer and where
     it goes, or the option that answers it; a read-only entry holds none."""
-    if p.entry.get("access") == "read":
-        return ["  qualification: none for a read-only project (its own sessions qualify it)"]
-    lc = p.entry.get("lifecycle") or {}
     floor = (p.entry.get("classes") or {}).get("floor")
+    if p.entry.get("access") == "read":
+        got = f"{floor} (classes.floor)" if floor else "not answered (--floor CLASS)"
+        return [f"  qualification: a read-only project answers 4 only, its criticity: {got}; its own sessions answer "
+                "the others"]
+    lc = p.entry.get("lifecycle") or {}
     stage = f"{lc['stage']} (since {lc.get('since')})" if lc.get("stage") else ""
     rows = [("1 purpose and audience", "lifecycle.profile", lc.get("profile"),
              "--profile " + "|".join(projects.LIFECYCLE_PROFILES)),
@@ -488,6 +508,30 @@ def ask(args, read=None, out=print) -> None:
         args.floor = read(f"4 criticity, its class floor ({'|'.join(_classes())}): ").strip() or None
     if args.template and not getattr(args, "team", False):
         args.team = read("5 who works on it: a person or a team? [person/team] ").strip().lower() in ("team", "t")
+
+
+NO_TERMINAL = ("brain project add: --interactive needs a terminal; --profile, --kind, --stage, --floor and --team "
+               "answer the same questions")
+
+
+def interactive(args, read=None) -> int:
+    """--interactive once the options are checked: the questions asked (:func:`ask`), 0; 2 without a terminal, an
+    input that ends (stdin from NUL or /dev/null, where isatty may say True) read as none, or a cancel."""
+    from . import firstrun
+    if not firstrun.tty():
+        print(NO_TERMINAL)
+        return 2
+    try:
+        ask(args, read)
+    except EOFError:
+        print()
+        print(NO_TERMINAL + " (its input ended)")
+        return 2
+    except KeyboardInterrupt:
+        print()
+        print("brain project add: cancelled, nothing written")
+        return 2
+    return 0
 
 
 def notes_line(p: Plan) -> str:
@@ -542,21 +586,14 @@ def main(args) -> int:
     if getattr(args, "project", None):
         print("brain project add: --project is not taken here: --root names the brain whose registry it writes")
         return 2
-    if getattr(args, "interactive", False):
-        from . import firstrun
-        if not firstrun.tty():
-            print("brain project add: --interactive needs a terminal; --profile, --kind, --stage, --floor and --team "
-                  "answer the same questions")
-            return 2
-        try:
-            ask(args)
-        except (EOFError, KeyboardInterrupt):
-            print()
-            print("brain project add: cancelled, nothing written")
-            return 2
     try:
         registry = registry_of(getattr(args, "root", None))
         with this_brain(registry):
+            if getattr(args, "interactive", False):
+                plan(args, registry)   # the options checked first: nothing is asked to be refused then
+                code = interactive(args)
+                if code:
+                    return code
             p = plan(args, registry)
     except AddError as exc:
         print(f"brain project add: {exc}")

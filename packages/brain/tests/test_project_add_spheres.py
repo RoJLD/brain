@@ -8,7 +8,7 @@ import json
 
 import pytest
 import yaml
-from brain import __version__, cli, firstrun, init, paths, project_add, projects, scopes, skew
+from brain import __version__, cli, firstrun, init, paths, project_add, projects, schema, scopes, skew
 
 HEADER = "home:\n  root: .\n  title: the brain itself\n"
 
@@ -135,7 +135,8 @@ def test_the_plan_names_each_unanswered_question_with_its_option(home, bench, ca
 
 def test_a_read_only_project_takes_no_qualification(home, capsys):
     assert cli.main(["--root", str(home), "project", "add", "orchard", "--read", "--parent", "personal"]) == 0
-    assert "qualification: none for a read-only project" in capsys.readouterr().out
+    assert "qualification: a read-only project answers 4 only, its criticity: not answered (--floor CLASS)" in \
+        capsys.readouterr().out
     assert cli.main(["--root", str(home), "project", "add", "orchard", "--read", "--kind", "cli"]) == 2
     assert "--kind: a read-only project's entry holds title, access, parent and classes only" in \
         capsys.readouterr().out
@@ -228,12 +229,17 @@ def test_lifecycle_of_maps_a_standards_stage_and_dates_it(monkeypatch):
     ("shape: round", "shape 'round' is not one of living, finite"),
     ("profile: hobby", "profile 'hobby' is not one of maker"),
 ])
-def test_an_unknown_lifecycle_value_is_an_error_in_strict_mode_a_note_in_read_mode(home, monkeypatch, line, what):
+def test_an_unknown_lifecycle_value_is_an_error_in_strict_mode_a_note_in_read_mode(home, monkeypatch, capsys, line,
+                                                                                    what):
     (home / "projects.yaml").write_text(HEADER + f"  lifecycle: {{{line}}}\n", encoding="utf-8")
     errors = projects.check(home)
     assert any(what in e for e in errors), errors
     monkeypatch.setenv("BRAIN_STRICT", "0")
+    monkeypatch.setattr(schema, "_NOTED", set())   # a note is printed once per process: this test's own
+    capsys.readouterr()
     assert not any(what in e for e in projects.check(home))
+    notes = [ln for ln in capsys.readouterr().err.splitlines() if ln.startswith("brain: note: ")]
+    assert any(what in ln and "(kept: a newer brain's key? strict in CI)" in ln for ln in notes), notes
 
 
 def test_known_lifecycle_values_pass(home):
@@ -241,3 +247,146 @@ def test_known_lifecycle_values_pass(home):
         HEADER + "  lifecycle: {typologies: [software], stage: deliver, shape: finite, profile: open-source, "
                  "since: '2030-01-02'}\n", encoding="utf-8")
     assert projects.check(home) == []
+
+
+def test_a_standards_stage_written_as_the_lifecycle_s_names_the_stage_it_reads_as(home):
+    (home / "projects.yaml").write_text(HEADER + "  lifecycle: {stage: mvp}\n", encoding="utf-8")
+    errors = projects.check(home)
+    assert any("stage 'mvp' is not one of" in e and "a standards stage: write build" in e for e in errors), errors
+
+
+# --- the review's findings ------------------------------------------------------------------------------------------
+
+def test_init_examples_view_reads_the_new_brain_never_another_s_environment(tmp_path, monkeypatch, capsys):
+    other = tmp_path / "other"
+    other.mkdir()
+    (other / "projects.yaml").write_text("zeta-lab:\n  root: .\n", encoding="utf-8")
+    (other / "scopes.yaml").write_text("v: 1\nscopes:\n  far-sphere: {type: sphere, title: Far}\n", encoding="utf-8")
+    monkeypatch.setenv("BRAIN_PROJECTS", (other / "projects.yaml").as_posix())
+    monkeypatch.setenv("BRAIN_SCOPES", (other / "scopes.yaml").as_posix())
+    root = tmp_path / "ada-brain"
+    assert cli.main(["init", str(root), "--owner", "Ada", "--examples", "--apply"]) == 0
+    capsys.readouterr()
+    view = (root / scopes.VIEW).read_text(encoding="utf-8")
+    assert "zeta-lab" not in view and "far-sphere" not in view
+    assert all(s in view for s in scopes.DEFAULT_SPHERES)
+    monkeypatch.delenv("BRAIN_PROJECTS")
+    monkeypatch.delenv("BRAIN_SCOPES")
+    assert view == scopes.view_text(scopes.load(root))   # current for the new brain's own brain check
+
+
+def test_project_add_reads_the_tree_of_the_brain_it_edits_whatever_brain_scopes_names(home, bench, tmp_path,
+                                                                                      monkeypatch, capsys):
+    elsewhere = tmp_path / "elsewhere.yaml"
+    elsewhere.write_text("v: 1\nscopes:\n  far-sphere: {type: sphere, title: Far}\n", encoding="utf-8")
+    monkeypatch.setenv("BRAIN_SCOPES", elsewhere.as_posix())
+    words = ["--root", str(home), "project", "add", "bench", "--existing", str(bench)]
+    assert cli.main([*words, "--parent", "far-sphere"]) == 2   # not a node of this brain's tree
+    capsys.readouterr()
+    assert cli.main([*words, "--parent", "academic", "--apply"]) == 0
+    assert registry(home)["bench"]["parent"] == "academic"
+
+
+def test_init_examples_leaves_out_a_sphere_the_brain_s_own_name_holds(tmp_path, capsys):
+    root = tmp_path / "pro-brain"
+    assert cli.main(["init", str(root), "--owner", "Ada", "--name", "pro", "--examples"]) == 0
+    out = capsys.readouterr().out
+    assert "--examples: scopes.yaml holds the default spheres of a person (personal, academic;" in out
+    assert "left out: pro (a project of the registry has that id" in out
+    assert cli.main(["init", str(root), "--owner", "Ada", "--name", "pro", "--examples", "--apply"]) == 0
+    capsys.readouterr()
+    data = yaml.safe_load((root / "scopes.yaml").read_text(encoding="utf-8"))
+    assert list(data["scopes"]) == ["personal", "academic"]
+    assert scopes.check(root) == ([], [])
+
+
+def test_init_examples_leaves_out_a_sphere_a_kept_registry_holds(tmp_path):
+    root = tmp_path / "kept"
+    root.mkdir()
+    (root / "projects.yaml").write_text("brain:\n  root: .\nacademic:\n  root: ../thesis\n", encoding="utf-8")
+    assert init.examples_for(root, "person", "brain") == ("person", ("pro", "personal"), ("academic",))
+    assert init.examples_for(root, "team", "brain") == ("team", (), ())
+
+
+def test_init_examples_on_a_team_brain_keeps_its_kind_without_kind_team(tmp_path, capsys):
+    root = tmp_path / "lab"
+    assert cli.main(["init", str(root), "--owner", "Lab Z", "--kind", "team", "--apply"]) == 0
+    capsys.readouterr()
+    assert cli.main(["init", str(root), "--examples", "--apply"]) == 0   # a re-run: --kind left at its default
+    out = capsys.readouterr().out
+    assert "--examples: a team has no default spheres" in out and not (root / "scopes.yaml").exists()
+    assert init.kind_in(root) == "team"
+
+
+def test_since_is_the_local_day(monkeypatch):
+    import argparse
+    import datetime as dt
+
+    class Local(dt.date):
+        @classmethod
+        def today(cls):
+            return cls(2030, 5, 6)
+
+    monkeypatch.setattr(project_add, "date", Local)
+    lc = project_add.lifecycle_of(argparse.Namespace(kinds=None, profile=None, stage="build"))
+    assert lc == {"stage": "build", "since": "2030-05-06"}
+
+
+@pytest.mark.parametrize("stage, std", [("launch", "v1"), ("build", "mvp"), ("grow", "scale"), ("explore", "prototype"),
+                                        ("mature", None), (None, None)])
+def test_a_lifecycle_stage_reads_back_as_its_standards_stage(stage, std):
+    assert project_add.standards_stage(stage, project_add.typologies.load()) == std
+
+
+def test_a_template_s_lifecycle_stage_selects_the_same_standards(home, tmp_path, capsys):
+    paths.personal_file().parent.mkdir(parents=True, exist_ok=True)
+    paths.personal_file().write_text(json.dumps({"root": str(home)}), encoding="utf-8")
+    words = ["--root", str(home), "project", "add", "sprout", "--template", "cli", "--dir", str(tmp_path / "sprout"),
+             "--stage", "launch"]
+    assert cli.main(words) == 0
+    assert "--stage v1 --apply" in capsys.readouterr().out
+    assert cli.main([*words, "--apply"]) == 0
+    capsys.readouterr()
+    assert registry(home)["sprout"]["lifecycle"]["stage"] == "launch"
+    std = yaml.safe_load((tmp_path / "sprout" / "projects.yaml").read_text(encoding="utf-8"))["sprout"]["standards"]
+    assert std["stage"] == "v1"   # the standards brain init selected, at the stage the entry records
+
+
+def test_a_stage_with_no_standards_stage_keeps_brain_init_s_default_and_says_so(home, tmp_path, capsys):
+    paths.personal_file().parent.mkdir(parents=True, exist_ok=True)
+    paths.personal_file().write_text(json.dumps({"root": str(home)}), encoding="utf-8")
+    assert cli.main(["--root", str(home), "project", "add", "sprout", "--template", init.DEFAULT_TEMPLATE, "--dir",
+                     str(tmp_path / "sprout"), "--stage", "mature"]) == 0
+    out = capsys.readouterr().out
+    first = next(ln for ln in out.splitlines() if ln.strip().startswith("first: brain init"))
+    assert "--stage" not in first
+    assert "brain init's standards: its default stage (mature reads as no standards stage" in out
+
+
+def test_a_read_only_project_s_plan_shows_its_floor(home, capsys):
+    assert cli.main(["--root", str(home), "project", "add", "orchard", "--read", "--floor", "private"]) == 0
+    assert "qualification: a read-only project answers 4 only, its criticity: private (classes.floor)" in \
+        capsys.readouterr().out
+
+
+def test_interactive_checks_the_options_before_asking(home, bench, monkeypatch, capsys):
+    def never(prompt):
+        raise AssertionError(f"asked {prompt!r} before the options were checked")
+    monkeypatch.setattr(firstrun, "tty", lambda: True)
+    monkeypatch.setattr(firstrun, "ASK", never)
+    assert cli.main(["--root", str(home), "project", "add", "bench", "--existing", str(bench), "--kind", "video-x",
+                     "-i", "--apply"]) == 2
+    assert "--kind video-x: not in the typology catalog" in capsys.readouterr().out
+    assert cli.main(["--root", str(home), "project", "add", "Bad_Name", "--existing", str(bench), "-i"]) == 2
+    assert "bench" not in registry(home)
+
+
+def test_interactive_reads_an_input_that_ends_as_no_terminal(home, bench, monkeypatch, capsys):
+    def ended(prompt):
+        raise EOFError
+    monkeypatch.setattr(firstrun, "tty", lambda: True)   # stdin from NUL: isatty says True on Windows
+    monkeypatch.setattr(firstrun, "ASK", ended)
+    assert cli.main(["--root", str(home), "project", "add", "bench", "--existing", str(bench), "-i", "--apply"]) == 2
+    out = capsys.readouterr().out
+    assert "--interactive needs a terminal" in out and "(its input ended)" in out and "cancelled" not in out
+    assert "bench" not in registry(home)
