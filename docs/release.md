@@ -289,11 +289,11 @@ steps for that version; in general:
   (in the same PR, so that they never name a command the pin does not have). Run `brain sync` with the new engine (a venv at the tag: the machine's own is still the
   old one, and sync refuses another engine than the pin), so the hooks it renders go in too. After its merge, on each machine: `<installer> -Apply` (its plan first), then restart
   the sessions. The mechanical part is one command, run in a branch of that brain with the tag's engine:
-  `brain release pin vX.Y.Z [--planning ROOT]` prints the plan (`--json` as data) and `--write` writes it, refused on
-  the brain's default branch: `engine.pin` moved in `config.json` (its keys, order, indent, line endings and BOM kept),
+  `brain release pin vX.Y.Z [--planning ROOT]` (default: the brain checkout holding the current folder) prints the
+  plan (`--json` as data) and `--write` writes it, refused on the brain's default branch: `engine.pin` moved in `config.json` (its keys, order, indent, line endings and BOM kept),
   the engine stores its `classes:` block leaves at their default added there (`brain classes --suggest`'s lines, the
   running engine's), the adapter plugin's shim `PIN` line when the brain keeps one; it lists the tag's Upgrade steps
-  since the pin that name `config.json` (read from the code host), to make by hand, and the brain's open PRs whose title
+  since the pin that name `config.json` (read from the code host; the standard install step aside), to make by hand, and the brain's open PRs whose title
   or body names the version (the lot PRs that waited for the tag). `brain sync`, the ADR and the journal stay by hand.
 - **Each install verifies the tag** first, against the brain's `allowed_signers`: `verify   vX.Y.Z: signed by <you>`
   in the plan of `brain update` and of the installer, else why not; with `engine.verify_tags` on, an unsigned tag is

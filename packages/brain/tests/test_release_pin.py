@@ -90,12 +90,13 @@ def test_the_plan_names_the_pin_the_stores_the_shim_the_upgrade_steps_and_the_wa
     p = release.pin_plan(brain, "v0.5.1", opener=_opener, runner=_gh(PRS))
     assert (p.prev, p.tag) == ("v0.5.0", "v0.5.1") and "ledger" in p.stores and "repo" not in p.stores
     assert p.shim is not None and 'PIN = "v0.5.1"' in p.shim_text and p.shim_text.count("\r\n") == 4
-    assert p.upgrade == ["0.5.1 step 1: Install the engine", "0.5.1 step 2: Declare the new store"]
+    assert p.upgrade == ["0.5.1 step 2: Declare the new store"]   # the standard Install step left out
     assert [w["number"] for w in p.waiting] == [9, 8]   # 0.5.10 and 0.5.1.2 are other versions
     lines = release.pin_lines(p)
     assert lines[0].endswith("v0.5.0 -> v0.5.1") and lines[1].startswith("edit     stores: classes.stores + ")
     assert "edit     shim: plugins/core/brain/__init__.py PIN v0.5.0 -> v0.5.1" in lines
-    assert "  #9 Wave 0.5.1, lot a" in lines and "upgrade  2 step(s) name config.json, by hand:" in lines
+    assert "  #9 Wave 0.5.1, lot a" in lines
+    assert "upgrade  1 step(s) name config.json, to read (what this command writes aside, by hand):" in lines
     assert (brain / "config.json").read_bytes().startswith(b"\xef\xbb\xbf")   # a plan writes nothing
 
 
@@ -106,10 +107,12 @@ def test_write_keeps_the_files_format_and_a_second_run_writes_nothing(brain):
     assert raw.startswith(b"\xef\xbb\xbf") and b"\r\n" in raw and b'\r\n  "engine": {' in raw
     data = json.loads(raw.decode("utf-8-sig"))
     assert data["engine"]["pin"] == "v0.5.1" and list(data) == list(CONFIG)   # its keys in their order
-    assert data["classes"]["stores"]["repo"] == CONFIG["classes"]["stores"]["repo"] and "ledger" in data["classes"]["stores"]
+    stores = data["classes"]["stores"]
+    assert stores["repo"] == CONFIG["classes"]["stores"]["repo"] and "ledger" in stores
     assert (brain / "plugins" / "core" / "brain" / "__init__.py").read_bytes() == SHIM.replace(
         'PIN = "v0.5.0"', 'PIN = "v0.5.1"').encode("utf-8")
-    assert done[0].startswith("written  config.json: engine.pin v0.5.1, classes.stores + ")
+    assert done[0] == "written  shim: plugins/core/brain/__init__.py"
+    assert done[1].startswith("written  config.json: engine.pin v0.5.1, classes.stores + ")
     again = release.pin_plan(brain, "v0.5.1", opener=_opener, runner=_gh([]))
     assert not again.writes() and again.stores == {} and again.shim_line.startswith("same     shim")
 
@@ -188,3 +191,74 @@ def test_cli_plan_json_and_write(brain, monkeypatch, capsys):
     assert cli.main(["release", "pin", "v0.4.0", "--planning", str(brain)]) == 2
     assert "before the pin v0.5.1" in capsys.readouterr().err
     assert cli.main(["release", "pin", "v0.5.1", "--planning", str(brain / "nope")]) == 2
+
+
+def test_a_failed_config_write_after_the_shim_is_said_and_a_rerun_resumes(brain, monkeypatch):
+    p = release.pin_plan(brain, "v0.5.1", opener=_opener, runner=_gh([]))
+    said = []
+
+    def locked(file, change):
+        raise PermissionError("config.json is locked")
+    with monkeypatch.context() as m:
+        m.setattr(update, "rewrite_json", locked)
+        with pytest.raises(PermissionError):
+            release.pin_write(p, say=said.append)
+    assert said == ["written  shim: plugins/core/brain/__init__.py"]   # told before the failure
+    again = release.pin_plan(brain, "v0.5.1", opener=_opener, runner=_gh([]))
+    assert again.shim is None and again.prev == "v0.5.0" and again.writes()   # only config.json is left
+    assert release.pin_write(again)[0].startswith("written  config.json: engine.pin v0.5.1")
+
+
+def test_a_moved_pin_is_refused_before_the_shim_is_written(brain):
+    p = release.pin_plan(brain, "v0.5.1", opener=_opener, runner=_gh([]))
+    f = brain / "config.json"
+    f.write_text(f.read_text(encoding="utf-8-sig").replace("v0.5.0", "v0.4.9"), encoding="utf-8")
+    shim = (brain / "plugins" / "core" / "brain" / "__init__.py").read_bytes()
+    with pytest.raises(ValueError):
+        release.pin_write(p)
+    assert (brain / "plugins" / "core" / "brain" / "__init__.py").read_bytes() == shim
+
+
+def test_a_classes_block_with_errors_adds_no_store(brain):
+    data = json.loads((brain / "config.json").read_text(encoding="utf-8-sig"))
+    data["classes"] = {"stores": ["not", "a", "mapping"]}
+    (brain / "config.json").write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")
+    p = release.pin_plan(brain, "v0.5.1", opener=_opener, runner=_gh([]))
+    assert p.stores == {} and "has errors" in p.stores_note
+
+
+def test_the_default_branch_is_asked_of_the_remote_when_origin_head_is_not_set(tmp_path):
+    def run(argv, **kw):
+        if "--abbrev-ref" in argv:
+            return subprocess.CompletedProcess(argv, 0, "trunk\n", "")
+        if "symbolic-ref" in argv:
+            return subprocess.CompletedProcess(argv, 128, "", "not a symbolic ref")
+        return subprocess.CompletedProcess(argv, 0, "ref: refs/heads/trunk\tHEAD\nabc\tHEAD\n", "")
+    with pytest.raises(release.ReleaseError, match="default branch trunk"):
+        release.pin_branch(tmp_path, run)
+
+
+def test_the_planning_brain_is_the_checkout_holding_the_current_folder(tmp_path, monkeypatch):
+    import argparse
+    wt = tmp_path / "wt"
+    wt.mkdir()
+    (wt / ".git").write_text("gitdir: elsewhere", encoding="utf-8")   # a worktree's .git is a file
+    (wt / "config.json").write_text("{}", encoding="utf-8")
+    (wt / "notes").mkdir()
+    args = argparse.Namespace(planning=None, root=None)
+    assert release.planning_root(args, cwd=wt / "notes") == wt.resolve()
+    args.planning = str(tmp_path)
+    assert release.planning_root(args, cwd=wt) == tmp_path.resolve()
+
+
+def test_write_json_writes_nothing(brain, monkeypatch, capsys):
+    monkeypatch.setattr(release, "waiting_prs", lambda root, tag, runner=None: ([], ""))
+    monkeypatch.setattr(update, "changelog", lambda repo, tag, since, opener=None: [])
+    before = (brain / "config.json").read_bytes()
+    assert cli.main(["release", "pin", "v0.5.1", "--planning", str(brain), "--write", "--json"]) == 0
+    assert (brain / "config.json").read_bytes() == before
+
+
+def test_a_wave_id_names_the_version():
+    run = _gh([{"number": 1, "title": "x", "body": "closes wave-0.5.1"}])
+    assert [w["number"] for w in release.waiting_prs(Path("."), "v0.5.1", run)[0]] == [1]

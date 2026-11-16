@@ -21,7 +21,10 @@ line of what each release brought, and the review. Every step runs a program wit
 shell: a theme with quotes, ``$`` or ``%`` reaches the script as typed.
 
 ``brain release pin vX.Y.Z`` (wi-brain-release-pin) plans the planning brain's pin PR once the tag is cut, and
-``--write`` writes its files, in a branch of that brain (refused on its default branch):
+``--write`` writes its files, in a branch of that brain (refused on its default branch: origin/HEAD, else asked of
+the remote, and main or master). The brain is ``--planning``, else ``--root``, else the checkout holding the current
+folder (a pin branch's worktree), else the personal brain. The shim is written first, then ``config.json``, each
+atomically, each said as it is written: a failure between them is told, and a rerun plans what is left.
 
 - **pin**: ``config.json`` ``engine.pin`` moved to the tag (brain.update.rewrite_json: its keys, order, indent, line
   endings and BOM kept); a tag before the pin is refused (a rollback is the owner's);
@@ -31,7 +34,8 @@ shell: a theme with quotes, ``$`` or ``%`` reaches the script as typed.
 - **shim**: the adapter plugin's transitional ``plugins/<adapters.claude.plugin>/brain/__init__.py``, when the brain
   keeps one: its ``PIN = "vX.Y.Z"`` line follows the pin;
 - **upgrade**: the tag's CHANGELOG sections after the pin (read from the code host, brain.update.changelog), the
-  ``### Upgrade`` steps that name ``config.json`` listed, to make by hand;
+  ``### Upgrade`` steps that name ``config.json`` listed, to read and make by hand (the standard « Install the
+  engine » step aside: the pin PR is that step);
 - **waiting**: the brain's open PRs (``gh pr list``) whose title or body names the version: the lot PRs that waited
   for the tag.
 
@@ -381,6 +385,7 @@ def _shim(p: PinPlan, cfg) -> None:
 
 
 STEP = re.compile(r"^(\d+)\. (.*)")
+INSTALL_STEP = "Install the engine"   # the standard step every release has: the pin PR and its installer are it
 
 
 def config_steps(lines: list[str]) -> list[str]:
@@ -389,8 +394,8 @@ def config_steps(lines: list[str]) -> list[str]:
     out, version, upgrade, step = [], "", False, None
 
     def close():
-        if step and "config.json" in step[2]:
-            title = re.match(r"\*\*(.+?)\*\*", step[2])
+        title = re.match(r"\*\*(.+?)\*\*", step[2]) if step else None
+        if step and "config.json" in step[2] and not (title and title.group(1).startswith(INSTALL_STEP)):
             out.append(f"{step[0]} step {step[1]}: {title.group(1) if title else step[2][:80]}")
 
     for line in lines:
@@ -443,42 +448,68 @@ def pin_branch(root: Path, runner: Runner = subprocess.run) -> str:
         raise ReleaseError(f"{root}: git could not run ({exc})") from None
     branch = (r.stdout or "").strip() if r.returncode == 0 else ""
     if not branch or branch == "HEAD":
-        raise ReleaseError(f"{root} is on no branch (not a git repo, or a detached HEAD): git switch -c chore/pin-<tag>")
-    try:
-        d = runner(["git", "-C", str(root), "symbolic-ref", "--short", "refs/remotes/origin/HEAD"],
-                   capture_output=True, text=True, timeout=30)
-        default = (d.stdout or "").strip().split("/", 1)[-1] if d.returncode == 0 else ""
-    except (OSError, subprocess.SubprocessError):
-        default = ""
+        raise ReleaseError(f"{root} is on no branch (not a git repo, or a detached HEAD): git switch -c "
+                           "chore/pin-<tag>")
+    default = _default_branch(root, runner)
     if branch in DEFAULT_BRANCHES | ({default} if default else set()):
         raise ReleaseError(f"{root} is on its default branch {branch}: the pin goes by a PR (git switch -c "
                            "chore/pin-<tag>, then again)")
     return branch
 
 
-def pin_write(p: PinPlan) -> list[str]:
-    """config.json (engine.pin and the stores, one write) and the shim's PIN line written; what was done, line by
-    line. A config.json moved since the plan is refused (ValueError), nothing written."""
-    from . import update
+def _default_branch(root: Path, runner: Runner) -> str:
+    """origin's default branch: origin/HEAD when the clone set it, else asked of the remote ('' when neither says)."""
+    for argv, pick in ((["symbolic-ref", "--short", "refs/remotes/origin/HEAD"], lambda s: s.split("/", 1)[-1]),
+                       (["ls-remote", "--symref", "origin", "HEAD"],
+                        lambda s: (re.search(r"^ref: refs/heads/(\S+)\s+HEAD", s, re.M) or [None, ""])[1])):
+        try:
+            r = runner(["git", "-C", str(root), *argv], capture_output=True, text=True, timeout=30)
+        except (OSError, subprocess.SubprocessError):
+            continue
+        found = pick((r.stdout or "").strip()) if r.returncode == 0 else ""
+        if found:
+            return found
+    return ""
+
+
+def pin_write(p: PinPlan, say: Callable[[str], object] = lambda line: None) -> list[str]:
+    """The shim's PIN line, then config.json (engine.pin and the stores, one write), each written atomically; what
+    was done, line by line, also said as it is done (``say``), so that a failure after the first write still tells
+    it (a rerun resumes: it plans what is left). A config.json moved since the plan is refused (ValueError) before
+    any write."""
+    from . import stateio, update
+    _pinned(p)
     done = []
+
+    def did(line: str) -> None:
+        done.append(line)
+        say(line)
+    if p.shim is not None:
+        stateio.write_atomic(p.shim, p.shim_text)   # newline="\n": its own line endings, in the text, kept
+        did(f"written  shim: {p.shim.relative_to(p.root).as_posix()}")
     if p.prev != p.tag or p.stores:
         def move(data: dict) -> None:
-            eng = data.get("engine") if isinstance(data, dict) else None
-            if not isinstance(eng, dict) or eng.get("pin") != p.prev:
-                raise ValueError(f"{p.file.name} engine.pin is no longer {p.prev}: nothing written (plan again)")
-            eng["pin"] = p.tag
+            _pin_is(data, p)
+            data["engine"]["pin"] = p.tag
             if p.stores:
                 block = data["classes"].setdefault("stores", {})
                 for name, line in p.stores.items():
                     block.setdefault(name, line)
         update.rewrite_json(p.file, move)
-        done.append(f"written  {p.file.name}: engine.pin {p.tag}" + (f", classes.stores + {', '.join(p.stores)}"
-                                                                      if p.stores else ""))
-    if p.shim is not None:
-        with p.shim.open("w", encoding="utf-8", newline="") as fh:   # its line endings kept
-            fh.write(p.shim_text)
-        done.append(f"written  shim: {p.shim.relative_to(p.root).as_posix()}")
+        did(f"written  {p.file.name}: engine.pin {p.tag}" + (f", classes.stores + {', '.join(p.stores)}"
+                                                             if p.stores else ""))
     return done
+
+
+def _pin_is(data, p: PinPlan) -> None:
+    eng = data.get("engine") if isinstance(data, dict) else None
+    if not isinstance(eng, dict) or eng.get("pin") != p.prev:
+        raise ValueError(f"{p.file.name} engine.pin is no longer {p.prev}: nothing written (plan again)")
+
+
+def _pinned(p: PinPlan) -> None:
+    """config.json still pins what the plan read (checked before the first write)."""
+    _pin_is(json.loads(p.file.read_text(encoding="utf-8-sig")), p)
 
 
 def pin_lines(p: PinPlan) -> list[str]:
@@ -496,8 +527,9 @@ def pin_lines(p: PinPlan) -> list[str]:
     if p.upgrade_note:
         out.append(f"upgrade  {p.upgrade_note}")
     else:
-        out.append("upgrade  " + (f"{len(p.upgrade)} step(s) name config.json, by hand:" if p.upgrade
-                                  else f"no Upgrade step after {p.prev} names config.json"))
+        out.append("upgrade  " + (f"{len(p.upgrade)} step(s) name config.json, to read (what this command writes "
+                                  "aside, by hand):" if p.upgrade
+                                  else f"no Upgrade step after {p.prev} names config.json beyond the install"))
         out += [f"  {s}" for s in p.upgrade]
     if p.waiting_note:
         out.append(f"waiting  {p.waiting_note}")
@@ -513,10 +545,23 @@ def _pin_data(p: PinPlan) -> dict:
             "waiting_note": p.waiting_note, "engine": p.engine}
 
 
-def main_pin(args) -> int:
+def planning_root(args, cwd: Path | None = None) -> Path | None:
+    """The brain whose pin moves: --planning, else --root, else the brain checkout holding the current folder (a
+    folder with config.json and .git: a pin branch's worktree), else the personal brain."""
     from . import paths
-    root = Path(args.planning).resolve() if args.planning else (
-        Path(args.root).resolve() if getattr(args, "root", None) else paths.personal_root())
+    if args.planning:
+        return Path(args.planning).resolve()
+    if getattr(args, "root", None):
+        return Path(args.root).resolve()
+    here = (cwd or Path.cwd()).resolve()
+    for d in (here, *here.parents):
+        if (d / "config.json").is_file() and (d / ".git").exists():
+            return d
+    return paths.personal_root()
+
+
+def main_pin(args) -> int:
+    root = planning_root(args)
     try:
         if root is None:
             raise ReleaseError("no planning brain: --planning names it (or --root, or a personal brain)")
@@ -531,7 +576,8 @@ def main_pin(args) -> int:
     print("\n".join(pin_lines(p)))
     if args.write and p.writes():
         try:
-            print("\n".join(pin_write(p)) + f"\nbranch   {branch}: commit them with the rest of the pin PR")
+            pin_write(p, say=print)
+            print(f"branch   {branch}: commit them with the rest of the pin PR")
         except (ValueError, OSError) as exc:
             print(f"brain release pin: {exc}", file=sys.stderr)
             return 1

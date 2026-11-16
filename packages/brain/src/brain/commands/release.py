@@ -16,13 +16,14 @@ USAGE = """\
                  --write runs them in that order and stops at the first that fails; the Upgrade steps' prose, the
                  pilot page's line and the review stay a model's (docs/release.md, « The version PR »)
   brain release pin vX.Y.Z [--planning ROOT] [--write] [--json]   the planning brain's pin PR (--planning, else
-                 --root, else the personal brain), as a plan: config.json engine.pin, the engine stores its classes:
-                 block leaves at their default (brain classes --suggest; this engine's stores), the adapter plugin's
-                 shim PIN line when it keeps one, the tag's Upgrade steps since the pin that name config.json (by
-                 hand), and its open PRs naming the version (the lot PRs that waited for the tag); --write writes
-                 config.json and the shim, refused on the brain's default branch; --json prints the plan, writes
-                 nothing; then by hand: brain sync with the new engine, the ADR, the journal (docs/release.md, « 4. The
-                 pin and the machines »)
+                 --root, else the brain checkout holding this folder, else the personal brain), as a plan:
+                 config.json engine.pin, the engine stores its classes: block leaves at their default (brain classes
+                 --suggest; this engine's stores), the adapter plugin's shim PIN line when it keeps one, the tag's
+                 Upgrade steps since the pin that name config.json (to read; the standard install step aside), and
+                 its open PRs naming the version (the lot PRs that waited for the tag); --write writes the shim then
+                 config.json, refused on the brain's default branch; --json prints the plan, writes nothing; then by
+                 hand: brain sync with the new engine, the ADR, the journal (docs/release.md, « 4. The pin and the
+                 machines »)
 """
 NO_PROJECT = {"release"}   # its parsers that take no --project after them
 
@@ -46,7 +47,8 @@ def register(sub, ctx) -> None:
     pin = rel.add_parser("pin", help="the planning brain's pin PR: engine.pin, the missing engine stores, the shim's "
                                      "PIN, the Upgrade steps naming config.json, the PRs waiting for the tag")
     pin.add_argument("tag", help="the release tag to pin, vX.Y.Z")
-    pin.add_argument("--planning", help="the brain whose pin moves (default: --root, else the personal brain)")
+    pin.add_argument("--planning", help="the brain whose pin moves (default: --root, else the brain checkout "
+                                         "holding this folder, else the personal brain)")
     pin.add_argument("--write", action="store_true", help="write config.json and the shim (in a pin branch)")
     pin.add_argument("--json", action="store_true", help="the plan as JSON; nothing written")
 
