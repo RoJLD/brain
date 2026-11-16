@@ -110,14 +110,9 @@ def main(argv: list[str] | None = None) -> int:
         if lines:
             parser.epilog = "\n".join([parser.epilog or "", "", *lines])
     args = parser.parse_args(argv)
-    why = gestures.cli_refusal(argv)   # an owner's gesture an agent's session runs past the hook (brain.gestures)
+    why = _refusal(argv)
     if why:
         print(f"brain: {why}", file=sys.stderr)
-        return 2
-    try:   # BRAIN_NOW and BRAIN_FAULT (brain.faults): a value not understood never plays another failure
-        faults.check()
-    except faults.FaultError as exc:
-        print(f"brain: {exc}", file=sys.stderr)
         return 2
     try:
         # a signal stops the command once its current write is whole, its locks released (brain.shutdown)
@@ -129,6 +124,20 @@ def main(argv: list[str] | None = None) -> int:
             sys.stderr.flush()
             shutdown.die(exc)
         return exc.exit_code
+
+
+def _refusal(argv: list[str]) -> str:
+    """Why the command must not run ('' when it may): an owner's gesture an agent's session runs past the hook
+    (brain.gestures), or a BRAIN_NOW or BRAIN_FAULT this engine cannot read (brain.faults: a value not understood
+    never plays another failure than the one asked)."""
+    why = gestures.cli_refusal(argv)
+    if why:
+        return why
+    try:
+        faults.check()
+    except faults.FaultError as exc:
+        return str(exc)
+    return ""
 
 
 def _context() -> registry.Context:

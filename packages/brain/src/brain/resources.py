@@ -69,7 +69,7 @@ import time
 from datetime import datetime, timezone
 from pathlib import Path, PureWindowsPath
 
-from . import classes, faults, governor, paths, probe, quota, sessions, usage
+from . import classes, governor, paths, probe, quota, sessions, usage
 from .resources_containers import DOCKER_TIMEOUT, containers
 
 V = 1
@@ -111,7 +111,7 @@ _size = probe._size
 
 
 def _now() -> datetime:
-    return faults.now()
+    return datetime.now(timezone.utc)
 
 
 def _cpu_times(ps=None) -> tuple[float, float] | None:
