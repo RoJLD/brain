@@ -384,3 +384,63 @@ def test_a_right_schedules_owner_passes_the_registry_check_and_is_a_listed_key(r
     assert schedview.check(projects.load()) == []
     assert not [e for e in projects.check() if "schedules_owner" in e]
     assert "schedules_owner" in projects.KEYS
+
+
+def test_off_windows_no_floor_is_said_missing(reg, monkeypatch, capsys):
+    _owned(reg, "{demo-scan: 15m}")
+    monkeypatch.setattr(alerts, "_scheduler", lambda folders: ([], alerts.OFF_WINDOWS))
+    assert cli.main(["schedule", "list", "--json"]) == 0
+    data = json.loads(capsys.readouterr().out)
+    assert data["floors_missing"] == [] and data["scheduler"] == alerts.OFF_WINDOWS
+
+
+def test_a_shared_folder_gives_a_task_the_floor_of_the_project_that_floors_it(reg):
+    text = reg.read_bytes().decode("utf-8") + (
+        "other:\r\n  root: .\r\n  alerts:\r\n    scheduler: ['\\\\demo\\\\']\r\n"
+        "  schedules_owner: {file: o.psd1, apply: o-apply, floors: {Demo-Scan: 5m}}\r\n")
+    reg.write_bytes(text.encode("utf-8"))
+    rows, _ = schedview.rows(projects.load(), here="box1")
+    scan = next(r for r in rows if r["name"] == "demo-scan")
+    assert scan["project"] == "demo" and scan["owner"] == "other"   # listed under the first, owned by the other
+    assert scan["below_floor"] == "every 15m is slower" and scan["change"].endswith("/o.psd1, then o-apply")
+    assert schedview.missing_floors(projects.load(), rows) == []
+
+
+def test_found_and_declared_rows_carry_below_floor_in_json(reg, capsys):
+    _owned(reg, "{demo-scan: 5m, Gone-Task: 1h}")
+    assert cli.main(["schedule", "list", "--json"]) == 0
+    data = json.loads(capsys.readouterr().out)
+    assert all(r["below_floor"] == "" for r in data["schedules"])
+    assert next(r for r in data["found"] if r["name"] == "demo-scan")["below_floor"] == "every 15m is slower"
+    assert data["floors_missing"] == [{"project": "demo", "name": "Gone-Task", "floor": 3600.0}]   # as declared
+
+
+def test_check_refuses_a_declared_schedules_floor_a_name_twice_and_floors_without_folders(reg):
+    _owned(reg, "{alerts-pass: 15m}")
+    errors = schedview.check(projects.load())
+    assert any("floors alerts-pass: a declared schedule" in e for e in errors), errors
+    assert any("floors scan: named twice" in e for e in schedview.owner_errors(
+        {"file": "f", "floors": {"Scan": "1h", "scan": "2h"}}))
+    text = reg.read_bytes().decode("utf-8") + (
+        "bare:\r\n  root: .\r\n  schedules_owner: {file: b.psd1, apply: null, floors: {t: 1h}}\r\n")
+    reg.write_bytes(text.encode("utf-8"))
+    errors = schedview.check(projects.load())
+    assert "project bare: schedules_owner: floors need its alerts: scheduler: folders (where its tasks are found)" \
+        in errors
+    assert not [e for e in errors if e.startswith("project bare") and "apply" in e]   # apply: null is no apply
+
+
+def test_an_unknown_key_is_noted_in_read_mode_and_refused_in_strict_mode(reg, monkeypatch):
+    reg.write_bytes(reg.read_bytes() + b"  schedules_owner: {file: f, later: 1}\r\n")
+    monkeypatch.setenv("BRAIN_STRICT", "0")
+    assert schedview.check(projects.load()) == []
+    monkeypatch.setenv("BRAIN_STRICT", "1")
+    assert any("unknown key(s) later" in e for e in schedview.check(projects.load()))
+
+
+def test_brain_check_all_reports_a_wrong_schedules_owner(reg, capsys):
+    from brain.commands._stores import check_registry
+    reg.write_bytes(reg.read_bytes() + b"  schedules_owner: {file: f, floors: {a: soon}}\r\n")
+    check_registry(reg.parent, list(projects.load().values()), every=True)
+    out = capsys.readouterr()
+    assert "schedules: project demo: schedules_owner: floors a: 'soon' is not a duration" in out.out + out.err
