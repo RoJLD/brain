@@ -55,7 +55,7 @@ def chlog(monkeypatch):
         try:
             with opener(update.CHANGELOG.format(repo=repo, tag=tag), timeout=1) as r:
                 return update.sections(r.read().decode("utf-8"), since, tag[1:])
-        except Exception:
+        except OSError:   # the test's offline opener: update.changelog says None for an unreadable CHANGELOG
             return None
     monkeypatch.setattr(update, "changelog", read)
 
