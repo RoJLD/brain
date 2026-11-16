@@ -537,20 +537,29 @@ def list_main(registry: Mapping[str, projects.Project], *, here: str | None = No
     w = schedule.watch(registry, here=here)
     missing = [] if why else missing_floors(registry, rs)
     if as_json:
-        print(json.dumps({"machine": here, "schedules": [r for r in rs if r["kind"] == "declared"],
-                          "found": [r for r in rs if r["kind"] == "found"], "scheduler": why or "read",
-                          "floors_missing": [{"project": p, "name": n, "floor": f} for p, n, f in missing],
-                          "alerts_pass": w}, indent=2, default=str))
+        print(json.dumps(_payload(here, rs, why, missing, w), indent=2, default=str))
         return 0
     if not any(r["kind"] == "declared" for r in rs):
         print("schedule none declared (projects.yaml schedules:)")
     for r in rs:
         print("\n".join(_row_lines(r)))
-    if why:
-        print(f"note     the scheduler's own tasks are not shown: {why}")
-    for project, name, f in missing:
-        print(f"note     {name} ({project}): a collector of its schedules_owner (floor {schedule.duration_text(f)}), "
-              "not found under its scheduler folders: BELOW FLOOR")
+    for line in _notes(why, missing):
+        print(line)
     if w:
         print(f"alerts pass: {w['line']}")
     return 0
+
+
+def _payload(here: str, rs: list[dict], why: str, missing: list[tuple[str, str, float]], w) -> dict:
+    """brain schedule list --json."""
+    return {"machine": here, "schedules": [r for r in rs if r["kind"] == "declared"],
+            "found": [r for r in rs if r["kind"] == "found"], "scheduler": why or "read",
+            "floors_missing": [{"project": p, "name": n, "floor": f} for p, n, f in missing], "alerts_pass": w}
+
+
+def _notes(why: str, missing: list[tuple[str, str, float]]) -> list[str]:
+    """The lines under the list: the scheduler not read, else each floored task it did not show."""
+    if why:
+        return [f"note     the scheduler's own tasks are not shown: {why}"]
+    return [f"note     {name} ({project}): a collector of its schedules_owner (floor {schedule.duration_text(f)}), "
+            "not found under its scheduler folders: BELOW FLOOR" for project, name, f in missing]
