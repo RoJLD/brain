@@ -554,3 +554,43 @@ def test_review_answers_of_another_shape_lose_nothing_else(brain_home):
                "tool_input": {"questions": [q]}, "tool_response": {"questions": [q], "answers": ["x"]}}
     assert capture.main(["post-tool-use"], stdin=io.StringIO(json.dumps(payload))) == 0
     assert _errors(brain_home) == "" and _ledger(brain_home, "ddr")[0]["status"] == "pending"
+
+
+def test_captured_records_in_the_asking_branch_when_only_it_holds_the_ddrs(origin, monkeypatch, brain_home,
+                                                                           tmp_path):
+    """wi-brain-captured-in-branch: a session asked in its own worktree, its DDR not on main yet. --captured records
+    the batch on that branch (committed, pushed: its own PR carries it), never in a fresh worktree from main where
+    the DDR does not exist; a dirty checkout is refused; a DDR main holds keeps the default flow."""
+    root, bare = origin
+    wt = tmp_path / "wt-asking"
+    run_git(root, "worktree", "add", "-q", "-b", "feat/asking", str(wt), "origin/main")
+    new = _ask(wt, "Asked here", "Only on this branch?", ["Yes: go", "No: wait"])["id"]
+    decisions.write_view(wt, "demo")
+    run_git(wt, "add", "-A")
+    run_git(wt, "commit", "-qm", "ask")
+    calls = []
+    monkeypatch.setattr(answers, "gh", _fake_gh(calls, [True]))
+    monkeypatch.setattr(answers, "refresh", _refresh)
+    _cap(new, "2026-11-02T10:00:00Z", choices=["Yes"])
+    (c,) = answers.unrecorded("s-1")
+    top, branch = answers.session_branch(root, wt / "records", "main")
+    assert top.resolve() == wt.resolve() and branch == "feat/asking"
+    assert answers.session_branch(root, root, "main") is None   # the main checkout, on main: the default flow
+    (wt / "scratch.txt").write_text("work in progress", encoding="utf-8")
+    with pytest.raises(answers.AnswersError, match="holds uncommitted changes: commit them first"):
+        answers.record_captured(_project(root), [c], owner="Ada", wait=0, at=AT, here=wt)
+    (wt / "scratch.txt").unlink()
+    out = answers.record_captured(_project(root), [c], owner="Ada", wait=0, at=AT, here=wt)
+    assert out["in_branch"] and out["branch"] == "feat/asking" and out["recorded"] == [new] and out["pr"] == ""
+    assert calls == []   # no PR of its own, no merge: the branch's PR carries the answers
+    assert yaml.safe_load((wt / "records" / "ddr" / f"{new}.yaml").read_text(encoding="utf-8"))["answer"][
+        "choices"] == ["Yes"]
+    pushed = subprocess.run(["git", "--git-dir", str(bare), "log", "feat/asking", "--format=%s"], capture_output=True,
+                            text=True, check=True).stdout
+    assert "Ada's answers: H (question tool, captured, in branch)" in pushed
+    assert not (root / ".claude" / "worktrees").exists() or not any((root / ".claude" / "worktrees").iterdir())
+    assert answers.unrecorded("s-1") == [] and answers.read(answers.RECORDED)[-1]["branch"] == "feat/asking"
+    # a DDR main holds too: the default flow (a worktree from main, one PR), even asked from the branch
+    _cap("ddr-2026-11-01-lone-question", "2026-11-02T11:00:00Z", choices=["No"], n=1)
+    (d,) = answers.unrecorded("s-1")
+    assert answers._in_branch(root, [d], wt, "main") is None

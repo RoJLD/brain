@@ -887,7 +887,12 @@ The session that asks the owner records the answers, in one PR per batch (wi-bra
    later capture was recorded never comes back. An answer captured before a low-stakes deadline replaces the
    default another branch's refresh took meanwhile. The command prints the retired captures (« retired, never
    recorded », each with its reason; `--dry-run` marks the refused ones) apart from the decisions left because they
-   are no longer pending (« not pending, left », which `--again` replaces).
+   are no longer pending (« not pending, left », which `--again` replaces). When the asking session runs in its own
+   checkout (a worktree of the project's repo on a branch other than the default one) that holds every captured DDR,
+   one of them not on the default branch yet (asked on that branch), the batch is recorded there instead: written,
+   refreshed, committed on that branch and pushed, no PR of its own (that branch's PR carries the answers), so no
+   extra PR is needed to put its DDRs on main first; a checkout with uncommitted changes is refused, so the commit
+   holds the answers alone.
 
 `--batch` is strict: a value is an option's exact label (any case, `(Recommandé)` ignored) or its number; a shortened
 label is refused with the label it shortens, and the owner's own text is marked as such, `{"other": "..."}`. Its file

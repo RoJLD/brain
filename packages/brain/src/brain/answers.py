@@ -25,6 +25,10 @@ refresh``), committed, pushed, one PR opened, then merged with its retries (main
 generated files, refresh again, push, retry). One writer per batch: the session that asked the owner records. A
 capture older than the answer the DDR already holds is stale: never written, even with ``--again``, and retired; an
 answer captured before a low-stakes deadline replaces the default taken meanwhile (the owner answered in time).
+When the asking session's own checkout (a worktree of the project's repo, on a branch other than the default one)
+holds every captured DDR and the default branch lacks one of them (asked in that branch, not merged yet), the batch is
+recorded there instead: written, refreshed, committed on that branch and pushed, carried by that branch's own PR; a
+checkout with uncommitted changes is refused, so the commit holds the answers alone (wi-brain-captured-in-branch).
 
 ``refusal`` is the other half of that rule: in an agent's session, ``brain decision answer`` (``--batch``, and ``brain
 record ddr`` when it writes an answer) records
@@ -384,8 +388,50 @@ def _merge(worktree: Path, pr: str, base: str, branch: str, retries: int, wait: 
     return False, log
 
 
+def session_branch(root: Path, here: Path | None, base: str) -> tuple[Path, str] | None:
+    """(the checkout, its branch) when ``here`` is in a checkout of ``root``'s repo on a branch other than ``base``
+    (the asking session's worktree), else None."""
+    if here is None or not Path(here).is_dir():
+        return None
+    p = _git(Path(here), "rev-parse", "--show-toplevel", check=False)
+    top = Path(p.stdout.strip()) if p.returncode == 0 and p.stdout.strip() else None
+    if top is None:
+        return None
+    mine, theirs = paths.main_checkout(top), paths.main_checkout(root)
+    if mine is None or theirs is None or os.path.normcase(str(mine.resolve())) != os.path.normcase(
+            str(theirs.resolve())):
+        return None
+    b = _git(top, "rev-parse", "--abbrev-ref", "HEAD", check=False).stdout.strip()
+    return (top, b) if b and b not in ("HEAD", base) else None
+
+
+def _in_branch(root: Path, caps: list[dict], here: Path | None, base: str) -> tuple[Path, str] | None:
+    """The asking session's checkout and branch when the batch belongs there: it holds every captured DDR (refused
+    captures aside) and the default branch lacks one of them; None otherwise (the default flow)."""
+    from . import decisions
+    found = session_branch(root, here, base)
+    if found is None:
+        return None
+    top, lacking = found[0], False
+    for c in caps:
+        if refused(c):
+            continue
+        try:
+            f, _ = decisions.find(top, c["ddr"], exact=True)
+        except decisions.QueueError:
+            return None
+        try:
+            rel = Path(f).resolve().relative_to(top.resolve()).as_posix()
+        except ValueError:
+            return None
+        if _git(root, "cat-file", "-e", f"origin/{base}:{rel}", check=False).returncode:
+            lacking = True
+    return found if lacking else None
+
+
 def record_captured(project, caps: list[dict], *, owner: str, session: str = "", merge: bool = True,
-                    retries: int = RETRIES, wait: float = 5.0, at: str = "", again: bool = False) -> dict:
+                    retries: int = RETRIES, wait: float = 5.0, at: str = "", again: bool = False,
+                    here: Path | None = None) -> dict:
     """Record ``caps`` (one project's) in a worktree on a new branch from the default one, refresh, commit, push,
     open one PR, merge it with its retries; the captures are marked recorded once the PR is open. A DDR no longer
     pending is left (``again``: its answer replaced, a default reversed). A capture names its DDR by its full id: one
@@ -395,18 +441,21 @@ def record_captured(project, caps: list[dict], *, owner: str, session: str = "",
     answer the DDR holds is stale: retired, never written (``again`` included). The retired ones are returned apart
     (``refused``, each with its reason) from the ones left (``skipped``: not pending, ``--again`` replaces them). An
     answer captured before a low-stakes DDR's deadline replaces the default taken meanwhile (the owner answered in
-    time)."""
-    from . import decisions, defaults  # the engine (YAML), not the hook's part
-
+    time). ``here`` (default: the current folder): the asking session's checkout; when it holds every DDR and the
+    default branch lacks one, the batch is recorded on its branch (:func:`_in_branch`; ``in_branch`` in the result,
+    no PR of its own)."""
     if not caps:
         raise AnswersError("no captured answer to record")
     root = Path(project.root)
     at = at or _now()
+    _git(root, "fetch", "-q", "origin")
+    base = _default_branch(root)
+    found = _in_branch(root, caps, Path.cwd() if here is None else here, base)
+    if found is not None:
+        return _record_in_branch(found[0], found[1], caps, owner=owner, at=at, again=again)
     stamp = at[:16].replace("-", "").replace(":", "").replace("T", "-")
     branch = BRANCH.format(stamp=stamp)
     worktree = root / ".claude" / "worktrees" / f"answers-{stamp}"
-    _git(root, "fetch", "-q", "origin")
-    base = _default_branch(root)
     _git(root, "worktree", "add", "-q", "-b", branch, str(worktree), f"origin/{base}")
     written, skipped, missing, retired, refusals = [], [], [], [], []
 
@@ -416,31 +465,7 @@ def record_captured(project, caps: list[dict], *, owner: str, session: str = "",
                         "pr": "", "retired": why})
 
     try:
-        for c in caps:
-            why = refused(c)
-            if why:
-                retire(c, why)
-                continue
-            try:
-                _, ddr = decisions.find(worktree, c["ddr"], exact=True)
-            except decisions.QueueError:
-                missing.append(c["ddr"])
-                continue
-            replace = again
-            if ddr.get("status") != "pending":
-                ans, dflt = ddr.get("answer") or {}, ddr.get("default") or {}
-                if ddr.get("status") == "answered" and defaults.by_default(ddr) and dflt.get("after") and \
-                        defaults.before(c["at"], dflt["after"]):
-                    replace = True   # the owner answered before the deadline: the default taken meanwhile yields
-                elif ans.get("at") and not defaults.before(ans["at"], c["at"]):
-                    retire(c, f"answered at {ans['at']}, not before this capture: stale, retired")
-                    continue
-                elif not again:
-                    skipped.append(f"{c['ddr']} ({ddr.get('status')})")
-                    continue
-            decisions.answer(worktree, c["ddr"], c.get("choices") or [], other=c.get("other") or "",
-                             notes=c.get("notes") or "", by=owner, via="ask-tool", at=c["at"], again=replace)
-            written.append(c)
+        _write_answers(worktree, caps, owner, again, written, skipped, missing, retire)
         _append(RECORDED, retired)
         if not written:
             raise AnswersError("nothing to record: " + "; ".join(
@@ -471,3 +496,69 @@ def record_captured(project, caps: list[dict], *, owner: str, session: str = "",
     return {"pr": url, "branch": branch, "worktree": str(worktree), "recorded": [c["ddr"] for c in written],
             "skipped": skipped, "missing": missing, "retired": [r["ddr"] for r in retired], "refused": refusals,
             "merged": merged, "log": log}
+
+
+def _write_answers(where: Path, caps: list[dict], owner: str, again: bool, written: list, skipped: list,
+                   missing: list, retire) -> None:
+    """Each capture's answer written in the checkout ``where`` (the lists filled: written, skipped, missing; a refused
+    or stale capture handed to ``retire``)."""
+    from . import decisions, defaults  # the engine (YAML), not the hook's part
+    for c in caps:
+        why = refused(c)
+        if why:
+            retire(c, why)
+            continue
+        try:
+            _, ddr = decisions.find(where, c["ddr"], exact=True)
+        except decisions.QueueError:
+            missing.append(c["ddr"])
+            continue
+        replace = again
+        if ddr.get("status") != "pending":
+            ans, dflt = ddr.get("answer") or {}, ddr.get("default") or {}
+            if ddr.get("status") == "answered" and defaults.by_default(ddr) and dflt.get("after") and \
+                    defaults.before(c["at"], dflt["after"]):
+                replace = True   # the owner answered before the deadline: the default taken meanwhile yields
+            elif ans.get("at") and not defaults.before(ans["at"], c["at"]):
+                retire(c, f"answered at {ans['at']}, not before this capture: stale, retired")
+                continue
+            elif not again:
+                skipped.append(f"{c['ddr']} ({ddr.get('status')})")
+                continue
+        decisions.answer(where, c["ddr"], c.get("choices") or [], other=c.get("other") or "",
+                         notes=c.get("notes") or "", by=owner, via="ask-tool", at=c["at"], again=replace)
+        written.append(c)
+
+
+def _record_in_branch(top: Path, branch: str, caps: list[dict], *, owner: str, at: str, again: bool) -> dict:
+    """The batch recorded on the asking session's branch (wi-brain-captured-in-branch): its DDRs are there, not on the
+    default branch yet. Refused when that checkout has uncommitted changes (the commit holds the answers alone);
+    written, refreshed, committed and pushed; that branch's PR carries them, so none is opened or merged here."""
+    if _git(top, "status", "--porcelain").stdout.strip():
+        raise AnswersError(f"{top} ({branch}) holds uncommitted changes: commit them first, so that the answers' "
+                           "commit holds the answers alone (its DDRs are on this branch only)")
+    written, skipped, missing, retired, refusals = [], [], [], [], []
+
+    def retire(c: dict, why: str) -> None:
+        refusals.append(f"{c['ddr']} ({why})")
+        retired.append({"v": 1, "id": c["id"], "at": at, "ddr": c["ddr"], "captured_at": c.get("at") or "",
+                        "pr": "", "retired": why})
+
+    _write_answers(top, caps, owner, again, written, skipped, missing, retire)
+    _append(RECORDED, retired)
+    if not written:   # nothing was written: the checkout is as it was
+        raise AnswersError("nothing to record: " + "; ".join(refusals + skipped + [f"{m} (not here)" for m in missing]))
+    if refresh(top):
+        raise AnswersError(f"brain refresh failed in {top}: fix it there (the answers are written, not committed)")
+    _git(top, "add", "-A")
+    heads = ", ".join(dict.fromkeys(c.get("header") or c["ddr"] for c in written))
+    _git(top, "commit", "-q", "-m", f"{owner}'s answers: {heads}"[:120] + " (question tool, captured, in branch)")
+    pushed = _git(top, "push", "-q", "-u", "origin", branch, check=False)
+    log = [f"recorded on {branch}, the branch that asked them: its own PR carries them"]
+    if pushed.returncode:
+        log.append(f"not pushed ({(pushed.stderr or pushed.stdout).strip()[:200]}): push {branch} yourself")
+    _append(RECORDED, [{"v": 1, "id": c["id"], "at": at, "ddr": c["ddr"], "captured_at": c.get("at") or "",
+                        "pr": "", "branch": branch} for c in written])
+    return {"pr": "", "branch": branch, "worktree": str(top), "recorded": [c["ddr"] for c in written],
+            "skipped": skipped, "missing": missing, "retired": [r["ddr"] for r in retired], "refused": refusals,
+            "merged": False, "log": log, "in_branch": True}

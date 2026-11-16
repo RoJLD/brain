@@ -27,8 +27,9 @@ USAGE = """\
                  {"other": "..."}; a BOM is fine; every key is checked before any DDR is written
   brain decision answer --captured [--session ID] [--no-merge] [--retries 3] [--dry-run]   the answers this
                  session's question tool captured (each tied to the DDR brain decision batch printed), recorded in a
-                 worktree, one PR, merged with its retries; in an agent's session an answer relayed by a message is
-                 never recorded (apply it, then ack)
+                 worktree, one PR, merged with its retries, or, when only the asking session's branch holds the
+                 DDRs (asked there, not merged yet), committed and pushed on that branch, whose PR carries them; in an
+                 agent's session an answer relayed by a message is never recorded (apply it, then ack)
   brain decision defaulted [--all] [--apply] [--seen [ID...]] [--on-main] [--json]   the review list: the decisions
                  taken by default, the provisional ones, the reversed ones (reverse one: answer ID <option> --again);
                  --apply and --seen never write a main checkout on main unless --on-main
@@ -189,10 +190,12 @@ def cmd_answer_captured(args, root: Path) -> int:
     except answers.AnswersError as exc:
         print(f"brain: {exc}", file=sys.stderr)
         return 1
-    print(f"recorded {len(out['recorded'])} answer(s) on {out['branch']}: {out['pr']}")
+    print(f"recorded {len(out['recorded'])} answer(s) on {out['branch']}: {out['pr'] or 'its own PR carries them'}")
     for line in _left_lines(out):
         print(line)
-    if not out["merged"]:
+    if out.get("in_branch"):   # its DDRs are on this branch only: they reach main with it
+        print(f"once {out['branch']} is merged and {project.root} pulled, the hooks announce the answers")
+    elif not out["merged"]:
         print(f"not merged yet: {out['pr']} (worktree {out['worktree']})")
     else:   # the hooks read the main checkout's queue: the other sessions see the answers once it is pulled
         print(f"merged: once {project.root} is pulled, the hooks announce the answers to every session of the project")
