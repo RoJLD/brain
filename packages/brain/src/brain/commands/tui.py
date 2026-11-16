@@ -37,7 +37,9 @@ USAGE = """\
                  {owner}'s), then a plugged project's tabs and panels, as its plugin declares them (COCKPIT,
                  brain.plugin_panels: a tab by its name, no number, before the settings; its tables sorted, filtered,
                  searched and saved as the others, read at the first read and at each probe), ctrl+pageup and
-                 ctrl+pagedown the previous and next, Escape back to the overview;
+                 ctrl+pagedown the previous and next, Escape back to the overview; the header's right end, the
+                 resources band (brain resources' sampler every 3 s: CPU, committed memory, disk, network, tokens
+                 today, quota and pace; WARN 85 % yellow, CRITICAL 95 % red), whose click or 9 opens the detail;
                  Escape first clears the search and closes a full view; the bar shows the queue's band now, the
                  sessions asking and the open alerts, and is reduced to its
                  numbers under 120 columns or 30 rows, where the cards take one column and the grid is not offered;

@@ -318,8 +318,10 @@ $ErrorActionPreference = 'Stop'
 $out = foreach ($folder in @(FOLDERS)) {
   foreach ($t in @(Get-ScheduledTask -TaskPath $folder -ErrorAction SilentlyContinue)) {
     $i = $t | Get-ScheduledTaskInfo
+    $a = @($t.Actions)[0]
     [pscustomobject]@{
       name = $t.TaskName; folder = $t.TaskPath; state = [string]$t.State
+      exe = $(if ($a) { [string]$a.Execute } else { $null }); args = $(if ($a) { [string]$a.Arguments } else { $null })
       last_run = $(if ($i.LastRunTime -and $i.LastRunTime.Year -gt 2000) { $i.LastRunTime.ToUniversalTime().ToString('o') } else { $null })
       last_result = [int64]$i.LastTaskResult
       next_run = $(if ($i.NextRunTime -and $i.NextRunTime.Year -gt 2000) { $i.NextRunTime.ToUniversalTime().ToString('o') } else { $null })

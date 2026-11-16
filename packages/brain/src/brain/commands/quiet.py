@@ -52,4 +52,5 @@ def register(sub, ctx) -> None:
                                      "task paused")
     q.add_argument("--for", dest="for_", metavar="DURATION", help="90m, 2h, 1d (at most 7d)")
     q.add_argument("--off", action="store_true", help="end the quiet now and send the sum-up")
-    q.add_argument("--dry-run", action="store_true", help="the sum-up is printed, not sent")
+    q.add_argument("--dry-run", action="store_true", help="the sum-up is printed, not sent (--off ends the quiet "
+                                                                 "all the same)")

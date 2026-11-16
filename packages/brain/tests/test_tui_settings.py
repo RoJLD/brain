@@ -80,13 +80,13 @@ def test_the_settings_frame_holds_the_pages_then_their_settings():
         pages = frame.query_one("#settings-pages", tui_settings.SettingsPages)
         assert pages.option_count == len(tui_settings.settings_.PAGES)
         assert [str(pages.get_option_at_index(i).prompt) for i in range(pages.option_count)] == [
-            "Cockpit", "Identity", "Brain", "Modules", "Permissions", "Setup"]
+            "Cockpit", "Identity", "Brain", "Modules", "Permissions", "Schedules", "Setup"]
         assert app.check_action("edit_setting", ()) is False  # off the tab: its keys are off
         await pilot.press("comma")
         assert app.check_action("edit_setting", ()) is True
         table = app.query_one("#settings-table", DataTable)
         assert tuple(str(c.label) for c in table.ordered_columns) == tui_settings.SETTING_COLUMNS
-        await pilot.press("left", "down", "down", "down", "down", "down")  # the last page: Setup
+        await pilot.press("left", "down", "down", "down", "down", "down", "down")  # the last page: Setup
         await pilot.pause(0.1)
         assert app.setting_page == "setup" and "checks" in _settings(app)
     _run(check)
@@ -188,7 +188,7 @@ def test_a_default_saved_unchanged_stays_unset_and_the_pages_follow_the_language
         await pilot.click("#save")
         await pilot.pause(0.1)
         pages = app.query_one("#settings-pages", tui_settings.SettingsPages)
-        assert str(pages.get_option_at_index(5).prompt) == "Mise en place" and "1 File d'Ada" in _bar(app)
+        assert str(pages.get_option_at_index(6).prompt) == "Mise en place" and "1 File d'Ada" in _bar(app)
     _run(check)
 
 

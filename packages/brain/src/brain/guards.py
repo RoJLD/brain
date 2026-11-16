@@ -27,7 +27,11 @@ on Windows, else bash (TERMINAL_TOOL), in its cwd, else the session's. Nine guar
   Set-Secret, kubectl create secret and Secret manifests), accounts (gh auth login|logout|refresh, docker, npm, az,
   gcloud and argocd logins, local users), scheduled (schtasks /create|/change|/delete, Register-ScheduledTask and
   its kin, brain schedule install --apply, services, crontab but -l, at, systemctl enable, Run keys, a file written
-  where it starts on its own, the desktop app's scheduled-tasks tools), arming (--arm), installer (install.ps1 -Apply). A category the file does
+  where it starts on its own, the desktop app's scheduled-tasks tools), arming (--arm), installer (install.ps1 -Apply).
+  The engine's own gestures (brain usage allow, handover root, schedule install --apply, ipc otel-headers; under
+  config.json guards.owner_strict also vault open, drill, device init and forget-previous, reseal --apply, update,
+  uninstall --apply, queue apply) are brain.gestures' one list, judged first: one in a never-grantable category is an action the
+  owner can queue, any other is refused naming the owner's terminal. A category the file does
   not declare is not guarded; money and legal have no command, only their deny rules. Also refused: setting
   BRAIN_GUARD_ALLOW for later sessions (setx, the registry, Claude Code's settings, a shell profile; check override).
   A session's Remote Control and permission mode (security-settings, never lifted) are refused but in Remote Control's
@@ -92,6 +96,10 @@ on Windows, else bash (TERMINAL_TOOL), in its cwd, else the session's. Nine guar
   unreadable, not an object, ``public`` not an object, a ``v`` above the known one, $BRAIN_CONFIG naming no file, or
   no config.json found although $BRAIN_PERSONAL or personal.json names a personal brain; never an unknown key), the
   reason naming the fix; guard.sh refuses them too when no Python that imports brain can run the guards.
+- Advice, never a refusal (wi-brain-private-text-prepush): a git push to a public repo that the guards let through gets
+  in the session's context the passages of 8 words or more that the lines its commits add (those the remote has not)
+  share with the owner's rules and notes on this machine (brain.privatetext), by file, line and source: reworded in
+  their PR, not before the tag. The ledger records it as ``public:private-text``, decision warned.
 - A warning, never a refusal: a Bash heredoc that holds a doubled backslash and writes a file or feeds an
   interpreter, on Windows, gets a note in the session's context (additionalContext): through the Bash tool the
   doubled backslash has arrived single; Write or Edit, or a byte check after (the lesson
@@ -130,7 +138,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import NamedTuple
 
-from . import config, diffs, markers, midsession, paths, projects, public, secretscan, timing
+from . import config, diffs, gestures, markers, midsession, paths, projects, public, secretscan, timing
 
 GUARDS = ("production", "attribution", "secrets", "markers", "owner", "power", "third-party", "public", "branches",
           "merges")
@@ -1640,12 +1648,8 @@ def _owner_command(words: list[str], cwd: str, shell: str, command: str) -> tupl
             if any(str(o.get("kind")) == "Secret" for o in objs):
                 return "keys", f"kubectl {verb} of a Secret"
         return None
-    if (prog == "brain" or "brain" in low[1:3]) and "--apply" in low and             any(x == "schedule" and y == "install" for x, y in zip(low, low[1:])):
-        return "scheduled", "brain schedule install --apply (it creates, changes or removes scheduled tasks)"
-    # whatever runs it (brain.cmd, python -mbrain, python -m brain.cli, a wrapper) and a word the guard cannot resolve
-    # after ipc ($x, %x%, a backquote), as _root_override reads brain handover root
-    if any(x == "ipc" and (y == "otel-headers" or any(c in y for c in "$`%")) for x, y in zip(low, low[1:])):
-        return "keys", "brain ipc otel-headers (it prints the machine's token: Claude Code's otelHeadersHelper runs it)"
+    # brain's own gestures (brain schedule install --apply, brain ipc otel-headers...) are brain.gestures', read by
+    # check_owner before this table
     return _subcommand(prog, args)
 
 
@@ -1955,13 +1959,8 @@ def _is_usage_allow(target) -> bool:
 
 
 def _usage_override(cmds, shell: str) -> str | None:
-    """What lifts the usage governor for a session: brain usage allow (python -m brain too), or a shell write into its
-    file."""
-    for words, _, _, _ in actions(cmds, shell):
-        low = [w.lower() for w in words]
-        if (_prog(words[0]) == "brain" or "brain" in low[1:3]) and any(
-                a == "usage" and b == "allow" for a, b in zip(low, low[1:])):
-            return "brain usage allow"
+    """What lifts the usage governor for a session by its file: a shell write into it (brain usage allow itself is a
+    gesture of brain.gestures, judged before)."""
     for what, target in shell_writes(cmds, shell):
         if not isinstance(target, Unresolved) and _is_usage_allow(target):
             return f"{what} into {target}"
@@ -2016,15 +2015,13 @@ def _hook_word(low: list[str], i: int, python: bool) -> bool:
 
 
 def _root_override(cmds, shell: str) -> str | None:
-    """What marks a chain root for a session (wi-brain-handover-command): any command whose words hold ``handover``
-    then ``root`` (quoted or not) or a word the guard cannot resolve (``$x``, ``%x%``, a backquote), whatever runs it
-    (brain, python -I -m brain, a wrapper); the hook entry that marks a root at a first prompt (midsession.py,
+    """What marks a chain root for a session (wi-brain-handover-command) but brain handover root itself (a loose
+    gesture of brain.gestures: any command whose words hold ``handover`` then ``root`` or a word the guard cannot
+    resolve, whatever runs it, judged before): the hook entry that marks a root at a first prompt (midsession.py,
     brain.midsession, brain.succession.auto_root: wi-brain-handover-auto-root) run by an interpreter; or a shell write
     into its file or the folder that holds it."""
     for words, _, _, _ in actions(cmds, shell):
         low = [w.lower() for w in words]
-        if any(a == "handover" and (b == "root" or any(c in b for c in "$`%")) for a, b in zip(low, low[1:])):
-            return "brain handover root"
         if _root_hook(low):
             return "the chain root's hook entry (midsession.py) run by hand"
     for what, target in shell_writes(cmds, shell):
@@ -2097,6 +2094,18 @@ def check_owner(tool: str, inp: dict, cmds, cwd: str, powershell: bool = False, 
     if what:
         return ("override", f"{what} refused: the guards' override is {config.owner_of()}'s, set in Claude Code's "
                             "environment", None)
+    cats = owner_categories()
+    for words, _, sh, top in actions(cmds, sub, command=command):
+        g = gestures.match(words)
+        if g is None or (g.guard == "strict" and not gestures.strict()):
+            continue
+        remote = " over ssh" if sh == "ssh" else ""
+        if g.category in cats:
+            why = cats[g.category].get("why") or f"{g.category} is in the never-grantable list"
+            return (g.category, f"{g.name} ({g.why}){remote} refused: {g.category} is {config.owner_of()}'s alone "
+                                f"({why.rstrip('.')})", _request(g.category, g.name + remote, top, shell, cwd))
+        return (g.category, f"{g.name}{remote} refused: {g.why}; it is {config.owner_of()}'s, in their own terminal "
+                            "(brain.gestures)", None)
     what = _usage_override(cmds, sub)
     if what:
         return ("override", f"{what} refused: it lifts the usage guard (brain.governor), which is "
@@ -2105,7 +2114,6 @@ def check_owner(tool: str, inp: dict, cmds, cwd: str, powershell: bool = False, 
     if what:
         return ("override", f"{what} refused: it marks a coordinators' chain root, which lets a session switch "
                             f"Remote Control; that mark is {config.owner_of()}'s, in their own terminal", None)
-    cats = owner_categories()
 
     def refusal(cat, what, top, remote=""):
         why = cats[cat].get("why") or f"{cat} is in the never-grantable list"
@@ -3254,21 +3262,30 @@ def _push_commits(repo: str, refspecs: list[str], flags: set[str]) -> list[tuple
     return out
 
 
+def _public_push(d: str, args: list[str], cfg) -> tuple[str, str, list[str], set[str]] | None:
+    """(slug, remote, refspecs, flags) of a git push run in ``d`` with ``args`` when it goes to a public repo of
+    config.json ``public.repos`` (the remote named or given as a URL, else the branch's push remote or upstream,
+    else origin); None for any other repo."""
+    remote, refspecs, flags = _push_target(args)
+    if not remote:
+        branch = _git_out(d, "rev-parse", "--abbrev-ref", "HEAD").strip()
+        remote = _git_out(d, "config", f"branch.{branch}.pushRemote").strip() or \
+            _git_out(d, "config", f"branch.{branch}.remote").strip() or "origin"
+    url = remote if re.search(r"[:/]", remote) else _git_out(d, "remote", "get-url", "--push", remote).strip()
+    slug = public.repo_slug(url)
+    return (slug, remote, refspecs, flags) if public.is_public(slug, cfg) else None
+
+
 def check_public(cmds: list[tuple[list[str], str]]) -> str | None:
     cfg = None
     for words, d, args in _pushes(cmds):
         cfg = cfg or config.load()
         if not public.public_repos(cfg):
             return None
-        remote, refspecs, flags = _push_target(args)
-        if not remote:
-            branch = _git_out(d, "rev-parse", "--abbrev-ref", "HEAD").strip()
-            remote = _git_out(d, "config", f"branch.{branch}.pushRemote").strip() or \
-                _git_out(d, "config", f"branch.{branch}.remote").strip() or "origin"
-        url = remote if re.search(r"[:/]", remote) else _git_out(d, "remote", "get-url", "--push", remote).strip()
-        slug = public.repo_slug(url)
-        if not public.is_public(slug, cfg):
+        target = _public_push(d, args, cfg)
+        if target is None:
             continue
+        slug, _, refspecs, flags = target
         # a stamp counts only under the key it was made with: this engine, these rules, gitleaks as now
         # (wi-brain-public-stamp-binding)
         missing = [(ref, sha, why) for ref, sha in _push_commits(d, refspecs, flags)
@@ -3298,6 +3315,109 @@ def _checks_first(cmds: list[tuple[list[str], str]], push: list[str]) -> bool:
         if brain and "check" in words and "--public" in words:
             return True
     return False
+
+
+# --- the private text a push to a public repo sends: advice (wi-brain-private-text-prepush) ----------------------
+
+PRIVATE_TEXT_SHOWN = 5   # the passages a note names; it counts the rest
+
+
+def private_text_note(payload: dict) -> str | None:
+    """Advice, never a refusal, for a git push to a public repo: the passages of 8 words or more that what it sends
+    (the added lines of its commits that the remote has not, :data:`PRIVATE_TEXT_COMMITS` commits at most) shares
+    with the owner's rules and notes on this machine (brain.privatetext's hashed index, cached), so that a sentence
+    copied from them is reworded in its PR, not at the release. A file under public.allow is not read; tag messages
+    and git notes are not either. None when the push adds no line, goes elsewhere, the brain has no rules or notes
+    here, or BRAIN_GUARD_ALLOW holds public:private-text (the owner's way to turn the advice off)."""
+    command, cwd, powershell = _shell_call(payload)
+    if "push" not in command or "public:private-text" in allowed():
+        return None
+    found, cfg, idx = [], None, None
+    for _, d, args in _pushes(calls(command, cwd, powershell)):
+        cfg = cfg or config.load()
+        target = _public_push(d, args, cfg) if public.public_repos(cfg) else None
+        if target is None:
+            continue
+        slug, remote, refspecs, flags = target
+        added = _pushed_lines(d, remote, [sha for _, sha in _push_commits(d, refspecs, flags)], cfg)
+        if not added:
+            continue
+        from . import privatetext
+        idx = privatetext.hashed_index(cfg) if idx is None else idx
+        if not idx:
+            return None
+        found += [(path, line, src) for path, rows in added.items() for line, src in _scan_runs(rows, idx)]
+    return _private_text_message(list(dict.fromkeys(found))) if found else None
+
+
+def _shell_call(payload: dict) -> tuple[str, str, bool]:
+    """(command, folder, PowerShell or not) of a shell call or a Terminal panel command; '' for any other tool."""
+    tool = payload.get("tool_name") or ""
+    inp = payload.get("tool_input") or {}
+    cwd = payload.get("cwd") or os.getcwd()
+    if TERMINAL_TOOL.match(tool):
+        tool = terminal_shell()
+        cwd = _path(inp["cwd"], cwd) if isinstance(inp.get("cwd"), str) and inp["cwd"] else cwd
+    command = (inp.get("command") or "") if tool in SHELL_TOOLS else ""
+    return str(command), cwd, tool == "PowerShell"
+
+
+def _private_text_message(found: list[tuple[str, int, str]]) -> str:
+    shown = "; ".join(f"{path}:{line} (from {src})" for path, line, src in found[:PRIVATE_TEXT_SHOWN])
+    more = f"; and {len(found) - PRIVATE_TEXT_SHOWN} more" if len(found) > PRIVATE_TEXT_SHOWN else ""
+    return (f"brain guard, advice (nothing refused): this push sends {len(found)} passage(s) of 8 words or more that "
+            f"the owner's rules or notes on this machine hold: {shown}{more}. Reword them in your own words in this "
+            "PR, before the tag's check refuses them (brain check --public --private-text lists them all).")
+
+
+PRIVATE_TEXT_COMMITS = 500   # the most commits one push's advice reads (a first push of a long history)
+
+
+def _excluded(repo: str, remote: str) -> list[str]:
+    """git log's --not side: the remote-tracking refs of ``remote``, or, for a URL, of the remotes whose push URL names
+    the same repo (none: nothing excluded, the scan bounded by PRIVATE_TEXT_COMMITS)."""
+    if not re.search(r"[:/]", remote):
+        return [f"--remotes={remote}"]
+    slug = public.repo_slug(remote)
+    return [f"--remotes={name}" for name in _git_out(repo, "remote").split()
+            if public.repo_slug(_git_out(repo, "remote", "get-url", "--push", name).strip()) == slug]
+
+
+def _pushed_lines(repo: str, remote: str, shas: list[str], cfg) -> dict[str, list[tuple[int, str]]]:
+    """path -> (line, text) of the lines the commits ``shas`` add that ``remote`` has not, the files under
+    public.allow left out; git's own diff options neutralised (brain.diffs.argv), the log strict (an error or a
+    timeout is logged by the caller, never read as nothing to say)."""
+    if not shas:
+        return {}
+    allow = [boundary_glob(g) for g in config.allowed(cfg)]
+    exclude = _excluded(repo, remote)
+    diff = _git_out(repo, *diffs.argv("log", "-p", "--format=", "-U0", f"--max-count={PRIVATE_TEXT_COMMITS}",
+                                      *shas, *(["--not", *exclude] if exclude else [])), strict=True)
+    return {path: rows for path, rows in diffs.added_lines(diff).items() if not any(rx.match(path) for rx in allow)}
+
+
+def boundary_glob(glob: str):
+    from . import boundary   # here: the guard hook imports it only for a push to a public repo
+    return boundary.glob_regex(glob)
+
+
+def _scan_runs(rows: list[tuple[int, str]], idx: dict) -> list[tuple[int, str]]:
+    """(line, source) of each copied passage in ``rows``, scanned run by run of consecutive line numbers: two hunks
+    never join into one sentence. ``rows`` come from git log, newest commit first: a line number keeps its newest
+    text, and lines added by several commits are read in their order in the file."""
+    from . import privatetext
+    newest: dict[int, str] = {}
+    for line, text in rows:
+        newest.setdefault(line, text)
+    out, run = [], []
+    for row in sorted(newest.items()) + [(None, "")]:
+        if run and (row[0] is None or row[0] != run[-1][0] + 1):
+            out += [(run[line - 1][0] if 0 < line <= len(run) else run[0][0], src)
+                    for line, src in privatetext.scan("\n".join(t for _, t in run), idx)]
+            run = []
+        if row[0] is not None:
+            run.append(row)
+    return out
 
 
 # --- what a commit to a public repo records (the lesson les-brain-owner-name-in-fixtures) ------------------------
@@ -3787,11 +3907,22 @@ def main(stdin=None, stdout=None) -> int:
             (stdout or sys.stdout).write(json.dumps({"hookSpecificOutput": {
                 "hookEventName": "PreToolUse", "permissionDecision": "deny", "permissionDecisionReason": reason}}) + "\n")
             return 0
+        notes = []
         note = heredoc_note(payload)
         if note:
             _record(payload, "heredoc", "backslash", "warned", note)
+            notes.append(note)
+        try:
+            note = private_text_note(payload)
+        except Exception as exc:   # advice that fails is no advice: the push goes on (ledger/errors.log)
+            _log("public", exc)
+            note = None
+        if note:
+            _record(payload, "public", "private-text", "warned", note)
+            notes.append(note)
+        if notes:
             (stdout or sys.stdout).write(json.dumps({"hookSpecificOutput": {
-                "hookEventName": "PreToolUse", "additionalContext": note}}) + "\n")
+                "hookEventName": "PreToolUse", "additionalContext": " ".join(notes)}}) + "\n")
     except Exception as exc:  # never break the session
         try:
             from .capture import _log_error

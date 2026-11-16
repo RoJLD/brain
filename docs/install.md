@@ -41,7 +41,10 @@ powershell -NoProfile -ExecutionPolicy Bypass -File "$HOME\brain-engine\packages
 powershell -NoProfile -ExecutionPolicy Bypass -File "$HOME\brain-engine\packages\brain\installer\install.ps1" -Apply
 ```
 
-`-ExecutionPolicy Bypass` applies to that one run only; it changes no setting. Open a new PowerShell window, then:
+`-ExecutionPolicy Bypass` applies to that one run only; it changes no setting. The `-Apply` reads this machine's
+profile once the command is installed (`brain profile render`, with or without a brain of your own yet) and installs
+the extras it wants in the same run: the default profile's is `tui`, the cockpit's full-screen app (`-Tier lite`
+installs none). Open a new PowerShell window, then:
 
 ```powershell
 brain --version        # brain 0.5.0
@@ -244,7 +247,7 @@ A user timer runs while you are logged in; on a server, keep them running with, 
 
 ```bash
 loginctl enable-linger "$USER"
-brain schedule list        # what is declared, installed, and the alerts pass's last run (SILENT after two cadences)
+brain schedule list        # every scheduled task, declared or found, and the alerts pass's last run (SILENT after two cadences)
 ```
 
 ### macOS

@@ -151,11 +151,14 @@ def stamp_path(slug: str, head: str) -> Path:
     return paths.brain_home() / FOLDER / owner.lower() / name.lower() / f"{head}.json"
 
 
-def stamp(g: Gate) -> Path:
+def stamp(g: Gate, together: dict | None = None) -> Path:
+    """The head's stamp; ``together`` (brain merge-ready --with): the PRs it was checked with, the order, the tests."""
     f = stamp_path(g.slug, g.head)
     f.parent.mkdir(parents=True, exist_ok=True)
     rec = {"v": 1, "pr": g.pr, "repo": g.slug, "head": g.head, "base": g.base,
            "at": datetime.now(timezone.utc).isoformat(timespec="seconds"), "checks": [c["check"] for c in g.checks]}
+    if together:
+        rec["together"] = together
     f.write_text(json.dumps(rec, indent=2) + "\n", encoding="utf-8", newline="\n")
     return f
 

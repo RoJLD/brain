@@ -162,6 +162,19 @@ def _is_type(value, t: str) -> bool:
     return isinstance(value, _TYPES[t])
 
 
+# A value an error may print back: a short plain word (an enum's typo), never an '@' or an account id (a UUID).
+_PLAIN = re.compile(r"(?![\s\S]*[0-9A-Fa-f]{8}-?[0-9A-Fa-f]{4}-?[0-9A-Fa-f]{4}-?[0-9A-Fa-f]{4}-?[0-9A-Fa-f]{12})"
+                    r"[A-Za-z0-9_.:+-]{1,40}")
+
+
+def _shown(value) -> str:
+    """``value`` as an enum or a format error prints it: its repr when it is a short plain word (or not a string),
+    else its length only, so an e-mail address, an account id or a long token never reaches a terminal or a log."""
+    if not isinstance(value, str) or _PLAIN.fullmatch(value):
+        return repr(value)
+    return f"its value ({len(value)} character(s))"
+
+
 def _format_ok(value: str, fmt: str) -> bool:
     try:
         if fmt == "date":
@@ -198,16 +211,17 @@ def _validate(value, schema: dict, root: dict, path: str, errors: list[str],
     if "const" in schema and value != schema["const"]:
         errors.append(f"{path}: must be {schema['const']!r}")
     if "enum" in schema and value not in schema["enum"]:
-        errors.append(f"{path}: {value!r} not in {schema['enum']}")
+        errors.append(f"{path}: {_shown(value)} not in {schema['enum']}")
     if isinstance(value, str):
         if "minLength" in schema and len(value) < schema["minLength"]:
             errors.append(f"{path}: shorter than {schema['minLength']}")
         if "maxLength" in schema and len(value) > schema["maxLength"]:
             errors.append(f"{path}: longer than {schema['maxLength']}")
         if "pattern" in schema and not re.search(schema["pattern"], value):
-            errors.append(f"{path}: {value!r} does not match {schema['pattern']}")
+            # the value is never printed back: it may be an e-mail address, an account id or a secret
+            errors.append(f"{path}: its value ({len(value)} character(s)) does not match {schema['pattern']}")
         if "format" in schema and not _format_ok(value, schema["format"]):
-            errors.append(f"{path}: {value!r} is not a {schema['format']}")
+            errors.append(f"{path}: {_shown(value)} is not a {schema['format']}")
     if _is_type(value, "number") and "minimum" in schema and value < schema["minimum"]:
         errors.append(f"{path}: below {schema['minimum']}")
     if _is_type(value, "number") and "maximum" in schema and value > schema["maximum"]:

@@ -43,6 +43,7 @@ def test_apply_writes_a_brain_that_checks_and_points_to_it(fresh, monkeypatch, c
     assert "next: git init" in out
     assert f"claude plugin marketplace add {fresh.resolve()}, then claude plugin install brain-core@brain" in out
     assert "brain sync renders the plugin again after an engine upgrade" in out
+    assert "local services, in this order" in out and "1. the machine's token: brain ipc token --plan" in out
     data = json.loads((fresh / "config.json").read_text(encoding="utf-8"))
     stores = data.pop("classes")["stores"]
     assert list(stores) == ["memory", "ddr", *classes.ENGINE_STORES, "repo"]   # every engine store declared

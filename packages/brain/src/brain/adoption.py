@@ -36,7 +36,7 @@ from collections import Counter
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
-from . import paths, perf, readhint
+from . import paths, perf, readhint, toolids
 
 SHELLS = ("Bash", "PowerShell")
 EDITORS = ("Edit", "Write", "MultiEdit", "NotebookEdit")
@@ -58,11 +58,6 @@ ANSWERS = {   # a kind -> the read command that answers a hand read of it
     "queue": "brain decision pending",
     "features": "brain features list|search|show",
 }
-SEGMENT = re.compile(r"[;&|\n]+|\$\(|`")
-BRAIN = re.compile(r"(^|[\\/])brain(\.exe)?$", re.I)
-OPTIONS = ("--root", "--project", "--store")   # brain's options that take a value, before the command
-QUOTED = re.compile(r"\"[^\"\n]*\"|'[^'\n]*'")
-PREFIXES = {"&", "sudo", "time", "exec", "nohup", "call", "do", "then", "else", "{", "("}
 
 
 def units(parser: argparse.ArgumentParser) -> tuple[dict[str, str], dict[str, str]]:
@@ -103,43 +98,13 @@ def ran_count(unit: str, counts: Counter) -> int:
     return int(counts.get(unit, 0)) or (int(counts.get(" ".join(words[:2]), 0)) if len(words) > 2 else 0)
 
 
-def _command(words: list[str]) -> tuple[str, list[str]] | None:
-    """(brain's command word, the words after it): brain's options before it skipped, those that take a value
-    (--root, --project, --store, or an abbreviation argparse accepts) with their value."""
-    i = 0
-    while i < len(words):
-        w = words[i]
-        if w.startswith("--") and "=" not in w and len(w) > 2 and any(o.startswith(w) for o in OPTIONS):
-            i += 2
-        elif w.startswith("-"):
-            i += 1
-        else:
-            return w, words[i + 1:]
-    return None
-
-
 def typed(command: str, known: dict[str, str], alias: dict[str, str]) -> list[str]:
-    """The registry's units a shell command line runs (``brain [options] <command> [<subcommand>]``, the program
-    ``brain`` or ``brain.exe`` by any path, or ``python -m brain``) at the start of a part of the line, after an
-    assignment or a prefix (``&``, ``sudo``); a quoted text is one word (a commit message that names a command runs
-    none), and from the first heredoc on the line is left out."""
-    if not isinstance(command, str):
-        return []
-    text = QUOTED.sub(lambda m: re.sub(r"[;&|`\n]|\$\(", " ", m.group(0)), command.split("<<", 1)[0])
+    """The registry's units a shell command line runs (brain.toolids.brain_words: ``brain [options] <command>
+    [<subcommand>]``, the program ``brain`` or ``brain.exe`` by any path, or ``python -m brain``, at the start of a
+    part of the line, after an assignment or a prefix; a quoted text is one word, a heredoc's body no command):
+    ``brain <command> <subcommand>`` when the registry has it, else ``brain <command>``."""
     out = []
-    for seg in SEGMENT.split(text):
-        words = seg.split()
-        while words and (words[0].lower() in PREFIXES or re.match(r"^[A-Za-z_][A-Za-z0-9_]*=", words[0])):
-            words.pop(0)
-        if len(words) > 2 and words[0].lower() in ("python", "python3", "py") and words[1:3] == ["-m", "brain"]:
-            words = words[2:]
-        if not words or not BRAIN.search(words[0].strip("'\"")):
-            continue
-        parts = _command([w.strip("'\"") for w in words[1:]])
-        if parts is None:
-            continue
-        cmd, after = parts
-        sub = next((w for w in after[:1] if not w.startswith("-")), "")
+    for cmd, sub in toolids.brain_words(command):
         for unit in (f"brain {cmd} {sub}", f"brain {cmd}"):
             unit = alias.get(unit, unit)
             if unit in known:
@@ -273,7 +238,9 @@ def unused_features(store: Path | None, known: dict[str, str], ran: Counter,
     by_module: dict[str, list[str]] = {}
     for unit, module in known.items():
         by_module.setdefault(module, []).append(unit)
-    used = (lambda u: ran_count(u, ran) or u in (via or {}))   # it ran, or is reached another way
+    def used(u: str) -> bool:   # it ran, or is reached another way
+        return bool(ran_count(u, ran) or u in (via or {}))
+
     out = []
     for fid, node in sorted(m.features.items()):
         if node.get("status") != "have" and (node.get("props") or {}).get("status") != "have":

@@ -15,6 +15,50 @@ Both are declared in `src/brain/adapters/claude/hooks/hooks.json`. A personal br
 `brain render --target claude --write` (or `brain sync`) into its own plugin, then its installer applies the plugin
 (on Windows `install.ps1 -Apply`, the owner's).
 
+## The owner's gestures, declared once
+
+What only the owner runs, in their own terminal, is one list in the engine, `brain.gestures.GESTURES`: a subcommand
+path of `brain`, the flags that make it the owner's, the owner guard's category, and where it is refused. The owner
+guard (`brain.guards.check_owner`) reads it for every shell call and every command of a nested shell, wrapper or
+launcher it sees through; `guard.sh`'s pre-filter starts Python for each; the command line (`brain.cli`) refuses the
+ones it gates when an agent's session (`CLAUDECODE`, `CLAUDE_CODE_ENTRYPOINT` or `BRAIN_AGENT_SESSION` set) runs them
+past the hook, through a script for instance. `tests/test_gestures.py` checks each gesture against the guard, the
+pre-filter, the command line and this table, so a new gesture added to the list is refused everywhere at once.
+
+| Gesture | Category | The guard | The command line in a session |
+|---|---|---|---|
+| `brain usage allow` | override | refuses | refuses (strict) |
+| `brain handover root` | override | refuses, whatever runs it | refuses (its own check) |
+| `brain schedule install --apply` | scheduled | refuses, queued for the owner | refuses (strict) |
+| `brain ipc otel-headers` | keys | refuses, whatever runs it, queued | runs: Claude Code's `otelHeadersHelper` calls it |
+| `brain vault open` | keys | refuses (strict), queued | refuses (its own check) |
+| `brain vault drill` | keys | refuses (strict), queued | refuses (its own check) |
+| `brain vault device init` | keys | refuses (strict), queued | refuses (its own check) |
+| `brain vault device forget-previous` | keys | refuses (strict), queued | refuses (its own check) |
+| `brain vault reseal --apply` (or `--identity`) | keys | refuses (strict), queued | refuses (strict; `--identity`: its own check) |
+| `brain update` (but `--check`) | installer | refuses (strict) | refuses (its own check) |
+| `brain uninstall --apply` | installer | refuses (strict) | refuses (its own check) |
+| `brain queue apply` | actions | refuses (strict) | refuses (its own check) |
+| `install.ps1 -Apply` | installer | refuses when permissions.yaml declares `installer` | not the engine's |
+
+A gesture's words follow `brain`'s own options (`--root`, `--project`, `--store`, or argparse's prefixes of them:
+`brain --proj x usage allow`), with options and their values allowed between them (`brain usage --hours 2 allow`),
+whatever runs it as the program: `brain`, its `.exe` or `.cmd`, `python -m brain` (`-mbrain`, `-Imbrain`, `-m
+brain.cli`), `uv run brain`; a word that only names brain (`echo brain update`, `cp -r brain x`) runs nothing. A flag
+counts by argparse's prefixes too (`--a`, `--app=x`). A loose gesture (`handover root`, `ipc otel-headers`) is found
+anywhere in the command, its last word unresolved too (`brain ipc $x`), `--help` or not; any other is a read with
+`--help` or `-h` before a `--`. A category
+of the never-grantable list (keys, scheduled; installer when permissions.yaml declares it) makes the refusal an action
+the owner can queue (`brain queue add --guard`); the others name the gesture and the owner's terminal.
+
+**Strict** (config.json `guards.owner_strict: true`, off by default): the refusals 0.5.1 adds to what the guard let
+through before. At the guard: `brain vault reseal --apply`, and the gestures whose commands refuse themselves in an
+agent's session already (`vault open`, `drill`, `device init` and `forget-previous`, `update`, `uninstall --apply`,
+`queue apply`: refused before they run, `brain update`'s plan included); at the command line, its own refusal of
+`brain usage allow`, `brain schedule install --apply` and `brain vault reseal --apply` in an agent's session (exit 2).
+Without it, the guard refuses what 0.5.0 refused (`usage allow`, `handover root`, `schedule install --apply`, `ipc
+otel-headers`), now however brain is run, and each command keeps its own check.
+
 ## The Terminal panel
 
 A command a session types into the owner's Terminal panel (`mcp__*terminal__run_in_terminal`) runs in the owner's own
@@ -176,7 +220,20 @@ so the guard fails closed. Override, the owner's: `BRAIN_GUARD_ALLOW=markers`.
 
 ## A public repo's commits, a chained push, heredocs
 
-Three guards the lessons registry asked for (`brain lessons --follow`):
+Three guards the lessons registry asked for (`brain lessons --follow`), and an advice:
+
+- **The private text a push sends** (`public:private-text`, advice, never a refusal; wi-brain-private-text-prepush):
+  a `git push` to a repo of `public.repos` that the guards let through is compared, by its added lines that the
+  remote has not, with the owner's rules and notes on this machine (`brain.privatetext`, windows of 8 words, as
+  `brain check --public --private-text` before a tag). Each passage is named in the session's context by its file,
+  line and source, never its text, and the ledger records the advice (`warned`); a file under `public.allow` is not
+  read, and a scan that fails lets the push go (`errors.log`). The PR rewords them; the tag's check still refuses.
+  A push that adds no line costs one `git log`; the windows are hashed and cached in
+  `<BRAIN_HOME>/cache/private-text.json` (hashes and source paths, never the words) while the rules and notes keep
+  their mtime and size; one push reads 500 commits at most (a first push of a long history), each hunk on its own,
+  and a remote given as a URL excludes what the remotes naming the same repo have. Tag messages and git notes are not
+  read. `BRAIN_GUARD_ALLOW=public` lifts the push's refusal, not the advice; `BRAIN_GUARD_ALLOW=public:private-text`
+  turns the advice off.
 
 - **The public check at the commit** (`public:commit`): in a checkout whose branch pushes to a repo of config.json's
   `public.repos` (its pushRemote, else its remote, else origin: a private fork's public upstream is not checked), a `git commit` whose added lines hold a denied term outside `public.allow` (the owner's name, a
@@ -257,6 +314,8 @@ the digest's and the forecast's history and the changed-items reader all read gi
 | `memory`: committed memory at `memory` % or more, or available RAM under `memory_available_gb` GB (default 0: no floor) | session, workflow | deny, naming both measures and the one that refused |
 | `sessions`: the sessions running reach the cap | session | deny |
 | `brainstorms`: the open brainstorms reach the cap, for a brainstorm | session | deny |
+| `streams`: the calling session already has `max_streams` live streams (`usage.guard.wave_quota`, off by default) | a session started now | deny |
+| `wave_quota`: the week's forecast at its reset plus this stream's estimate over `ask_over_pct` (`usage.guard.wave_quota`, off by default) | a session started now | ask the owner |
 | `warn`: a window at `warn` % or more | all | ask the owner |
 
 The parallel sessions cap is the smaller of `sessions` and what the week's room pays for:
@@ -271,9 +330,57 @@ applied, and a `sessions` refusal names the session-hour it used (`measured` whe
 A brainstorm is a session whose brief says `Task class: brainstorm` or carries `#brainstorm` (the session record's
 `task_class`), or whose title matches `brainstorm_title` (default: it starts with "Brainstorm"). It is open while not
 archived and active in the last `brainstorm_hours`, in any project. A brainstorm start the governor lets through is
-noted in `<BRAIN_HOME>/usage/starts.jsonl` and counted for 10 minutes, until the app shows its session (a log rotated
+noted in `<BRAIN_HOME>/usage/starts.jsonl` (`"brainstorm": true`) and counted for 10 minutes, until the app shows its session (a log rotated
 monthly, two months kept; the governor reads the live file and the newest monthly one, so a start just before the
 month turned still counts).
+
+### The wave quota gate (`usage.guard.wave_quota`, off by default)
+
+The owner's rule for waves (the waves retro, RETRO-5): a stream starts only while the quota's forecast, its own
+estimate included, keeps the week under 90 % at its reset, and one master runs three streams at most, their reviews
+included. Without `usage.guard.wave_quota` in config.json nothing of this runs; with it, two checks apply to a
+`start_session` call that starts a session now (`initiation` `user_asked` or none, or a `proposal_id`; a proposal card,
+`offer` or `own_initiative`, starts nothing and is not checked):
+
+- **`streams`** refuses a new stream when the calling session (the master) already has `max_streams` live ones: its
+  children in the desktop app's session files (their `spawnedFrom`), neither archived nor detached, that are
+  *running* (the transcript written in the last `live_minutes` and its last turn not ended: a child that reported and
+  waits, or asks the owner, does not count) or *starting* (created in the last 10 minutes, no transcript yet), plus the
+  stream starts no child matches yet. Each start the governor lets through, or asks the owner about (so that parallel
+  starts in one message see each other), is noted in `usage/starts.jsonl` (`"stream": true`). A noted start is matched
+  against every child of the master, archived and detached ones included, on its creation time (the title or the
+  app's short name only breaks a tie: the app may cut or rename a title); one no child matches counts for one minute
+  only, so a start the app refused, or the owner declined, holds no slot for long, and a review that ran and was
+  archived within minutes holds none.
+- **`wave_quota`** asks the owner when the week's forecast at its reset goes over `ask_over_pct`: the week's percent
+  as read (the newest reading, or the last forecast's percent when it is newer) plus the last forecast's pace
+  (`usage/quota.json`, `pace.pct_h`, only while that forecast is of the week in force) times the hours from that
+  reading to the reset, plus this stream's cost in percent of the week. The
+  cost is the brief's estimate (the `usd=` of its « Cost estimate » line: `brain brief`, `brain cost estimate`), else
+  the median session's cost of the last forecast (`live.median_session_usd`), converted by its `pct_per_usd`. The
+  question gives the arithmetic: `232 % (78 % at 12:24 UTC + 2.16 %/h x 71.6 h) plus this stream's 0.7 % ($11.00,
+  the brief's estimate): 233 %, over 90 %`.
+
+Both fail open: a forecast that cannot be read (no week reading in force, no pace of this week, no conversion), a
+session the app does not know or no app on the machine, a count that takes more than 2 s (timed from before the app's
+sessions are read), a transcript with no whole record in its last 1 MB (that child is not counted), or an error inside
+the gate let the call through, and the hook says why in its context (« Wave quota gate (usage.guard.wave_quota): ...; the start
+goes through unchecked by it. »). The owner's override (below) lifts either check when it is named
+(`brain usage allow --check streams`, `--check wave_quota`); an allow without `--check` leaves the gate on. The
+counts of the streams that fit (below) plan a wave and ignore an allow: `brain usage guard`'s line says when one lifts a
+check of the gate.
+
+The gate is `brain.wavegate`. How many streams fit now, from the same reading (`brain.wavegate.room`): the smaller of the streams left to the
+master (`max_streams` less its live ones) and the streams that keep the forecast at the reset under `ask_over_pct`.
+`brain brief` says it on its « Streams that fit now » line (for its coordinator, each stream at the item's estimate),
+`brain wave plan` and `brain next` on theirs (a round holds at most `max_streams` lots, the first round's lots at the sum
+of their items' recorded estimates), `brain usage guard` on its `waves` line.
+
+```json
+{"usage": {"guard": {"wave_quota": {"ask_over_pct": 90, "max_streams": 3}}}}
+```
+
+Both fields are optional (90 and 3); `0` turns that check off.
 
 ### A master's start_session (the master's watch)
 
@@ -313,12 +420,26 @@ Every refusal, ask and override is a line of the guards ledger with `"guard": "u
 ### Overriding it (the owner only)
 
 ```bash
-brain usage allow --hours 2 --reason "finish the demo"   # in your own terminal
+brain usage allow --hours 2 --reason "finish the demo"   # in your own terminal: the memory and session caps
+brain usage allow --check critical --hours 1             # the critical quota (and warn with it)
 brain usage allow --hours 0                              # end it now
 ```
 
+An allow lifts checks, not the governor (RETRO-8): by default the memory and session caps (`memory`, `sessions`,
+`brainstorms`); `--check NAME`, repeatable, aims one or more of `critical` (which
+lifts `warn` too), `warn`, `memory`, `sessions`, `brainstorms`, `streams`, `wave_quota`. A stale quota reading is never lifted: reading it again is one `get_usage` call. A lifted
+check lets the next one decide (memory lifted, the sessions cap still refuses), and each refusal names the allow that
+lifts it (`brain usage allow --check critical --hours 2`), or says that none does. An allow adds to the one in
+force (its checks and the later end kept), so following one refusal's hint never undoes another allow; `--hours 0`
+ends the whole override. Each allow, and its end (`ended` by `--hours 0`, `expired` when its time has passed: the
+first to see it, a hook, `brain usage guard` or the next allow, claims the file and ends it, once; an allow the
+owner wrote meanwhile is kept), is a line of the guards ledger (`"guard": "usage"`, `"check": "allow"`, its checks, since, until and reason),
+and each call it lets through one more (`"decision": "overridden"`, `"by": "allow"`). An `allow.json` written by
+0.5.0 (no `checks`) lifts every check but `stale` until it ends.
+
 The guards refuse `brain usage allow` to a session, and any write of its file (`<BRAIN_HOME>/usage/allow.json`).
-`BRAIN_GUARD_ALLOW=usage` in Claude Code's environment lifts it too, for every session started with it.
+`BRAIN_GUARD_ALLOW=usage` in Claude Code's environment lifts every check, for every session started with it;
+`BRAIN_GUARD_ALLOW=usage:CHECK` that one only.
 
 ### Not applied here
 

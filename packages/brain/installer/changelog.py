@@ -52,7 +52,12 @@ def fragment_files(repo: Path, dist: str) -> list[Path]:
 
 def parse(path: Path) -> tuple[Fragment | None, str]:
     """(the fragment, '') or (None, what is wrong with it)."""
-    lines = path.read_text(encoding="utf-8").replace("\r\n", "\n").split("\n")
+    return parse_text(path, path.read_text(encoding="utf-8"))
+
+
+def parse_text(path: Path, text: str) -> tuple[Fragment | None, str]:
+    """:func:`parse` of a fragment's text read elsewhere (a commit's, by release_check.py --preview --ref)."""
+    lines = text.replace("\r\n", "\n").split("\n")
     m = HEAD.match(lines[0]) if lines else None
     if not m:
         return None, f"{path.as_posix()}: its first line is 'section: {' | '.join(SECTIONS)}'"

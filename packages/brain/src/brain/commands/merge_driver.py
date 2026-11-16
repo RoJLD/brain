@@ -33,7 +33,8 @@ def cmd_merge_driver(args) -> int:
         return mergedriver.install(repo, args.apply, args.launcher, args.json)
     if args.merge_cmd == "status":
         return mergedriver.status(repo, args.json)
-    return mergedriver.main_replay(repo, args.since, args.merges, args.json)
+    from .. import mergereplay
+    return mergereplay.main_replay(repo, args.since, args.merges, args.json)
 
 
 def register(sub, ctx) -> None:

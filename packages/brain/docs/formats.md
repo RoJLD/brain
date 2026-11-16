@@ -72,6 +72,19 @@ truncated write, a byte that is not UTF-8) or that its schema refuses is an erro
 `v`, a kind this engine does not know) is skipped and counted. Neither stops `brain sync`: the graph is built from the
 other lines, and a note says how many were left out. Their ids still count as recorded, so no AR is appended twice.
 
+### Where a session ran (config.json)
+
+config.json `usage.accounts` (wi-brain-session-provenance, `brain.provenance`) is additive: an optional key, which an
+older engine notes in read mode and refuses in strict mode (CI), so a brain repo whose CI runs an older engine sets it
+once its CI runs the engine that knows it. `usage.accounts[].alias` never takes an `@` nor a UUID (an e-mail address,
+an account id) anywhere in it, nor a trailing newline (the patterns end on `(?![\s\S])`, read alike by ECMA and
+Python), and `usage.accounts[].since` is a UTC day (YYYY-MM-DD). A value that breaks a schema's pattern is never
+printed back, whatever the schema: the error gives its path and length; an enum's or a format's error prints a short
+plain word only (no `@`, no UUID, at most 40 characters), else the length too. The SR and the token ledger
+(`usage/sessions.json`) do not change: a session's provider, harness, account and plan are computed when a report is
+built (the row's own fields, what the session's snapshot holds, then config.json and the model). The SR fields come
+with wi-brain-sr-provenance-fields.
+
 ### Milestone kinds (the store)
 
 A graph store's `schema.yaml` is a registered format (`store` in `SCHEMAS`, with what `brain init` writes once:
@@ -85,7 +98,7 @@ then the view merges as plain text and `boundary.yaml` reads it as `notes/**`; `
 | `props.kind` | Its members (`part_of` it) | Its props | brain check refuses |
 |---|---|---|---|
 | none | items and milestones, as before | `trigger`, `reached` | - |
-| `wave` | work items; it is itself `part_of` a milestone or an era (a warning without one) | `release: X.Y.Z` (its name), `week` (optional) | a `release` that is not `X.Y.Z`, two waves of one release, a member that is not a work item, an item `part_of` two waves, a `carried_to` that names no later wave, a `carried_via` that names no wave, a reached or dropped wave that still holds an open item |
+| `wave` | work items; it is itself `part_of` a milestone or an era (a warning without one) | `seq` (its place; the id `wave-sN`), `release: X.Y.Z` (a legacy or pinned release; else computed), `shipped_as: X.Y.Z` (written by `brain wave close`), `renamed_from` (`brain wave rename`), `week` (optional) | a `release` that is not `X.Y.Z`, a wave with no release (nothing before it to count from), two waves of one release, a member that is not a work item, an item `part_of` two waves, a `carried_to` that names no later wave, a `carried_via` that names no wave, a reached or dropped wave that still holds an open item |
 | `era` | milestones | `exit` (the Go/NoGo question, a DDR once its milestones are reached), `stage_to` and `serves` (optional, free labels) | a member that is not a milestone (a warning without `exit`, and once its exit is due) |
 
 An item's wave is the one it is `part_of`, or, once that wave closed without it, the later one its `props.carried_to`
@@ -136,7 +149,7 @@ projects) keeps its `v` 1 unwritten, so that brain 0.2.5, which reads every key 
 | `schedules/installed.json` | `v` 1, unwritten | `brain schedule install --apply` prints the plan and refuses (exit 2) |
 | `alerts/state.json` | `v` 1, unwritten | the notify pass sends nothing (« nothing sent: ... »), since sending without a record would send again each pass |
 | `vault/state.json` | `v` 1, written from 0.2.6 | `brain vault seal`, `canary` and `drill` refuse before any work; `status` and the health still read it |
-| `usage/sessions.json` | `v` 2 (`LEDGER_V`, apart from the scanner's `SCAN_V`, which only rescans rows) | `brain usage` brings the rows up to date in memory and says on stderr that it saved nothing |
+| `usage/sessions.json` | `v` 2 (`LEDGER_V`, apart from the scanner's `SCAN_V`, which only rescans rows; `SCAN_V` 4 adds a row's `tooling` and `refused`, the usage counters by tool id: additive, a row without them, its transcript gone, is read from its `tools`, `commands` and `skills`; an engine of `SCAN_V` 3 rescans a v4 row whose transcript exists and writes it back as v3, so the newer engine rescans it once more: run one engine per machine; from `SCAN_V` 4 on, a newer scanner's row is kept) | `brain usage` brings the rows up to date in memory and says on stderr that it saved nothing |
 | `tui.json` | `v` 1 (beside the older `cockpit: 1`, kept) | the cockpit shows the saved views but does not remember new ones (« brain tui: ... written by a newer brain ... the views are not remembered ») |
 | `memory-sync/state.json` | `v` 1 | the memory sync refuses before any fetch: `last.json` says « failed » and the alert names brain update |
 | `formats/<project>.json` | `v` 1 | `brain formats check` runs and reports as usual, and remembers no result: each check runs again next time |
@@ -205,7 +218,7 @@ over. Each class keeps (`stateio.LOG_RETENTION`, this month counted):
 | errors | `ledger/errors.log`, `ledger/errors-YYYY-MM[-n].log` | 6 months |
 | timing | `ledger/engine/*-YYYY-MM.jsonl` (brain.selftime, the hooks' `exec-bash-`) | 3 months |
 | ledger | `ledger/<name>-YYYY-MM.jsonl` (actions, decisions, events, guard decisions, the queue) | kept: records nothing else holds |
-| starts | `usage/starts.jsonl`, `usage/starts-YYYY-MM[-n].jsonl` (the governor's brainstorm starts, read for 10 minutes) | 2 months |
+| starts | `usage/starts.jsonl`, `usage/starts-YYYY-MM[-n].jsonl` (the governor's brainstorm starts, read for 10 minutes; and its stream starts, let through or asked about, while `usage.guard.wave_quota` is on: `"stream": true`, `name`, `asked`, read for a minute) | 2 months |
 | quota | `usage/quota.jsonl`, `usage/quota-YYYY-MM[-n].jsonl` (`brain usage quota --observe`'s readings) | 12 months |
 | notify | `notify/YYYY-MM.jsonl` (the notifications' audit: one file per month already; the older months go at a month's first line) | 6 months |
 
