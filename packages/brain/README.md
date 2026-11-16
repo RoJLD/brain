@@ -1309,7 +1309,9 @@ id), kept at first sight in `<BRAIN_HOME>/machine.json`. `brain doctor` prints t
 owner's `config.json` lacks it, the `hosts` line to add (`"hosts": {"<name>": {"anchor": "..."}}`): a name on another
 install (reused), two names on one install (a cloned image), a renamed machine, a copied `BRAIN_HOME` or an unreadable
 id is a doubt, said with its question; while it lasts the memory sync exports nothing (the machine's branch), and
-imports as before.
+imports as before. An id that cannot be read (no machine-id file, an MSYS Python) is cleared by the owner's
+confirmation: the name declared in `hosts` without an anchor (`"hosts": {"<name>": {}}`, its facts beside); a declared
+anchor that cannot be read here stays a doubt.
 
 Each fact is true, false or unknown: an unknown fact satisfies neither `FACT` nor `not FACT` in a `recommend_when`,
 and a requirement unknown counts as missing. `brain doctor` probes ECC memory (WMI on Windows, EDAC on Linux) and a

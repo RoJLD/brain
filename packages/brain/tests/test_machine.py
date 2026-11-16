@@ -80,6 +80,24 @@ def test_doubts_renamed_moved_reused_duplicate_and_no_anchor(box, monkeypatch):
     assert machine.identity({})["state"] == "no-anchor"
 
 
+def test_a_hosts_entry_without_an_anchor_confirms_a_machine_whose_install_id_cannot_be_read(box, monkeypatch):
+    """wi-brain-machine-no-anchor-doubt: no machine-id file (an MSYS Python): the doubt says which hosts line clears it,
+    and that line does; a declared anchor that cannot be read here keeps the doubt, as does another name's entry."""
+    monkeypatch.setattr(machine, "_install_id_raw", lambda system: "")
+    first = machine.identity({})
+    assert first["state"] == "no-anchor" and first["anchor"] is None and "declare" not in first
+    assert ('confirm it by declaring it without an anchor in config.json ("hosts": {"box1": {}}, its facts beside), '
+            "which clears this doubt") in first["doubt"]
+    assert "MachineGuid not found" in first["doubt"] and machine.in_doubt({})
+    for hosts in ({"box1": {}}, {"box1": {"roles": ["instance"], "type": "laptop"}}):
+        ok = machine.identity({"hosts": hosts})
+        assert ok["state"] == "ok" and ok["doubt"] == "" and not machine.in_doubt({"hosts": hosts}), hosts
+    for hosts in ({"box1": {"anchor": ANCHOR}}, {"other": {}}, {"box1": "not a mapping"}):
+        assert machine.identity({"hosts": hosts})["state"] == "no-anchor", hosts
+    monkeypatch.setenv("BRAIN_MACHINE", "box2")   # a confirmation is per name: the first sight's name still counts
+    assert machine.identity({"hosts": {"box2": {}}})["state"] == "renamed"
+
+
 # --- the facts, their states and their sources ---
 
 def test_an_unknown_fact_holds_neither_way():

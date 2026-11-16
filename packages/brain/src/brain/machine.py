@@ -15,7 +15,9 @@ declared machines (``config.json`` ``hosts``: ``{name: {anchor, roles, aliases, 
   moved        another OS install with this BRAIN_HOME (a copied home, a cloned image)
   reused       ``hosts`` gives this name another OS install's anchor (a name taken again: name the new machine)
   duplicate    ``hosts`` gives this anchor to another name too (a cloned image)
-  no-anchor    the OS install id could not be read
+  no-anchor    the OS install id could not be read (no machine-id file, an MSYS Python), and ``hosts`` does not
+               declare this name without an anchor: that entry (``"hosts": {"<name>": {}}``) is the owner's
+               confirmation and clears it; one with an anchor keeps it (that install is not the one read here)
 
 Every state but ok and new is a doubt (``doubt`` holds the question, asked once: ``asked`` in machine.json dates it):
 the memory sync's export (the machine's branch, a machine-level write) is held while it lasts (:func:`in_doubt`,
@@ -61,7 +63,9 @@ DOUBTS = {
     "reused": "hosts.{name}.anchor is another OS install's: {name} was reused; give this machine a new name "
               "(BRAIN_MACHINE)",
     "duplicate": "hosts gives this OS install to {other} as well: a cloned image? one name per install",
-    "no-anchor": "the OS install id cannot be read here ({why}): confirm the name {name} by hand in hosts",
+    "no-anchor": "the OS install id cannot be read here ({why}): if {name} is this machine's own name, confirm it "
+                 "by declaring it without an anchor in config.json (\"hosts\": {{\"{name}\": {{}}}}, its facts "
+                 "beside), which clears this doubt",
 }
 INSTALL_ID_SOURCES = {"windows": "MachineGuid", "linux": "/etc/machine-id", "darwin": "IOPlatformUUID"}
 
@@ -159,11 +163,14 @@ def _stamp() -> str:
 
 
 def _state(nm: str, anc: str | None, first: dict, declared: dict) -> tuple[str, str | None]:
-    """(the identity's state, the other name that holds this anchor in hosts) from what is read and recorded."""
+    """(the identity's state, the other name that holds this anchor in hosts) from what is read and recorded. An
+    unreadable anchor is a doubt until ``hosts`` declares this name without one (the owner's confirmation:
+    wi-brain-machine-no-anchor-doubt); a declared anchor that cannot be read here stays one."""
     mine = declared.get(nm) if isinstance(declared.get(nm), dict) else {}
     other = next((k for k, v in declared.items() if k != nm and isinstance(v, dict) and anc
                   and v.get("anchor") == anc), None)
-    checks = (("no-anchor", anc is None), ("reused", bool(mine.get("anchor")) and mine.get("anchor") != anc),
+    confirmed = isinstance(declared.get(nm), dict) and not mine.get("anchor")
+    checks = (("no-anchor", anc is None and not confirmed), ("reused", bool(mine.get("anchor")) and mine.get("anchor") != anc),
               ("duplicate", bool(other)), ("new", not first),
               ("moved", bool(first.get("anchor")) and first.get("anchor") != anc),
               ("renamed", bool(first.get("name")) and first.get("name") != nm))
