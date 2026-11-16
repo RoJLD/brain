@@ -44,10 +44,9 @@ import re
 import subprocess
 import sys
 import time
-from datetime import datetime, timezone
 from pathlib import Path
 
-from . import paths, secretscan, timing
+from . import faults, paths, secretscan, timing
 
 ASKED, CAPTURED, RECORDED = "asked", "answer", "answer-recorded"
 MARK_RE = re.compile(r"\s*\((?:recommandée?|recommended)\)\s*$", re.I)
@@ -66,7 +65,7 @@ class AnswersError(Exception):
 
 
 def _now() -> str:
-    return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    return faults.now().strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
 def _norm(text) -> str:

@@ -47,7 +47,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Callable, TypeVar
 
-from . import paths, stateio
+from . import faults, paths, stateio
 
 T = TypeVar("T")
 
@@ -61,7 +61,7 @@ UNHANDLED_HTTP = {429, 503}         # the request was not handled: retried on a 
 FILE = "breakers.json"
 
 _sleep = time.sleep    # the tests replace these
-_clock = time.time
+_clock = faults.time   # the engine's clock: $BRAIN_NOW moves it (brain.faults)
 _random = random.random
 
 
@@ -201,11 +201,13 @@ def ok(service: str) -> None:
 
 
 def call(service: str, fn: Callable[[], T], *, retries: int = RETRIES, idempotent: bool = True,
-         breaker: bool = True) -> T:
+         breaker: bool = True, timeout_error: Callable[[], BaseException] | None = None) -> T:
     """``fn()`` under ``service``'s breaker: skipped with :class:`Unavailable` while it is open, a quick failure
     retried with backoff and jitter, a timeout not retried; a last failure that says the service is down opens the
     breaker and is raised as it was. An answer (any other exception) closes the breaker and is raised unchanged.
-    ``idempotent=False``: retried only when the request was surely not handled; ``breaker=False``: the retry only."""
+    ``idempotent=False``: retried only when the request was surely not handled; ``breaker=False``: the retry only.
+    ``$BRAIN_FAULT`` net[@service]:timeout or :refused (brain.faults) raises that failure instead of calling ``fn``
+    (``timeout_error()`` for a timeout, ``TimeoutError`` without it), handled as a real one."""
     if breaker:
         why = blocked(service)
         if why:
@@ -213,6 +215,11 @@ def call(service: str, fn: Callable[[], T], *, retries: int = RETRIES, idempoten
     attempt = 0
     while True:
         try:
+            kind = faults.net_fault(service)
+            if kind == "timeout":
+                raise timeout_error() if timeout_error else TimeoutError(f"{service}: timed out ({faults.FAULT_ENV})")
+            if kind == "refused":
+                raise ConnectionRefusedError(f"{service}: connection refused ({faults.FAULT_ENV})")
             out = fn()
         except Exception as exc:  # noqa: BLE001 (sorted below, then raised as it was)
             if attempt < retries and quick(exc, idempotent):
@@ -234,7 +241,8 @@ def run(service: str, argv: list[str], *, timeout: float, **kwargs) -> subproces
     """``subprocess.run(argv, timeout=timeout, **kwargs)`` under ``service``'s breaker: a timeout opens it (raised
     as ``subprocess.TimeoutExpired``), a skipped call raises :class:`Unavailable` (an OSError, like a missing
     program); the exit code is the command's answer, never retried."""
-    return call(service, lambda: subprocess.run(argv, timeout=timeout, **kwargs), retries=0)
+    return call(service, lambda: subprocess.run(argv, timeout=timeout, **kwargs), retries=0,
+                timeout_error=lambda: subprocess.TimeoutExpired(argv, timeout))
 
 
 def status() -> dict[str, dict]:

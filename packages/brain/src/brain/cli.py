@@ -31,7 +31,7 @@ import codecs
 import os
 import sys
 
-from . import __version__, config, gestures, nowindow, paths, plugins, projects, selftime, shutdown
+from . import __version__, config, faults, gestures, nowindow, paths, plugins, projects, selftime, shutdown
 from .commands import _registry as registry
 from .commands._common import root_of
 
@@ -101,16 +101,15 @@ def main(argv: list[str] | None = None) -> int:
     argv = list(sys.argv[1:] if argv is None else argv)
     parser = build_parser()
     commands = next(a for a in parser._actions if isinstance(a, argparse._SubParsersAction)).choices
-    plugged = plugins.target(argv, commands)   # brain <project> ...: its plugin's subcommands (brain.plugins)
-    if plugged is not None:
-        before, name, ref, after = plugged
-        return plugins.run(before, name, ref, after, _context(), _project_root)
+    code = _plugged(argv, commands)   # brain <project> ...: its plugin's subcommands (brain.plugins)
+    if code is not None:
+        return code
     if plugins.split(argv) is None and {"-h", "--help"} & set(argv):   # brain --help lists the plugged projects
         lines = plugins.help_lines()
         if lines:
             parser.epilog = "\n".join([parser.epilog or "", "", *lines])
     args = parser.parse_args(argv)
-    why = gestures.cli_refusal(argv)   # an owner's gesture an agent's session runs past the hook (brain.gestures)
+    why = _refusal(argv)
     if why:
         print(f"brain: {why}", file=sys.stderr)
         return 2
@@ -124,6 +123,35 @@ def main(argv: list[str] | None = None) -> int:
             sys.stderr.flush()
             shutdown.die(exc)
         return exc.exit_code
+
+
+def _plugged(argv: list[str], commands) -> int | None:
+    """A plugin's subcommand run (``brain <project> ...``, brain.plugins): its exit code; None when ``argv`` names
+    none. A BRAIN_NOW or BRAIN_FAULT this engine cannot read refuses it as it refuses a command (exit 2)."""
+    plugged = plugins.target(argv, commands)
+    if plugged is None:
+        return None
+    try:
+        faults.check()
+    except faults.FaultError as exc:
+        print(f"brain: {exc}", file=sys.stderr)
+        return 2
+    before, name, ref, after = plugged
+    return plugins.run(before, name, ref, after, _context(), _project_root)
+
+
+def _refusal(argv: list[str]) -> str:
+    """Why the command must not run ('' when it may): an owner's gesture an agent's session runs past the hook
+    (brain.gestures), or a BRAIN_NOW or BRAIN_FAULT this engine cannot read (brain.faults: a value not understood
+    never plays another failure than the one asked)."""
+    why = gestures.cli_refusal(argv)
+    if why:
+        return why
+    try:
+        faults.check()
+    except faults.FaultError as exc:
+        return str(exc)
+    return ""
 
 
 def _context() -> registry.Context:

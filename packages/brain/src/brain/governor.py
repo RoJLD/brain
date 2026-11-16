@@ -69,7 +69,7 @@ import sys
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
-from . import midsession, paths, stateio, timing
+from . import faults, midsession, paths, stateio, timing
 
 GUARD = "usage"
 DEFAULTS = {"enabled": True, "warn": 80.0, "critical": 95.0, "sessions": 8, "brainstorms": 2, "memory": 97.0,
@@ -101,7 +101,7 @@ def kind(tool: str) -> str:
 
 
 def _now() -> datetime:
-    return datetime.now(timezone.utc)
+    return faults.now()
 
 
 def _dt(text) -> datetime | None:

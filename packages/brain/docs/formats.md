@@ -142,6 +142,11 @@ nothing else keeps. Such a file is read and written through `brain.stateio` (`lo
   sidecar goes just before each write, and the new one is made from the file's bytes and stat read through one
   handle, so a writer cut short or racing another never leaves a sidecar that does not describe its file.
 
+Each of these paths can be played on purpose: `BRAIN_FAULT=write[@<glob>]:disk-full` or `:killed` fails the atomic
+write or ends the process before the move, `BRAIN_FAULT=read[@<glob>]:corrupt` reads a file as corrupt bytes (the
+disk unchanged), and `BRAIN_NOW` moves the clock the set-aside stamps and the log months read (`brain.faults`; the
+package README, « A virtual clock and injected faults »).
+
 `v` is the top-level integer `v`; a file without one is read as version 1. A record keyed by names (schedules,
 projects) keeps its `v` 1 unwritten, so that brain 0.2.5, which reads every key as a name, still reads it.
 

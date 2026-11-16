@@ -35,7 +35,7 @@ import shutil
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
-from . import classes, config, paths, secretscan, stateio, vault
+from . import classes, config, faults, paths, secretscan, stateio, vault
 
 CHECK = "spool"                                   # brain health spool
 STORE = "spool"                                   # its own store (brain.classes.ENGINE_STORES)
@@ -125,7 +125,7 @@ def _save(st: stateio.State, data: dict) -> None:
 
 
 def _now(now: datetime | None) -> datetime:
-    return (now or datetime.now(timezone.utc)).astimezone(timezone.utc)
+    return (now or faults.now()).astimezone(timezone.utc)
 
 
 def _iso(t: datetime) -> str:
