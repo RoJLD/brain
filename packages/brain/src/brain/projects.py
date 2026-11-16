@@ -37,7 +37,8 @@ notify`` (brain.notify). ``alerts`` declares where the project's alerts come fro
 alert files, event folders) and their levels, inline or as a YAML file relative to the root, for ``brain alerts`` and
 ``brain status`` (brain.alerts). ``schedules`` declares the brain commands the machines' schedulers run (the alerts
 pass, a daily canary), inline or as a YAML file relative to the root, for ``brain schedule`` and the installer's
-schedule step (brain.schedule).
+schedule step (brain.schedule). ``schedules_owner`` names where the tasks its own installer registers (found in the
+scheduler, not declared) change, ``{file, apply, floors}``, for ``brain schedule list`` (brain.schedview).
 
 An entry with ``access: read`` is a project the brain **reads and never writes** (another repo's own sessions write
 it): it holds ``title``, ``access``, ``parent`` (its place in the scope tree) and ``classes`` only, the shape of a
@@ -114,6 +115,10 @@ KEYS = {
     "schedules": "the brain commands a machine's scheduler runs, {name: {command, every, at, at_logon, machines, "
                  "timeout, enabled}}: a mapping, or a YAML file relative to the root; installed by brain schedule "
                  "install --apply, the installer's schedule step (brain.schedule)",
+    "schedules_owner": "where the scheduled tasks its own installer registers change (found under its alerts: "
+                       "scheduler: folders, not declared in schedules:), {file, apply, floors: {task: cadence}}: the "
+                       "settings file relative to the root, the command that applies it, a collector's slowest "
+                       "cadence; brain schedule list shows them and flags a task below its floor (brain.schedview)",
     "shared_ids": "ids its stores may share with another store, {id: reason of 15 characters or more}; any other id "
                   "found in two stores fails brain check --all",
     "usage": "the usage governor's caps for this project, {sessions: N, brainstorms: N}: lower than config.json "
@@ -176,6 +181,7 @@ class Project:
     notify: dict | str | None = None
     alerts: dict | str | None = None
     schedules: dict | str | None = None
+    schedules_owner: object = None   # where its own installer's tasks change, as declared (brain.schedview.owner)
     title: str = ""
     journals: list[Path] = field(default_factory=list)
     decision_logs: list[Path] = field(default_factory=list)
@@ -250,7 +256,7 @@ def _project(name: str, entry: dict, root: Path) -> Project:
                    production=[Path(os.path.normpath(root / p)) for p in _paths(e.get("production"))],
                    stacks=e.get("stacks"), repos=e.get("repos") or [], audit=e.get("audit") or {},
                    code_index=list(e.get("code_index") or []), notify=e.get("notify"), alerts=e.get("alerts"),
-                   schedules=e.get("schedules"),
+                   schedules=e.get("schedules"), schedules_owner=e.get("schedules_owner"),
                    title=str(e.get("title") or ""), journals=journals, decision_logs=logs,
                    ledgers={str(k): root / v for k, v in ledgers.items() if isinstance(v, str) and v},
                    shared_ids=dict(e["shared_ids"]) if isinstance(e.get("shared_ids"), dict) else {},
