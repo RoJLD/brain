@@ -916,6 +916,17 @@ Zero-token commands for many sessions on one brain ([`docs/merge-driver.md`](doc
   then all merged on the base by `git merge-tree` with the repo's merge driver, the merge order and the PR GitHub
   will see conflicting said, the tests `brain impact` chooses for the set (run by `--test` in a scratch worktree),
   and a stamp per head naming the set.
+- **`brain ship PR`** (brain.ship): the local merge queue. The session queues its PR (`<BRAIN_HOME>/ship/queue.json`,
+  once per repo and number, its place said) and stops; `brain ship --run`, the merger, takes the lock
+  `<BRAIN_HOME>/locks/ship.lock` (one merger per machine: exit 1 and the holder when another runs; a lock whose pid is
+  gone or whose TTL passed is broken) and ships the queued PRs in order: the merge gate (`brain merge-ready`'s own
+  checks, `fresh` answered by the catch-up), main merged into the PR's head in a scratch worktree with the merge
+  driver, the views regenerated once and `brain check`, `brain merge-check`, the targeted tests, the catch-up pushed,
+  `gh pr merge --match-head-commit`. A PR that fails is marked with its reason and the next goes on; every
+  `--batch N` PRs merged per repo (5), the full suite runs once, and a bisection names the culprit when it fails.
+  `brain ship --list [--json]` shows the queue, `brain ship --run --dry-run` the plan. The merger is a command:
+  starting it as a service is the owner's decision ([`docs/merge-driver.md`](docs/merge-driver.md), « The merge
+  queue »).
 - **`brain lot check [SESSION] [--branch B]... [--keep B]... [--repo-dir D]... [--scratch GLOB]... [--lot NAME]
   [--offline] [--json]`** (brain.lotcheck): whether a finished lot (a session a coordinator started; default: this
   one) can be archived, read only. From the desktop app's file of the session (its worktree and branch, the branches
