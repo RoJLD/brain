@@ -239,28 +239,28 @@ def _include_line(text: str, ids: list[str], name: str) -> str:
     return "".join(lines[:at + 1] + [f"    include: {flow}   {MARK}: personal data's rows\n"] + lines[at + 1:])
 
 
-class _Unique(yaml.SafeLoader):
-    """A YAML loader that refuses a key twice in one mapping: a line the answers add beside the template's own key
-    (a second ``standards:``, ``classes:`` or ``lang:``) would otherwise win silently."""
-
-
-def _unique_mapping(loader, node, deep=False):
-    keys = [loader.construct_object(k, deep=deep) for k, _ in node.value]
-    twice = sorted({str(k) for k in keys if keys.count(k) > 1})
-    if twice:
-        raise yaml.constructor.ConstructorError(None, None, f"key(s) {', '.join(twice)} twice", node.start_mark)
-    return loader.construct_mapping(node, deep=deep)
-
-
-_Unique.add_constructor(yaml.resolver.BaseResolver.DEFAULT_MAPPING_TAG, _unique_mapping)
+def _twice(node) -> list[str]:
+    """The keys written twice in one mapping of a composed YAML tree: a line the answers add beside the template's own
+    key (a second ``standards:``, ``classes:`` or ``lang:``) would otherwise win silently."""
+    if isinstance(node, yaml.MappingNode):
+        keys = [k.value for k, _ in node.value if isinstance(k, yaml.ScalarNode)]
+        out = sorted({k for k in keys if keys.count(k) > 1})
+        return out + [k for _, v in node.value for k in _twice(v)]
+    if isinstance(node, yaml.SequenceNode):
+        return [k for v in node.value for k in _twice(v)]
+    return []
 
 
 def _landed(text: str, name: str, a: Answers) -> None:
     try:
-        data = yaml.load(text, Loader=_Unique)
+        twice = _twice(yaml.compose(text, Loader=yaml.SafeLoader))
+        data = graph.load_yaml(text)
     except yaml.YAMLError as exc:   # the template's registry with the answers' lines
-        raise init.InitError(f"--template {a.template}: projects.yaml with the answers is not YAML, or holds a key "
-                             f"twice ({exc}): the answers' lines go in by hand") from exc
+        raise init.InitError(f"--template {a.template}: projects.yaml with the answers is not YAML ({exc}): the "
+                             "answers' lines go in by hand") from exc
+    if twice:
+        raise init.InitError(f"--template {a.template}: projects.yaml with the answers holds {', '.join(twice)} twice "
+                             "(the template writes it already): the answers' lines go in by hand")
     entry = _dict(data.get(name) if isinstance(data, dict) else None)
     repo = _own_repo(entry)
     got = {"lang": repo.get("lang"), "tools": repo.get("tools") or {}, "floor": _dict(entry.get("classes")).get(
