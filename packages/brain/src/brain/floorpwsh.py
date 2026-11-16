@@ -43,10 +43,11 @@ TYPE_VAR = re.compile(r"(?i)\$(?:\{)?(\w+)\}?\s*=\s*(?:\[type\]|\[[\w.]+\]\s*(?=
 TYPE_CALL = re.compile(r"(?i)(?:\)|\}|\$[\w:]+)\s*::\s*\w|\]\s*\.\s*(?:GetMethods?|GetMembers?|InvokeMember|GetField|"
                        r"GetProperty|UnderlyingSystemType|GetType)\b|\.Invoke\s*\(\s*\$null\b|"
                        # round 10 #6: a member named by an expression (::("Write"+"AllText")), a method group invoked
-                       r"::\s*[(\"'$]|::\s*\w+\s*\.\s*Invoke\s*\(")
-# What a patch's headers name that a settings or customization file is (git apply, git am).
-PATCHED = re.compile(r"(?m)^(?:\+\+\+|---|diff --git)\s.*?(\S*(?:\.claude/settings(?:\.local)?\.json|\.mcp\.json|"
-                     r"\.claude/(?:skills|commands|agents)/\S+))")
+                       r"::\s*[(\"'$]|::\s*\w+\s*\.\s*Invoke\s*\(|"
+                       r"\)\s*\.\s*Invoke\s*\(")   # round 11 #7: a method group reached through parentheses
+# Round 11 #3: git apply's and git am's forms that write nothing.
+READ_ONLY = {"apply": {"--check", "--stat", "--numstat", "--summary"},
+             "am": {"--continue", "--abort", "--skip", "--quit", "--show-current-patch"}}
 HOME_VARS = re.compile(r"(?i)^(?:\$env:(?:USERPROFILE|HOME)|\$\{env:(?:USERPROFILE|HOME)\}|\$HOME|~)(?=$|[\\/])")
 
 
@@ -121,18 +122,62 @@ def customized(tool: str, inp: dict, target: str, real: str) -> str | None:
     return None
 
 
-def patched_settings(d: str, args: list[str]) -> str:
-    """The settings or customization file a patch of git apply or am writes, '' when none; a patch read from stdin
-    (no file named, or -: a pipe, a redirection) cannot be read and counts as one (round 10 #2)."""
-    files = [a for a in args if not a.startswith("-")]
-    if not files or "-" in args:
-        return "a patch read from standard input (name the patch file)"
-    for a in files:
+def patched_settings(sub: str, args: list[str]) -> str:
+    """Why git apply or git am would write under the floor (round 11 #3: a patch names its files in more spellings
+    than a reader follows: case, renames, a patch the same command makes), '' for their read-only forms (apply
+    --check, --stat, --numstat, --summary without --apply) and am's session options (--continue, --abort, --skip,
+    --quit, --show-current-patch)."""
+    flags = {a.split("=", 1)[0] for a in args}
+    if flags & READ_ONLY.get(sub, set()) and "--apply" not in flags:
+        return ""
+    return f"the work tree through a patch (under the floor only {', '.join(sorted(READ_ONLY.get(sub, set())))})"
+
+
+def alias(real: str, kept, cwd: str) -> str:
+    """``real`` as the settings or kept file it IS when it has more than one name (round 11 #1: a hard link): its
+    identity (st_dev, st_ino: the volume serial and file index on Windows) against the home's and the working
+    directory's settings files and the kept files; ``real`` itself otherwise."""
+    try:
+        st = os.stat(real)
+    except (OSError, ValueError):
+        return real
+    if st.st_nlink < 2:
+        return real
+    home, here = Path.home() / ".claude", Path(cwd or os.getcwd())
+    folders = [home, *(p / ".claude" for p in (here, *list(here.parents)[:6]))]
+    for c in [*(f / n for f in folders for n in ("settings.json", "settings.local.json")), *kept.files]:
         try:
-            text = Path(g._path(a, d)).read_text(encoding="utf-8", errors="replace")
-        except OSError:
+            other = os.stat(c)
+        except (OSError, ValueError):
             continue
-        m = PATCHED.search(text)
-        if m:
-            return m.group(1)
-    return ""
+        if (other.st_dev, other.st_ino) == (st.st_dev, st.st_ino):
+            return os.path.normcase(os.path.abspath(str(c)))
+    return real
+
+
+def link_refusal(prog: str, words: list[str], d: str, kept) -> str:
+    """A link command (LINKERS) any of whose paths is a settings or kept file, a folder above a kept path, a
+    .claude folder or a folder holding one (round 11 #1, #2): what it names; '' otherwise."""
+    args = words[1:]
+    if not _links_files(prog, args):
+        return ""
+    return next((a for a in args if (not a.startswith(("-", "/")) or os.path.isabs(a))
+                 and _settings_reach(g._real(g._path(a, d)), kept)), "")
+
+
+def _links_files(prog: str, args: list[str]) -> bool:
+    """Whether the command makes a link: mklink, ln, fsutil hardlink, cp -l/--link, New-Item -ItemType *Link."""
+    if prog in ("mklink", "ln"):
+        return True
+    if prog == "fsutil":
+        return "hardlink" in (a.lower() for a in args)
+    if prog == "cp":
+        return any(a == "--link" or re.match(r"^-[a-zA-Z]*l", a) for a in args)
+    return prog in ("new-item", "ni") and any(re.match(r"(?i)^(?:symboliclink|hardlink|junction)$", a) for a in args)
+
+
+def _settings_reach(real: str, kept) -> bool:
+    """Whether a link onto ``real`` reaches a settings or kept file: it is one, a folder above a kept path, a .claude
+    folder or a folder holding one."""
+    return kept.settings(real) or kept.inside(real) or kept.holds(real) or os.path.basename(real) == ".claude" \
+        or os.path.isdir(os.path.join(real, ".claude"))

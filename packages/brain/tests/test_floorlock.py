@@ -491,3 +491,20 @@ def test_a_real_lock_of_a_scratch_folder(tmp_path):
         for cmd in (["icacls", str(scratch), "/reset", "/T", "/C", "/Q"],
                     ["icacls", str(scratch), "/setowner", me, "/T", "/C", "/Q"]):
             subprocess.run(cmd, capture_output=True, timeout=300)
+
+
+def test_the_managed_settings_allow_only_the_brain_s_marketplace(tmp_path, monkeypatch):
+    """Round 11 #4: strictKnownMarketplaces names the brain's own marketplace only."""
+    cfg = _setup(tmp_path, monkeypatch, only=True)
+    data = json.loads(cfg.read_text(encoding="utf-8"))
+    data["adapters"] = {"claude": {"source": "ada/brain"}}
+    cfg.write_text(json.dumps(data), encoding="utf-8")
+    assert floorlock.known_marketplaces(guards.config.load()) == [{"source": "github", "repo": "ada/brain"}]
+    data["adapters"] = {}
+    cfg.write_text(json.dumps(data), encoding="utf-8")
+    assert floorlock.known_marketplaces(guards.config.load()) == []   # none known: none may be added
+    (cfg.parent / ".claude-plugin").mkdir()
+    (cfg.parent / ".claude-plugin" / "marketplace.json").write_text("{}", encoding="utf-8")
+    assert floorlock.known_marketplaces(guards.config.load()) == [{"source": "directory", "path": str(cfg.parent)}]
+    s = floorlock.hooks_settings(tmp_path / "py.exe", tmp_path / "g1", marketplaces=[{"source": "github", "repo": "a/b"}])
+    assert s["strictKnownMarketplaces"] == [{"source": "github", "repo": "a/b"}]

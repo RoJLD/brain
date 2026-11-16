@@ -140,15 +140,15 @@ def _edit(tool: str, inp: dict, cwd: str, kept: Kept) -> str | None:
     target = g._edit_target(inp, tool, cwd)
     if not target:
         return None
-    real = g._resolved(target)
+    real = floorpwsh.alias(g._resolved(target), kept, cwd)   # round 11 #1: the file it IS, a hard link's too
     if kept.inside(real):
         return f"{tool} refused: {target} sets the floor or runs the guard"
     if floor.GIT_CONFIG_FILES.search(real) or floor.GIT_CONFIG_FILES.search(target):
         return f"{tool} refused: {target} is git's configuration (an alias or a mirror there changes what a push does)"
     why = floorpwsh.customized(tool, inp, target, real)
-    if why is not None:
-        return why or None
-    if not g._override_file(target):
+    if why:   # round 11 #2: a customization path that resolves to a settings file is judged as one below
+        return why
+    if not (g._override_file(target) or g._override_file(real)):
         return None
     before, after = g._edit_result(inp, tool, target)
     added = g._introduced(floor.FLOOR_ENV, before, after) or g._introduced(floor.SETTINGS_KEYS, before, after) \
@@ -336,6 +336,7 @@ def _writes(cmds, sub: str, kept: Kept) -> str | None:
     configuration files."""
     for what, target in g.shell_writes(cmds, sub):
         real = g._resolved(target)
+        real = floorpwsh.alias(real, kept, os.getcwd()) if real else real   # round 11 #1: a hard link's file
         if real and kept.inside(real):
             return f"{what} into {target} refused: it sets the floor or runs the guard"
         if real and floor.GIT_CONFIG_FILES.search(real):
@@ -530,7 +531,7 @@ def _brings_settings(d: str, sub: str, args: list[str]) -> str:
     each commit it names or reads by default (the last stash, the upstream for pull) against HEAD, so a local edit
     the command carries over is no change; each patch file of apply or am read as text."""
     if sub in ("apply", "am"):
-        return floorpwsh.patched_settings(d, args)
+        return floorpwsh.patched_settings(sub, args)
     if sub in INDEX_RESTORERS or (sub == "checkout" and ("--" in args or "." in args)):
         changed = g._git_out(d, "diff", "--name-only", "HEAD", "--", *SETTINGS_SPEC).split() or \
             g._git_out(d, "diff", "--name-only", "--", *SETTINGS_SPEC).split()
@@ -581,8 +582,9 @@ def _links(acts, kept: Kept) -> str | None:
         prog = g._prog(words[0])
         link = _link_of(prog, words)
         real = g._real(g._path(link, d)) if link else ""
-        if real and (kept.settings(real) or kept.inside(real)):
-            return f"{prog} onto {link} refused: Claude Code's settings and what sets the floor change by Write or Edit only"
+        hit = link if real and (kept.settings(real) or kept.inside(real)) else floorpwsh.link_refusal(prog, words, d, kept)
+        if hit:
+            return f"{prog} onto {hit} refused: Claude Code's settings and what sets the floor change by Write or Edit only"
     return None
 
 
@@ -729,6 +731,9 @@ def _plugin_cmd(acts) -> str | None:
         if g._prog(words[0]) != "claude":
             continue
         low = [w.lower() for w in words[1:]]
+        if {"plugin", "plugins"} & set(low) and {"install", "i", "enable", "update", "add"} & set(low):   # round 11 #4
+            return (f"claude {' '.join(words[1:4])} refused: a plugin's MCP servers, monitors and bin/ run with no "
+                    "tool call; the owner installs them outside a session")
         if not ({"plugin", "plugins"} & set(low) and {"disable", "uninstall", "remove", "rm"} & set(low)):
             continue
         names = " ".join(low)

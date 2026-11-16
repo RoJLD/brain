@@ -50,7 +50,11 @@ section: Added
   written. A settings write also adds or changes only the top-level keys of `brain.floor.SETTINGS_ALLOWED` (the
   command-line keys such as `apiKeyHelper`, `otelHeadersHelper` and `statusLine` refused), its path is read with its
   NTFS stream dropped (a write to a stream is refused), frontmatter is read as YAML, and `git apply`/`git am` from
-  standard input are refused. The managed settings also set `strictPluginOnlyCustomization: ["hooks", "mcp"]`; the guard's copy carries the
+  standard input are refused. A write is judged by the file it reaches (a hard link by its identity), a link onto a
+  settings or kept file or a `.claude` folder is refused, `git apply`/`git am` write nothing under the floor but their
+  read-only forms and am's session options, and `claude plugin install|enable|update|marketplace add|update` are
+  refused under `floor.only` too. The managed settings also set `strictPluginOnlyCustomization: ["hooks", "mcp"]` and
+  `strictKnownMarketplaces` (the brain's marketplace only); the guard's copy carries the
   rendered rules and hook contract, and on Windows its hooks run the copy's own engine.
 - Under a lock, the guard's refusal names the elevated `brain floor lock --lower` and `brain floor unlock` instead of
   `BRAIN_GUARD_ALLOW`, and `guard.sh` no longer steps aside for the managed file (it judges where the managed

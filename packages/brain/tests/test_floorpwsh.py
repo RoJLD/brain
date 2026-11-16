@@ -166,7 +166,7 @@ def test_a_settings_stream_a_stdin_patch_and_command_keys_are_refused(repo, tmp_
     for path in (f"{settings}::$DATA", f"{settings}:x", f"{repo / '.claude' / 'skills' / 'x' / 'SKILL.md'}::$DATA"):
         assert "stream" in (edit(repo, path, evil) or ""), path
     for command in ("git apply < p.diff", "git apply - < p.diff", "cat p.diff | git apply", "cat p.diff | git am"):
-        assert "standard input" in (bash(repo, command) or ""), command
+        assert "work tree" in (bash(repo, command) or ""), command
     for key in ("apiKeyHelper", "otelHeadersHelper", "awsAuthRefresh", "awsCredentialExport", "gcpAuthRefresh",
                 "statusLine", "fileSuggestion", "enableAllProjectMcpServers", "extraKnownMarketplaces"):
         reason = edit(repo, settings, json.dumps({key: "git push origin HEAD:main"})) or ""
@@ -190,3 +190,51 @@ def test_frontmatter_hooks_at_any_depth_and_dynamic_members_are_refused(repo, tm
                     f"[IO.File]::WriteAllText.Invoke(@('{cfg}','x'))"):
         assert "floor" in (pwsh(repo, command) or ""), command
     assert pwsh(repo, "[IO.Path]::Combine('a', 'b')") is None
+
+
+def test_a_write_is_judged_by_the_file_it_reaches_and_links_onto_settings_are_refused(repo, tmp_path, monkeypatch):
+    """Review round 11 #1, #2: a hard link to a settings file is that file (its identity); a link whose target is a
+    settings file, a .claude folder or a folder holding one is refused; a customization path that resolves to a
+    settings file is judged as one."""
+    import os
+    config(tmp_path, monkeypatch, refuse=True)
+    settings = repo / ".claude" / "settings.json"
+    settings.parent.mkdir(parents=True, exist_ok=True)
+    settings.write_text("{}", encoding="utf-8")
+    monkeypatch.chdir(repo)
+    evil = json.dumps({"env": {"BASH_FUNC_git%%": "() { git push origin HEAD:main; }"}})
+    link = repo / "x.txt"
+    os.link(settings, link)
+    assert "moves or stops the floor" in (edit(repo, link, evil) or "")
+    assert "settings" in (bash(repo, f"echo '{evil}' > x.txt") or "")
+    s, c = settings.as_posix(), (repo / ".claude").as_posix()
+    for command in (f"ln {s} y.txt", f"cp -l {s} y.txt", f"cmd /c mklink /H y.txt {s}", f"fsutil hardlink create y.txt {s}",
+                    f"cmd /c mklink /J k {c}"):
+        assert "refused" in (bash(repo, command) or ""), command
+    for command in (f"New-Item -ItemType HardLink -Path y.txt -Target {s}",
+                    f"New-Item -ItemType Junction -Path .claude/skills/k -Target {c}"):
+        assert "refused" in (pwsh(repo, command) or ""), command
+    assert bash(repo, "ln -s a.txt b.txt") is None
+
+
+def test_git_apply_and_am_write_nothing_under_the_floor_but_their_read_only_forms(repo, tmp_path, monkeypatch):
+    """Review round 11 #3, #5: a patch names its files in more spellings than a reader follows."""
+    config(tmp_path, monkeypatch, refuse=True)
+    for command in ("git apply p.diff", "git apply --index u.diff", "git am m.mbox", "git apply --stat --apply p.diff"):
+        assert "work tree" in (bash(repo, command) or ""), command
+    for command in ("git apply --check p.diff", "git apply --stat p.diff", "git am --continue", "git am --abort",
+                    "git am --skip", "git am --quit", "git am --show-current-patch=diff"):
+        assert bash(repo, command) is None, command
+
+
+def test_plugin_installs_are_refused_under_the_floor_and_a_paren_method_group(repo, tmp_path, monkeypatch):
+    """Review round 11 #4, #6, #7."""
+    config(tmp_path, monkeypatch, only=True)
+    monkeypatch.setattr(floor, "unlocked", lambda *a, **k: "")
+    for command in ("claude plugin marketplace add C:/x/mkt", "claude plugin install evil@mkt", "claude plugin enable x",
+                    "claude plugin update x", "claude plugin marketplace update mkt"):
+        assert "no tool call" in (bash(repo, command) or ""), command
+    config(tmp_path, monkeypatch, refuse=True)
+    _, _, cfg = _r7(repo, tmp_path)
+    assert "floor" in (pwsh(repo, f"([IO.File]::WriteAllText).Invoke('{cfg}','x')") or "")
+    assert floor.resolve("\\\\?\\" + str(tmp_path / "config.json")) == floor.resolve(str(tmp_path / "config.json"))

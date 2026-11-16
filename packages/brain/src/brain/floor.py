@@ -454,6 +454,8 @@ UNC = re.compile(r"^[\\/]{2}(?![?.][\\/])|^[\\/]{2}[?.][\\/](?![A-Za-z]:(?:[\\/]
 
 def resolve(path: str) -> str:
     """os.path.realpath, but a network path is judged as written (normalised, never resolved: round 8 #2)."""
+    if re.match(r"^[\\/]{2}[?.][\\/][A-Za-z]:(?:[\\/]|$)", path):   # round 11 #6: \\?\C:\ is C:\, kept or not
+        path = path[4:]
     absolute = os.path.abspath(path)
     return os.path.normpath(absolute) if UNC.match(path) or UNC.match(absolute) else os.path.realpath(absolute)
 

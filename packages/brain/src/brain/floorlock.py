@@ -248,10 +248,13 @@ def manifest(gdir: Path) -> dict:
     return out
 
 
-def hooks_settings(interp: Path, gdir: Path, bash: str | None = None, data: dict | None = None) -> dict:
+def hooks_settings(interp: Path, gdir: Path, bash: str | None = None, data: dict | None = None,
+                   marketplaces: list | None = None) -> dict:
     """The managed settings: allowManagedHooksOnly, and every hook of the plugin's hooks.json (the opt-in ones only
     when ``data``, config.json, turns them on) declared from the copy in exec form (:func:`_managed_hook`); a hook of
-    another event is left out when there is no administrators' ``bash``."""
+    another event is left out when there is no administrators' ``bash``. ``marketplaces``: the strictKnownMarketplaces
+    sources (round 11 #4: "Allowlist the marketplace sources users can add and install from", enforced "on
+    marketplace add and on plugin install, update, refresh, and auto-update"), the brain's own only."""
     from .render import OPTIONAL_HOOKS, _opted_in
     plugin = json.loads((Path(floor.__file__).parent / "adapters" / "claude" / "hooks" / "hooks.json")
                         .read_text(encoding="utf-8"))
@@ -270,7 +273,21 @@ def hooks_settings(interp: Path, gdir: Path, bash: str | None = None, data: dict
     # strictPluginOnlyCustomization: skills', commands' and agents' frontmatter hooks (round 9 #2), and the MCP servers
     # of ~/.claude.json and .mcp.json (round 10 #4: their stdio commands start with no tool call); managed and plugin
     # servers keep loading, among them the brain's own (the rendered plugin's .mcp.json).
-    return {"allowManagedHooksOnly": True, "strictPluginOnlyCustomization": ["hooks", "mcp"], "hooks": out}
+    return {"allowManagedHooksOnly": True, "strictPluginOnlyCustomization": ["hooks", "mcp"],
+            **({"strictKnownMarketplaces": marketplaces} if marketplaces is not None else {}), "hooks": out}
+
+
+def known_marketplaces(cfg) -> list:
+    """The brain's own marketplace as a strictKnownMarketplaces source (config.json adapters.claude.source: owner/repo
+    on GitHub, or an absolute folder; else the brain's folder when it holds .claude-plugin/marketplace.json); [] when
+    none is known (then no marketplace may be added or installed from)."""
+    from . import config
+    src = config.claude(cfg)["source"]
+    if re.fullmatch(r"[\w.-]+/[\w.-]+", src or ""):
+        return [{"source": "github", "repo": src}]
+    root = Path(src) if src and os.path.isabs(src) else Path(cfg.file).parent
+    return [{"source": "directory", "path": str(root)}] if (root / ".claude-plugin" / "marketplace.json").is_file() \
+        else []
 
 
 def _managed_hook(h: dict, event: str, script: str, rest: list[str], interp: Path, gdir: Path,
@@ -500,8 +517,8 @@ def apply(cfg, lower: bool = False, run=subprocess.run, is_elevated=None, instal
         if failed or wrong:
             raise LockError("; ".join([*failed, *wrong][:12]))
         managed.parent.mkdir(parents=True, exist_ok=True)
-        managed.write_text(json.dumps(hooks_settings(interp, new, found.get("bash"), cfg.data), indent=2) + "\n",
-                           encoding="utf-8")
+        managed.write_text(json.dumps(hooks_settings(interp, new, found.get("bash"), cfg.data, known_marketplaces(cfg)),
+                                      indent=2) + "\n", encoding="utf-8")
         lockdir.mkdir(parents=True, exist_ok=True)
         cut = lock_commands(lockdir)
         before, after = (cut[:3], cut[2:]) if os.name == "nt" else ([], cut)   # Windows: cut before the file is written
