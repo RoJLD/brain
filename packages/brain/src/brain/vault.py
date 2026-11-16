@@ -58,7 +58,7 @@ KINDS = ("device", "recovery", "hardware", "person")
 ADAPTERS = ("age", "gpg")
 MIN_RECIPIENTS = 2
 CANARY_HOURS = 26
-DUE_HOURS = 20   # brain vault canary --due: a canary sealed within this is not due (a day's run, less a margin)
+DUE_MARGIN = 2   # brain vault canary --due: due this many hours before brain health vault would fail
 DRILL_DAYS = 400
 NAME = re.compile(r"^[a-z0-9][a-z0-9-]*$")
 AGE_KEY = re.compile(r"^age1[0-9a-z]{20,}$")                      # X25519 and plugin recipients, bech32 lower case
@@ -964,26 +964,44 @@ def _distinct_key(cfg: config.Config, name: str, age: str, gpg: Path | None) -> 
 
 
 # --- the canary and the drill ---
-def due(cfg: config.Config, now: datetime | None = None, hours: float = DUE_HOURS) -> str:
-    """Why the canary is due ('' when it is not): a recipient never sealed, failing, sealed more than ``hours`` ago,
-    or this machine's device key not opening its own within ``hours``. ``brain vault canary --due`` seals only then,
-    so a logon trigger catches up a run the machine was off for without a second canary the same day."""
+def canary_hours(cfg: config.Config) -> int:
+    """How old a canary may be before ``brain health vault`` fails: config.json ``vault.canary_hours``, else 26."""
+    return int(_block(cfg).get("canary_hours") or CANARY_HOURS)
+
+
+def last_slot(t: datetime, at: str, tz=None) -> datetime:
+    """The latest daily time ``at`` (HH:MM, local time, ``tz`` for the tests) at or before ``t``, in UTC."""
+    hh, mm = (int(x) for x in at.split(":"))
+    local = t.astimezone(tz)
+    slot = local.replace(hour=hh, minute=mm, second=0, microsecond=0)
+    return (slot - timedelta(days=1) if slot > local else slot).astimezone(timezone.utc)
+
+
+def due(cfg: config.Config, at: str, now: datetime | None = None, tz=None) -> str:
+    """Why the canary is due ('' when it is not), for a daily run at ``at`` (HH:MM, local): a recipient never sealed to
+    its current key, failing, not sealed since the latest ``at`` (the run the machine was off for), or within
+    DUE_MARGIN hours of ``canary_hours``; or this machine's device key not having opened its own since that time.
+    ``brain vault canary --due HH:MM`` seals only then: the run at ``at`` always seals, a logon trigger catches up
+    the day's run the machine was off for, and a second logon the same day seals nothing."""
     t = _now(now)
+    slot, hours = last_slot(t, at, tz), canary_hours(cfg)
     recs, errors = recipients(cfg)
     if errors:
         return "; ".join(errors)
     st = load_state()
     dev = device()
     for r in recs.values():
-        c = st["canary"].get(r.name) or {}
+        c = proven_canary(st, r.name, r.fingerprint(cfg.root))   # a canary sealed to a replaced key counts for none
         sealed, opened = _parse(c.get("sealed_at", "")), _parse(c.get("opened_at", ""))
         if c.get("error") or not sealed:
-            return f"{r.name}: " + (c["error"] if c.get("error") else "never sealed")
-        if t - sealed > timedelta(hours=hours):
-            return f"{r.name}: sealed {_age(t - sealed)} ago"
+            return f"{r.name}: " + (c["error"] if c.get("error") else "never sealed to its current key")
+        if sealed < slot:
+            return f"{r.name}: not sealed since {at} (sealed {_age(t - sealed)} ago)"
+        if t - sealed > timedelta(hours=hours - DUE_MARGIN):
+            return f"{r.name}: sealed {_age(t - sealed)} ago, within {DUE_MARGIN} h of canary_hours ({hours})"
         mine = dev and r.kind == "device" and r.name == dev.get("name")
-        if mine and (not opened or t - opened > timedelta(hours=hours)):
-            return f"{r.name}: not opened by this machine's key within {hours:g} h"
+        if mine and (not opened or opened < slot):
+            return f"{r.name}: not opened by this machine's key since {at}"
     return ""
 
 
@@ -1134,7 +1152,7 @@ def health(cfg: config.Config, now: datetime | None = None, out=None,
         say(f"{CHECK} OFF (config.json declares no vault: nothing is sealed yet)")
         return 0
     fails, warns = list(s["errors"]), []
-    hours = int(_block(cfg).get("canary_hours") or CANARY_HOURS)
+    hours = canary_hours(cfg)
     recs = s["recipients"]
     if len(recs) < s["min_recipients"]:
         fails.append(f"{len(recs)} recipient(s): a sealed store needs {s['min_recipients']} at least")

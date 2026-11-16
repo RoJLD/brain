@@ -1898,7 +1898,7 @@ and indexed by session record (`brain session-archive run [--dry-run]`).
 
 ```
 brain classes [--check] [--suggest] [--matrix] [PATH...]
-brain vault status | seal STORE | canary [--due] | recipient add NAME [--replace] | recipient remove NAME | reseal [--apply]
+brain vault status | seal STORE | canary [--due HH:MM] | recipient add NAME [--replace] | recipient remove NAME | reseal [--apply]
 brain vault device init [--rotate] | device forget-previous | open FILE | drill RECIPIENT
 brain health vault
 brain spool push [STORE...] [--dry-run] | status | verify

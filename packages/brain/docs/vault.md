@@ -222,17 +222,23 @@ in clear is a false sense of safety.
 
    **A machine that is off at the run's time.** `StartWhenAvailable` starts a missed run after the next boot, but not
    always: a missed day is a gap in the vault's proof, and `brain health vault` fails 26 hours after the last seal. A
-   brain that declares its schedules (`brain schedule`) adds a logon trigger whose run seals only when it is due:
+   brain that declares its schedules (`brain schedule`, in its project's entry of `projects.yaml`) adds a logon
+   trigger, both triggers running a command that seals only when the day's canary is not done:
 
    ```yaml
-   schedules:
-     vault-canary-daily: {command: vault canary --due, at: '07:30', at_logon: true}
+   brain:
+     schedules:
+       vault-canary-daily: {command: vault canary --due 07:30, at: '07:30', at_logon: true}
    ```
 
-   `brain vault canary --due` seals when a recipient was never sealed, fails, or was sealed more than 20 hours ago
-   (`vault.DUE_HOURS`), or this machine's key has not opened its own since; otherwise it prints `canary not due` and
-   exits 0, so a second logon the same day seals nothing. The alerts pass watches the task (`alerts: scheduler:
-   ['\Brain\']`); `tasks: {vault-canary-daily: {missed: 1}}` makes one missed day a warning rather than a late note.
+   `brain vault canary --due 07:30` seals when a recipient has no canary sealed to its current key since the latest
+   07:30 (local time), its canary failed, it is within 2 hours of `canary_hours`, or this machine's key has not
+   opened its own since 07:30; it then says why (`canary due: ...`). Otherwise it prints `canary not due` and exits 0.
+   So the 07:30 run seals each day, a logon after a boot catches up the day's run the machine was off for, and a
+   second logon the same day seals nothing. Named `vault-canary-daily`, the declared schedule replaces a task
+   registered by hand under that name (`brain schedule install --apply` adopts it, then rewrites it). The alerts pass
+   watches the task (`alerts: scheduler: ['\Brain\']`); `tasks: {vault-canary-daily: {missed: 1}}` under the
+   project's `alerts:` makes one missed day a warning rather than a late note.
 
    macOS: a LaunchAgent, `~/Library/LaunchAgents/brain.vault-canary.plist`, with the absolute path `which brain`
    prints:
