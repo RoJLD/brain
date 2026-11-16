@@ -25,7 +25,8 @@ USAGE = """\
   brain item close ID (--pr "repo #N" | --evidence TEXT...) [--outcome TEXT] [--status done|dropped]   --pr
                  is required for an item that takes a clause whose evidence is a PR (a software item: its
                  props.typology, else its project's lifecycle.typologies, else no typology declared); any other closes
-                 with --evidence (a render id, a document's version, a DDR...) (wi-brain-done-by-typology)
+                 with --evidence (a render id, a document's version, a DDR...) (wi-brain-done-by-typology);
+                 it prints the journal's line for brain journal add, its PR or its evidence
   brain item clauses ID [--json]   the item's definition of done: the generic sentence, then the clauses of its
                  typologies (the software pack's: a PR, a test, the docs in the same PR, the scout, the worktree)
   brain item link FROM TYPE TO [--prop k=v]...   an edge (with props: enforced_by's scope); one end may be another

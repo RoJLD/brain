@@ -65,8 +65,9 @@ def test_a_digest_row_without_a_proof_key_still_reads():
 
 
 def test_a_lesson_shows_the_proof_of_the_item_it_led_to():
-    assert lessons._led({"id": "wi-one", "status": "done", "proof": "evidence memo v3", "done": "2026-11-16"}) == \
-        "  led to wi-one [done] evidence memo v3, done 2026-11-16"
+    assert lessons._led({"id": "wi-one", "status": "done", "pr": "", "evidence": "memo v3", "done": "2026-11-16"}) \
+        == "  led to wi-one [done] evidence memo v3, done 2026-11-16"
+    assert lessons._evidence({"evidence": "memo v3"}) == {"evidence": "memo v3"} and lessons._evidence({}) == {}
     assert lessons._led({"id": "wi-one", "status": "todo", "pr": "", "done": ""}) == "  led to wi-one [todo]"
 
 

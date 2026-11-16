@@ -320,7 +320,7 @@ def rows(store: Path) -> list[dict]:
         p = _props(n)
         led = [{"id": t, "status": (reg.nodes.get(t) or {}).get("status", ""),
                 "pr": _props(reg.nodes.get(t) or {}).get("pr", ""),
-                "proof": graph.proof(_props(reg.nodes.get(t) or {})),
+                **_evidence(_props(reg.nodes.get(t) or {})),
                 "done": str(_props(reg.nodes.get(t) or {}).get("done", ""))[:10]} for t in reg.out(n["id"], LED)]
         fixed_on = max((x["done"] for x in led if x["done"]), default="")
         last = str(p.get("last_seen") or p.get("learned") or "")
@@ -367,8 +367,16 @@ def friction(store: Path) -> list[dict]:
             for k, v in sorted(weeks.items())]
 
 
+def _evidence(props: dict) -> dict:
+    """{"evidence": ...} when the item was closed with --evidence (wi-brain-evidence-views), else {}: a row keeps its
+    keys as before for an item closed by a PR."""
+    ev = " ".join(str(props.get("evidence") or "").split())
+    return {"evidence": ev} if ev else {}
+
+
 def _led(x: dict) -> str:
-    return f"  led to {x['id']} [{x['status']}]" + (f" {x['proof']}" if x.get("proof") else "") + \
+    proof = graph.proof(x)
+    return f"  led to {x['id']} [{x['status']}]" + (f" {proof}" if proof else "") + \
         (f", done {x['done']}" if x["done"] else "")
 
 
