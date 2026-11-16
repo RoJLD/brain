@@ -94,6 +94,9 @@ KEYS = {
             "is an error",
     "title": "one line saying what the project is, for the views",
     "stores": "its graph stores, relative to the root (default [notes/graph]); brain item writes the first",
+    "overlays": "other repos' graph stores read with its first store, read-only (research_graph's --overlay: their own "
+                "schema.yaml, nodes, edges and external.yaml), relative to the root: a path or a list; brain impact "
+                "walks them and the code map places their CodeRefs; never written",
     "journal": "its journals: a path or a list (default notes/journal.md); brain journal add writes the first",
     "decisions": "its decision logs (ADR, SDR): a path or a list (default notes/decisions.md); brain adr new writes "
                  "the first",
@@ -194,6 +197,7 @@ class Project:
     formats: object = None           # its formats: as declared (brain.formats.formats_of)
     migrations: object = None        # its migrations: as declared (brain.formats.migrations_of)
     lifecycle: dict = field(default_factory=dict)   # its lifecycle: as declared (LC-1; typologies read)
+    overlays: list[Path] = field(default_factory=list)   # other repos' stores, read-only over the first store
 
 
 @dataclass
@@ -260,6 +264,7 @@ def _project(name: str, entry: dict, root: Path) -> Project:
                    title=str(e.get("title") or ""), journals=journals, decision_logs=logs,
                    ledgers={str(k): root / v for k, v in ledgers.items() if isinstance(v, str) and v},
                    shared_ids=dict(e["shared_ids"]) if isinstance(e.get("shared_ids"), dict) else {},
+                   overlays=[Path(os.path.normpath(root / s)) for s in _paths(e.get("overlays"))],
                    plugin=e.get("plugin"), standards=e.get("standards"), formats=e.get("formats"),
                    migrations=e.get("migrations"),
                    lifecycle=dict(e["lifecycle"]) if isinstance(e.get("lifecycle"), dict) else {})
@@ -532,6 +537,7 @@ def get(name: str, root: Path | None = None) -> Project:
     if root is None:
         return reg[name]
     p = _project(name, raw(root).get(name) or {}, root)
+    p.overlays = list(reg[name].overlays)   # another repo's stores: beside the main checkout, never a worktree
     p.shares_root_with = reg[name].shares_root_with
     p.registry_dir = reg[name].registry_dir
     return p
@@ -808,7 +814,7 @@ def check(root: Path | None = None) -> list[str]:
         errors += [f"{where}: {k} is a string" for k in ("root", "title") if k in entry
                    and not isinstance(entry[k], str)]
         errors += [f"{where}: {k} is a path or a list of paths" for k in ("stores", "journal", "decisions",
-                                                                         "production") if k in entry
+                                                                         "production", "overlays") if k in entry
                    and not _is_paths(entry[k])]
         listed: set[str] = set()
         for s in _paths(entry.get("stores")):
@@ -1005,6 +1011,14 @@ def _rel(path: Path, root: Path) -> str:
     return path.relative_to(root).as_posix() if path.is_relative_to(root) else path.as_posix()
 
 
+def _up(path: Path, root: Path) -> str:
+    """``path`` relative to ``root``, ``..`` allowed (an overlay in a sibling repo); absolute on another drive."""
+    try:
+        return os.path.relpath(path, root).replace(os.sep, "/")
+    except ValueError:
+        return path.as_posix()
+
+
 def describe(p: Project) -> dict:
     """A project's entry, resolved, with stable keys: what brain projects prints and the views read."""
     try:
@@ -1013,7 +1027,8 @@ def describe(p: Project) -> dict:
         repos = [f"error: {exc}"]
     stacks = sorted(map(str, p.stacks)) if isinstance(p.stacks, dict) else ([p.stacks] if p.stacks else [])
     return {"name": p.name, "title": p.title, "root": str(p.root), "found": p.root.is_dir(),
-            "stores": [_rel(s, p.root) for s in p.stores], "journals": [_rel(j, p.root) for j in p.journals],
+            "stores": [_rel(s, p.root) for s in p.stores],
+            "overlays": [_up(o, p.root) for o in p.overlays], "journals": [_rel(j, p.root) for j in p.journals],
             "decisions": [_rel(d, p.root) for d in p.decision_logs],
             "ledgers": {k: _rel(v, p.root) for k, v in p.ledgers.items()},
             "production": [os.path.relpath(x, p.root).replace(os.sep, "/") for x in p.production],

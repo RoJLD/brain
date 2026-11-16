@@ -146,7 +146,8 @@ resources tab comes, `9` opens the resources' detail (`brain resources`, below).
 Sessions 1! » the sessions asking, « 8 Health 2 » the open alerts. A click on it, `ctrl+pageup` and
 `ctrl+pagedown` also change tab, and Escape goes back one step at a time: the search, a full view, then the overview. A tab with several views says so in its toolbar:
 `v` or a click changes it, and the overview's other views are the grid of every panel, where open alerts take a whole
-row, and the digest. `--tab NAME` starts on a tab, and with `--once` or `--plain` prints its panels alone (the overview:
+row, and the digest; the health tab's other view, Impact, is `brain impact --diff` of the branch of the checkout the
+cockpit runs from, read at each probe. `--tab NAME` starts on a tab, and with `--once` or `--plain` prints its panels alone (the overview:
 its cards). Under 120 columns or 30 rows the bar is reduced to its numbers (`0 1 Ada's queue 3 2 3 4 8`), the cards take
 one column, the grid is not offered and the health frames stack. The last tab and each tab's view are kept
 in `<BRAIN_HOME>/tui.json`.
@@ -444,6 +445,9 @@ change, the docs to update, the ADRs and specs to re-read, the tests to run (one
 run them, the open items that deliver those features and the decisions pending on them. Without GitNexus it works at
 the file level, a Python symbol looked up by the AST, and says so on its second line. `brain code-map` resolves
 each active CodeRef to its GitNexus node and reports the coverage: symbols and files with a CodeRef.
+`brain impact --markdown` prints the checklist as a PR body's section (tasks ticked by hand, every text escaped);
+the cockpit's Health tab shows the impact of the branch it runs from (its Impact view); a project's `overlays:` (another
+repo's store read with its own, read-only) are walked too.
 
 A decision can be pinned to the code it governs ([`docs/pins.md`](docs/pins.md)): `brain adr pin ID --touches
 PATH|CODEREF --holds LINE` writes `pins.yaml` beside the decision log (an ADR, an SDR or an answered DDR; the `holds`
