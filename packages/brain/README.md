@@ -1960,8 +1960,9 @@ machine is sealed client-side to public keys (`brain vault`: age, gpg as the fal
 kept in the OS keystore, and an offline recovery key: two recipients at least, proven daily by a canary per recipient
 (`brain health vault`). When the recipients change (a lost machine, a revoked heir, a rotated key), `brain vault
 reseal` seals the kept copies again to the current set. Opening, drilling, and creating or rotating a key are the
-owner's acts, refused in an agent session. The owner's steps, the canary's scheduled task per system, the rotation
-and what to do with a lost key are in the runbook, [`docs/vault.md`](docs/vault.md). Until a data remote exists,
+owner's acts, refused in an agent session. The owner's steps, the canary's scheduled task per system (with `--due`,
+its catch-up at logon after a boot), the rotation and what to do with a lost key are in the runbook,
+[`docs/vault.md`](docs/vault.md). Until a data remote exists,
 what leaves waits in a sealed local spool: `brain spool push`, run by hand, seals the changed stores of its set (the
 ledger, the usage, the session records by default) after a secret scan, sends them to `spool.remote` when one is set,
 each copy checked by sha256, and `brain health spool` gives the last push's age. The session archive (opt-in,
@@ -1971,7 +1972,7 @@ and indexed by session record (`brain session-archive run [--dry-run]`).
 
 ```
 brain classes [--check] [--suggest] [--matrix] [PATH...]
-brain vault status | seal STORE | canary | recipient add NAME [--replace] | recipient remove NAME | reseal [--apply]
+brain vault status | seal STORE | canary [--due HH:MM] | recipient add NAME [--replace] | recipient remove NAME | reseal [--apply]
 brain vault device init [--rotate] | device forget-previous | open FILE | drill RECIPIENT
 brain health vault
 brain spool push [STORE...] [--dry-run] | status | verify

@@ -9,7 +9,7 @@ from pathlib import Path
 
 import pytest
 
-from brain import config, keystore, rotation, stateio, vault
+from brain import cli, config, keystore, rotation, stateio, vault
 
 FAKE = Path(__file__).parent / "fixtures" / "fake_age.py"
 NOW = datetime(2026, 11, 2, 12, 0, tzinfo=timezone.utc)
@@ -725,3 +725,82 @@ def test_device_rotation_keeps_the_keys_a_newer_brain_added(brain, brain_home):
     assert disk["later"] == {"kept": True} and new["later"] == {"kept": True}
     assert disk["public"] == new["public"] != old["public"] and disk["previous"]["public"] == old["public"]
     assert list(disk)[:2] == ["v", "name"]
+
+
+
+
+def _two(brain, found, **extra):
+    """box1 (this machine's device key) and a recovery key, declared."""
+    facts = vault.device_init(brain({}), "box1", now=NOW, found=found)
+    (_, rec_pub), = keygen(1, found["age"])
+    return brain({"box1": {"kind": "device", "age": facts["public"]}, "recovery": {"kind": "recovery", "age": rec_pub}},
+                 **extra)
+
+
+def _due(cfg, at):
+    return vault.due(cfg, "07:30", now=at, tz=timezone.utc)
+
+
+def test_canary_due_is_the_days_run_not_done_and_health_never_fails_after_a_logon(brain, brain_home, capsys):
+    """A daily run at 07:30 and a logon trigger, both brain vault canary --due 07:30: whatever the boots, the run at
+    07:30 seals when the day's canary is not done, and right after each logon brain health vault holds."""
+    found = fake_age()
+    cfg = _two(brain, found)
+    day = datetime(2026, 11, 10, tzinfo=timezone.utc)
+    assert _due(cfg, day + timedelta(hours=8)) == "box1: never sealed to its current key"
+    vault.canary(cfg, now=day + timedelta(hours=12), found=found)           # a hand run at 12:00
+    assert _due(cfg, day + timedelta(hours=13)) == ""                         # a second logon the same day: nothing
+    assert _due(cfg, day + timedelta(hours=31, minutes=30)).startswith("box1: not sealed since 07:30")   # next 07:30
+    # boots: (day, hour on, hours awake); the 07:30 run fires only when the machine is on at 07:30
+    boots = [(1, 12.6, 3), (2, 9.6, 8), (3, 6.0, 4), (4, 16.75, 1), (5, 23.0, 1), (6, 7.0, 12), (8, 18.0, 2)]
+    for d, on, awake in boots:
+        start = day + timedelta(days=d, hours=on)
+        slot = day + timedelta(days=d, hours=7.5)
+        for t in sorted([start] + ([slot] if start <= slot <= start + timedelta(hours=awake) else [])):
+            if _due(cfg, t):
+                vault.canary(cfg, now=t, found=found)
+            assert vault.health(cfg, now=t + timedelta(minutes=5), found=found) == 0, (d, on)
+    capsys.readouterr()
+
+
+def test_canary_due_after_a_rotation_a_failure_or_near_canary_hours(brain, brain_home):
+    found = fake_age()
+    cfg = _two(brain, found, canary_hours=12)
+    t = datetime(2026, 11, 10, 7, 30, tzinfo=timezone.utc)
+    vault.canary(cfg, now=t, found=found)
+    assert _due(cfg, t + timedelta(hours=9)) == ""
+    assert _due(cfg, t + timedelta(hours=10, minutes=30)) == (
+        "box1: sealed 10 h ago, within 2 h of canary_hours (12)")           # health fails at 12 h, before 07:30
+    st = vault.load_state(write=True)
+    st["canary"]["recovery"]["error"] = "no adapter found for its keys"
+    vault.save_state(st)
+    assert _due(cfg, t + timedelta(hours=1)) == "recovery: no adapter found for its keys"
+    st["canary"]["recovery"]["error"], st["canary"]["box1"]["opened_at"] = "", ""
+    vault.save_state(st)
+    assert _due(cfg, t + timedelta(hours=1)) == "box1: not opened by this machine's key since 07:30"
+    (_, new_pub), = keygen(1, found["age"])                                  # the recovery key replaced
+    cfg = brain({**config.load(brain.root).data["vault"]["recipients"],
+                 "recovery": {"kind": "recovery", "age": new_pub}}, canary_hours=12)
+    vault.canary(cfg, now=t, found=found)
+    (_, newer_pub), = keygen(1, found["age"])
+    cfg = brain({**config.load(brain.root).data["vault"]["recipients"],
+                 "recovery": {"kind": "recovery", "age": newer_pub}}, canary_hours=12)
+    assert _due(cfg, t + timedelta(hours=1)) == "recovery: never sealed to its current key"
+
+
+def test_cli_canary_due_seals_only_when_due_and_says_why(brain, brain_home, capsys, monkeypatch):
+    found = fake_age()
+    cfg = _two(brain, found)
+    calls = []
+    real = vault.canary
+    monkeypatch.setattr(vault, "canary", lambda c: calls.append(1) or real(c, found=found))
+    root = ["--root", str(brain.root), "vault", "canary"]
+    assert cli.main([*root, "--due", "07:30"]) == 0 and len(calls) == 1
+    assert capsys.readouterr().out.startswith("canary due: box1: never sealed to its current key\n")
+    assert cli.main([*root, "--due", "07:30"]) == 0 and len(calls) == 1
+    assert capsys.readouterr().out.startswith("canary not due: every recipient sealed since 07:30")
+    assert cli.main(root) == 0 and len(calls) == 2                          # without --due: sealed whatever its age
+    with pytest.raises(SystemExit) as exc:
+        cli.main([*root, "--due", "7h30"])
+    assert exc.value.code == 2
+    assert vault.health(cfg, found=found) == 0
