@@ -159,6 +159,10 @@ The selection is only as fresh as the map: refresh it from the CI's `coverage-da
   module stands for (the CI's workflow files, the licence, the suite's own configuration) cannot get one: the
   repo's `waive` globs in `projects.yaml` (`{glob: reason}`, the reason 15 characters or more) take it, as they take
   a doc of `doc.links` (a template a new brain copies) and a module or a script; the report lists it as waived.
+- `waive.stale` (P2, never in the scout; ruleset 13): a glob of a repo's `waive` that matches no file of its tree (the
+  file renamed or removed since). It waives nothing, keeps a reason no unit carries, and would hide the next file that
+  takes its name: remove it from `projects.yaml`, or fix the glob to the files it means. The finding's unit is the
+  glob; a glob that matches a file is never stale, whether or not that file has a finding to waive.
 - `feature.tests` (P2, never in the scout): a `have` or `partial` feature with code in the repo (a module or a
   script its CodeRefs name, whichever repo owns the feature; a data file is no code a test imports) that no test
   module of the repo is `tested_by`, by the links derived now.

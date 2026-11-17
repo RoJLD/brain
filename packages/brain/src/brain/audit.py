@@ -57,7 +57,7 @@ from . import (
 from .inventory import AuditError
 from .mergedriver import HEAD_LINES
 
-RULESET = 12   # 2: doc.links and test.links measured (wi-brain-doc-test-links); 3: features.md and feature.links
+RULESET = 13   # 2: doc.links and test.links measured (wi-brain-doc-test-links); 3: features.md and feature.links
 #               (wi-brain-feature-matrix); 4: test.coverage measured (wi-brain-test-coverage) and feature.tests
 #               (wi-brain-test-links-auto); 5: cmd.registry (wi-brain-cli-registry); 6: feature.coverage, info in
 #               the full audit, NEW in the scout for an added command or module (wi-brain-audit-feature-coverage); 7: the scout's norm lints
@@ -71,7 +71,8 @@ RULESET = 12   # 2: doc.links and test.links measured (wi-brain-doc-test-links);
 #               active CodeRef of a repo no project registers, P0 instead of not measured
 #               (wi-brain-audit-unregistered-coderef)
 #               12: doc.dead-ref for a doc line naming a prefix config.json moved: says moved
-#               (wi-brain-moved-paths)
+#               (wi-brain-moved-paths); 13: waive.stale, a repo's waive glob that matches no file of its tree
+#               (wi-brain-engine-debt, batch 2)
 # the scout's calibration (wi-brain-scout-rule, design section 8: fewer than 10 % wrong per check; the numbers are in
 # the journal and on the item); a detection change that the numbers do not cover clears it until measured again
 CALIBRATED = ("2026-11-02 (83 flagged units checked by hand over brain audit --all and --diff on 50 merges, 2 wrong; "
@@ -133,6 +134,9 @@ CHECKS = {c.id: c for c in (
           "a CodeRef, stands for its code)"),
     Check("test.coverage", "P2", "never", f"a Python module the tests run under {COVERAGE_FLOOR:g} % of, by the "
           "store's coverage summary (brain coverage)"),
+    # projects.yaml's, not the repo's to fix: never in the scout of a change to the repo
+    Check("waive.stale", "P2", "never", "a glob of the repo's waive: in projects.yaml that matches no file of its "
+          "tree: it waives nothing, and would hide the next file that takes its name"),
     Check("feature.tests", "P2", "never", "a have or partial feature with code that no test module is tested_by "
           "(no test imports, names or runs its code)"),
     # a generated view: the default branch's to hold fresh (brain check there, brain.views), never a branch's to fix
@@ -972,6 +976,7 @@ def _repo_result(c: projects.Repo, rf: inventory.RepoFacts, idx: inventory.Index
         pending.append({"check": "coderef.dangling", "owner": f"CodeRefs of repos not measured here (another "
                                                               f"project's, or not cloned): {', '.join(unregistered)}"})
     found, waived = waived_findings(found, getattr(c, "waive", None))
+    found += stale_waivers(name, t, getattr(c, "waive", None))
     found.sort(key=lambda f: (f["severity"] if f["severity"] != "info" else "P9", f["check"], f["unit"]))
     counts = {s: sum(1 for f in found if f["severity"] == s) for s in SEVERITIES + ("info",)}
     classes = {k: sum(1 for u in rf.units if u.cls == k) for k in ("entry", "prod", "other")}
@@ -999,6 +1004,15 @@ def waived_findings(found: list[dict], waive: dict[str, str] | None) -> tuple[li
         elif f["unit"] not in {u for u, _ in out}:
             out.append((f["unit"], why))
     return keep, out
+
+
+def stale_waivers(repo: str, t: inventory.Tree, waive: dict[str, str] | None) -> list[dict]:
+    """waive.stale: each glob of a repo's ``waive:`` that matches no file of its tree (the file renamed or removed):
+    it waives nothing today, keeps a reason no unit carries, and would hide the next file that takes its name."""
+    return [finding(repo, "waive.stale", glob, f"the waive glob matches no file of {repo} at {t.label} ({reason})",
+                    "remove it from projects.yaml (repos[].waive), or fix the glob to the files it means")
+            for glob, reason in sorted((waive or {}).items())
+            if not any(fnmatch.fnmatchcase(p, glob) for p in t.files)]
 
 
 def _parallel(fn, items: list) -> list:
