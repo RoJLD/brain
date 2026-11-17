@@ -1064,8 +1064,8 @@ Zero-token commands for many sessions on one brain ([`docs/merge-driver.md`](doc
   Each step runs even when one before it failed (`--fail-fast` stops; `--skip STEP` skips one: INCOMPLETE, exit 1);
   its log goes to `<temp>/brain-gate/<run>/<n>-<step>.log` (or `--logs DIR`; the newest 20 runs kept) and three lines
   answer: what passed (and the logs' folder), what failed and why, the next command. Exit 0 only when every step that
-  applies passes; `--python` runs the tests (the brain steps run with the engine running the gate); `--json` for
-  the report.
+  applies passes; `--python` runs the tests and `-n N` gives them xdist workers (the brain steps run with the engine
+  running the gate); `--json` for the report.
 - **`brain merge-ready PR`**: the merge gate, before `gh pr merge`: the PR open and not a draft, main not moved under
   a file it touches since their merge base, `brain merge-check` on a head that merged main, every CI check green on
   the head, the review's stamp for the head with no finding open, the public check's stamp for a public repo, nothing

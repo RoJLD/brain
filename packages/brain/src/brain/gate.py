@@ -118,7 +118,8 @@ class Gate:
     are injectable."""
 
     def __init__(self, top: Path, base: str = "", *, skip: tuple[str, ...] = (), strict: bool = False,
-                 fail_fast: bool = False, python: str = "", logs: Path | None = None, store: str = "", runner=None,
+                 fail_fast: bool = False, python: str = "", workers: str = "", logs: Path | None = None,
+                 store: str = "", runner=None,
                  is_public: Callable[[Path], tuple[bool, str]] | None = None,
                  stamp_valid: Callable[[str, str], bool] | None = None, say: Callable[[str], None] | None = None):
         unknown = sorted(set(skip) - set(STEPS))
@@ -128,6 +129,7 @@ class Gate:
         self.skip, self.strict, self.fail_fast, self.store = set(skip), strict, fail_fast, store
         self.python = python or sys.executable   # the tests' interpreter (brain test --python)
         self.engine = sys.executable              # the one that runs every brain step: this engine
+        self.workers = workers                    # the tests' pytest-xdist workers (brain test -n)
         self.runner = runner or _default_runner()
         self.is_public, self.stamp_valid = is_public or _is_public, stamp_valid or _stamp_valid
         self.say = say or (lambda line: None)
@@ -266,7 +268,8 @@ class Gate:
 
     def tests(self) -> Step:
         cmd = self._brain("test", "--changed", self.base, "--repo-dir", str(self.top),
-                          *(["--strict"] if self.strict else []), "--python", self.python)
+                          *(["--strict"] if self.strict else []), "--python", self.python,
+                          *(["-n", self.workers] if self.workers else []))
         r, log = self._run("tests", cmd, TEST_TIMEOUT)
         s = verdict.pytest_summary(r.out + "\n" + r.err)
         counts = ", ".join(f"{n} {k}" for k, n in sorted(s.counts.items()))

@@ -245,9 +245,9 @@ def test_the_brain_steps_run_with_this_engine_and_the_tests_with_python(repo):
     import sys
     stamp(repo)
     fake = Fake()
-    make(repo, fake, python="other-python").run()
+    make(repo, fake, python="other-python", workers="4").run()
     assert fake.exes == {sys.executable}
-    assert [c for c in fake.calls if " test --changed" in c][0].endswith("--python other-python")
+    assert [c for c in fake.calls if " test --changed" in c][0].endswith("--python other-python -n 4")
 
 
 def test_a_base_that_is_no_commit_cannot_start(repo, capsys, tmp_path):
