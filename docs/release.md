@@ -351,4 +351,4 @@ in its own process and with its own timeout, its output in `$BRAIN_HOME/release/
   pytest (else said and skipped; `--no-tests` skips them), within an hour.
 
 It writes `$BRAIN_HOME/release/verified.json` (`v` 1, derived: the next verify rebuilds it; the store `release` of
-`docs/vault.md`), which `status` reads, and exits 0 when every check passed, 1 when one failed.
+`packages/brain/docs/vault.md`), which `status` reads, and exits 0 when every check passed, 1 when one failed.

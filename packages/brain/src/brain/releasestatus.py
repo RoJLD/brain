@@ -318,10 +318,45 @@ def _has_pytest(python: str, runner: Runner) -> bool:
     return rc == 0
 
 
+def _version_verdict(out: str, pin: str | None) -> tuple[bool, str]:
+    """``brain --version``'s output against the pin: (ok, why)."""
+    got = (out.strip().split() or [""])[-1]
+    if not key(got):
+        return False, f"no version in {out.strip()!r}"
+    if pin is None:
+        return True, f"brain {got}, no pin"
+    return (True, "") if key(got) == key(pin) else (False, f"brain {got}, the pin is {pin}")
+
+
+def _check(name: str, argv: list[str], cwd: Path, timeout: float, folder: Path, pin: str | None,
+           runner: Runner) -> Check:
+    """One check run, its output written to <folder>/<name>.log (no log when it cannot be written)."""
+    rc, out, err = _run(runner, argv, cwd, timeout)
+    log = folder / f"{name}.log"
+    try:
+        log.write_text(f"$ {' '.join(argv)}\n{out}{err}", encoding="utf-8")
+    except OSError:
+        log = None
+    if rc is None:
+        ok, why = False, err.strip()
+    elif rc != 0:
+        ok, why = False, f"exit {rc}"
+    else:
+        ok, why = _version_verdict(out, pin) if name == "version" else (True, "")
+    return Check(name, ok, rc, why, str(log) if log else "")
+
+
+def _machine() -> str:
+    from . import machine
+    try:
+        return machine.name()
+    except Exception:  # the machine's name is a label only
+        return ""
+
+
 def verify(root: Path, *, tests: bool = True, python: str = sys.executable, runner: Runner = subprocess.run,
            now: datetime | None = None, say: Callable[[str], object] = lambda line: None) -> dict:
     """Run the checks, each one's output into its log; the record, written to :func:`record_file`."""
-    from . import machine
     folder = record_file().parent
     folder.mkdir(parents=True, exist_ok=True)
     pin = engine_of(config_of(root)).get("pin")
@@ -329,30 +364,14 @@ def verify(root: Path, *, tests: bool = True, python: str = sys.executable, runn
     if tests and (root / "tests").is_dir() and not _has_pytest(python, runner):
         say("tests    skipped: pytest is not installed in this interpreter (pip install pytest, or --no-tests)")
         tests = False
-    done: list[Check] = []
+    done = []
     for name, argv, cwd, timeout in checks(root, tests=tests, python=python):
-        rc, out, err = _run(runner, argv, cwd, timeout)
-        log = folder / f"{name}.log"
-        try:
-            log.write_text(f"$ {' '.join(argv)}\n{out}{err}", encoding="utf-8")
-        except OSError:
-            log = Path("")
-        ok = rc == 0
-        why = "" if ok else err.strip() if rc is None else f"exit {rc}"
-        if name == "version" and ok:
-            got = (out.strip().split() or [""])[-1]
-            ok = bool(key(got)) and (pin is None or key(got) == key(pin))
-            why = f"brain {got}, no pin" if ok and pin is None else "" if ok else \
-                f"brain {got}, the pin is {pin}"
-        c = Check(name, ok, rc, why, str(log) if str(log) != "." else "")
+        c = _check(name, argv, cwd, timeout, folder, pin, runner)
         done.append(c)
-        say(f"{name:<9}{'OK' if ok else 'FAIL'}  {why or 'passed'}" + (f"  ({c.log})" if c.log and not ok else ""))
+        say(f"{name:<9}{'OK' if c.ok else 'FAIL'}  {c.why or 'passed'}" + (f"  ({c.log})" if c.log and not c.ok
+                                                                            else ""))
     at = (now or datetime.now(timezone.utc)).strftime("%Y-%m-%dT%H:%M:%SZ")
-    try:
-        mname = machine.name()
-    except Exception:  # the machine's name is a label only
-        mname = ""
-    rec = {"v": V, "version": __version__, "pin": pin, "at": at, "machine": mname, "root": str(root),
+    rec = {"v": V, "version": __version__, "pin": pin, "at": at, "machine": _machine(), "root": str(root),
            "ok": all(c.ok for c in done), "checks": [asdict(c) for c in done]}
     _write(rec, say)
     return rec

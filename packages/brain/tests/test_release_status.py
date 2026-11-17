@@ -219,3 +219,10 @@ def test_the_cli_runs_status_and_verify(tmp_path, net, monkeypatch, capsys):
     assert cli.main(["release", "verify", "--planning", str(root), "--no-tests"]) == 1
     assert "verify   FAILED" in capsys.readouterr().out
     assert sys.executable   # the checks run with this interpreter: the engine installed
+
+
+def test_the_version_check_reads_brain_version_against_the_pin():
+    assert rs._version_verdict("brain 0.2.0\n", "v0.2.0") == (True, "")
+    assert rs._version_verdict("brain 0.2.0\n", None) == (True, "brain 0.2.0, no pin")
+    assert rs._version_verdict("brain 0.1.9\n", "v0.2.0") == (False, "brain 0.1.9, the pin is v0.2.0")
+    assert rs._version_verdict("", "v0.2.0") == (False, "no version in ''")
