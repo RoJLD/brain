@@ -267,12 +267,34 @@ def test_the_marker_check_costs_its_length(owner):
     assert time.monotonic() - t0 < 2
 
 
-def test_the_lock_reads_every_claude_code_variable():
+def test_the_lock_reads_the_session_variables_not_the_configuration_ones():
+    """A session carries its own variables (its id, its host's, its process); an owner's terminal may carry Claude
+    Code's configuration ones (the review's round 3: CLAUDE_CODE_USE_BEDROCK, the IDE's CLAUDE_CODE_SSE_PORT), which
+    never make it an agent's session."""
     from brain import detail, succession
-    assert gestures.agent_session({"CLAUDE_CODE_SSE_PORT": "1"}) == "CLAUDE_CODE_SSE_PORT"
-    assert "CLAUDE_CODE_SSE_PORT" in detail.refused({"CLAUDE_CODE_SSE_PORT": "1"})
-    assert "CLAUDE_CODE_SSE_PORT" in succession._refused({"CLAUDE_CODE_SSE_PORT": "1"})
-    assert gestures.agent_session({"CLAUDE_CONFIG_DIR": "x", "PATH": "y"}) == ""   # not a session's marker
+    for var in gestures.MARKER_NAMES:
+        assert gestures.agent_session({var: "x"}) == var
+        assert var in detail.refused({var: "x"}) and var in succession._refused({var: "x"})
+    owner = {"CLAUDE_CODE_SSE_PORT": "1", "CLAUDE_CODE_USE_BEDROCK": "1", "CLAUDE_CODE_GIT_BASH_PATH": "C:/x",
+             "CLAUDE_CODE_MAX_OUTPUT_TOKENS": "8000", "CLAUDE_CONFIG_DIR": "x", "PATH": "y"}
+    assert gestures.agent_session(owner) == "" and detail.refused(owner) == "" and succession._refused(owner) == ""
+
+
+@pytest.mark.parametrize("command", [
+    "unset $(compgen -e | grep ^CLAUDE)", "for v in $(compgen -e); do case $v in CLAUDE*) unset $v;; esac; done",
+    "Get-ChildItem Env:CLAUDE* | Remove-Item", "env -u \"$v\" python run.py  # CLAUDE",
+])
+def test_clearing_by_pattern_is_read(command):
+    assert gestures.clears_marker(command), command
+
+
+@pytest.mark.parametrize("command", [
+    "git commit -m \"unset ${!CLAUDE*} is refused\"", "gh pr create --body \"env -u CLAUDECODE\"",
+    "grep -rn \"unset CLAUDECODE\" docs", "[Environment]::SetEnvironmentVariable('PATH', 'x')", "$env:CLAUDECODE",
+    "CLAUDECODE=1 python -m pytest",
+])
+def test_a_mention_of_the_forms_is_no_clearing(command):
+    assert gestures.clears_marker(command) == "", command
 
 
 def test_usage_allow_refuses_itself_under_the_wide_guard(tmp_path, monkeypatch):

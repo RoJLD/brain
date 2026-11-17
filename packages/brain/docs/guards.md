@@ -64,22 +64,29 @@ refused as the first one), but an option's value (`brain usage --hours $h guard`
 names brain and, as words, each of a gesture's words and one of its flags, in its code or its own arguments, drives it
 (`python -X utf8 -c "from brain.cli import main; main(['schedule', 'install', '--apply'])"`, `$PY -c "...main(sys.argv[1:])"
 schedule install --apply`, `schedule.install(reg, apply=True)`); and a call that clears an agent session's markers
-(`CLAUDECODE`, any `CLAUDE_CODE_*`, `BRAIN_AGENT_SESSION`: `CLAUDECODE= ...`, `env -u`, `env -i`, `unset`, `unset
-${!CLAUDE*}`, `export -n`, `declare +x`, `$env:CLAUDECODE = ''`, `Remove-Item Env:CLAUDE*`, `SetEnvironmentVariable`,
-`-UseNewEnvironment`, `.Environment.Clear()`, inline code's `environ.pop`; read with the call's quotes removed) is
-refused (check `override`); reading them passes (`$env:CLAUDECODE`, `CLAUDECODE=1 pytest`), a search for the
-assignment's text does not (`grep "CLAUDECODE="`). The MCP server matches wide always.
+(`brain.gestures.MARKER_NAMES`) is refused (check `override`), read from the call's own commands: an empty
+assignment (`CLAUDECODE= ...`, `$env:CLAUDECODE = ''`), `unset`, `export -n`, `declare +x` or `env -u` of a marker,
+of `${!CLAUDE*}` or of a word the guard cannot resolve in a call that names CLAUDE (`unset $v`, `unset $(compgen -e
+| grep ^CLAUDE)`), `env -i`, PowerShell's removal of `Env:` items (`Remove-Item Env:CLAUDE*`, `Get-ChildItem
+Env:CLAUDE* | Remove-Item`), .NET's `SetEnvironmentVariable` of a marker or a variable, `-UseNewEnvironment`,
+`.Environment.Clear()`, inline code's `environ.pop`. Reading them passes (`$env:CLAUDECODE`, `CLAUDECODE=1 pytest`),
+and so does a message or a search that only names the forms (`git commit -m "unset ..."`). The MCP server matches
+wide always.
 
 **The lock under the guard.** The gestures that act check the session themselves: `brain schedule install --apply`,
 `brain update`, `brain uninstall --apply`, `brain queue apply`, `brain handover root` refuse to run while any agent
-marker is set (`brain.detail.refused`, `brain.gestures.agent_session`: `CLAUDECODE`, `BRAIN_AGENT_SESSION` or any of
-the thirty `CLAUDE_CODE_*` variables a Claude Code session carries), and so do `brain usage allow` and `brain vault
+marker is set (`brain.detail.refused`, `brain.gestures.agent_session`: `CLAUDECODE`, `CLAUDE_CODE_ENTRYPOINT`,
+`BRAIN_AGENT_SESSION`, and the variables Claude Code sets for each session, `CLAUDE_CODE_SESSION_ID`,
+`CLAUDE_CODE_HOST_SESSION_ID`, `CLAUDE_CODE_CHILD_SESSION`, `CLAUDE_CODE_EXECPATH`, `CLAUDE_CODE_MESSAGING_SOCKET`,
+`CLAUDE_PID`; never a configuration variable an owner may export, `CLAUDE_CODE_USE_BEDROCK` or the IDE's
+`CLAUDE_CODE_SSE_PORT`), and so do `brain usage allow` and `brain vault
 reseal --apply` under `guards.owner_strict` or `guards.gestures_wide` (the command line's gate), whatever launched them (a script, `python -m runpy`, `xargs`, `find
 -exec`, inline code calling `schedule.install`); the guard's reading of the command line is the earlier, advisory
 layer that queues the action for the owner. `brain ipc otel-headers` has no such lock (Claude Code runs it as its
 `otelHeadersHelper`, from a session's environment): the guard alone keeps it from a session, and
 `guards.refuse_token_read` the token's file. What neither sees: a session that clears every marker by a means the
-guard does not read (a script that rewrites its own environment), a variable the call sets to several words (`x="install
+guard does not read (a script that rewrites its own environment; `sudo`, whose `env_reset` drops them, asks for
+the owner's password), a variable the call sets to several words (`x="install
 --apply"; brain schedule $x`, PowerShell's `$a = 'install', '--apply'`), `${x}` (the guards' reader splits a brace),
 PowerShell's parenthesised arguments (`brain schedule install ('--apply')`), an option the guard takes for one with a
 value (`brain usage --json $x`), the arguments `xargs`, `find -exec` or `parallel` add from their input, and code fed

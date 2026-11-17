@@ -82,12 +82,12 @@ GESTURES: tuple[Gesture, ...] = (
 
 
 def agent_session(env=None) -> str:
-    """The variable that marks an agent's session ('' in the owner's own terminal): one of :data:`AGENT_ENV`, or any
-    other ``CLAUDE_CODE_*`` variable Claude Code sets in its sessions (about thirty: a session that would clear the
-    markers has them all to find)."""
+    """The variable that marks an agent's session ('' in the owner's own terminal): one of :data:`MARKER_NAMES`, the
+    variables Claude Code sets for each session (its id, its host's, its child flag, its executable, its messaging
+    socket, its process) besides :data:`AGENT_ENV`; never a configuration variable an owner may export in their own
+    terminal (``CLAUDE_CODE_USE_BEDROCK``, the IDE's ``CLAUDE_CODE_SSE_PORT``)."""
     env = os.environ if env is None else env
-    return next((v for v in AGENT_ENV if env.get(v)), "") or \
-        next((v for v in sorted(env) if v.upper().startswith(("CLAUDE_CODE_", "CLAUDECODE")) and env.get(v)), "")
+    return next((v for v in MARKER_NAMES if env.get(v)), "")
 
 
 def runs_brain(low: list[str]) -> int:
@@ -307,31 +307,77 @@ def strict(data: dict | None = None) -> bool:
     return isinstance(section, dict) and section.get("owner_strict") is True
 
 
-_MARKERS = r"CLAUDECODE|CLAUDE_CODE_\w*|BRAIN_AGENT_SESSION|CLAUDE\w*\*"
-_EMPTY = r"\s*=\s*(?:$|[\s;&|)]|''|\"\"|\$null\b)"
-# what clears an agent session's markers, so that a gesture's own check (brain.detail.refused) would not see the
-# session: an empty assignment (CLAUDECODE= cmd, $env:CLAUDECODE = ''), unset, export -n, declare +x, env -u or -i, the
-# Env: drive's removal, .NET's SetEnvironmentVariable or an environment cleared, inline code's environ deletion; read
-# on the call's text with its quotes removed, each gap bounded (a long call costs no more than its length)
-CLEARS = re.compile(
-    rf"(?i)(?<![\w$])(?:\$env:)?(?:{_MARKERS}){_EMPTY}|"
-    rf"\b(?:unset|export\s+-n|declare\s+\+x|typeset\s+\+x)\b[^;&|\n]{{0,200}}?(?:{_MARKERS}|\$\{{!CLAUDE)|"
-    rf"(?:^|\s)(?:-u\s*|--unset[= ])(?:{_MARKERS})|\benv\s+(?:-[a-z]*i\b|--ignore-environment\b|-\s)|"
-    rf"\b(?:remove-item|ri|rm|del|erase|clear-item|cli)\s+(?:-path\s+|-literalpath\s+)?env:[\\/]?(?:{_MARKERS}|\*|$)|"
-    rf"SetEnvironmentVariable\s*\(|-UseNewEnvironment\b|\.Environment\.(?:Clear|Remove)\s*\(|"
-    rf"\b(?:del\s+os\.environ|environ\.(?:pop|clear)|unsetenv|putenv)\b")
+# What marks a session: the variables Claude Code sets for each session it runs (and the brain's own agents'), never
+# the configuration ones an owner may export in their own terminal (CLAUDE_CODE_USE_BEDROCK, CLAUDE_CODE_SSE_PORT...)
+SESSION_ENV = ("CLAUDE_CODE_SESSION_ID", "CLAUDE_CODE_HOST_SESSION_ID", "CLAUDE_CODE_CHILD_SESSION",
+               "CLAUDE_CODE_EXECPATH", "CLAUDE_CODE_MESSAGING_SOCKET", "CLAUDE_PID")
+MARKER_NAMES = (*AGENT_ENV, *SESSION_ENV)
+_MARKER = re.compile(r"(?i)^(?:CLAUDE\w*|BRAIN_AGENT_SESSION)\*?$")
+CLEARING = {"unset": "", "export": "-n", "declare": "+x", "typeset": "+x"}   # the shell's, with the flag that clears
+PS_REMOVE = {"remove-item", "ri", "rm", "del", "erase", "clear-item", "cli", "rmdir", "rd"}
+CODE_CLEARS = re.compile(
+    r"(?i)SetEnvironmentVariable\s*\(\s*(?:['\"]?(?:CLAUDE|BRAIN_AGENT)|\$)|-UseNewEnvironment\b|"
+    r"\.Environment\.(?:Clear|Remove)\s*\(|\b(?:del\s+os\.environ|environ\.(?:pop|clear)\s*\(|unsetenv|putenv)\b")
+
+
+def _names_marker(word: str, named: bool) -> bool:
+    """Whether ``word`` (an operand) is a marker, a pattern of them, or (``named``: the call names CLAUDE) a word the
+    guard cannot resolve, which may be one ($v, $(compgen ...))."""
+    w = word.strip("'\"")
+    return bool(_MARKER.match(w)) or "${!CLAUDE" in w.upper() or (named and _unknown(w))
 
 
 def clears_marker(command: str) -> str:
-    """The text of ``command`` that clears an agent session's markers, else '': read only when the call names CLAUDE,
-    BRAIN_AGENT_SESSION or a way to clear a whole environment (env -i, -UseNewEnvironment, .Environment.Clear)."""
-    text = re.sub(r"['\"`]", "", command or "")
-    low = text.lower()
+    """What in ``command`` clears an agent session's markers, else '': read from its simple commands' words (a
+    message or a search that only names the forms passes), and only when the call names CLAUDE, BRAIN_AGENT_SESSION or
+    a way to clear a whole environment: an empty assignment (``CLAUDECODE= cmd``, ``$env:CLAUDECODE = ''``), ``unset``,
+    ``export -n``, ``declare +x`` of a marker, a pattern or an operand it cannot resolve; ``env -u`` likewise,
+    ``env -i``; PowerShell's removal of ``Env:`` items (or of what an ``Env:`` listing pipes to it); .NET's and inline
+    code's environment calls."""
+    low = (command or "").lower()
     if not any(w in low for w in ("claude", "brain_agent_session", "env -i", "env --ignore", "env -", "usenewenv",
-                                  "environment.clear", "setenvironmentvariable")):
+                                  "environment.clear")):
         return ""
-    m = CLEARS.search(text)
-    return m.group(0).strip() if m else ""
+    named = "claude" in low or "brain_agent_session" in low
+    from . import guards
+    for ps in (False, True):
+        try:
+            segs = guards.segments(command, ps)
+        except Exception:   # noqa: BLE001 - a call the reader cannot split: its text alone is read below
+            segs = []
+        for words in segs:
+            if not words or words[0].startswith(guards.REDIRECT):
+                continue
+            for i, w in enumerate(words):   # leading assignments: CLAUDECODE= cmd, X='' cmd
+                m = re.match(r"^(?:\$env:)?([A-Za-z_]\w*)=(.*)$", w, re.I)
+                if not m:
+                    break
+                if _MARKER.match(m.group(1)) and m.group(2).strip("'\"") in ("", "$null"):
+                    return w
+            if len(words) >= 3 and words[1] == "=" and _MARKER.match(words[0].removeprefix("$env:").removeprefix(
+                    "$ENV:")) and words[0].lower().startswith("$env:") and words[2].strip("'\"") in ("", "$null"):
+                return " ".join(words[:3])   # PowerShell: $env:CLAUDECODE = ''
+            prog = re.split(r"[\\/]", words[0])[-1].lower().removesuffix(".exe")
+            args = words[1:]
+            if prog in CLEARING and (not CLEARING[prog] or CLEARING[prog] in args) and \
+                    any(_names_marker(a, named) for a in args if not a.startswith(("-", "+"))):
+                return " ".join(words)[:120]
+            if prog == "env":
+                for k, a in enumerate(args):
+                    if a in ("-i", "-", "--ignore-environment") or re.fullmatch(r"-[a-z]*i", a):
+                        return " ".join(words)[:120]
+                    val = args[k + 1] if a in ("-u", "--unset") and k + 1 < len(args) else \
+                        a[2:] if a.startswith("-u") and len(a) > 2 else a.split("=", 1)[1] if a.startswith(
+                            "--unset=") else None
+                    if val is not None and _names_marker(val, named):
+                        return " ".join(words)[:120]
+            if prog in PS_REMOVE:
+                paths = [a for a in args if not a.startswith("-")]
+                if any(re.match(r"(?i)^env:[\\/]?", a.strip("'\"")) for a in paths) or \
+                        (not paths and re.search(r"(?i)\benv:[\\/]?claude", command)):
+                    return " ".join(words)[:120]
+    m = CODE_CLEARS.search(command or "")
+    return m.group(0) if m else ""
 
 
 def wide_matching(data: dict | None = None) -> bool:
@@ -355,4 +401,4 @@ def cli_refusal(argv: list[str], env=None, data: dict | None = None) -> str:
         return ""
     from . import config
     return (f"{g.name} is {config.name_of()}'s, in their own terminal: {g.why}; refused in an agent's session "
-            f"({var} is set; config.json guards.owner_strict)")
+            f"({var} is set; config.json guards.owner_strict or guards.gestures_wide)")

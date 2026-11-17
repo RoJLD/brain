@@ -11,5 +11,7 @@ section: Added
   reads a command's quoted and escaped words (`b\rain`, `"us"age`, `ins''tall`) and starts Python for a brain command
   with a word it may not resolve. The MCP server matches wide always (docs/guards.md, « The owner's gestures »).
 - The gestures that act (`schedule install --apply`, `update`, `uninstall --apply`, `queue apply`, `handover root`)
-  refuse themselves while any agent marker is set: `CLAUDECODE`, `BRAIN_AGENT_SESSION` or any `CLAUDE_CODE_*`
-  variable, not only `CLAUDECODE` (`brain.gestures.agent_session`, `brain.detail.refused`).
+  refuse themselves while any agent marker is set: `CLAUDECODE`, `CLAUDE_CODE_ENTRYPOINT`, `BRAIN_AGENT_SESSION` or
+  a variable Claude Code sets for each session (`CLAUDE_CODE_SESSION_ID`, `CLAUDE_PID`...), not only `CLAUDECODE`
+  (`brain.gestures.agent_session`, `brain.detail.refused`); a configuration variable such as `CLAUDE_CODE_USE_BEDROCK`
+  in the owner's terminal is none.
