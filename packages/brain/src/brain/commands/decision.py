@@ -142,10 +142,11 @@ def cmd_decision(args, root: Path) -> int:
 
 def cmd_apply(args, root: Path) -> int:
     """``brain decision apply``: the answered DDRs applied, but their Why and Revisit if (brain.answerapply)."""
-    log = _project(args, root).decisions
+    here = _project(args, root)
+    mine = (here.shares_root_with or here.name) if here.registered else ""   # the root's records: its owner's
     store = _store(args, root)
     try:
-        p = answerapply.plan(root, store, log, answerapply.select(root, args.ids, args.spec or ""),
+        p = answerapply.plan(root, store, here.decisions, answerapply.select(root, args.ids, args.spec or "", mine),
                              title=_text(args.title) or "", day=args.date)
     except (answerapply.ApplyError, decisions.QueueError) as exc:
         print(f"brain: {exc}", file=sys.stderr)
@@ -153,11 +154,11 @@ def cmd_apply(args, root: Path) -> int:
     if args.json and not args.write:
         print(json.dumps(p.as_dict(), indent=2, ensure_ascii=False, default=str))
         return 0
-    if not args.write:
+    if not args.write or p.problems:
         print("\n".join(answerapply.render(p)))
-        return 0
+        return 2 if args.write else 0
     try:
-        done = answerapply.write(root, store, log, p, at=args.at or _now(), session=args.session or "",
+        done = answerapply.write(root, store, here.decisions, p, at=args.at or _now(), session=args.session or "",
                                  day=args.date)
     except (answerapply.ApplyError, decisions.QueueError, notes.NotesError, graph.GraphError) as exc:
         print(f"brain: {exc} (what was written before it stays)", file=sys.stderr)

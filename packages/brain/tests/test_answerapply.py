@@ -43,10 +43,10 @@ def root(store):
     (r / "notes" / "decisions.md").write_text(LOG, encoding="utf-8", newline="\n")
     one, _ = decisions.ask(r, title="ZEN-1: the first question", question="Which first?",
                            options=["Alpha: fast, one step", "Beta: slow"], why="fast", at=AT,
-                           items=["wi-one", "wi-gone"], specs=["spec-x"], project="demo")
+                           items=["wi-one", "wi-gone"], specs=["spec-x"])
     two, _ = decisions.ask(r, title="ZEN-2: the second question", question="Which second?",
                            options=["Gamma: kept", "Delta: dropped", "Epsilon: both"], why="kept", at=AT,
-                           items=["wi-one", "wi-two"], specs=["spec-x"], multi=True, project="demo")
+                           items=["wi-one", "wi-two"], specs=["spec-x"], multi=True)
     decisions.answer(r, one["id"], ["Alpha"], by="Ada", via="ask-tool", at="2026-11-02T10:00:00Z")
     decisions.answer(r, two["id"], ["Gamma", "Epsilon"], other="and a note", by="Ada", via="ask-tool",
                      at="2026-11-03T10:00:00Z")
@@ -127,3 +127,25 @@ def test_codes_and_the_place_of_the_table():
     assert answerapply._place(lines, "ZEN-9") == (lines.index("## 3. Build path"), "2. Questions")   # the heading
     assert answerapply._place(["# T", "", "text"], "ZEN-9") == (3, "")                             # the end
     assert answerapply._place(lines, "ZEN-2")[1] == "2.1 Details"   # the fenced mention is passed over
+
+
+def test_another_projects_answers_are_left_out_and_a_stopped_run_is_refused(root, capsys):
+    other, _ = decisions.ask(root, title="ZEN-9: theirs", question="?", options=["A: a", "B: b"], why="a", at=AT,
+                             project="elsewhere")
+    decisions.answer(root, other["id"], ["A"], by="Ada", at=AT)
+    assert other["id"] not in [d["id"] for d in answerapply.select(root, [], "", "demo")]
+    assert other["id"] in [d["id"] for d in answerapply.select(root, [], "", "elsewhere")]
+    log = root / "notes" / "decisions.md"
+    log.write_text(LOG + "\n## 2026-11-04 — Ada's answers of 2026-11-03 to ZEN-1 to ZEN-2\n", encoding="utf-8")
+    assert _apply(root, "--spec", "spec-x", "--write") == 2
+    assert "refused: the decision log already holds" in capsys.readouterr().out
+    assert all(d["status"] == "answered" for _, d in decisions.load(root))
+
+
+def test_a_spec_without_a_file_is_not_named_in_the_acks(root, capsys):
+    (root / "docs" / "x.md").unlink()
+    assert _apply(root, "--write") == 0
+    out = capsys.readouterr().out
+    assert "spec: spec-x has no file in the root: its table is not written" in out
+    assert all("spec-x" not in " ".join(d["applied"]["in"]) for _, d in decisions.load(root))
+    assert "not in the store: wi-gone (left out)" in out
