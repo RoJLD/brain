@@ -371,6 +371,19 @@ def locate(runner: Runner, repo_dir: Path, remote: str) -> tuple[Path, str]:
     return top, public.repo_slug(url.out.strip()) if url.ok else ""
 
 
+def _same_repo(pr: int, remote: str, remote_slug: str, *named: str) -> None:
+    """:class:`ShipError` when a repo named (--slug, a PR URL's) is not the checkout's remote's."""
+    for n in named:
+        if n and remote_slug and n.lower() != remote_slug.lower():
+            raise ShipError(f"{n}#{pr} is not a PR of this checkout's repo ({remote_slug}, its remote {remote}): "
+                            f"queue it from a checkout of {n} (--repo-dir D)")
+
+
+def _url_slug(data: dict) -> str:
+    from . import mergeready
+    return mergeready.slug_of_url(str(data.get("url") or ""))
+
+
 def queue_pr(pr_text: str, repo_dir: Path, slug: str = "", remote: str = "origin",
              runner: Runner = run) -> tuple[dict, bool, tuple[int, int], list[str]]:
     """``brain ship PR``: (the entry, added, its place, warnings). gh is read for the title and the branch; when it
@@ -378,10 +391,7 @@ def queue_pr(pr_text: str, repo_dir: Path, slug: str = "", remote: str = "origin
     another repo than the checkout's remote is refused: the merger works in that checkout."""
     url_slug, pr = parse_pr(pr_text)
     top, remote_slug = locate(runner, repo_dir, remote)
-    for named in (slug, url_slug):
-        if named and remote_slug and named.lower() != remote_slug.lower():
-            raise ShipError(f"{named}#{pr} is not a PR of this checkout's repo ({remote_slug}, its remote "
-                            f"{remote}): queue it from a checkout of {named} (--repo-dir D)")
+    _same_repo(pr, remote, remote_slug, slug, url_slug)
     slug = slug or url_slug or remote_slug
     warnings: list[str] = []
     data: dict = {}
@@ -389,9 +399,7 @@ def queue_pr(pr_text: str, repo_dir: Path, slug: str = "", remote: str = "origin
         data = gh_pr(runner, pr, slug, "number,state,title,headRefName,url", top)
     except ShipError as exc:
         warnings.append(f"{exc}; queued without its title (the merger reads the PR at its run)")
-    if not slug:
-        from . import mergeready
-        slug = mergeready.slug_of_url(str(data.get("url") or ""))
+    slug = slug or _url_slug(data)
     if not slug:
         raise ShipError(f"the GitHub repo of PR {pr} is unknown (--slug OWNER/NAME)")
     state = str(data.get("state") or "")
@@ -614,18 +622,22 @@ class Merger:
         if blocks or not g.checks:
             why = "; ".join(f"{c['check']}: {c['detail']}" for c in blocks) or "the gate ran no check"
             return self._done(e, "refused", f"the merge gate: {why}")
-        data = self._pr_data.get(_key(str(e["repo"]), int(e["pr"])), {})
+        why = self._push_refusal(self._pr_data.get(_key(str(e["repo"]), int(e["pr"])), {}), g.base, top, remote)
+        return self._done(e, "refused", why) if why else g
+
+    def _push_refusal(self, data: dict, base: str, top: Path, remote: str) -> str:
+        """Why the merger may not push to this PR's branch ('' when it may): a fork PR (or one gh does not say is
+        not), a branch that is the base or the default branch."""
         if data.get("isCrossRepository") is not False:
-            owner = (data.get("headRepositoryOwner") or {}).get("login", "") if isinstance(
-                data.get("headRepositoryOwner"), dict) else ""
-            return self._done(e, "refused", "a PR from a fork" + (f" ({owner})" if owner else "") + " or one gh does "
-                              "not say is not: the merger pushes to the base repo's PR branch only; merge it by hand")
+            who = data.get("headRepositoryOwner") if isinstance(data.get("headRepositoryOwner"), dict) else {}
+            owner = str(who.get("login") or "")
+            return ("a PR from a fork" + (f" ({owner})" if owner else "") + " or one gh does not say is not: the "
+                    "merger pushes to the base repo's PR branch only; merge it by hand")
         branch = str(data.get("headRefName") or "")
-        guarded = {b.lower() for b in (g.base, self._default_branch(top, remote)) if b}
+        guarded = {b.lower() for b in (base, self._default_branch(top, remote)) if b}
         if not branch or branch.lower() in guarded:
-            return self._done(e, "refused", f"its branch {branch or '(unknown)'} is the base or the default branch: "
-                              "the merger never pushes there")
-        return g
+            return f"its branch {branch or '(unknown)'} is the base or the default branch: the merger never pushes there"
+        return ""
 
     def _wait_ci(self, pr: int, repo: str, head: str) -> None:
         """The checks GitHub reports on ``head`` awaited: all green, else :class:`StepFailed` (one failed, or still
