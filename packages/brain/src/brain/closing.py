@@ -144,21 +144,15 @@ def plan(store: Path, item: str, pr: PR, repo_dir: Path | None, *, outcome: str 
          do_tidy: bool = True) -> Plan:
     """What ``brain close`` does for ``item`` closed by ``pr`` (merged), the graph at ``store``."""
     index = graph.node_index(store, generated=False)
-    node = index.get(item, (None, {}))[1]
-    p = Plan(item, str(node.get("status") or "") if node else "", pr)
-    if not node:
-        p.problems.append(f"{item}: unknown node")
-    elif node.get("type") not in (None, "WorkItem"):
-        p.problems.append(f"{item}: a {node.get('type')}, not a WorkItem")
-    if pr.state != "MERGED" or not pr.merged_at:
-        p.problems.append(f"{pr.ref} is not merged ({pr.state.lower() or 'state unknown'}): close it after the merge")
-    props = (node or {}).get("props") or {}
+    node = index.get(item, (None, {}))[1] or {}
+    p = Plan(item, str(node.get("status") or ""), pr)
+    p.problems = _problems(item, node, pr)
+    props = node.get("props") or {}
     have = [x.strip() for x in str(props.get("pr") or "").split(",") if x.strip()]
     p.refs = ", ".join(dict.fromkeys([*have, pr.ref]))
     p.outcome = " ".join((outcome or pr.title).split())
-    closed = {**(node or {}), "status": "done" if p.closes else p.status,
-              "props": {**props, "pr": p.refs, "done": f"{pr.day} {p.outcome}".strip()} if p.closes else props}
-    p.line = graph.close_line(closed)
+    closed = {**node, "status": "done", "props": {**props, "pr": p.refs, "done": f"{pr.day} {p.outcome}".strip()}}
+    p.line = graph.close_line(closed if p.closes else node)
     _features(p, index)
     _fragments(p)
     _milestones(p, store)
@@ -167,6 +161,18 @@ def plan(store: Path, item: str, pr: PR, repo_dir: Path | None, *, outcome: str 
     elif do_tidy:
         p.tidy_note = f"no checkout of {pr.repo} here: nothing to tidy"
     return p
+
+
+def _problems(item: str, node: dict, pr: PR) -> list[str]:
+    """What refuses --write: an unknown item, a node that is no WorkItem, a PR not merged."""
+    out = []
+    if not node:
+        out.append(f"{item}: unknown node")
+    elif node.get("type") not in (None, "WorkItem"):
+        out.append(f"{item}: a {node.get('type')}, not a WorkItem")
+    if pr.state != "MERGED" or not pr.merged_at:
+        out.append(f"{pr.ref} is not merged ({pr.state.lower() or 'state unknown'}): close it after the merge")
+    return out
 
 
 def _features(p: Plan, index: dict) -> None:
@@ -228,12 +234,20 @@ def _tidy(p: Plan, repo_dir: Path) -> None:
                 or (s.kind == "worktree" and tidy._norm(s.target) in holders)]
     p.tidy = rp
     if not rp.steps:
-        p.tidy_note = f"no local branch {p.pr.head} nor worktree on it: nothing to tidy"
+        here = tidy._git_ok(repo_dir, "rev-parse", "--verify", "--quiet", f"refs/heads/{p.pr.head}")
+        p.tidy_note = (f"{p.pr.head} is not merged into {rp.default} as git sees it here (a squash or rebase merge, or "
+                       f"the default branch not fetched): kept, brain tidy decides later" if here and not holders
+                       else f"no local branch {p.pr.head} nor worktree on it: nothing to tidy" if not here
+                       else f"the worktrees on {p.pr.head} stay (see brain tidy): nothing removed")
 
 
 def write(store: Path, journal: Path, p: Plan, today: str | None = None, title: str = "") -> list[str]:
-    """Apply the plan: the item closed, the features set, the journal's line, then tidy. One line each."""
+    """Apply the plan: the item closed, the features set, the journal's line, then tidy. One line each. The journal is
+    checked first: a close it could not historise would leave a re-run nothing to finish."""
     out: list[str] = []
+    day = today or date.today().isoformat()
+    if p.closes and not journal.is_file():
+        raise notes.NotesError(f"{journal}: no journal here: nothing written")
     if p.closes:
         graph.close_item(store, p.item, p.refs, p.outcome, today=p.pr.day)
         out.append(f"closed: {p.item} --pr \"{p.refs}\" ({p.pr.day})")
@@ -242,8 +256,7 @@ def write(store: Path, journal: Path, p: Plan, today: str | None = None, title: 
                                           f"status_merged={p.pr.merged_at}"])
         out.append(f"feature: {fid} {status} ({p.pr.ref})")
     if p.closes:
-        day = today or date.today().isoformat()
-        new = notes.last_day(notes.read(journal)[0]) != day if journal.is_file() else False
+        new = notes.last_day(notes.read(journal)[0]) != day
         notes.journal_add(journal, [p.line], title=(title or f"{p.item} closed") if new else "", day=day)
         out.append(f"journal: {p.line}")
     if p.tidy is not None and p.tidy.steps:
@@ -251,37 +264,44 @@ def write(store: Path, journal: Path, p: Plan, today: str | None = None, title: 
     return out
 
 
+def _plan_lines(p: Plan) -> list[str]:
+    """What --write would do: the close and its journal line, the features, tidy's steps."""
+    lines = []
+    if p.closes:
+        lines.append(f"to close: {p.item} --pr \"{p.refs}\" --outcome \"{p.outcome}\" ({p.pr.day or 'not merged'})")
+        lines.append(f"journal: {p.line}")
+    elif p.status:
+        lines.append(f"already {p.status}: {p.item} (left as it is; no journal line)")
+    lines += [f"feature: {f} {old} -> {new}" for f, old, new in p.features]
+    if p.tidy is not None:
+        lines += [f"tidy: {'remove' if s.remove else 'keep'} {s.kind} {s.target} ({s.why})" for s in p.tidy.steps]
+    return lines
+
+
+def _fragment_line(p: Plan) -> str:
+    if p.fragments:
+        return f"fragment: {', '.join(p.fragments)}"
+    carries = f" (it carries {', '.join(p.other_fragments)})" if p.other_fragments else ""
+    return f"fragment: none of the PR's names {p.item}{carries}"
+
+
+def _milestone_line(p: Plan, m: Milestone) -> str:
+    if m.open:
+        more = ", ..." if len(m.open) > 5 else ""
+        return f"milestone {m.id}: {len(m.open)} open left ({', '.join(m.open[:5])}{more})"
+    return (f"milestone {m.id}: no open item left; its trigger: « {m.trigger or 'none written'} »; when met: brain "
+            f"item set {m.id} status=reached reached=\"{p.pr.day or date.today()} <evidence>\"")
+
+
 def render(p: Plan, written: list[str] | None = None) -> list[str]:
     lines = [f"close {p.item} by {p.pr.ref}: {p.pr.title}" + (f" (merged {p.pr.day})" if p.pr.day else "")]
     lines += [f"refused: {x}" for x in p.problems]
-    if written is not None:
-        lines += written
-    else:
-        if p.closes:
-            lines.append(f"to close: {p.item} --pr \"{p.refs}\" --outcome \"{p.outcome}\" ({p.pr.day or 'not merged'})")
-            lines.append(f"journal: {p.line}")
-        elif p.status:
-            lines.append(f"already {p.status}: {p.item} (left as it is; no journal line)")
-        lines += [f"feature: {f} {old} -> {new}" for f, old, new in p.features]
-        if p.tidy is not None:
-            lines += [f"tidy: {'remove' if s.remove else 'keep'} {s.kind} {s.target} ({s.why})" for s in p.tidy.steps]
+    lines += written if written is not None else _plan_lines(p)
     lines += [f"feature already applied: {f}" for f in p.features_done]
     lines += [f"feature named, unknown: {f}" for f in p.features_unknown]
-    if p.fragments:
-        lines.append(f"fragment: {', '.join(p.fragments)}")
-    else:
-        lines.append(f"fragment: none of the PR's names {p.item}" + (f" (it carries {', '.join(p.other_fragments)})"
-                                                                     if p.other_fragments else ""))
-    for m in p.milestones:
-        if m.open:
-            lines.append(f"milestone {m.id}: {len(m.open)} open left ({', '.join(m.open[:5])}"
-                         + (", ..." if len(m.open) > 5 else "") + ")")
-        else:
-            lines.append(f"milestone {m.id}: no open item left; its trigger: « {m.trigger or 'none written'} »; "
-                         f"when met: brain item set {m.id} status=reached reached=\"{p.pr.day or date.today()} "
-                         f"<evidence>\"")
-    if p.tidy_note:
-        lines.append(p.tidy_note)
+    lines.append(_fragment_line(p))
+    lines += [_milestone_line(p, m) for m in p.milestones]
+    lines += [p.tidy_note] if p.tidy_note else []
     tail = ("written; then brain sync and brain check" if written is not None
             else "not written: --write" if not p.problems else "nothing written")
     lines.append(f"close {p.item}: {tail}")

@@ -29,9 +29,9 @@ def _repo_dir(args, root: Path, name: str) -> tuple[str, Path | None, str]:
         d = Path(args.repo_dir).resolve()
         return name or (paths.main_checkout(d) or d).name.lower(), d, ""
     if name:
-        hit = next((p for n, p in declared if n.lower() == name.lower()), None)
-        return (name, hit, "") if hit else (name, None, f"{name}: no repo of that name in the project "
-                                                        f"({', '.join(n for n, _ in declared) or 'none'})")
+        hit = next(((n, p) for n, p in declared if n.lower() == name.lower()), None)   # the project's spelling
+        return (*hit, "") if hit else (name, None, f"{name}: no repo of that name in the project "
+                                                   f"({', '.join(n for n, _ in declared) or 'none'})")
     here = paths.main_checkout(Path(os.getcwd()))
     for n, p in declared:
         if here is not None and paths.main_checkout(p) == here:

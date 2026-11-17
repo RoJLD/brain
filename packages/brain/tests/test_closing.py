@@ -207,5 +207,40 @@ def test_tidy_removes_the_prs_merged_branch_and_no_other(root, gh, tmp_path, mon
     assert cli.main(args + ["--write"]) == 0
     assert "tidy: deleted branch feat/close" in capsys.readouterr().out
     branches = subprocess.run(["git", "-C", str(repo), "branch", "--format=%(refname:short)"], capture_output=True,
-                              text=True, check=True, env=dict(os.environ, **GIT_ENV)).stdout.split()
+                              text=True, check=True, env=dict(os.environ, **GIT_ENV), timeout=60).stdout.split()
     assert sorted(branches) == ["feat/other", "main"]
+    assert cli.main(args) == 0   # gone now: nothing left to tidy
+    assert "no local branch feat/close nor worktree on it: nothing to tidy" in capsys.readouterr().out
+
+
+@pytest.mark.skipif(not shutil.which("git"), reason="git not available")
+def test_tidy_keeps_a_head_branch_git_does_not_see_merged(root, gh, tmp_path, monkeypatch, capsys):
+    for k, v in GIT_ENV.items():
+        monkeypatch.setenv(k, v)
+    repo = git_init(tmp_path / "engine")
+    (repo / "a.txt").write_text("a\n", encoding="utf-8")
+    run_git(repo, "add", "-A")
+    run_git(repo, "commit", "-q", "-m", "base")
+    run_git(repo, "checkout", "-q", "-b", "feat/close")
+    (repo / "b.txt").write_text("b\n", encoding="utf-8")   # a squash merge leaves the branch unmerged in git's eyes
+    run_git(repo, "add", "-A")
+    run_git(repo, "commit", "-q", "-m", "work")
+    run_git(repo, "checkout", "-q", "main")
+    monkeypatch.chdir(tmp_path)
+    assert cli.main(["--root", str(root), "close", "wi-close", "--pr", "ENGINE #7", "--repo-dir", str(repo)]) == 0
+    out = capsys.readouterr().out
+    assert "feat/close is not merged into main as git sees it here" in out and "tidy: remove" not in out
+
+
+def test_a_missing_journal_refuses_before_anything_is_written(root, gh, tmp_path, capsys):
+    (root / "notes" / "journal.md").unlink()
+    assert cli.main(_base(root, tmp_path, "--write")) == 1
+    assert "no journal here: nothing written" in capsys.readouterr().err
+    assert _nodes(root)["wi-close"]["status"] == "doing"
+    assert _nodes(root, "features.yaml")["feat-close"]["status"] == "planned"
+
+
+def test_a_repo_named_in_another_case_takes_the_projects_spelling(root, gh, capsys):
+    # the project at a bare root has one repo, named after its folder
+    assert cli.main(["--root", str(root), "close", "wi-close", "--pr", "BRAIN #7", "--no-tidy"]) == 0
+    assert 'to close: wi-close --pr "engine #3, brain #7"' in capsys.readouterr().out
