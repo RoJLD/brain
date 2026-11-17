@@ -346,7 +346,8 @@
       "description": "The locked floor (brain.floor, the owner's R21): the rules marked <!-- lock --> and the guard's refusals that hold them.",
       "properties": {
         "refuse": {"type": "boolean", "description": "true: the guard refuses a session's git push to main or master and a forced push (guard floor, checks main and force; BRAIN_GUARD_ALLOW=floor lifts them). Default false: refusals 0.5.1 adds."},
-        "only": {"type": "boolean", "description": "true: this machine gets the floor alone until it is adopted: inject-rules.sh injects the locked rules only, the guard runs only the floor's refusals and the secrets check, the memory notes are not synced either way. Default false."}
+        "only": {"type": "boolean", "description": "true: this machine gets the floor alone until it is adopted: inject-rules.sh injects the locked rules only, the guard runs only the floor's refusals and the secrets check, the memory notes are not synced either way. Default false."},
+        "acl": {"type": "boolean", "description": "true, under only: brain floor lock --apply (Windows) also denies the account the sessions run as write, delete and any change of ACL or owner on its Claude Code settings, hooks, skills, commands and agents and on its projects' .claude settings, whatever writes them; brain floor unlock --apply gives them back. Default false: a refusal 0.6.0 adds."}
       }
     },
     "ipc": {

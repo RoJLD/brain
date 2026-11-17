@@ -25,6 +25,9 @@ floor lock``) prints the floor it would lock, what it installs and the command l
 Win+R (no interactive shell, which would load a profile and modules a session can write); the apply (``--apply``)
 refuses to run without elevation (a session never elevates), with the floor off, or lowering a locked floor without
 ``--lower``. ``brain floor unlock --apply`` removes the lock file and the managed file together, then the copies.
+Under config.json ``floor.acl`` on a floor-only machine (Windows), the apply also denies the account the sessions run
+as every change of its own Claude Code files and its projects' settings (the ACL step, brain.flooracl), and the
+unlock gives them back first.
 brain.floor.unlocked is what the guard checks on each call; ``brain floor status`` checks every file.
 """
 
@@ -39,7 +42,7 @@ import sys
 from datetime import datetime, timezone
 from pathlib import Path
 
-from . import floor, floorhook
+from . import floor, flooracl, floorhook
 
 ADMINS, SYSTEM, USERS = "*S-1-5-32-544", "*S-1-5-18", "*S-1-5-32-545"   # Administrators, SYSTEM, Users (SIDs)
 TREE_GRANTS = (f"{ADMINS}:(OI)(CI)F", f"{SYSTEM}:(OI)(CI)F", f"{USERS}:(OI)(CI)RX")
@@ -82,9 +85,11 @@ def elevated() -> bool:
 
 # --- the plan --------------------------------------------------------------------------------------------------------
 
-def plan(cfg) -> dict:
+def plan(cfg, account: str | None = None) -> dict:
     """What brain floor lock would do: the floor it locks and the one held now, the paths it writes, the command the
-    owner runs. LockError when there is no config.json to lock, or its floor is off."""
+    owner runs, and under config.json floor.acl the paths the ACL step denies ``account`` (the plan's own account when
+    None: a normal terminal's is the sessions'). LockError when there is no config.json to lock, or its floor is
+    off."""
     if cfg.file is None or cfg.error or not Path(cfg.file).is_file():
         raise LockError("no readable config.json: the lock copies the floor of the one the guard reads "
                         "(brain config shows it)")
@@ -97,7 +102,8 @@ def plan(cfg) -> dict:
     return {"floor": fl, "held": held, "lowers": bool(held) and _rank(fl) < _rank(held),
             "config": str(Path(cfg.file).resolve()), "brain_home": str(_brain_home()), "guard": floor.guard_dir(),
             "lock": floor.lock_dir(), "managed": floor.managed_file(),
-            "installed": lock if _installed(lock) else None}
+            "installed": lock if _installed(lock) else None,
+            "acl": flooracl.plan(cfg, account or floor.account()) if flooracl.wanted(cfg) else None}
 
 
 def _rank(fl: dict) -> int:
@@ -127,6 +133,8 @@ def run_command(p: dict, verb: str = "lock") -> str:
         py, args = Path(sys.executable), ["-m", "brain", "floor", verb, "--apply"]
     if p.get("lowers"):
         args.append("--lower")
+    if p.get("acl") and verb == "lock":
+        args += ["--account", p["acl"]["account"]]
     if os.name != "nt":
         return " ".join(["/usr/bin/sudo", str(py), "-I", *args])
     return " ".join(f'"{a}"' if " " in a else a for a in [str(py), "-I", *args, "--wait"])
@@ -157,6 +165,7 @@ def render_plan(p: dict) -> list[str]:
             "hook runs) and the plugin's hooks declared from the copy",
             f"  {p['lock'] / floor.LOCK_FILE}  the lock file: the floor's copy (written last, after every file is "
             "checked)",
+            *flooracl.render(p.get("acl")),
             f"Needs Claude Code v{MIN_CLAUDE_CODE} or later (onFailure: block on the judging hooks).",
             "Before the apply: close every Claude Code session (a process keeps what it opened before the lock).",
             *runbook(run_command(p))]
@@ -491,13 +500,20 @@ def _prune(root: Path, keep: Path | None) -> list[str]:
 
 
 def apply(cfg, lower: bool = False, run=subprocess.run, is_elevated=None, install=install_guard,
-          check=verify, tools=None) -> list[str]:
+          check=verify, tools=None, account: str | None = None, acl_check=None) -> list[str]:
     """Lock this machine (module docstring); the lines to print. LockError without elevation, with the floor off,
     lowering a locked floor without ``lower``, when a command fails or a file is not held: the managed file and the
     lock file are then restored as they were (no lock before: none, and a floor-only machine refuses every call) and
-    the new copy removed; the copy in use is never touched until the new one holds."""
+    the new copy removed; the copy in use is never touched until the new one holds. Under config.json floor.acl, the
+    ACL step denies ``account`` (the plan's --account: the elevated step may run as another administrator) its
+    Claude Code files once the copy holds, checked by ``acl_check``; undone if a later step fails, unless the previous
+    lock held them already."""
     _need_elevation("brain floor lock --apply", is_elevated)
-    p = plan(cfg)
+    if flooracl.wanted(cfg) and not account:
+        raise LockError("floor.acl needs --account SID, the account the sessions run as: brain floor lock, printed in "
+                        "a normal terminal of that account, gives the command line with it")
+    p = plan(cfg, account)
+    prev_acl = (floor.read_lock() or {}).get("acl")
     if p["lowers"] and not lower:
         raise LockError("this lowers the locked floor: check config.json's floor, then run the apply with --lower")
     root, lockdir, managed = p["guard"], p["lock"], p["managed"]
@@ -509,6 +525,12 @@ def apply(cfg, lower: bool = False, run=subprocess.run, is_elevated=None, instal
     while new.exists():   # never the copy in use, even locked twice in a second
         new, n = root / f"{stamp}-{n}", n + 1
     found = (tools or system_tools)(check)
+    a, acl_started = p["acl"], False
+    if a:   # the elevated step never follows a link a session made (it would hand over its target)
+        linked = flooracl.all_links(a)
+        if linked:
+            raise LockError(f"the ACL step refuses a link or a junction among its paths: {', '.join(linked[:6])}; "
+                            "remove it from a normal terminal, then lock again")
     try:
         root.mkdir(parents=True, exist_ok=True)
         interp = install(new, rendered=_rendered(cfg))
@@ -516,6 +538,14 @@ def apply(cfg, lower: bool = False, run=subprocess.run, is_elevated=None, instal
         wrong = [] if failed else check(root)
         if failed or wrong:
             raise LockError("; ".join([*failed, *wrong][:12]))
+        if a:   # the account's own Claude Code files, before the managed hooks and the lock file that check them
+            flooracl.create(a)
+            acl_started = True
+            failed = flooracl.run_all(flooracl.commands(a), run)
+            failed = failed or flooracl.lock_trees(a, run)
+            wrong = [] if failed else (acl_check or flooracl.verify)(a)
+            if failed or wrong:
+                raise LockError("the ACL step: " + "; ".join([*failed, *wrong][:12]))
         managed.parent.mkdir(parents=True, exist_ok=True)
         managed.write_text(json.dumps(hooks_settings(interp, new, found.get("bash"), cfg.data, known_marketplaces(cfg)),
                                       indent=2) + "\n", encoding="utf-8")
@@ -532,17 +562,29 @@ def apply(cfg, lower: bool = False, run=subprocess.run, is_elevated=None, instal
     except BaseException as exc:
         _restore(saved)
         _remove(new)
+        undone = _undo_added(a, prev_acl, run) if acl_started else []
         if isinstance(exc, LockError):
             raise LockError("the lock is not complete, the managed settings and the lock file are back as they were "
-                            f"({'the previous lock' if saved[lock_file] else 'no lock'}): {exc}") from None
+                            f"({'the previous lock' if saved[lock_file] else 'no lock'}): {exc}"
+                            + (f"; the ACL step not all undone: {'; '.join(undone[:6])}" if undone else "")) from None
         raise
     left = _prune(root, keep=new)
     lost = [] if found.get("bash") else ["no administrators' bash: the hooks of other events than PreToolUse "
                                          "(rules, announce, health, capture, budget, memory) are not declared"]
+    gone = flooracl.released(prev_acl, a, run)
     return [f"locked: the floor refuse={p['floor']['refuse']}, only={p['floor']['only']} in {lock_file}; the guard in "
             f"{new}, its hooks in {managed}. Start Claude Code again (v{MIN_CLAUDE_CODE} or later), then in a normal "
             "terminal brain floor status checks every file", *lost,
+            *([f"the ACL step: {len(a['files']) + len(a['trees']) + len(a['folders'])} paths denied to "
+               f"{a['account']} (and {a['home']} itself)"] if a else []), *gone,
             *([f"older copies still there (in use): {', '.join(left)}; the next lock removes them"] if left else [])]
+
+
+def _undo_added(a: dict, prev: dict | None, run) -> list[str]:
+    """After a failed apply: give back what its ACL step added (not what the previous lock, restored, still holds);
+    what failed or was left alone."""
+    cmds, left = flooracl.undo_beside(a, prev)
+    return [*flooracl.run_all(cmds, run), *left]
 
 
 def _rendered(cfg) -> Path | None:
@@ -567,23 +609,27 @@ def _empty(folder: Path) -> None:
 
 def lock_data(p: dict, interp: Path, gdir: Path, tools: dict | None = None) -> dict:
     """The lock file's content."""
-    tools = tools or {}
+    tools, a = tools or {}, p.get("acl")
     return {"format": floor.LOCK_FORMAT, "floor": p["floor"], "config": p["config"], "brain_home": p["brain_home"],
             "guard": str(gdir), "interpreter": str(interp), "managed": str(p["managed"]),
             "manifest": floor.file_hash(gdir / floor.MANIFEST), **tools,
             "checks": [str(x) for x in (p["guard"], gdir, gdir / floor.MANIFEST, gdir / "hook.py", gdir / "floor.py",
                                         interp, p["managed"], *tools.values())],
+            **({"acl": {k: a[k] for k in ("account", "home", "files", "trees", "folders", "create")}} if a else {}),
             "locked_at": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"), "lock_dir": str(p["lock"])}
 
 
-def unlock(is_elevated=None) -> list[str]:
-    """Remove the lock file and the managed hooks together (both restored if either fails), then the guard's copies
-    but the one this interpreter runs from (elevated); the lines to print."""
+def unlock(is_elevated=None, run=subprocess.run, cfg=None, account: str | None = None) -> list[str]:
+    """Give the account its Claude Code files back when the lock denied them (each path still the lock's: there, no
+    link, owned by Administrators; LockError if a command fails: the lock file stays), then remove the lock file
+    and the managed hooks together (both restored if either fails), then the guard's copies but the one this
+    interpreter runs from (elevated); the lines to print. A lock file that cannot be read says nothing of its ACL
+    step: ``account`` (--account) then rebuilds its paths from ``cfg`` (config.json), else the unlock stops."""
     _need_elevation("brain floor unlock --apply", is_elevated)
     lock = floor.read_lock()
-    managed = floor.managed_file()
-    if lock and not lock.get("error"):
-        managed = Path(lock.get("managed") or managed)
+    readable = bool(lock) and not lock.get("error")
+    managed = Path(lock.get("managed") or floor.managed_file()) if readable else floor.managed_file()
+    left = _give_back(_unlock_acl(lock, cfg, account), run)
     lock_file = floor.lock_dir() / floor.LOCK_FILE
     saved = _saved(lock_file, managed)
     try:
@@ -593,15 +639,44 @@ def unlock(is_elevated=None) -> list[str]:
         _restore(saved)
         raise LockError(f"unlock failed, the lock and the managed settings are back as they were: {exc}") from None
     root = floor.guard_dir()
-    left = _prune(root, keep=None)
+    stays = _prune(root, keep=None)
     for d in (root, floor.lock_dir()):
         try:
             d.rmdir()
         except OSError:
             pass
     return [f"unlocked: the lock file and {managed} removed; the plugin's guard judges again (start Claude Code "
-            "again)", *([f"still there (this window runs from it): {', '.join(left)}; remove it once the window is "
-                         "closed, or the next lock does"] if left else [])]
+            "again)", *([f"still there (this window runs from it): {', '.join(stays)}; remove it once the window is "
+                         "closed, or the next lock does"] if stays else []),
+            *([f"the ACL step left alone (not the lock's now): {'; '.join(left[:6])}"] if left else [])]
+
+
+def _unlock_acl(lock: dict | None, cfg, account: str | None) -> dict | None:
+    """The ACL step an unlock gives back: the lock file's; with one that cannot be read, the paths ``account``
+    (--account) gets from config.json (LockError without it: they are unknown)."""
+    if lock and not lock.get("error"):
+        a = lock.get("acl")
+        return a if isinstance(a, dict) and a.get("account") else None
+    if account and cfg is not None:
+        return flooracl.plan(cfg, account)
+    if lock:
+        raise LockError(f"the lock file cannot be read ({lock['error']}), so its ACL step's paths are unknown: run "
+                        "brain floor unlock --apply --account SID (the account the sessions run as; any SID when the "
+                        "lock had no floor.acl)")
+    return None
+
+
+def _give_back(a: dict | None, run) -> list[str]:
+    """Run the step's undo (LockError when a command fails: the lock file and the managed hooks stay, the other
+    entries lifted, an unlock again ends it); what was left alone."""
+    if not a:
+        return []
+    cmds, left = flooracl.undo(a)
+    failed = flooracl.run_all(cmds, run)
+    if failed:
+        raise LockError("unlock stopped, the lock file and the managed hooks stay; these deny entries are still there "
+                        "(the others are lifted; run the unlock again): " + "; ".join(failed[:6]))
+    return left
 
 
 def status(cfg) -> list[str]:
@@ -619,6 +694,7 @@ def status(cfg) -> list[str]:
         out.append(f"lock: {floor.lock_dir() / floor.LOCK_FILE}, locked at {lock.get('locked_at', '?')}; the guard in "
                    f"{lock.get('guard')}, its hooks in {lock.get('managed')}")
         out.append(_in_force(lock))
+        out += flooracl.status(lock.get("acl"), flooracl.wanted(cfg))
     if not (fl["only"] or lock is not None):
         return out
     why = floor.unlocked(cfg, fl, lock) or (_whole(lock) if lock and not lock.get("error") else "")
