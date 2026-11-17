@@ -10,18 +10,19 @@ from pathlib import Path
 ORDER = 504   # its place in brain --help's list of commands (brain.commands), after ship
 USAGE_ORDER = 163
 USAGE = """\
-  brain gate [--base REF] [--repo-dir D] [--skip STEP]... [--strict] [--fail-fast] [--python PY] [--logs DIR]
-             [--store DIR] [--json]   the pre-push checks in one call, on the checkout here (or --repo-dir):
-                        clean (nothing left out of HEAD, untracked files included), merge-check (a fresh base merged
-                        in, nothing of it lost), review (HEAD's review stamp, no finding open), views (a graph store's
+  brain gate [--base REF] [--repo-dir D] [--skip STEP]... [--strict] [--fail-fast] [--python PY] [-n N]
+             [--logs DIR] [--store DIR] [--json]
+                        the pre-push checks in one call, on the checkout here (or --repo-dir): clean (nothing left
+                        out of HEAD, untracked files included), merge-check (a fresh base merged in, nothing of it
+                        lost), review (HEAD's review stamp, no finding open), views (a graph store's
                         views regenerated and checked: brain refresh --offline), audit (brain audit --diff: 0 NEW, 0
                         LEFT; --store: a worktree's code store), public (a public repo's HEAD stamped by brain check
                         --public --history), tests (brain test --changed; --strict runs the whole suite when the
                         selection widens). Each step's log in <temp>/brain-gate/<run>/ (or --logs), then three lines:
                         what passed, what failed and why, the next command. Exit 0 only when every step that applies
                         passes (a --skip says INCOMPLETE, exit 1); 2 when it cannot start (not a git checkout, a
-                        --base that is no commit here). --python: the tests' interpreter (the brain steps run with
-                        this engine); a remote --base (origin/main) is fetched again
+                        --base found neither here nor on its remote). --python: the tests' interpreter (the brain
+                        steps run with this engine); a remote --base (origin/main) is fetched again
 """
 
 
@@ -33,7 +34,7 @@ def early(args) -> int:
         top = Path(git(Path(args.repo_dir or getattr(args, "root", None) or ".").resolve(),
                        "rev-parse", "--show-toplevel").strip()).resolve()
         g = gate.Gate(top, args.base or "", skip=tuple(args.skip or ()), strict=args.strict,
-                      fail_fast=args.fail_fast, python=args.python or "",
+                      fail_fast=args.fail_fast, python=args.python or "", workers=args.workers or "",
                       logs=Path(args.logs).resolve() if args.logs else None, store=args.store or "",
                       say=None if args.json else (lambda line: print(line, file=sys.stderr, flush=True)))
     except (AuditError, gate.GateError, OSError) as exc:
@@ -62,6 +63,7 @@ def register(sub, ctx) -> None:
     g.add_argument("--fail-fast", action="store_true", help="stop at the first step that fails")
     g.add_argument("--python", default="", help="the Python that runs the tests (default: this one; the brain "
                                                 "steps always run with the engine running the gate)")
+    g.add_argument("-n", dest="workers", default="", metavar="N", help="tests: pytest-xdist workers (auto, 8...)")
     g.add_argument("--logs", metavar="DIR", help="the folder of this run's logs (default: <temp>/brain-gate/<run>)")
     g.add_argument("--store", metavar="DIR", help="audit: a code store in a worktree (a change across two repos)")
     g.add_argument("--json", action="store_true", help="the report as JSON (the steps, their logs, the verdict)")

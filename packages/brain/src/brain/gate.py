@@ -21,10 +21,11 @@ The steps, in order (the cheap ones first; each runs even when one before it fai
    verdict.
 
 A step that does not apply (no graph store, a private repo) is skipped with its reason. ``--skip STEP`` skips one on
-purpose: the verdict says INCOMPLETE and the exit is 1 even when nothing failed (a skipped check is no pass). Each step's command and output go to ``<n>-<step>.log`` in the run's folder
-(brain.verdict: ``<temp>/brain-gate/<repo>-<head>-<UTC stamp>/``, or ``--logs``), the verdict to ``verdict.json``.
-The steps' commands run with this Python (``-m brain``: the engine running the gate), through one injectable runner with a timeout that stops the
-whole process tree (brain.ship.run): the tests fake it.
+purpose: the verdict says INCOMPLETE and the exit is 1 even when nothing failed (a skipped check is no pass). Each
+step's command and output go to ``<n>-<step>.log`` in the run's folder (brain.verdict:
+``<temp>/brain-gate/<repo>-<head>-<UTC stamp>/``, or ``--logs``), the verdict to ``verdict.json``. The steps'
+commands run with this Python (``-m brain``: the engine running the gate), through one injectable runner with a
+timeout that stops the whole process tree (brain.ship.run): the tests fake it.
 """
 
 from __future__ import annotations
@@ -117,7 +118,8 @@ class Gate:
     are injectable."""
 
     def __init__(self, top: Path, base: str = "", *, skip: tuple[str, ...] = (), strict: bool = False,
-                 fail_fast: bool = False, python: str = "", logs: Path | None = None, store: str = "", runner=None,
+                 fail_fast: bool = False, python: str = "", workers: str = "", logs: Path | None = None,
+                 store: str = "", runner=None,
                  is_public: Callable[[Path], tuple[bool, str]] | None = None,
                  stamp_valid: Callable[[str, str], bool] | None = None, say: Callable[[str], None] | None = None):
         unknown = sorted(set(skip) - set(STEPS))
@@ -127,6 +129,7 @@ class Gate:
         self.skip, self.strict, self.fail_fast, self.store = set(skip), strict, fail_fast, store
         self.python = python or sys.executable   # the tests' interpreter (brain test --python)
         self.engine = sys.executable              # the one that runs every brain step: this engine
+        self.workers = workers                    # the tests' pytest-xdist workers (brain test -n)
         self.runner = runner or _default_runner()
         self.is_public, self.stamp_valid = is_public or _is_public, stamp_valid or _stamp_valid
         self.say = say or (lambda line: None)
@@ -136,8 +139,8 @@ class Gate:
             raise GateError(str(exc)) from None
         from . import mergecheck
         self.base = base or mergecheck.default_base(top)
-        if not self._base_sha():
-            raise GateError(f"--base {self.base}: not a commit of this checkout (a remote one: git fetch first)")
+        if not self._base_sha() and not (self._fetch_remote_base() and self._base_sha()):
+            raise GateError(f"--base {self.base}: not a commit of this checkout, nor of its remote")
         self.folder = logs if logs is not None else verdict.run_folder(KIND, f"{top.name}-{self.head[:8]}")
         self.folder.mkdir(parents=True, exist_ok=True)
         self.report = Report(top.name, self.head, self.base, self.folder.as_posix())
@@ -161,6 +164,14 @@ class Gate:
     def _dirty(self) -> list[str]:
         out = git(self.top, "status", "--porcelain", "--untracked-files=normal")
         return [line for line in out.splitlines() if line.strip()]
+
+    def _fetch_remote_base(self) -> bool:
+        """A remote base (``origin/x``) this checkout never fetched: its remote fetched once; whether it was one."""
+        remote = self.base.split("/", 1)[0] if "/" in self.base else ""
+        if remote not in git(self.top, "remote").split():
+            return False
+        git(self.top, "fetch", "--quiet", remote, allow=(0, 1, 128))
+        return True
 
     def _base_sha(self) -> str:
         return git(self.top, "rev-parse", "--verify", f"{self.base}^{{commit}}", allow=(0, 128)).strip()
@@ -226,8 +237,9 @@ class Gate:
                         "brain refresh (read its log), fix, then brain gate", log)
         changed = sorted(set(self._dirty()) - before)
         if changed:
+            more = ", ..." if len(changed) > 3 else ""
             return Step("views", False, f"refresh rewrote {len(changed)} file(s) "
-                                        f"({', '.join(x[3:] for x in changed[:3])}{', ...' if len(changed) > 3 else ''})",
+                                        f"({', '.join(x[3:] for x in changed[:3])}{more})",
                         "git add -A && git commit (the regenerated views), then brain gate", log)
         return Step("views", True, "views current, the store checked", log=log)
 
@@ -256,7 +268,8 @@ class Gate:
 
     def tests(self) -> Step:
         cmd = self._brain("test", "--changed", self.base, "--repo-dir", str(self.top),
-                          *(["--strict"] if self.strict else []), "--python", self.python)
+                          *(["--strict"] if self.strict else []), "--python", self.python,
+                          *(["-n", self.workers] if self.workers else []))
         r, log = self._run("tests", cmd, TEST_TIMEOUT)
         s = verdict.pytest_summary(r.out + "\n" + r.err)
         counts = ", ".join(f"{n} {k}" for k, n in sorted(s.counts.items()))
