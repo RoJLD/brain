@@ -67,7 +67,7 @@ SESSION_DIMS = ("project", "class", "kind", "model", "pr", *SOURCE_DIMS)
 ITEM_DIMS = ("item", "theme", "milestone")
 PART_DIMS = {"phase": "phases", "tool": "tools", "command": "commands", "skill": "skills"}
 TIME_DIMS = ("day", "week")
-AGENT_DIMS = ("workflow", "agent")  # a workflow run, an agent's label (wi-brain-usage-workflow-agents)
+AGENT_DIMS = ("workflow", "agent", "role")  # a workflow run, an agent's label, its role (verify, review, Explore...)
 DIMS = ("summary", *SESSION_DIMS, *ITEM_DIMS, *PART_DIMS, "session", "family", *AGENT_DIMS, *TIME_DIMS, "sequences")
 METRICS = ("cost", "output", "peak", "active_s", "sessions")
 # The signals explain() names; {owner}: config.owner_of(), read when it runs.
@@ -627,14 +627,16 @@ def table_of(led: Ledger, rows: list[dict], dim: str, since: str, until: str) ->
                             "title": r.get("title") or r.get("branch") or "", "start": w.get("start") or "",
                             "phases": [[k, v.get("count") or 0, round(v.get("cost") or 0.0, 4)] for k, v in phases],
                             "output": w.get("output") or 0})
-    elif dim == "agent":
+    elif dim in ("agent", "role"):   # by label, or by role with each model's count (wi-brain-review-model-routing)
         per: dict[str, dict] = {}
 
         def add(label: str, v: dict, kind: str, run: str = "") -> None:
-            a = per.setdefault(label, {"total": 0.0, "n": 0, "kinds": set(), "runs": set()})
+            a = per.setdefault(label if dim == "agent" else v.get("role") or "-",
+                               {"total": 0.0, "n": 0, "kinds": set(), "runs": set(), "models": Counter()})
             a["total"] += v.get("cost") or 0.0
             a["n"] += v.get("count") or 0
             a["kinds"].add(kind)
+            a["models"].update(v.get("models") or {})
             if run:
                 a["runs"].add(run)
 
@@ -648,7 +650,7 @@ def table_of(led: Ledger, rows: list[dict], dim: str, since: str, until: str) ->
                         add(label, v, "workflow", run)
         for k, a in per.items():
             out.append({"key": k, "total": round(a["total"], 4), "share": a["total"] / total, "n": a["n"],
-                        "kind": "+".join(sorted(a["kinds"])), "runs": len(a["runs"])})
+                        "kind": "+".join(sorted(a["kinds"])), "runs": len(a["runs"]), "models": dict(a["models"])})
     elif dim in TIME_DIMS:
         buckets: dict[str, dict] = {}
         for r in rows:
@@ -832,10 +834,12 @@ def _render_table(dim: str, rows: list[dict], top: int) -> list[str]:
             lines.append(f"  {r['key'][:18]:<18} {usage.usd(r['total']):>9} {_pct(r['share']):>4}  {r['agents']:>3} "
                          f"agent(s)  <{r['session']} {r['start'][:10]}  {ph}  {r['title'][:40]}".rstrip())
         return lines if rows else lines + ["  none"]
-    if dim == "agent":
-        lines = [f"By agent label{more}: the subagents and the workflow agents"]
+    if dim in ("agent", "role"):
+        lines = [f"By agent {'label' if dim == 'agent' else 'role'}{more}: the subagents and the workflow agents"]
         lines += [f"  {str(r['key'])[:40]:<40} {usage.usd(r['total']):>9} {_pct(r['share']):>4}  n {r['n']:>3}  "
-                  f"{r['kind']}" + (f", {r['runs']} run(s)" if r["runs"] else "") for r in shown]
+                  f"{r['kind']}" + (f", {r['runs']} run(s)" if r["runs"] else "") + "  " + ", ".join(
+                      f"{m.removeprefix('claude-')} {n}" for m, n in sorted((r.get("models") or {}).items()))
+                  for r in shown]
         return lines if rows else lines + ["  none"]
     if dim == "session":
         lines = [f"By session{more}"]

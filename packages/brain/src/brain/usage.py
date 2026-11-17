@@ -62,9 +62,10 @@ PRICES, LONG_PROMPT, FAMILIES, FAST = prices.PRICES, prices.LONG_PROMPT, prices.
 _price_table, cost_parts, message_cost = prices._price_table, prices.cost_parts, prices.message_cost
 token_rates, tokens_cost = prices.token_rates, prices.tokens_cost
 
-SCAN_V = 5  # a row scanned by an older scanner is scanned again while its transcript exists (2: the hours; 3: the
+SCAN_V = 6  # a row scanned by an older scanner is scanned again while its transcript exists (2: the hours; 3: the
 #            subagents and workflow runs apart, ``agents``; 4: the usage counters by tool id, ``tooling``, ``refused``;
-#            5: the context buckets, the hand-over simulation, the outputs' downstream cost and the base, ``spend``)
+#            5: the context buckets, the hand-over simulation, the outputs' downstream cost and the base, ``spend``;
+#            6: each agent's role and model, ``agents``)
 START_MESSAGES = 10
 REFUSED_KEEP = 200  # a session's refused tool calls kept by tool use id, for the guards ledger's join
 HOOK_FAILS = ("hook_cancelled", "hook_blocking_error", "hook_non_blocking_error", "hook_error_during_execution")
@@ -698,11 +699,33 @@ def _rounded(d: dict) -> dict:
 NO_LABEL = "(no label)"
 
 
+def role_of(info: dict) -> str:
+    """An agent's role (wi-brain-review-model-routing): a workflow agent's label before its colon (``verify:x#0``:
+    verify), else its phase; a plain subagent's type (Explore, general-purpose); ``-`` when nothing says it."""
+    label = str(info.get("label") or "")
+    if info.get("run"):
+        return (label.split(":", 1)[0].strip().lower() if ":" in label else "") or str(info.get("phase") or "-").lower()
+    return str(info.get("type") or "-")
+
+
+def _model_of(s: "Scan", info: dict) -> str:
+    """The model an agent ran on: its messages' (the most of them), else its meta's alias."""
+    return (s.st.models.most_common(1)[0][0] if s.st.models else str(info.get("model") or "")) or "?"
+
+
+def _add_agent(d: dict, key: str, role: str, model: str, **vals) -> None:
+    _add_to(d, key, **vals)
+    d[key]["role"] = role
+    d[key].setdefault("models", {})
+    d[key]["models"][model] = d[key]["models"].get(model, 0) + 1
+
+
 def agents_of(subs: list[tuple[dict, "Scan"]]) -> dict:
     """A session's subagents apart (wi-brain-usage-workflow-agents): ``subagents``, the plain ones by label
-    ({count, cost, output, tokens}); ``workflows``, each run by its id ({cost, agents, output, tokens, start, end,
-    days: {day: cost}, phases: {phase: {count, cost}}, labels: {label: {count, cost}}}). Their cost is already in the
-    session's ``cost`` (not in its ``main_cost``): this says whose it is."""
+    ({count, cost, output, tokens, role, models: {model: count}}); ``workflows``, each run by its id ({cost, agents,
+    output, tokens, start, end, days: {day: cost}, phases: {phase: {count, cost}}, labels: {label: {count, cost, role,
+    models}}}). An agent's role (:func:`role_of`) and model are what wi-brain-review-model-routing reads. Their cost
+    is already in the session's ``cost`` (not in its ``main_cost``): this says whose it is."""
     plain: dict[str, dict] = {}
     runs: dict[str, dict] = {}
     for info, s in subs:
@@ -710,7 +733,8 @@ def agents_of(subs: list[tuple[dict, "Scan"]]) -> dict:
         out = s.st.tokens.get("output", 0)
         label = info.get("label") or NO_LABEL
         if not info.get("run"):
-            _add_to(plain, label, count=1, cost=s.cost, output=out, tokens=tokens)
+            _add_agent(plain, label, role_of(info), _model_of(s, info), count=1, cost=s.cost, output=out,
+                       tokens=tokens)
             continue
         r = runs.setdefault(info["run"], {"cost": 0.0, "agents": 0, "output": 0, "tokens": 0, "start": "", "end": "",
                                           "days": {}, "phases": {}, "labels": {}})
@@ -725,7 +749,7 @@ def agents_of(subs: list[tuple[dict, "Scan"]]) -> dict:
         for day, b in s.days.items():
             r["days"][day] = r["days"].get(day, 0.0) + (b.get("cost") or 0.0)
         _add_to(r["phases"], info.get("phase") or "-", count=1, cost=s.cost)
-        _add_to(r["labels"], label, count=1, cost=s.cost)
+        _add_agent(r["labels"], label, role_of(info), _model_of(s, info), count=1, cost=s.cost)
     for r in runs.values():
         r["cost"] = round(r["cost"], 4)
         r["days"] = {d: round(c, 4) for d, c in r["days"].items()}

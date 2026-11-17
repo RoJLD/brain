@@ -64,7 +64,7 @@ def _session(projects_dir):
 def test_the_scan_keeps_buckets_split_base_and_outputs(projects_dir):
     row = usage.scan(_session(projects_dir))
     sp = row["spend"]
-    assert row["v"] == usage.SCAN_V == 5
+    assert row["v"] == usage.SCAN_V == 6
     assert sp["messages"] == 3 and sp["base"] == 50_010 and sp["step"] == 100 and sp["restart"] == spend.SIM_RESTART
     assert {k: n for k, (n, _) in sp["buckets"].items()} == {"0": 2, "100": 1}
     assert sum(c for _, c in sp["buckets"].values()) == pytest.approx(row["main_cost"], abs=1e-3)
