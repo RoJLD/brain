@@ -147,7 +147,7 @@ def test_a_derivation_that_fails_renders_nothing(ada, monkeypatch):
     def broken(cfg):
         raise denylist.DeriveError("projects.yaml: a conflict marker")
     monkeypatch.setattr(denylist, "terms", broken)
-    with pytest.raises(denyrender.RenderError, match="cannot be derived"):
+    with pytest.raises(denyrender.RenderError, match="cannot be (?:derived|trusted)"):
         denyrender.plan(ada, Path("x.toml"))
 
 
@@ -183,3 +183,20 @@ def test_gitleaks_reads_the_file_and_finds_the_terms(ada, tmp_path):
     want = {i for i, line in enumerate(LINES, 1)
             if any(boundary.term_regex(t).search(line.replace("\\", "/")) for ts in DENY.values() for t in ts)}
     assert found == want
+
+
+@pytest.mark.parametrize("data", ['{"v": 1, "public": [', '{"v": 1, "public": []}', '{"v": 999}',
+                                  '{"v": 1, "public": {"deny": ["acme"]}}'])
+def test_a_configuration_the_guards_cannot_trust_renders_nothing(tmp_path, monkeypatch, data):
+    """The review (2026-11-17): a config.json that does not parse, a public or deny of another type, a v above the
+    engine's: no file, never a shorter one over the good one (exit 2)."""
+    out = tmp_path / "o" / denyrender.FILE_NAME
+    out.parent.mkdir()
+    out.write_text("the good render\n", encoding="utf-8")
+    cfg = tmp_path / "config.json"
+    cfg.write_text(data, encoding="utf-8")
+    monkeypatch.setenv("BRAIN_CONFIG", str(cfg))
+    assert cli.main(["public", "deny", "render", "--format", "gitleaks", "--out", str(out), "--apply"]) == 2
+    assert out.read_text(encoding="utf-8") == "the good render\n"
+    monkeypatch.setenv("BRAIN_CONFIG", str(tmp_path / "missing.json"))
+    assert cli.main(["public", "deny", "render", "--format", "gitleaks", "--out", str(out), "--apply"]) == 2

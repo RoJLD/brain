@@ -98,6 +98,9 @@ def by_category(cfg: config.Config) -> dict[str, list[str]]:
     """{category: [terms]} in public.deny's order, derived terms included (config.deny_terms); a derivation that
     cannot be read raises RenderError (the file is never shorter than the list the guards hold)."""
     from . import denylist
+    why = config.unexpected(cfg)   # a configuration the guards cannot trust renders nothing (never a shorter file)
+    if why:
+        raise RenderError(f"the configuration cannot be trusted: {why}")
     try:
         denylist.terms(cfg)
     except denylist.DeriveError as exc:
