@@ -8,6 +8,7 @@ from .. import codeindex, projects
 from ._common import root_of
 
 ORDER = 370   # its place in brain --help's list of commands (brain.commands)
+PHASE = "early"   # its handlers: early only, before any root is resolved (brain.commands)
 USAGE_ORDER = 460   # its usage lines' place in brain --help's epilog
 USAGE = """\
   brain index [REPO]... [--all] [--stale] [--backend gitnexus|cbm]

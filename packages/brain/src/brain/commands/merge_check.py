@@ -12,6 +12,7 @@ from .. import resume
 from ..inventory import AuditError
 
 ORDER = 500   # its place in brain --help's list of commands (brain.commands)
+PHASE = "early"   # its handlers: early only, before any root is resolved (brain.commands)
 USAGE_ORDER = 160   # its usage lines' place in brain --help's epilog
 USAGE = """\
   brain merge-check [--base REF] [--no-fetch] [--worktree] [--path P]... [--repo DIR] [--json]   after a merge of

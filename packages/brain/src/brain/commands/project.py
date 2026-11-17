@@ -8,6 +8,7 @@ from __future__ import annotations
 from .. import init, langs, project_add, project_new, projects
 
 ORDER = 201   # its place in brain --help's list of commands (brain.commands), after brain init
+PHASE = "early"   # its handlers: early only, before any root is resolved (brain.commands)
 USAGE_ORDER = 231   # its usage lines' place in brain --help's epilog
 USAGE = """\
   brain project new DIR --kind K [--kind K]... [--stage prototype|mvp|v1|scale] [--template NAME|DIR]

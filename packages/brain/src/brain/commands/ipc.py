@@ -11,6 +11,7 @@ from .. import config, ipcauth, ipchealth
 from ._common import root_of
 
 ORDER = 446   # its place in brain --help's list of commands (brain.commands)
+PHASE = "early"   # its handlers: early only, before any root is resolved (brain.commands)
 USAGE_ORDER = 406   # its usage lines' place in brain --help's epilog
 USAGE = """\
   brain ipc token [--init|--plan] the machine's token for the Brain's local services (brain.ipcauth): its file and

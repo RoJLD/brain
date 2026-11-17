@@ -8,6 +8,7 @@ from .. import audit, skew
 from ._common import _whole, root_of
 
 ORDER = 360   # its place in brain --help's list of commands (brain.commands)
+PHASE = "early"   # its handlers: early only, before any root is resolved (brain.commands)
 USAGE_ORDER = 410   # its usage lines' place in brain --help's epilog
 USAGE = """\
   brain audit [--all | --scope REF] [--repo R]... [-v] [--json] [--trend [N]] [--fail-on P] [--write [--force]]

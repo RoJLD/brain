@@ -14,6 +14,7 @@ from pathlib import Path
 from .. import __version__, docgraph, docjoin, docsgraph, targets
 
 ORDER = 47   # its place in brain --help's list of commands (brain.commands), after brain docs
+PHASE = "both"   # its handlers: early first, then run with the root (brain.commands)
 USAGE_ORDER = 34   # its usage lines' place in brain --help's epilog
 USAGE = """\
   brain docgraph validate FILE... [--json] | checks [--json] | emit [--out FILE]   the documentation graph's contract,
