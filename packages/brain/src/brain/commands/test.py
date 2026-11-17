@@ -120,11 +120,32 @@ def _next(args, top: Path, tests: list[str], summary) -> tuple[str, str]:
 
     from .. import targeted
     runs = targeted.commands(top, tests, args.python, args.workers) if tests else []
-    where = f" (in {posixpath.relpath(runs[0][0].as_posix(), top.as_posix())})" if len(runs) == 1 else ""
-    again = " ".join(x for x in ("brain test --changed", args.changed, "--verdict") if x)
+    where = f" (in {posixpath.relpath(runs[0][0].as_posix(), top.as_posix())})" if len(runs) == 1 else \
+        " (in the folder of the pytest run that names it in the log)" if runs else ""
+    again = _again(args)
     if not summary.failed:
         return again, f"read the log, fix, then {again}"
     return again, f"python -m pytest {' '.join(summary.failed[:3])}{where}, fix, then {again}"
+
+
+def _again(args) -> str:
+    """This run's own command line (its repo, map, scope, interpreter, workers and pytest arguments), to run it
+    again; --deadline and --log left out (the next run picks its own)."""
+    import shlex
+
+    def q(value: str) -> str:
+        return shlex.quote(str(value).replace("\\", "/"))
+    parts = ["brain test --changed", *([q(args.changed)] if args.changed else [])]
+    parts += [f"--repo-dir {q(args.repo_dir)}"] if args.repo_dir else []
+    parts += [f"--map {q(args.map)}"] if args.map else []
+    parts += [f"--inert {q(g)}" for g in args.inert or ()]
+    parts += ["--strict"] if args.strict else []
+    parts += [f"--python {q(args.python)}"] if args.python else []
+    parts += [f"-n {q(args.workers)}"] if args.workers else []
+    parts.append("--verdict")
+    extra = [a for a in (args.pytest_args or []) if a != "--"]
+    parts += ["--", *map(q, extra)] if extra else []
+    return " ".join(parts)
 
 
 def _report(args, sel, tests: list[str], rc: int) -> None:

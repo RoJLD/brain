@@ -381,7 +381,6 @@ def run_logged(top: Path, tests: list[str], log: Path, deadline: float, python: 
     the deadline the running pytest's process tree is stopped (its xdist workers too) and 124 is the exit code."""
     import time
 
-    from .formats import _kill_tree
     end = time.monotonic() + max(1.0, float(deadline))
     group = {"creationflags": subprocess.CREATE_NEW_PROCESS_GROUP} if os.name == "nt" else {"start_new_session": True}
     worst = 0
@@ -402,15 +401,25 @@ def run_logged(top: Path, tests: list[str], log: Path, deadline: float, python: 
             try:
                 rc = proc.wait(timeout=left)
             except subprocess.TimeoutExpired:
-                _kill_tree(proc)
-                try:
-                    proc.wait(timeout=30)
-                except subprocess.TimeoutExpired:
-                    pass
+                _stop(proc)
                 out.write(f"\n--- stopped at the deadline ({int(deadline)} s): its process tree killed ---\n")
                 return 124, True
+            except BaseException:   # an interrupt (Ctrl+C, a kill of brain): pytest in its own group would outlive it
+                _stop(proc)
+                out.write("\n--- interrupted: its process tree killed ---\n")
+                raise
             worst = max(worst, exit_code(rc))
     return worst, False
+
+
+def _stop(proc: subprocess.Popen) -> None:
+    """pytest's process tree stopped (brain.formats._kill_tree), then reaped for 30 s at most."""
+    from .formats import _kill_tree
+    _kill_tree(proc)
+    try:
+        proc.wait(timeout=30)
+    except subprocess.TimeoutExpired:
+        pass
 
 
 def exit_code(rc: int) -> int:

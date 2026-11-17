@@ -53,7 +53,8 @@ def test_a_red_run_names_the_failed_tests_and_how_to_rerun_them(lab, capsys):
     assert lines[0].startswith("test: FAILED 1 failed, 1 passed (1 test module(s)); log: ")
     assert lines[1] == "failed: tests/test_other.py::test_other"
     assert lines[2].startswith("next: python -m pytest tests/test_other.py::test_other (in .), fix, then brain test "
-                               "--changed --verdict")
+                               "--changed --repo-dir ")
+    assert " --map " in lines[2] and lines[2].endswith(" --verdict")   # this run's own scope, run again
 
 
 def test_the_deadline_stops_the_run_and_its_tree(lab, capsys, tmp_path):
@@ -64,8 +65,45 @@ def test_the_deadline_stops_the_run_and_its_tree(lab, capsys, tmp_path):
     lines = _out(capsys)
     assert lines[0].startswith("test: TIMEOUT stopped at the deadline (3 s) (1 test module(s)); log: ")
     assert lines[0].endswith(log.as_posix()) and lines[1] == "failed: none so far"
-    assert lines[2] == "next: brain test --changed --verdict with a later --deadline (never a background run polled)"
+    assert lines[2].startswith("next: brain test --changed --repo-dir ") and "--deadline 3" not in lines[2]
+    assert lines[2].endswith(" --verdict with a later --deadline (never a background run polled)")
     assert "stopped at the deadline (3 s)" in log.read_text(encoding="utf-8")
+
+
+def test_the_next_command_keeps_the_runs_own_flags(tmp_path):
+    import argparse
+    args = argparse.Namespace(changed="origin/main", repo_dir="C:\\work tree", map="m.json", inert=["docs/*.md"],
+                              strict=True, python="py", workers="4", pytest_args=["--", "-x", "-k", "a b"])
+    assert test_cmd._again(args) == ("brain test --changed origin/main --repo-dir 'C:/work tree' --map m.json "
+                                     "--inert 'docs/*.md' --strict --python py -n 4 --verdict -- -x -k 'a b'")
+    bare = argparse.Namespace(changed="", repo_dir=None, map=None, inert=[], strict=False, python="", workers="",
+                              pytest_args=[])
+    assert test_cmd._again(bare) == "brain test --changed --verdict"
+    (tmp_path / "pkg" / "tests").mkdir(parents=True)
+    (tmp_path / "pkg" / "pyproject.toml").write_text("[tool.pytest.ini_options]\n", encoding="utf-8")
+    failed = verdict.PytestSummary({"failed": 1}, ["tests/test_a.py::t"])
+    _, rerun = test_cmd._next(bare, tmp_path, ["pkg/tests/test_a.py", "tests/test_b.py"], failed)
+    assert rerun.startswith("python -m pytest tests/test_a.py::t (in the folder of the pytest run that names it")
+
+
+def test_an_interrupted_run_stops_pytest_and_its_tree(tmp_path, monkeypatch):
+    """Ctrl+C or a kill of brain while pytest runs in its own process group: its tree is stopped, never left."""
+    from brain import targeted
+    stopped = []
+
+    class Proc:
+        pid = 4242
+
+        def wait(self, timeout=None):
+            if not stopped:
+                raise KeyboardInterrupt
+            return 1
+    monkeypatch.setattr(targeted.subprocess, "Popen", lambda *a, **k: Proc())
+    monkeypatch.setattr("brain.formats._kill_tree", lambda proc: stopped.append(proc.pid))
+    log = tmp_path / "pytest.log"
+    with pytest.raises(KeyboardInterrupt):
+        targeted.run_logged(tmp_path, ["tests/test_a.py"], log, 60)
+    assert stopped == [4242] and "interrupted: its process tree killed" in log.read_text(encoding="utf-8")
 
 
 def test_json_carries_the_verdict(lab, capsys):

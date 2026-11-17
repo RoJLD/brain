@@ -164,8 +164,10 @@ next: python -m pytest tests/test_gate.py::test_skip_and_fail_fast (in packages/
 ```
 
 PASSED, FAILED or TIMEOUT with pytest's counts, the failed and erroring tests' ids (pytest's short summary), and the
-next command: the failed tests to run again, a later deadline, or `brain gate` after a pass. `--json` adds the log,
-the counts, the ids and the three lines to the selection's JSON.
+next command: the failed tests to run again, a later deadline, or `brain gate` after a pass (a rerun repeats the
+run's own flags: its repo, map, scope, interpreter, workers and pytest arguments). An interrupt (Ctrl+C, a kill of
+brain) stops pytest's tree too: it never outlives the command. `--json` adds the log, the counts, the ids and the
+three lines to the selection's JSON.
 
 The selection is only as fresh as the map: refresh it from the CI's `coverage-data` artifact of a recent `main` run
 (above, « In the CI »); a map far behind main still answers, but its diff is wide and so is the selection.
