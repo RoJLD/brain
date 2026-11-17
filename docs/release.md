@@ -320,3 +320,35 @@ steps for that version; in general:
   --history` by hand before its next push, as does a checkout outside the registry.
 
 Tell anyone running a pilot of the tag, with the link to the section at that tag.
+
+## Where a release stands
+
+`brain release status [X.Y.Z]` reads where a release stands, at zero token, from the planning brain (`--planning`,
+else `--root`, else the brain checkout holding the current folder, else the personal brain). The version is the one
+given, else the lowest live wave's release above the pin, else the pin's own. Six steps, each `done`, `pending` or
+`unknown`, then the first pending one as the next step, with whose it is:
+
+| Step | Done when | Next move while pending, and its owner |
+|---|---|---|
+| wave | the wave of that release is `reached` (`brain wave close`) | the coordinator closes it |
+| version | the version PR, whose title names « Release » and the version, is merged (or the tag is cut) | the coordinator: `brain release prepare`, then its PR's review and merge |
+| tag | the tag is on the engine repo and signed by a releaser of `allowed_signers` (brain.tagsig, the tag fetched alone into a temporary folder) | the owner, named by their display name: « 3. The tag » |
+| pin | `engine.pin` on the planning brain's default branch is at the tag | the coordinator: `brain release pin vX.Y.Z --write` in a pin branch, its PR, the merge |
+| install | the engine running is at the version, on this machine | the owner: the brain's installer `-Apply`, else `brain update` |
+| verified | this machine's last `brain release verify` passed at the version | the session: `brain release verify` |
+
+Every read is bounded (60 s) and none writes. A read that fails (gh or git missing, the network down) leaves its step
+`unknown` with why; `--offline` reads no network (the version, tag and pin PR steps). `--json` prints the steps. The
+install and the verify are this machine's: each machine runs `brain release verify` after its install.
+
+`brain release verify` runs the after-install checks in one call, each with this interpreter (the engine installed),
+in its own process and with its own timeout, its output in `$BRAIN_HOME/release/<check>.log` and one line on screen:
+
+- **version**: `brain --version` against the planning brain's `engine.pin`;
+- **probes**: `brain probes`, this machine's dependency probes;
+- **classes**: `brain classes --check`, the store classes;
+- **tests**: `python -m pytest tests -q` in the planning brain, when it has a `tests` folder and this interpreter has
+  pytest (else said and skipped; `--no-tests` skips them), within an hour.
+
+It writes `$BRAIN_HOME/release/verified.json` (`v` 1, derived: the next verify rebuilds it; the store `release` of
+`docs/vault.md`), which `status` reads, and exits 0 when every check passed, 1 when one failed.

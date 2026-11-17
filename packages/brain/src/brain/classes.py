@@ -182,6 +182,8 @@ ENGINE_STORES = {
                   "the local merge queue: the PRs queued per repo, their state and reason (brain ship, queue.json)"),
     "merge-ready": Known("$BRAIN_HOME/merge-ready", "sealed", "derived",
                          "the merge gate's stamps, per repo and head (brain merge-ready)"),
+    "release": Known("$BRAIN_HOME/release", "sealed", "derived",
+                     "this machine's last brain release verify (verified.json) and its checks' logs"),
     "formats": Known("$BRAIN_HOME/formats", "sealed", "derived",
                      "the projects' format checks' last pass or fail, keyed by the hashes of their command and files "
                      "(brain formats check)"),

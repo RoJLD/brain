@@ -1,5 +1,6 @@
 """``brain release``: the version PR's mechanical part (``prepare``) and the planning brain's pin PR (``pin``) in one
-command each (brain.release), a plan then --write."""
+command each (brain.release), a plan then --write; where a release stands (``status``) and the after-install checks
+(``verify``) (brain.releasestatus)."""
 
 from __future__ import annotations
 
@@ -25,6 +26,15 @@ USAGE = """\
                  config.json, refused on the brain's default branch; --json prints the plan, writes nothing; then by
                  hand: brain sync with the new engine, the ADR, the journal (docs/release.md, « 4. The pin and the
                  machines »)
+  brain release status [X.Y.Z] [--planning ROOT] [--store DIR] [--offline] [--json]   where a release stands, at
+                 zero token: its wave closed, the version PR merged, the tag cut and signed, the pin PR merged, the
+                 engine installed and verified on this machine, each done, pending or unknown; then the next step and
+                 whose it is (the version: the lowest live wave above the pin, else the pin's); --offline reads no
+                 network (docs/release.md, « Where a release stands »)
+  brain release verify [--planning ROOT] [--no-tests] [--json]   the after-install checks in one call: the engine
+                 against the pin, brain probes, brain classes --check, the brain's tests (python -m pytest tests);
+                 each one's output in $BRAIN_HOME/release/<check>.log, one line each; recorded for brain release
+                 status; exit 1 when one fails
 """
 NO_PROJECT = {"release"}   # its parsers that take no --project after them
 
@@ -52,9 +62,28 @@ def register(sub, ctx) -> None:
                                          "holding this folder, else the personal brain)")
     pin.add_argument("--write", action="store_true", help="write config.json and the shim (in a pin branch)")
     pin.add_argument("--json", action="store_true", help="the plan as JSON; nothing written")
+    st = rel.add_parser("status", help="where a release stands: wave, version PR, tag, pin PR, install, verify; "
+                                        "the next step and its owner (brain.releasestatus)")
+    st.add_argument("version", nargs="?", default="", help="X.Y.Z (default: the lowest live wave above the pin, "
+                                                           "else the pin's)")
+    st.add_argument("--planning", help="the planning brain (default: --root, else the brain checkout holding this "
+                                       "folder, else the personal brain)")
+    st.add_argument("--store", help="its graph store (default: <planning>/notes/graph)")
+    st.add_argument("--offline", action="store_true", help="no network: the version, tag and pin PR steps unknown")
+    st.add_argument("--json", action="store_true", help="the steps as JSON")
+    ve = rel.add_parser("verify", help="the after-install checks in one call, logged and recorded "
+                                       "(brain.releasestatus)")
+    ve.add_argument("--planning", help="the planning brain (default: --root, else the brain checkout holding this "
+                                       "folder, else the personal brain)")
+    ve.add_argument("--no-tests", dest="tests", action="store_false", help="skip the brain's own tests")
+    ve.add_argument("--json", action="store_true", help="the record as JSON")
 
 
 def early(args) -> int:
     """No project's root: the engine checkout is the one here (or --repo), the planning brain --planning or --root."""
-    from .. import release
+    from .. import release, releasestatus
+    if args.release_cmd == "status":
+        return releasestatus.main_status(args)
+    if args.release_cmd == "verify":
+        return releasestatus.main_verify(args)
     return release.main_pin(args) if args.release_cmd == "pin" else release.main_prepare(args)
