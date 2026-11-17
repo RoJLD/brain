@@ -343,12 +343,10 @@ def main(root: Path | None, *, do_apply: bool = False, as_json: bool = False, de
     """brain migrate: the plan (read-only), or with ``do_apply`` its run. Exit 1 on a failure."""
     entries = plan(root)
     if not do_apply:
-        if as_json:
-            out(json.dumps({"engine": __version__, "log": str(log_file()), "files": [e.row() for e in entries],
-                            "pending": sum(len(e.steps) for e in entries if e.status == "pending"),
-                            "unfinished": unfinished()}, ensure_ascii=False, indent=1, sort_keys=True))
-        else:
-            out("\n".join(_plan_lines(entries)))
+        out(json.dumps({"engine": __version__, "log": str(log_file()), "files": [e.row() for e in entries],
+                        "pending": sum(len(e.steps) for e in entries if e.status == "pending"),
+                        "unfinished": unfinished()}, ensure_ascii=False, indent=1, sort_keys=True)
+            if as_json else "\n".join(_plan_lines(entries)))
         return 0
     refused = "" if dev else dev_refusal()
     if refused:
@@ -358,18 +356,22 @@ def main(root: Path | None, *, do_apply: bool = False, as_json: bool = False, de
     if as_json:
         out(json.dumps({"engine": __version__, "log": str(log_file()), "files": [e.row() for e in entries],
                         "applied": done, "failed": failed}, ensure_ascii=False, indent=1, sort_keys=True))
+        if failed:   # the JSON on stdout holds it; a line on stderr for whoever reads only that
+            print(f"brain migrate: {failed['file']}: {failed['why']}", file=sys.stderr)
     else:
-        lines = [f"applied  {r['file']}: {r['step']} v{r['from']} -> v{r['to']} (backup {r['backup']})" for r in done]
-        if failed:
-            lines.append(f"failed   {failed['file']}: {failed['why']}; nothing further applied")
-        elif not done:
-            lines.append("brain migrate: nothing to apply (each file is at a version this engine reads)")
-        else:
-            lines.append(f"brain migrate: {len(done)} step(s) applied; the log is {log_file()}")
-        if any(r["format"] == "config" for r in done):
-            to = max(r["to"] for r in done if r["format"] == "config")
-            lines.append(f"then     {CONFIG_ORDER.format(to=to)}")
-        out("\n".join(lines))
-    if failed and as_json:   # the JSON on stdout holds it; a line on stderr for whoever reads only that
-        print(f"brain migrate: {failed['file']}: {failed['why']}", file=sys.stderr)
+        out("\n".join(_apply_lines(done, failed)))
     return 1 if failed else 0
+
+
+def _apply_lines(done: list[dict], failed: dict | None) -> list[str]:
+    lines = [f"applied  {r['file']}: {r['step']} v{r['from']} -> v{r['to']} (backup {r['backup']})" for r in done]
+    if failed:
+        lines.append(f"failed   {failed['file']}: {failed['why']}; nothing further applied")
+    elif not done:
+        lines.append("brain migrate: nothing to apply (each file is at a version this engine reads)")
+    else:
+        lines.append(f"brain migrate: {len(done)} step(s) applied; the log is {log_file()}")
+    config_to = [r["to"] for r in done if r["format"] == "config"]
+    if config_to:
+        lines.append(f"then     {CONFIG_ORDER.format(to=max(config_to))}")
+    return lines

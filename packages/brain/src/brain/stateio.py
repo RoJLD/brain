@@ -275,11 +275,10 @@ def load(path: Path, *, known: int = 1, check: Callable[[dict], str] | None = No
         if st.v is not None and st.v > known:
             st.status, st.data = "newer", data
             return st
-        if (1 if st.v is None else st.v) < known:   # an older version (none: 1): its steps run in memory
-            data, behind = _upcast(st, data)
-            if behind:
-                st.status, st.data, st.why = "behind", data, behind
-                return st
+        data, st.why = _upcast(st, data)   # an older version: its steps run in memory (brain.migrations)
+        if st.why:
+            st.status, st.data = "behind", data
+            return st
         why = (check(data) if check else "") or ""
         if not why:
             st.status, st.data = "ok", data
@@ -302,12 +301,15 @@ def load(path: Path, *, known: int = 1, check: Callable[[dict], str] | None = No
 def _upcast(st: State, data: dict) -> tuple[dict, str]:
     """A file at a ``v`` below ``st.known`` seen as this engine reads it: its format's pending steps run on ``data``
     in memory (brain.migrations.upcast), so the next save writes a ``v`` the data has. ('' or why it is behind: a
-    step missing or failing; read-only then.) A file of no registered format is read as it is."""
+    step missing or failing; read-only then.) A file at the engine's version, or of no registered format, is read as
+    it is (a file without ``v`` is at version 1)."""
+    v = 1 if st.v is None else st.v
+    if v >= st.known:
+        return data, ""
     from . import migrations
     fmt = migrations.home_format(st.path)
     if fmt is None:
         return data, ""
-    v = 1 if st.v is None else st.v
     out, reached, behind = migrations.upcast(fmt, data, v, st.known)
     if not behind and reached != v:
         st.upcast = reached
