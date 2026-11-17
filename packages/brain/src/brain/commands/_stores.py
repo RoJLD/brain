@@ -520,6 +520,9 @@ def check_registry(root: Path | None, projs: list[projects.Project], every: bool
         print(f"warning: moved: {line}")
     for line in render.registry_warnings(neutral.brain_root(root), projs) + _uncloned(root):
         print(f"warning: {line}")
+    from .. import projectids   # a repo named after its folder while its ids name another (wi-brain-project-ids)
+    for line in projectids.repo_name_warnings([p for p in projs if p.root.is_dir()], root):
+        print(f"warning: {line}")
     from .. import denylist   # a declared private name no deny list holds (wi-brain-public-deny-derived)
     for line in denylist.check_lines(root):
         print(f"warning: {line}")

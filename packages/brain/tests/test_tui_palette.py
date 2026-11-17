@@ -98,6 +98,7 @@ def test_up_and_down_move_a_column_and_its_cursor_with_it():
         dialog = app.screen
         chooser = dialog.query_one("#column-list", SelectionList)
         order = list(dialog.order)
+        shown = list(chooser.selected)  # the extra columns (Size, Value, Score) hidden by default
         chooser.highlighted = 1
         await pilot.press("shift+up")
         await pilot.pause(0.1)
@@ -112,7 +113,7 @@ def test_up_and_down_move_a_column_and_its_cursor_with_it():
         assert dialog.order[2] == order[1] and chooser.highlighted == 2
         dialog.query_one("#up", Button).press()
         await pilot.pause(0.1)
-        assert dialog.order == order and list(chooser.selected) == order  # what is shown stays shown
+        assert dialog.order == order and list(chooser.selected) == shown  # what is shown stays shown
         chooser.highlighted = 0
         await pilot.press("space")  # a hidden column stays hidden when it moves
         await pilot.pause(0.1)

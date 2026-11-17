@@ -495,7 +495,8 @@ def scope_chain(cfg: config.Config, project: str, nodes: dict[str, dict] | None 
     if not nodes or not project:
         return []
     from . import scopes
-    return scopes.load(cfg.root, cfg).chain(project)
+    tree = scopes.load(cfg.root, cfg)
+    return tree.chain(tree.canonical(project))   # an old name (an alias) names its project
 
 
 def floor(cfg: config.Config, project: str, nodes: dict[str, dict] | None = None) -> tuple[str, str]:
@@ -504,6 +505,7 @@ def floor(cfg: config.Config, project: str, nodes: dict[str, dict] | None = None
     nodes = scope_nodes(cfg) if nodes is None else nodes
     from . import scopes
     tree = scopes.load(cfg.root, cfg)
+    project = tree.canonical(project)   # an old name (an alias) names its project: its floor holds
     best, where = "", ""
     for node, f in scopes.floors(tree, project) if project in tree.nodes else []:
         if f in CLASSES and (not best or RANK[f] > RANK[best]):

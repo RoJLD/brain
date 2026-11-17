@@ -175,7 +175,7 @@ def test_a_click_on_the_bar_leaves_the_focus_on_the_body_and_its_tooltips_name_t
         await pilot.pause(0.1)
         assert app.focused is table
         await pilot.press("s")
-        assert app.views["frontier"]["sort"] == "unblocks"  # its keys still work
+        assert app.views["frontier"]["sort"] == "score"  # its keys still work: the next sort
         assert app.query_one("#tab-frontier").tooltip == "Frontier (3): What can start?"
         assert not app.query_one("#tabs").can_focus
     _run(check)

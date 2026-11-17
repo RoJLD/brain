@@ -1,4 +1,3 @@
-import dataclasses
 import json
 from datetime import date
 from pathlib import Path
@@ -6,7 +5,7 @@ from pathlib import Path
 import pytest
 import yaml
 
-from brain import audit, cli, inventory, projects
+from brain import audit, audit_checks, audit_measure, cli, inventory, projects
 
 from conftest import run_git
 from test_inventory import mem
@@ -99,7 +98,7 @@ CODE = """\
 
 
 def test_coderefs_dangling_measured_module_layer_and_pending_code_layer(monkeypatch):
-    monkeypatch.setattr(audit, "_repo_tokens", lambda p, cfgs: {"lab", "sib", "far"})   # far: another project's
+    monkeypatch.setattr(audit_measure, "_repo_tokens", lambda p, cfgs: {"lab", "sib", "far"})   # far: another project's
     res = _measure({"lab": {
         "notes/graph/schema.yaml": "node_types: [WorkItem, CodeRef, Repo]\n", "notes/graph/nodes/code.yaml": CODE,
         "README.md": README, "src/lab/__init__.py": "", "src/lab/core.py": "def go():\n    pass\n",
@@ -125,7 +124,7 @@ def test_coderefs_dangling_measured_module_layer_and_pending_code_layer(monkeypa
 
 def test_a_coderef_of_a_registered_repo_not_cloned_here_stays_not_measured(monkeypatch):
     """The project's own repo with no tree on this machine is registered: not measured, never P0."""
-    monkeypatch.setattr(audit, "_repo_tokens", lambda p, cfgs: {"lab", "sib"})
+    monkeypatch.setattr(audit_measure, "_repo_tokens", lambda p, cfgs: {"lab", "sib"})
     root = Path("/m/lab")
     p = projects.Project("demo", root, [root / "notes" / "graph"])
     cfgs = [projects.Repo("lab", root), projects.Repo("sib", Path("/m/sib"))]
@@ -236,7 +235,7 @@ def test_cli_text_json_repo_filter_fail_on_and_help(make_repo, tmp_path, monkeyp
         cli.main(["--project", "demo", "audit", "--write", "--repo", "lab"])
     cli.main(["--project", "demo", "audit"])
     assert f"(calibrated {audit.CALIBRATED[:10]})" in capsys.readouterr().out
-    monkeypatch.setattr(audit, "CALIBRATED", "")
+    monkeypatch.setattr(audit_checks, "CALIBRATED", "")
     cli.main(["--project", "demo", "audit"])
     assert "(uncalibrated: wi-brain-scout-rule" in capsys.readouterr().out
 
@@ -280,56 +279,6 @@ def _weekly(make_repo, name, start_untested, dates, root_files=None):
     for k, d in enumerate(dates[1:], 1):
         make_repo.commit(repo, {f"tests/test_m{k - 1}.py": "x\n"} if k <= start_untested else {}, date=d)
     return repo
-
-
-def test_trend_falling_flat_week_and_like_for_like_window(make_repo):
-    weeks = ["2026-09-30T12:00:00Z", "2026-10-07T12:00:00Z", "2026-10-14T12:00:00Z", "2026-10-21T12:00:00Z",
-             "2026-10-28T12:00:00Z"]
-    a = _weekly(make_repo, "a", 5, weeks)
-    late = _weekly(make_repo, "late", 2, weeks[2:])
-    p = projects.Project("demo", a)
-    cfgs = [projects.Repo("a", a), projects.Repo("late", late)]
-    refs = {"a": "refs/heads/main", "late": "refs/heads/main"}
-    t = audit.trend(p, cfgs, refs, 5, date(2026, 11, 2))
-    assert [w["week"] for w in t["weeks"]] == ["2026-W40", "2026-W41", "2026-W42", "2026-W43", "2026-W44"]
-    assert [audit._total(w) for w in t["weeks"]] == [5, 4, 3, 2, 1]
-    assert t["left"] == ["late"] and t["repos"] == ["a"]               # no commit before W40's end: out
-    assert audit.falling([5, 4, 3, 2, 1]) == 4 and "falling 4 of 4" in audit.trend_line(t)
-    assert audit.falling([5, 4, 4, 3, 2]) == 2 and audit.falling([3, 2, 0, 0, 0]) == 4   # zero counts as falling
-    assert audit.week_ends(1, date(2026, 11, 8)) == [("2026-W44", "2026-11-02T00:00:00Z")]
-    assert audit.trend(p, cfgs[1:], refs, 5, date(2026, 11, 2))["weeks"] == []   # nothing over the window
-    layer = {"notes/graph/schema.yaml": "node_types: [CodeRef, Repo]\n",
-             "notes/graph/nodes/code.yaml": "- {id: repo-a, type: Repo, status: active, title: a}\n"}
-    make_repo.commit(a, layer, date="2026-10-29T12:00:00Z")   # a code layer arrives in the last week
-    p = projects.Project("demo", a, [a / "notes" / "graph"])
-    now = audit.measure(p, cfgs[:1], {"a": inventory.git_tree(a, "HEAD")})
-    assert now["layered"] == {"a"}
-    t = audit.trend(p, cfgs[:1], refs, 5, date(2026, 11, 2), None, now["layered"])
-    assert [audit._total(w) for w in t["weeks"]] == [10, 9, 8, 7, 6]   # coderef.module counted in every week
-
-
-def test_milestone_needs_every_repo_no_p0_p1_no_pending_and_four_falls(monkeypatch):
-    ok = {"counts": {"P0": 0, "P1": 0, "P2": 3}, "repos": [{"name": "a"}]}
-    tr = {"weeks": [{}], "falling": 4}
-    assert not audit.milestone([ok], tr)["met"]                         # generator checks still pending
-    assert "1 P0/P1 checks not measured" in audit.milestone([ok], tr)["reasons"]   # readme.generated: features.md,
-    #                                    feature.links, readme.yaml and help.quoted run (wi-brain-readme-sync)
-    unopted = {**ok, "repos": [{"name": "a", "not_measured": [{"check": "readme.yaml", "owner": audit.NO_README}]}]}
-    assert audit.milestone([unopted], tr)["pending"] == ["readme.generated", "readme.yaml"]   # not opted in: pending
-    monkeypatch.setattr(audit, "PENDING", {k: dataclasses.replace(v, run=len) for k, v in audit.PENDING.items()})
-    assert audit.milestone([ok], tr)["met"]
-    unfeatured = {**ok, "repos": [{"name": "a", "not_measured": [{"check": "features.md", "owner": audit.NO_FEATURES},
-                                                                 {"check": "doc.links", "owner": "x"}]}]}
-    m = audit.milestone([unfeatured], tr)   # a generator's check that cannot run in that project still blocks
-    assert not m["met"] and m["pending"] == ["features.md"]
-    assert not audit.milestone([ok], {"weeks": [{}], "falling": 3})["met"]
-    assert not audit.milestone([ok], None)["met"]
-    assert not audit.milestone([{**ok, "counts": {"P0": 0, "P1": 1, "P2": 0}}], tr)["met"]
-    assert not audit.milestone([{**ok, "repos": [{"name": "a", "error": "x not found"}]}], tr)["met"]
-    blind = {**ok, "repos": [{"name": "a", "not_measured": [{"check": "test.module",
-                                                             "owner": "pyproject.toml needs Python 3.11+ (tomllib)"}]}]}
-    m = audit.milestone([blind], tr)   # its modules could not be read: not audited
-    assert not m["met"] and m["reasons"][0] == "not audited: a (pyproject.toml needs Python 3.11+ (tomllib))"
 
 
 class _Today(date):
@@ -435,12 +384,41 @@ def graph_node(root, nid):
 
 
 def test_dogfood_the_audit_modules_pass_their_own_test_module_check():
-    repo = Path(__file__).resolve().parents[1]
+    repo = Path(__file__).resolve().parents[3]   # the checkout's root: the package moved under packages/brain
     if not (repo / ".git").exists():
         pytest.skip("not a git checkout")
-    rf = inventory.collect(inventory.work_tree(repo), "brain")
+    rf = inventory.collect(inventory.work_tree(repo), "brain", roots=["src", "packages/brain/src"])
     ev = inventory.evidence(rf.tree, rf.tests, {"brain"})
     reach = inventory.tests_reach(rf, ev, inventory.Index.build({"brain": rf}))
     mods = {u.name: u for u in rf.units if u.kind == "module"}
-    for name in ("brain.inventory", "brain.audit", "brain.scout"):
+    for name in ("brain.inventory", "brain.audit", "brain.audit_render", "brain.audit_trend", "brain.scout"):
         assert inventory.module_evidence(mods[name], rf, ev, {}, {}, reach)[0] == "name", name
+
+
+# brain.audit's public names before its split by concern (wi-brain-engine-debt, batch 2), its modules aside: a name
+# dropped from both its import and __all__ fails the test below
+BEFORE_SPLIT = (
+    "AuditError", "BACKTICK", "CALIBRATED", "CHECKS", "COVERAGE_FLOOR", "Check", "DOC_PATH", "EXTERNAL", "FILE_EXTS",
+    "HEADING", "HEAD_LINES", "MILESTONE", "NO_FEATURES", "NO_README", "NO_TOOLS", "PENDING", "Pending", "README_LINES",
+    "REFERENCE_PAGE", "RULESET", "SECTIONS", "SEVERITIES", "STREAK", "TICK_DOTTED", "VIEW", "WAIVABLE", "doc_links",
+    "falling", "feature_cover", "feature_links", "feature_tests", "features_md", "finding", "generated_doc",
+    "help_quoted", "item_id", "lang_report", "main", "measure", "merge_trends", "milestone", "readme_yaml",
+    "registry_findings", "render_json", "render_text", "render_view", "run", "scope", "severity", "stale_waivers",
+    "standards_gap", "sync_items", "test_coverage", "test_links", "trees_now", "trend", "trend_line",
+    "waived_findings", "week_ends", "write_view")
+
+
+def test_brain_audit_keeps_the_names_of_its_concern_modules():
+    """brain.audit is split by concern (wi-brain-engine-debt, batch 2: behaviour unchanged): its callers (brain.scout,
+    brain.status, the cockpit, the commands, a plugin) still find every name there, the same object."""
+    from brain import audit_checks, audit_measure, audit_render, audit_trend
+    assert sorted(set(BEFORE_SPLIT) - set(audit.__all__)) == []   # every public name the module had before
+    assert [n for n in audit.__all__ if not hasattr(audit, n)] == []
+    mods = (audit_checks, audit_measure, audit_render, audit_trend)
+    for name in audit.__all__:
+        home = [m for m in mods if hasattr(m, name)]
+        assert all(getattr(audit, name) is getattr(m, name) for m in home), name
+    assert audit.PENDING is audit_checks.PENDING and audit.measure is audit_measure.measure
+    assert audit.render_view is audit_render.render_view and audit.milestone is audit_trend.milestone
+    for m in (audit, *mods):   # the structure rule: no module of the audit past 1000 lines
+        assert len(Path(m.__file__).read_text(encoding="utf-8").splitlines()) <= 1000, m.__name__
