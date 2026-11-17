@@ -18,7 +18,8 @@ USAGE = """\
   brain alerts [--project P | --all] [--quick] [--json] [--fail-on LEVEL] [--notify [--dry-run]]
                  the open alerts of each project, at zero token: the scheduler's tasks (missed passes against their
                  cadence, 2 before an alert; killed, failed, disabled, silent), the exec ledger, watched stacks, the
-                 code index, the audit debt above the written view, the project's alert events and files, and on
+                 code index, the audit debt above the written view, the project's alert events and files, its repos'
+                 main checkouts holding modified or untracked files (git status), and on
                  the brain's own project this machine's dependency probes, run by the pass (brain probes; brain
                  status shows them in the project's section); --quick: the files and events only, the probes' last
                  run; --fail-on: exit 1 when one is open at that level or above; --notify: the pass a scheduled
@@ -79,11 +80,12 @@ def _report(args, root: Path, scope: list) -> int:
 
 def register(sub, ctx) -> None:
     al = sub.add_parser("alerts", help="each project's open alerts (scheduler, ledger, stacks, code index, audit, its "
-                                       "events and files); --notify sends the changes through brain notify")
+                                       "events and files, main checkouts); --notify sends the changes through brain notify")
     al.add_argument("--project", default=argparse.SUPPRESS, help="a registered project (same as brain --project)")
     al.add_argument("--all", action="store_true", help="every project of the registry")
-    al.add_argument("--quick", action="store_true", help="the files and events only: no scheduler, stack, code index "
-                                                         "or audit probe, and the dependency probes' last run")
+    al.add_argument("--quick", action="store_true", help="the files and events only: no scheduler, stack, code index, "
+                                                         "audit or main checkout probe, and the dependency probes' "
+                                                         "last run")
     al.add_argument("--json", action="store_true", help="stable keys, no timestamp of its own")
     al.add_argument("--fail-on", choices=list(alerts.LEVELS), help="exit 1 when an alert at this level or above is "
                                                                     "open")
