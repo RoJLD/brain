@@ -12,15 +12,15 @@ from .. import config, floorlock
 ORDER = 487   # its place in brain --help's list of commands (brain.commands)
 USAGE_ORDER = 367   # its usage lines' place in brain --help's epilog
 USAGE = """\
-  brain floor lock [--apply] [--lower] [--account SID] [--wait] | unlock [--apply] [--wait] | status
+  brain floor lock [--apply] [--lower] [--account SID] [--wait] | unlock [--apply] [--account SID] [--wait] | status
                  the locked floor held by the operating system: lock prints the floor it locks, what it installs (the
                  guard's copy in Program Files, its hooks in Claude Code's managed settings, the lock file in
                  ProgramData; under config.json floor.acl, the account's Claude Code settings, hooks, skills, commands
                  and agents and its projects' settings denied to it) and the command line to run elevated from Win+R;
                  --apply does it, elevated only (--lower to lock a lower floor than the locked one; --account, the
                  account the plan named, for floor.acl; --wait keeps the window open on the result); unlock --apply
-                 gives the files back and removes the rest; status checks every file and says whether the managed
-                 hooks are in force
+                 gives the files back (--account when the lock file cannot be read) and removes the rest; status
+                 checks every file and says whether the managed hooks are in force
 """
 
 
@@ -30,7 +30,7 @@ def early(args) -> int:
         if args.floor_cmd == "status":
             lines = floorlock.status(cfg)
         elif args.floor_cmd == "unlock":
-            lines = floorlock.unlock() if args.apply else _unlock_plan()
+            lines = floorlock.unlock(cfg=cfg, account=args.account) if args.apply else _unlock_plan()
         elif args.apply:
             lines = floorlock.apply(cfg, lower=args.lower, account=args.account)
         else:
@@ -83,6 +83,8 @@ def register(sub, ctx) -> None:
                                           "only)")
     unlock.add_argument("--apply", action="store_true", help="remove the lock file and the managed hooks, then the "
                                                              "guard's copies")
+    unlock.add_argument("--account", metavar="SID", help="the account the ACL step denied, when the lock file "
+                                                         "cannot be read")
     unlock.add_argument("--wait", action="store_true", help="wait for Enter before closing (the Win+R window)")
     fs.add_parser("status", help="the floor, the lock file, whether the managed hooks are in force, and whether a "
                                  "session can change what they hold")

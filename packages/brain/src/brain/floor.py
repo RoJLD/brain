@@ -302,6 +302,44 @@ PROFILE_DIR: Path | None = None   # the account's profile folder brain floor loc
 # entries, delete it, change its ACL or its owner (FILE_WRITE_DATA, FILE_APPEND_DATA, FILE_WRITE_EA,
 # FILE_DELETE_CHILD, DELETE, WRITE_DAC, WRITE_OWNER; a folder's add-file and add-folder are the first two).
 WRITE_RIGHTS = 0x2 | 0x4 | 0x10 | 0x40 | 0x10000 | 0x40000 | 0x80000
+# Who may own a locked path: Administrators, SYSTEM, TrustedInstaller.
+TRUSTED_OWNERS = {"S-1-5-32-544", "S-1-5-18", "S-1-5-80-956008885-3418522649-1831038044-1853292631-2271478464"}
+
+
+def acl_wanted(data) -> bool:
+    """Whether config.json's data asks the lock's ACL step (brain.flooracl): ``floor.acl: true`` under floor.only."""
+    section = data.get("floor") if isinstance(data, dict) else None
+    return isinstance(section, dict) and section.get("acl") is True and settings(data)["only"]
+
+
+def acl_loose(path, writable=None) -> str:
+    """Why a path of the lock's ACL step is not held ('' when it is): gone, within this session's reach, or owned by
+    another than the administrators (a folder a session made again in its place, its DACL read-only for itself)."""
+    if not os.path.lexists(path):
+        return "missing"
+    if (writable or globals()["writable"])(path):
+        return "writable"
+    if os.name == "nt" and owner(path) not in TRUSTED_OWNERS:
+        return "not owned by the administrators"
+    return ""
+
+
+def _acl_held(lock: dict, writable) -> str:
+    """'' when the lock's ACL step (its ``acl``) still holds for this session: its account is this process's, Claude
+    Code reads the folder it locked (no CLAUDE_CONFIG_DIR), and each of its paths is held (:func:`acl_loose`)."""
+    a = lock.get("acl")
+    if not isinstance(a, dict):
+        return ""
+    me = account()
+    if me and me != a.get("account"):
+        return f"the lock's ACL step denies {a.get('account')}, not this session's account {me}"
+    if os.environ.get("CLAUDE_CONFIG_DIR"):
+        return "CLAUDE_CONFIG_DIR moves Claude Code's settings out of the folder the lock's ACL step holds"
+    for p in [*a.get("files", []), *a.get("trees", []), *a.get("folders", [])]:
+        why = acl_loose(p, writable)
+        if why:
+            return f"{p} is {why}"
+    return ""
 
 
 def _union(*states: dict) -> dict:
@@ -341,23 +379,55 @@ def managed_file() -> Path:
     return managed_dir() / "managed-settings.d" / MANAGED_NAME
 
 
-def profile(sid: str) -> Path:
+def profile(sid: str, fallback: bool = True) -> Path | None:
     """The profile folder of the account ``sid`` as the machine's registry names it (HKLM ProfileList's
-    ProfileImagePath: a value only an administrator writes, and the right folder when an elevated step runs as another
-    administrator than the account); else this process's home."""
+    ProfileImagePath, %SystemDrive% read from HKLM: values only an administrator writes, and the right folder when an
+    elevated step runs as another administrator than the account); else this process's home, or None when not
+    ``fallback`` (the ACL step never guesses whose folder it locks)."""
     if PROFILE_DIR is not None:
         return Path(PROFILE_DIR)
     if os.name == "nt":
         try:
             import winreg
-            key = rf"SOFTWARE\Microsoft\Windows NT\CurrentVersion\ProfileList\{sid}"
-            with winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE, key) as k:
+            nt = r"SOFTWARE\Microsoft\Windows NT\CurrentVersion"
+            with winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE, rf"{nt}\ProfileList\{sid}") as k:
                 value = str(winreg.QueryValueEx(k, "ProfileImagePath")[0])
+            with winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE, nt) as k:
+                drive = os.path.splitdrive(str(winreg.QueryValueEx(k, "SystemRoot")[0]))[0] or "C:"
+            value = re.sub(r"(?i)%SystemDrive%", lambda m: drive, value)
             if value and "%" not in value:
                 return Path(value)
         except (OSError, ImportError, ValueError):
             pass
-    return Path.home()
+    return Path.home() if fallback else None
+
+
+def sid_kind(sid: str) -> int:
+    """The kind of account ``sid`` names (LookupAccountSid's SID_NAME_USE: 1 a user, 2 a group...); 0 when it cannot
+    be looked up or off Windows."""
+    if os.name != "nt":
+        return 0
+    try:
+        import ctypes
+        from ctypes import wintypes
+        adv, k32 = ctypes.WinDLL("advapi32", use_last_error=True), ctypes.WinDLL("kernel32", use_last_error=True)
+        adv.ConvertStringSidToSidW.argtypes = [wintypes.LPCWSTR, ctypes.POINTER(ctypes.c_void_p)]
+        adv.LookupAccountSidW.argtypes = [wintypes.LPCWSTR, ctypes.c_void_p, wintypes.LPWSTR,
+                                          ctypes.POINTER(wintypes.DWORD), wintypes.LPWSTR,
+                                          ctypes.POINTER(wintypes.DWORD), ctypes.POINTER(ctypes.c_int)]
+        psid = ctypes.c_void_p()
+        if not adv.ConvertStringSidToSidW(sid, ctypes.byref(psid)):
+            return 0
+        try:
+            name, domain = ctypes.create_unicode_buffer(256), ctypes.create_unicode_buffer(256)
+            n, d, use = wintypes.DWORD(256), wintypes.DWORD(256), ctypes.c_int(0)
+            if not adv.LookupAccountSidW(None, psid, name, ctypes.byref(n), domain, ctypes.byref(d), ctypes.byref(use)):
+                return 0
+            return use.value
+        finally:
+            k32.LocalFree(psid)
+    except (OSError, AttributeError, ValueError):
+        return 0
 
 
 def account() -> str:
@@ -456,7 +526,8 @@ def unlocked(cfg, fl: dict, lock: dict | None, writable=None) -> str:
         return f"the lock file cannot be read ({lock['error']})"
     writable = writable or globals()["writable"]
     held = [str(lock_dir()), str(lock_dir() / LOCK_FILE), *(lock.get("checks") or [])]
-    return _reachable(held, writable, missing=True) or _manifest_changed(lock) or _held_config(cfg, lock)
+    return _reachable(held, writable, missing=True) or _manifest_changed(lock) or _held_config(cfg, lock) \
+        or _acl_held(lock, writable)
 
 
 def _manifest_changed(lock: dict) -> str:
@@ -485,6 +556,9 @@ def _held_config(cfg, lock: dict) -> str:
     if local != locked:
         return (f"config.json's floor (refuse={local['refuse']}, only={local['only']}) is not the locked one "
                 f"(refuse={locked['refuse']}, only={locked['only']}): the owner locks it again")
+    if not cfg.error and acl_wanted(cfg.data) != isinstance(lock.get("acl"), dict):
+        return (f"config.json's floor.acl ({acl_wanted(cfg.data)}) is not the locked one "
+                f"({isinstance(lock.get('acl'), dict)}): the owner locks it again")
     return ""
 
 

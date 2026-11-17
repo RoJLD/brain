@@ -177,36 +177,50 @@ each in a folder whose parents only an administrator writes:
   `ProgramData`; `/etc/brain`): the floor's copy, the config.json and `<BRAIN_HOME>` the guard reads, the copy in use,
   the paths it checks on each call, the manifest's hash, and the administrators' git (and bash) the guard runs.
 
-**The ACL step** (config.json `floor.acl: true` under `floor.only`, off by default; Windows; `brain.floorlock`'s
-`acl_*`, wi-brain-floor-acl-lock). A shell guard cannot read code it is not shown: a script, a program, inline code
-can still write the account's own Claude Code files, whose `statusLine`, `apiKeyHelper` or `env` run outside any tool
-call. So the apply, once the guard's copy holds and before the managed hooks and the lock file, denies the account
-the sessions run as every change of them, whatever writes them:
+**The ACL step** (config.json `floor.acl: true` under `floor.only`, off by default; Windows; `brain.flooracl`,
+wi-brain-floor-acl-lock). A shell guard cannot read code it is not shown: a script, a program, inline code can still
+write the account's own Claude Code files, whose `statusLine`, `apiKeyHelper` or `env` run outside any tool call. So the
+apply, once the guard's copy holds and before the managed hooks and the lock file, denies the account the sessions run
+as every change of them, whatever writes them:
 
 - `~/.claude/settings.json` and `settings.local.json` (made empty, `{}`, when missing), and the settings files of the
-  brain's own folder and of its registry's projects that exist on this machine: no write, append, attribute, delete,
-  ACL or owner change (icacls' `WD,AD,WEA,WA,D,WDAC,WO`);
-- `~/.claude/hooks`, `skills`, `commands` and `agents` (made when missing), with everything in them: the same and no
-  child deleted (`DC`), inherited by every child (`(OI)(CI)`), each child's own entries reset to what it inherits;
-- each project's `.claude` folder (made when missing): nothing added to it and nothing removed through it;
-- `~/.claude` itself: no child removed or renamed through it (`DC`, and its ACL and owner); Claude Code still adds its
-  own files there (sessions, todos).
+  brain's own folder, of its registry's projects that exist on this machine and of the repos they span: no write,
+  append, attribute, delete, ACL or owner change (icacls' `WD,AD,WEA,WA,DC,D,WDAC,WO`, every right the per-call check
+  reads);
+- `~/.claude/hooks`, `skills`, `commands`, `agents` (made when missing) and `plugins` (their MCP servers and `bin/` run
+  with no tool call), and a project's `hooks`, `skills`, `commands` and `agents` that exist, with everything in them:
+  the same, inherited by every child (`(OI)(CI)`), each child's own entries reset to what it inherits (an entry made
+  before the lock goes, an explicit one included);
+- each project's `.claude` folder (made when missing, with its `worktrees`, where Claude Code makes a session's):
+  nothing added to it and nothing removed through it;
+- `~/.claude` itself: none of the locked paths removed or renamed through it (`DC`, and its ACL and owner); Claude Code
+  still adds and removes its own files there (sessions, todos).
 
 The rights are named one by one: icacls' `W` and `M` carry `SYNCHRONIZE` and `READ_CONTROL`, and Claude Code must still
 read the files. The owner of each path becomes Administrators: an owner keeps `WRITE_DAC` whatever its ACL says, and the
-account's normal token holds Administrators as deny-only. The account is a SID the plan reads in a normal terminal of
-the account (`brain floor lock` prints the elevated command line with `--account <SID>`: the elevated step may run as
-another administrator; its profile is read from HKLM's `ProfileList`, not the environment); a group or a well-known SID
-is refused. The apply then checks every path (present, no link, owned by Administrators, SYSTEM or TrustedInstaller,
-its deny entries for the account holding every right its kind needs, every file and folder of a tree) and records
-them in the lock file's `acl`; they join its `checks`, so a path a session reached anyway (removed and made again
-through code the guard does not read, `~/.claude` renamed through the profile) refuses every call until the owner
-locks again. A step that fails gives the entries back (unless the previous lock held the same ones); a relock without
-`floor.acl`, or for another account, gives the previous lock's back once the new one holds. `brain floor status` says
-whether each is held; `brain floor unlock --apply` gives them back first (their deny entries, then their ownership),
-and stops with the lock whole when it cannot. While locked, Claude Code's own writes there fail (an "always allow"
-saved to `settings.local.json`, a plugin or a skill installed, a project's new `.claude` file brought by a pull): the
-owner changes them after unlocking. On POSIX `floor.acl` refuses the plan (a deny entry is Windows').
+account's normal token holds Administrators as deny-only. Every command takes `/L` and the apply refuses, before
+anything runs, a path that is a link or a junction, sits under one or holds one: an administrator's icacls follows a
+link, and a session could aim it at a folder of the system's. The account is a SID the plan reads in a normal terminal
+of the account (`brain floor lock` prints the elevated command line with `--account <SID>`: the elevated step may run
+as another administrator); it must look up as a user's (a group, a well-known SID, a malformed one is refused), and its
+profile is read from HKLM's `ProfileList` (none there: refused, never guessed). A registry that does not load stops
+the plan. The apply then checks every path (present, no link, owned by Administrators, SYSTEM or TrustedInstaller, its
+deny entries for the account holding every right its kind needs, no entry of its own letting anyone else write; every
+file and folder of a tree) and records them in the lock file's `acl`. On each call the guard (`brain.floor.unlocked`)
+then refuses every call while one is missing, within the session's reach or owned by another than the administrators (a
+folder a session renamed away and made again, its DACL read-only for itself), while the session's account is not the
+one the lock denies, while `CLAUDE_CONFIG_DIR` moves Claude Code's settings elsewhere, and while config.json's
+`floor.acl` is not the locked one. A step that fails gives back what it added (the previous lock, restored, keeps its
+entries); a relock without `floor.acl`, for another account or with fewer paths gives the previous lock's back once
+the new one holds. `brain floor status` says whether each is held; `brain floor unlock --apply` gives them back first
+(their deny entries, then their ownership; a path gone, a link or one no longer owned by Administrators left alone and
+said) and stops with the lock whole when a command fails; with a lock file that cannot be read it needs `--account
+<SID>` and rebuilds the paths from config.json. While locked, Claude Code's own writes there fail (an "always allow"
+saved to `settings.local.json`, a plugin or a skill installed or updated, a project's new `.claude` file brought by a
+pull): the owner changes them after unlocking; and the unlock gives the account every child of a tree, one an
+administrator owned before included. Not held: a script a locked setting names outside those folders (the owner points
+`statusLine` or `apiKeyHelper` at a held path), a worktree made after the lock (its own `.claude`, read by a session
+opened there), a repo's `.git/hooks`. On POSIX `floor.acl` refuses the plan (a deny entry is Windows').
 
 Each folder is given to Administrators (root): its own ACL reset, its inheritance cut with Administrators and SYSTEM
 full and the users read and run (from here no child gains the user's rights), the owner set on the whole tree, then
@@ -458,8 +472,8 @@ Round 7 (the same classes, new spellings; on any machine with the floor on):
   script file an interpreter runs (`python p.py`), a write or a copy whose target is a variable alone (`> "$OUT"`, `cp
   x "$OUT"`), a program an interpreter runs from a name it computes, and code that hides a link name from the rules
   above in a way they do not read. The ACL step holds the account's own Claude Code files and its projects' settings
-  whatever writes them; it does not hold a worktree made after the lock (its own `.claude` settings, read by a session
-  opened there), a repo's `.git/hooks`, nor anything on a machine without it.
+  whatever writes them; it does not hold what « The ACL step » lists as not held, nor anything on a machine without
+  it.
   A write that adds a `hooks` key, at any depth, to a skill's, command's or agent's frontmatter (read as YAML) is
   refused, and `claude plugin install`, `enable`, `update` and `marketplace add`/`update` are refused, under
   `floor.only` too. A hard link made before the floor was on, to the settings file of a project outside those folders,
