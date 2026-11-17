@@ -103,8 +103,7 @@ def gpg_call(ad: vault.Gpg, call: str, *args, end: float, deadline: float, tmp: 
     assert tmp is not None, "a real gpg call needs a folder of pytest's basetemp"
     temp, run = Path(tmp), os.urandom(4).hex()
     result, child_log = temp / f"result-{run}.json", temp / f"child-{run}.log"
-    # its own short temporary folder, in the system's (under a pytest folder gpg's agent did not start on the CI's
-    # Windows): no other worker's gpg home is in it, so the cleanup takes only this call's
+    # a short folder of its own in the system's temp: no other worker's gpg home is in it (cleanup: this call's)
     private = Path(tempfile.mkdtemp(prefix="g"))
     gpg_call.private = private
     env = {**os.environ, "TEMP": str(private), "TMP": str(private), "TMPDIR": str(private),
