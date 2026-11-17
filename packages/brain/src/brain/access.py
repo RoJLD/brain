@@ -90,19 +90,20 @@ def _day(value) -> str:
 
 def grants(data: dict) -> list[Grant]:
     """Every membership of the brain's own domain (not an organization's or a tenant's) as a grant, in file order."""
-    out = []
-    for i, m in enumerate(_list(data, "memberships")):
-        if not isinstance(m, dict) or m.get("organization") or m.get("tenant"):
-            continue
-        roles = [r for r in m.get("roles") or [] if isinstance(r, str)] if isinstance(m.get("roles"), list) else []
-        node = _text(m.get("scope")) or _text(m.get("project")) or GLOBAL
-        grade = _text(m.get("grade"))
-        legacy = [LEGACY.get(r, r) for r in roles if r in GRADES or r in LEGACY]
-        grade = _highest([g for g in [grade, *legacy] if g])
-        out.append(Grant(i, _text(m.get("person_id")), _text(m.get("group")), node, grade,
-                         [r for r in roles if r not in GRADES and r not in LEGACY], _day(m.get("since")),
-                         _day(m.get("until"))))
-    return out
+    return [_grant(i, m) for i, m in enumerate(_list(data, "memberships"))
+            if isinstance(m, dict) and not (m.get("organization") or m.get("tenant"))]
+
+
+def _grant(i: int, m: dict) -> Grant:
+    """One membership as a grant: its node as identity reads it (a value of the wrong type names no node, never
+    Global), its grade the highest of its grade and the roles named as grades."""
+    from .identity import node_of
+    roles = [r for r in m["roles"] if isinstance(r, str)] if isinstance(m.get("roles"), list) else []
+    legacy = [LEGACY.get(r, r) for r in roles if r in GRADES or r in LEGACY]
+    grade = _highest([g for g in [_text(m.get("grade")), *legacy] if g])
+    return Grant(i, _text(m.get("person_id")), _text(m.get("group")), node_of(m) or GLOBAL, grade,
+                 [r for r in roles if r not in GRADES and r not in LEGACY], _day(m.get("since")),
+                 _day(m.get("until")))
 
 
 def _highest(grades: list[str]) -> str:
@@ -268,33 +269,42 @@ def explain(data: dict, person: str, tree, node: str = GLOBAL, client: str = "",
     today = today or date.today().isoformat()
     via = memberships_of(person, data)
     on = set(chain(tree, node))
-    mine = [g for g in grants(data) if (g.person == person and not g.group) or (g.group and g.group in via)]
-    live = [g for g in mine if g.node in on and g.active(today)]
+    mine = [g for g in _of(data, person, via) if g.node in on]
+    live = [g for g in mine if g.active(today)]
+    verbs, roles, unknown = _tally(live, via)
+    out = {"person": person, "node": node, "chain": chain(tree, node), "groups": dict(via),
+           "grade": _highest([g.grade for g in live if g.grade in GRADES]), "verbs": verbs, "roles": roles,
+           "unknown_grades": unknown,
+           "not_counted": [_source(g, via) + _why_not(g, today) for g in mine if not g.active(today)]}
+    if client:
+        out["client"] = {"name": client, "ceiling": list(CEILING), "verbs": [v for v in verbs if v in CEILING],
+                         "never": ["administer", "decide"]}
+    return out
+
+
+def _of(data: dict, person: str, via: dict) -> list[Grant]:
+    """The grants that name ``person``: their own (a person's), and their groups', nested ones included."""
+    return [g for g in grants(data) if (g.person == person and not g.group) or (g.group and g.group in via)]
+
+
+def _tally(live: list[Grant], via: dict) -> tuple[dict[str, list[str]], dict[str, list[str]], list[str]]:
+    """({verb: the grants behind it}, {role: the grants behind it}, the unknown grades said), verbs in VERBS order."""
     verbs: dict[str, list[str]] = {v: [] for v in VERBS}
     roles: dict[str, list[str]] = {}
-    unknown = []
+    unknown = [f"{g.grade} ({_source(g, via)})" for g in live if g.grade and g.grade not in GRADES]
     for g in live:
         source = _source(g, via)
-        if g.grade and g.grade not in GRADES:
-            unknown.append(f"{g.grade} ({source})")
         for v in GRADE_VERBS.get(g.grade, ()):
             verbs[v].append(source)
         for r in g.roles:
             roles.setdefault(r, []).append(source)
             for v in ROLE_VERBS.get(r, ()):
                 verbs[v].append(source)
-    grade = _highest([g.grade for g in live if g.grade in GRADES])
-    out = {"person": person, "node": node, "chain": chain(tree, node), "groups": {g: p for g, p in via.items()},
-           "grade": grade, "verbs": {v: s for v, s in verbs.items() if s}, "roles": roles,
-           "unknown_grades": unknown,
-           "not_counted": [_source(g, via) + (f", until {g.until}" if g.until and g.until < today
-                                              else f", since {g.since}") for g in mine
-                           if g.node in on and not g.active(today)]}
-    if client:
-        reach = [v for v in out["verbs"] if v in CEILING]
-        out["client"] = {"name": client, "ceiling": list(CEILING), "verbs": reach,
-                         "never": ["administer", "decide"]}
-    return out
+    return {v: s for v, s in verbs.items() if s}, roles, unknown
+
+
+def _why_not(g: Grant, today: str) -> str:
+    return f", until {g.until}" if g.until and g.until < today else f", since {g.since}"
 
 
 def _source(g: Grant, via: dict[str, list[str]]) -> str:

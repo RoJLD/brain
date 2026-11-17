@@ -110,11 +110,17 @@ def _references(data: dict) -> list[str]:
     errors = [f"people: person_id {p!r} is declared twice" for p in sorted(dupes)]
     errors += [f"{key}[{i}]: person_id {x.get('person_id')!r} is not in people"
                for key in ("accounts", "memberships") for i, x in enumerate(_list(data, key))
-               if (_id(x) is None and not (key == "memberships" and "group" in x)) or
-               (_id(x) is not None and _id(x) not in people)]
+               if _unknown_person(x, key, people)]
     errors += [f"memberships[{i}]: grants nothing: give it roles (or a grade)" for i, x in
                enumerate(_list(data, "memberships")) if not x.get("roles") and x.get("grade") is None]
     return errors + _org_references(data)
+
+
+def _unknown_person(x: dict, key: str, people: list) -> bool:
+    """An account or a membership whose person_id is missing or not a person; a grant to a group names none."""
+    if _id(x) is None:
+        return not (key == "memberships" and "group" in x)
+    return _id(x) not in people
 
 
 def _access(data: dict, root: Path) -> list[str]:

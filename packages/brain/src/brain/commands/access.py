@@ -64,24 +64,23 @@ def _print(r: dict, tree, labels: dict, lang: str) -> None:
     grade = r["grade"]
     shown = f"{grade} ({labels[grade].get(lang) or labels[grade]['en']})" if grade else "none"
     print(f"{r['person']} on {where}: grade {shown}")
-    if r["groups"]:
-        print("  groups: " + ", ".join(" -> ".join(p) for p in r["groups"].values()))
-    for verb in access.VERBS:
-        if verb in r["verbs"]:
-            print(f"  {verb:<10} " + "; ".join(r["verbs"][verb]))
-    for role, src in r["roles"].items():
-        print(f"  role {role}: " + "; ".join(src) + ("" if role in access.ROLES else " (a role this engine does not "
-                                                     "know: kept, gives nothing)"))
-    for u in r["unknown_grades"]:
-        print(f"  unknown grade {u}: read as none, never above")
-    for n in r["not_counted"]:
-        print(f"  not counted today: {n}")
-    if "client" in r:
-        c = r["client"]
-        print(f"  an agent of {c['name']} for them: {', '.join(c['verbs']) or 'nothing'} (ceiling "
-              f"{', '.join(c['ceiling'])}; never {', '.join(c['never'])})")
-    if not r["verbs"] and not r["roles"]:
-        print("  no verb here")
+    for line in _lines(r):
+        print(f"  {line}")
+
+
+def _lines(r: dict) -> list[str]:
+    """The explanation's lines under its heading: groups, each verb with its grants, the roles, what does not count."""
+    out = ["groups: " + ", ".join(" -> ".join(p) for p in r["groups"].values())] if r["groups"] else []
+    out += [f"{verb:<10} " + "; ".join(r["verbs"][verb]) for verb in access.VERBS if verb in r["verbs"]]
+    out += [f"role {role}: " + "; ".join(src) + ("" if role in access.ROLES else " (a role this engine does not "
+                                                 "know: kept, gives nothing)") for role, src in r["roles"].items()]
+    out += [f"unknown grade {u}: read as none, never above" for u in r["unknown_grades"]]
+    out += [f"not counted today: {n}" for n in r["not_counted"]]
+    c = r.get("client")
+    if c:
+        out.append(f"an agent of {c['name']} for them: {', '.join(c['verbs']) or 'nothing'} (ceiling "
+                   f"{', '.join(c['ceiling'])}; never {', '.join(c['never'])})")
+    return out + ([] if r["verbs"] or r["roles"] else ["no verb here"])
 
 
 def cmd_access(args, root: Path) -> int:
