@@ -35,6 +35,25 @@ def test_trend_falling_flat_week_and_like_for_like_window(make_repo):
     assert [audit_trend._total(w) for w in t["weeks"]] == [10, 9, 8, 7, 6]   # coderef.module counted in every week
 
 
+def test_the_trend_leaves_waive_stale_out_of_its_past_weeks(make_repo):
+    """Review of the PR, finding C1: today's waive globs against a past week's tree would count a file added since as
+    a stale glob in the weeks before it, and a fall of the debt that no change made; the trend measures without it."""
+    weeks = ["2026-09-30T12:00:00Z", "2026-10-07T12:00:00Z", "2026-10-14T12:00:00Z", "2026-10-21T12:00:00Z",
+             "2026-10-28T12:00:00Z"]
+    a = _weekly(make_repo, "a", 5, weeks)
+    make_repo.commit(a, {"scripts/new.ps1": "x\n"}, date="2026-10-29T12:00:00Z")   # added in the last week
+    waive = {"scripts/new.ps1": "an installer script the tests cannot run"}
+    p = projects.Project("demo", a)
+    cfgs = [projects.Repo("a", a, waive=waive)]
+    t = audit_trend.trend(p, cfgs, {"a": "refs/heads/main"}, 5, date(2026, 11, 2))
+    assert [audit_trend._total(w) for w in t["weeks"]] == [5, 4, 3, 2, 1]   # as with no waive at all: no stale glob
+    now = audit_measure.measure(p, cfgs, {"a": inventory.git_tree(a, "HEAD")})
+    assert not [f for f in now["repos"][0]["findings"] if f["check"] == "waive.stale"]   # today's: it matches
+    gone = audit_measure.measure(p, [projects.Repo("a", a, waive={"scripts/old.ps1": "removed since, its reason left"})],
+                         {"a": inventory.git_tree(a, "HEAD")})
+    assert [f["unit"] for f in gone["repos"][0]["findings"] if f["check"] == "waive.stale"] == ["scripts/old.ps1"]
+
+
 def test_milestone_needs_every_repo_no_p0_p1_no_pending_and_four_falls(monkeypatch):
     ok = {"counts": {"P0": 0, "P1": 0, "P2": 3}, "repos": [{"name": "a"}]}
     tr = {"weeks": [{}], "falling": 4}

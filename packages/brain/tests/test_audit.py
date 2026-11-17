@@ -395,10 +395,24 @@ def test_dogfood_the_audit_modules_pass_their_own_test_module_check():
         assert inventory.module_evidence(mods[name], rf, ev, {}, {}, reach)[0] == "name", name
 
 
+# brain.audit's public names before its split by concern (wi-brain-engine-debt, batch 2), its modules aside: a name
+# dropped from both its import and __all__ fails the test below
+BEFORE_SPLIT = (
+    "AuditError", "BACKTICK", "CALIBRATED", "CHECKS", "COVERAGE_FLOOR", "Check", "DOC_PATH", "EXTERNAL", "FILE_EXTS",
+    "HEADING", "HEAD_LINES", "MILESTONE", "NO_FEATURES", "NO_README", "NO_TOOLS", "PENDING", "Pending", "README_LINES",
+    "REFERENCE_PAGE", "RULESET", "SECTIONS", "SEVERITIES", "STREAK", "TICK_DOTTED", "VIEW", "WAIVABLE", "doc_links",
+    "falling", "feature_cover", "feature_links", "feature_tests", "features_md", "finding", "generated_doc",
+    "help_quoted", "item_id", "lang_report", "main", "measure", "merge_trends", "milestone", "readme_yaml",
+    "registry_findings", "render_json", "render_text", "render_view", "run", "scope", "severity", "stale_waivers",
+    "standards_gap", "sync_items", "test_coverage", "test_links", "trees_now", "trend", "trend_line",
+    "waived_findings", "week_ends", "write_view")
+
+
 def test_brain_audit_keeps_the_names_of_its_concern_modules():
     """brain.audit is split by concern (wi-brain-engine-debt, batch 2: behaviour unchanged): its callers (brain.scout,
     brain.status, the cockpit, the commands, a plugin) still find every name there, the same object."""
     from brain import audit_checks, audit_measure, audit_render, audit_trend
+    assert sorted(set(BEFORE_SPLIT) - set(audit.__all__)) == []   # every public name the module had before
     assert [n for n in audit.__all__ if not hasattr(audit, n)] == []
     mods = (audit_checks, audit_measure, audit_render, audit_trend)
     for name in audit.__all__:

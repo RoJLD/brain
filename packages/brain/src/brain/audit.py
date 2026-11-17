@@ -23,7 +23,9 @@ and a finding at that severity or above, or a refused write; 2 a registry or usa
 
 By concern: the checks and their ruleset (brain.audit_checks), the measure of a project's repos (brain.audit_measure),
 the trend and the milestone (brain.audit_trend), the outputs (brain.audit_render); this module holds the backlog sync
-and the command, and keeps every name the others had here (brain.audit.measure, CHECKS, RULESET, ...).
+and the command, and keeps every public name the others had here (brain.audit.measure, CHECKS, RULESET, ...:
+__all__); a private helper is its module's (brain.audit_measure._moved), and so is a patch of a name a moved
+function reads (brain.audit_measure.measure for the trend's weeks, brain.audit_checks.PENDING).
 """
 
 from __future__ import annotations
@@ -62,8 +64,14 @@ from .audit_checks import (
     test_links,
 )
 from .audit_measure import (
+    BACKTICK,
+    DOC_PATH,
+    EXTERNAL,
+    FILE_EXTS,
+    HEADING,
     README_LINES,
     SECTIONS,
+    TICK_DOTTED,
     WAIVABLE,
     measure,
     registry_findings,
@@ -84,10 +92,12 @@ from .audit_trend import (
     week_ends,
 )
 from .inventory import AuditError
+from .mergedriver import HEAD_LINES
 
 # brain.audit's names: its own, and those of the concern modules it is the front of (kept for its callers)
-__all__ = ["CALIBRATED", "CHECKS", "COVERAGE_FLOOR", "MILESTONE", "NO_FEATURES", "NO_README", "NO_TOOLS", "PENDING",
-           "README_LINES", "REFERENCE_PAGE", "RULESET", "SECTIONS", "SEVERITIES", "STREAK", "VIEW", "WAIVABLE",
+__all__ = ["BACKTICK", "CALIBRATED", "CHECKS", "COVERAGE_FLOOR", "DOC_PATH", "EXTERNAL", "FILE_EXTS", "HEADING",
+           "HEAD_LINES", "MILESTONE", "NO_FEATURES", "NO_README", "NO_TOOLS", "PENDING", "README_LINES",
+           "REFERENCE_PAGE", "RULESET", "SECTIONS", "SEVERITIES", "STREAK", "TICK_DOTTED", "VIEW", "WAIVABLE",
            "AuditError", "Check", "Pending", "doc_links", "falling", "feature_cover", "feature_links",
            "feature_tests", "features_md", "finding", "generated_doc", "help_quoted", "item_id", "lang_report",
            "main", "measure", "merge_trends", "milestone", "readme_yaml", "registry_findings", "render_json",

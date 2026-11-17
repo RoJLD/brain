@@ -212,7 +212,7 @@ def _repo_tokens(p: projects.Project, cfgs: list[projects.Repo]) -> set[str] | N
 def measure(p: projects.Project, cfgs: list[projects.Repo], trees: dict[str, inventory.Tree],
             only: set[str] | None = None, layered: set[str] | None = None,
             extra_dirs: dict[str, set] | None = None, linked: dict | None = None,
-            featured: bool | None = None, coverage: dict | None = None) -> dict:
+            featured: bool | None = None, coverage: dict | None = None, stale: bool = True) -> dict:
     """Every check on every repo of ``p`` that has a tree (its findings only for the repos in ``only`` when given):
     the project's result, as the JSON output carries it. ``layered``: the repos whose store has a code layer, given
     by the trend from today's measure (a layer added since then is a rule of today, not a rise of the debt);
@@ -220,7 +220,9 @@ def measure(p: projects.Project, cfgs: list[projects.Repo], trees: dict[str, inv
     ``featured``, whether the project's store has the Feature type (then a week before it has no feature), and
     ``coverage``, each repo's coverage summary (test.coverage: a summary committed since is a rule of today).
     ``extra_dirs``: more top-level folders whose paths a doc names are checked (the scout passes the base tree's, so
-    a folder a change empties still has its dead references)."""
+    a folder a change empties still has its dead references). ``stale``: waive.stale measured (the trend turns it
+    off: today's waive globs against a past week's tree would count a file added since as a stale glob then, and its
+    fix as a fall of the debt)."""
     moved = _moved(p)
     registered = _repo_tokens(p, cfgs)   # before the filter: a repo of the project not cloned here is registered
     cfgs = [c for c in cfgs if c.name in trees]
@@ -306,7 +308,7 @@ def measure(p: projects.Project, cfgs: list[projects.Repo], trees: dict[str, inv
         if only is not None and c.name not in only:
             continue
         ctx = {"rf": rf, "idx": idx, "store": linked.get(c.name), "cache": {}, "cfg": c, "features": fm, "trees": trees,
-               "project": p, "moved": moved,
+               "project": p, "moved": moved, "stale": stale,
                "flabel": flabel, "fhome": fhome, "fpublic": fpublic, "fstrict": fstrict, "coverage": coverage.get(c.name),
                "mod_ev": {path: v for (r, path), v in mod_evidence.items() if r == c.name}}
         out_repos.append(_repo_result(c, rf, idx, tops, mod_evidence, facts, dangling.get(c.name, []),
@@ -536,7 +538,8 @@ def _repo_result(c: projects.Repo, rf: inventory.RepoFacts, idx: inventory.Index
         pending.append({"check": "coderef.dangling", "owner": f"CodeRefs of repos not measured here (another "
                                                               f"project's, or not cloned): {', '.join(unregistered)}"})
     found, waived = waived_findings(found, getattr(c, "waive", None))
-    found += stale_waivers(name, t, getattr(c, "waive", None))
+    if (ctx or {}).get("stale", True):   # not in the trend's past weeks (measure)
+        found += stale_waivers(name, t, getattr(c, "waive", None))
     found.sort(key=lambda f: (f["severity"] if f["severity"] != "info" else "P9", f["check"], f["unit"]))
     counts = {s: sum(1 for f in found if f["severity"] == s) for s in SEVERITIES + ("info",)}
     classes = {k: sum(1 for u in rf.units if u.cls == k) for k in ("entry", "prod", "other")}

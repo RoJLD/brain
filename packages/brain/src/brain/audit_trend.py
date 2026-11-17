@@ -53,7 +53,8 @@ def trend(p: projects.Project, cfgs: list[projects.Repo], refs: dict[str, str], 
     for i, (label, end) in enumerate(weeks if scope else []):
         trees = dict(zip([c.name for c in scope], _parallel(
             lambda c, i=i: inventory.git_tree(c.path, commits[c.name][i]), scope)))
-        res = measure(p, scope, trees, only, layered, linked=linked, featured=featured, coverage=coverage)
+        res = measure(p, scope, trees, only, layered, linked=linked, featured=featured, coverage=coverage,
+                      stale=False)
         out.append({"week": label, "end": end[:10], "debt": {s: res["counts"][s] for s in SEVERITIES}})
     return {"weeks": out, "repos": [c.name for c in scope],
             "left": sorted(c.name for c in cfgs if c not in scope)}
