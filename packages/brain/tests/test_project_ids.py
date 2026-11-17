@@ -259,7 +259,7 @@ def test_a_repo_named_after_its_folder_while_its_ids_name_another_is_warned(brai
 # --- ID-3: a node id is a birth mark, never read back ---
 
 SRC = Path(projects.__file__).resolve().parent
-RG = SRC.parent / "research_graph"
+RG = SRC.parents[3] / "src" / "research_graph"   # the repo's other package (src/research_graph)
 # what reading a project out of a node id looks like: the second dash-separated part of an id, or a regex that captures
 # the segment after a node type's prefix
 READS_PROJECT = [
@@ -278,6 +278,7 @@ def test_no_engine_code_reads_a_project_from_a_node_id():
     assert _reads_project('m = re.match(r"wi-(?P<project>[a-z0-9]+)-", nid)') != []
     assert _reads_project('short = nid.removeprefix("wi-").removeprefix(p.name + "-")') == []   # a display strip
     hits = {}
+    assert SRC.is_dir() and RG.is_dir(), "both packages are scanned, never skipped silently"
     for base in (SRC, RG):
         for f in base.rglob("*.py") if base.is_dir() else []:
             found = _reads_project(f.read_text(encoding="utf-8", errors="replace"))
@@ -293,3 +294,56 @@ def test_an_item_whose_slug_names_another_project_is_read_by_its_store(brain, ca
         fh.write('- {id: wi-elsewhere-thing, type: WorkItem, status: todo, title: "Born elsewhere"}\n')
     assert cli.main(["item", "show", "wi-elsewhere-thing", "--project", "orchard"]) == 0
     assert "Born elsewhere" in capsys.readouterr().out
+
+
+# --- the review's cases: a typo never shrinks the deny list, an old name keeps its floor ---
+
+@pytest.mark.parametrize("fault", ["status: actve", "status: archived", "access: raed"])
+def test_a_typo_or_a_tombstone_with_live_keys_never_shrinks_the_deny_terms(brain, tmp_path, fault):
+    """A private project whose entry is skipped (an unknown status, a tombstone that still names its repos, an access
+    typo) keeps its repos' names denied, in the tree's feed and the derived one: fail closed."""
+    (tmp_path / "secret-repo").mkdir()
+    entry = "{root: ../secret-repo, parent: acme, repos: [{path: ., name: hidden-name}]"
+    brain("alpha: {root: .}\norchard: " + entry + "}\n")
+    (brain.root / scopes.FILE).write_text(TREE, encoding="utf-8")
+    data = {"v": 1, "identity": {"owner": "Ada"}, "public": {"deny": {"people": ["Ada"]}, "derive": ["projects"],
+                                                             "deny_from_tree": True}}
+    (brain.root / config.FILE).write_text(json.dumps(data), encoding="utf-8")
+    cfg = config.load(brain.root)
+    before_tree = scopes.private_terms(cfg)
+    before_derived = [t for _, t in denylist.declared(cfg, ("projects",))]
+    assert {"hidden-name", "secret-repo", "orchard"} <= set(before_tree)
+    brain("alpha: {root: .}\norchard: " + entry + ", " + fault + "}\n")
+    assert "orchard" not in projects.load()
+    assert set(before_tree) <= set(scopes.private_terms(cfg))
+    assert set(before_derived) <= {t for _, t in denylist.declared(cfg, ("projects",))}
+
+
+def test_a_stores_old_project_name_keeps_its_class_floor(brain):
+    from brain import classes
+    brain("alpha: {root: .}\norchard: {root: ../orchard, parent: acme, aliases: [grove]}\n")
+    (brain.root / scopes.FILE).write_text(TREE, encoding="utf-8")
+    cfg = config.load(brain.root)
+    assert classes.floor(cfg, "grove") == classes.floor(cfg, "orchard") == ("private", "acme")
+    assert classes.scope_chain(cfg, "grove") == ["acme", "pro"]
+
+
+def test_project_never_resolves_a_containers_id_or_alias(brain, capsys):
+    brain("alpha: {root: .}\norchard: {root: ../orchard, aliases: [grove, pro-old]}\n")
+    (brain.root / scopes.FILE).write_text(TREE.replace("aliases: [work]", "aliases: [grove]"), encoding="utf-8")
+    assert projectids.canonical("grove") == "grove"   # two nodes declare it: none
+    assert projectids.canonical("pro") == "pro"   # a container's id
+    assert projectids.canonical("pro-old") == "orchard" and "is an alias of 'orchard'" in capsys.readouterr().err
+
+
+def test_a_notes_home_with_a_status_is_no_tombstone(brain):
+    brain("alpha: {root: .}\nnotes: {kind: knowledge, root: ../notes, status: archived}\n")
+    assert projects.tombstones() == {} and "notes" in projects.knowledge()
+    assert any("project notes: a notes home holds" in e and "status" in e for e in projects.check())
+
+
+def test_the_reference_registry_leaves_a_tombstone_out(brain):
+    from brain import arc42
+    got = arc42.registry({"alpha": {"root": "."}, "old-lab": {"status": "merged", "access": "read"},
+                          "up": {"access": "read"}})
+    assert list(got) == ["alpha", "up"] and got["up"]["access"] == "read"

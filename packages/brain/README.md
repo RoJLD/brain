@@ -1619,7 +1619,11 @@ its guards stay on while it is red); a status it does not know is a note (strict
 loaded either. An id that is not kebab-case is a warning only: it stays as it is, and `brain project add` mints
 kebab-case ones only, never a name another node or alias holds. An alias two nodes declare resolves to neither. A
 private project's aliases and label are as private as its id: they join the deny terms the registry derives
-(`public.derive` `projects`) and those of the tree (`public.deny_from_tree`), and so do a tombstone's names. A repo's
+(`public.derive` `projects`) and those of the tree (`public.deny_from_tree`), and so do a tombstone's names; an entry
+the walk skips (a status or an access typo, a tombstone that still names its repos) keeps its repos' names there,
+so a typo never shrinks the list. A tombstone names no repo: when a private project ends, a repo name that differs
+from its id and aliases goes to `public.deny` by hand. A store's `project:` in `config.json` that names an alias
+keeps its project's class floor and vault recipients. A repo's
 `name:` is its frozen id too: `brain check --all` warns when a project's repo has no `name:` (it is named after its
 folder) while the project's graph names a repo no registered one answers to (`code:`, `doc:`, `test:` ids), the sign
 of a clone in another folder. A node id's slug (`wi-<slug>-...`) says where it was born, never where it lives: no

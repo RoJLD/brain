@@ -108,9 +108,7 @@ def main(argv: list[str] | None = None) -> int:
         lines = plugins.help_lines()
         if lines:
             parser.epilog = "\n".join([parser.epilog or "", "", *lines])
-    args = parser.parse_args(argv)
-    if getattr(args, "project", None):   # an alias names its project's id, said once (brain.projectids)
-        args.project = projectids.canonical(args.project, root_of(args))
+    args = _canonical(parser.parse_args(argv))
     why = _refusal(argv)
     if why:
         print(f"brain: {why}", file=sys.stderr)
@@ -125,6 +123,13 @@ def main(argv: list[str] | None = None) -> int:
             sys.stderr.flush()
             shutdown.die(exc)
         return exc.exit_code
+
+
+def _canonical(args):
+    """``args`` with --project's alias read as its project's id, said once on stderr (brain.projectids)."""
+    if getattr(args, "project", None):
+        args.project = projectids.canonical(args.project, root_of(args))
+    return args
 
 
 def _plugged(argv: list[str], commands) -> int | None:
