@@ -443,11 +443,37 @@ def without_deny(acl: bytes, who: bytes, inherited: bool) -> bytes | None:
     return None if len(keep) == len(entries) else build_acl(rev, keep)
 
 
+def _not_itself(path: str, h, k32) -> str:
+    """Why the handle ``h`` is not ``path`` itself: a link or a junction (a name surrogate: a compressed, deduplicated
+    or cloud file passes), or a path that resolves elsewhere (a folder above it renamed and replaced by a junction
+    once checked: with the privileges asked, an administrator's write would land on a system file); '' when it is."""
+    import ctypes
+    import struct
+    tag = ctypes.create_string_buffer(8)   # FILE_ATTRIBUTE_TAG_INFO: FileAttributes, ReparseTag
+    if not k32.GetFileInformationByHandleEx(h, 9, tag, 8):   # FileAttributeTagInfo
+        return f"{path}: its attributes cannot be read (error {ctypes.get_last_error()})"
+    attrs, reparse = struct.unpack("<II", tag.raw)
+    if attrs & 0x400 and reparse & 0x20000000:   # FILE_ATTRIBUTE_REPARSE_POINT, a name surrogate
+        return f"{path}: a link or a junction"
+    buf = ctypes.create_unicode_buffer(32768)
+    n = k32.GetFinalPathNameByHandleW(h, buf, len(buf), 0)   # FILE_NAME_NORMALIZED, VOLUME_NAME_DOS
+    if not n or n >= len(buf):
+        return f"{path}: its final path cannot be read (error {ctypes.get_last_error()})"
+    final = buf.value
+    for prefix, repl in (("\\\\?\\UNC\\", "\\\\"), ("\\\\?\\", "")):
+        if final.startswith(prefix):
+            final = repl + final[len(prefix):]
+            break
+    if os.path.normcase(final) != os.path.normcase(os.path.abspath(path)):
+        return f"{path}: resolves to {final} (a folder on its way is a link or a junction)"
+    return ""
+
+
 def _rewrite(path: str, edit, owner: bytes | None, what: str) -> str:
-    """Open ``path`` itself (FILE_FLAG_OPEN_REPARSE_POINT: never a link's target; a link or a junction refused) for
-    its ACL (and ``owner``: its owner), the privileges asked, then write ``edit`` of its DACL (None: unchanged) and the
-    owner as they are, with no inheritance computed nor propagated (SetKernelObjectSecurity), its control bits kept.
-    '' when done, else why."""
+    """Open ``path`` itself (FILE_FLAG_OPEN_REPARSE_POINT: never a link's target; a link or a junction, or a path
+    resolving elsewhere, refused: :func:`_not_itself`) for its ACL (and ``owner``: its owner), the privileges asked,
+    then write ``edit`` of its DACL (None: unchanged) and the owner as they are, with no inheritance computed nor
+    propagated (SetKernelObjectSecurity), its control bits kept. '' when done, else why."""
     import ctypes
     import struct
     from ctypes import wintypes as w
@@ -464,11 +490,9 @@ def _rewrite(path: str, edit, owner: bytes | None, what: str) -> str:
         if h in (None, ctypes.c_void_p(-1).value):          # BACKUP_SEMANTICS (a folder, the privileges), REPARSE_POINT
             return f"{path}: cannot be opened for its ACL (error {ctypes.get_last_error()})"
         try:
-            info = ctypes.create_string_buffer(64)   # BY_HANDLE_FILE_INFORMATION: dwFileAttributes first
-            if not k32.GetFileInformationByHandle(h, info):
-                return f"{path}: its attributes cannot be read (error {ctypes.get_last_error()})"
-            if struct.unpack_from("<I", info.raw)[0] & 0x400:   # FILE_ATTRIBUTE_REPARSE_POINT
-                return f"{path}: a link or a junction"
+            why = _not_itself(path, h, k32)
+            if why:
+                return why
             need = w.DWORD(0)
             adv.GetKernelObjectSecurity(h, 0x1 | 0x4, None, 0, ctypes.byref(need))   # OWNER, DACL
             sd = ctypes.create_string_buffer(need.value or 1)
@@ -492,9 +516,10 @@ def _rewrite(path: str, edit, owner: bytes | None, what: str) -> str:
             sid = ctypes.create_string_buffer(owner or b"\0")
             new = ctypes.create_string_buffer(64)   # an absolute SECURITY_DESCRIPTOR (40 bytes on x64)
             kept = control.value & 0x1400            # SE_DACL_AUTO_INHERITED, SE_DACL_PROTECTED
+            kept |= 0x100 if kept & 0x400 else 0     # SE_DACL_AUTO_INHERIT_REQ: else the kernel drops AUTO_INHERITED
             if not (adv.InitializeSecurityDescriptor(new, 1)
                     and adv.SetSecurityDescriptorDacl(new, True, dacl, False)
-                    and adv.SetSecurityDescriptorControl(new, 0x1400, kept)
+                    and adv.SetSecurityDescriptorControl(new, 0x1500, kept)
                     and (same_owner or adv.SetSecurityDescriptorOwner(new, sid, False))):
                 return f"{path}: {what} cannot be made (error {ctypes.get_last_error()})"
             if not adv.SetKernelObjectSecurity(h, 0x4 | (0 if same_owner else 0x1), new):
@@ -517,7 +542,9 @@ def _api():
     k32.CreateFileW.argtypes = [w.LPCWSTR, w.DWORD, w.DWORD, p, w.DWORD, w.DWORD, w.HANDLE]
     k32.CreateFileW.restype = w.HANDLE
     k32.CloseHandle.argtypes = [w.HANDLE]
-    k32.GetFileInformationByHandle.argtypes = [w.HANDLE, p]
+    k32.GetFileInformationByHandleEx.argtypes = [w.HANDLE, ctypes.c_int, p, w.DWORD]
+    k32.GetFinalPathNameByHandleW.argtypes = [w.HANDLE, w.LPWSTR, w.DWORD, w.DWORD]
+    k32.GetFinalPathNameByHandleW.restype = w.DWORD
     k32.GetCurrentProcess.restype = w.HANDLE
     adv.GetKernelObjectSecurity.argtypes = [w.HANDLE, w.DWORD, p, w.DWORD, ctypes.POINTER(w.DWORD)]
     adv.SetKernelObjectSecurity.argtypes = [w.HANDLE, w.DWORD, p]

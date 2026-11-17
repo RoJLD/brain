@@ -219,8 +219,11 @@ link met there refusing the step. The unlock removes the account's deny entries 
 a tree entry's inherited copies too), never by icacls' `/remove:d`, which an entry's own deny refused while `/C`
 reported it done. A path still goes through its parents by name: a
 session that renames `~/.claude` or a project's `.claude` through a parent it owns while the elevated step runs could
-send one of its commands to a folder of its choosing; the commands only make the administrators its owner and add a
-deny for the account (never a reset, never an owner given away), so such a folder is never opened to the account.
+turn a folder on its way into a junction once checked. So each handle's final path (`GetFinalPathNameByHandleW`) must
+be the path as written, or nothing is written (with the privileges asked, a write sent elsewhere could reach a system
+file); and the commands only make the administrators an owner and add a deny for the account (never a reset, never an
+owner given away), so no folder is ever opened to the account. A reparse point that is no name surrogate (a
+compressed, deduplicated or cloud file) is the file itself and is held.
 Every path the plan names must already belong to the account (or to the administrators, a previous lock's): a
 registry entry or a worktree pointing at another account's folder refuses the plan. The account is a SID the plan reads in a normal
 terminal of the account (`brain floor lock` prints the elevated command line with `--account <SID>`: the elevated step
@@ -243,7 +246,8 @@ gives back what it added (the previous lock, restored, keeps its entries); a rel
 account (whose shared paths keep the administrators as owner) or with fewer paths gives the previous lock's back once
 the new one holds. `brain floor status` says whether each is held; `brain floor unlock --apply` lifts the account's deny entries
 first, trees first (each entry) and `~/.claude` last (a path gone, a link or one no longer owned by Administrators left
-alone and said), and stops with the lock whole when a command fails. The ownership stays the administrators': an
+alone and said); when one fails, the lock file and the managed hooks stay, the failures are named and an unlock
+again ends it. The ownership stays the administrators': an
 elevated step never gives a path's owner away (a folder swapped in for one of them would be handed to the account);
 the account keeps the rights it inherits and takes the ownership back from its own terminal if it wants (`takeown /f
 <path> /r`); with a lock file that

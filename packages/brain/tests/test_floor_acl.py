@@ -317,7 +317,7 @@ def test_unlock_gives_the_files_back_first_and_stops_whole_when_it_cannot(tmp_pa
 
     def failing(cmd, **kw):
         return type("R", (), {"returncode": 5, "stdout": "", "stderr": "denied"})()
-    with pytest.raises(floorlock.LockError, match="the lock is whole"):
+    with pytest.raises(floorlock.LockError, match="the managed hooks stay; these deny entries are still there"):
         floorlock.unlock(is_elevated=lambda: True, run=failing)
     assert floor.read_lock() is not None and floor.managed_file().exists()
     ran = []
@@ -685,3 +685,39 @@ def test_a_real_deny_reaches_no_existing_child_and_is_lifted(tmp_path):
     assert flooracl.deny_exact(str(tmp_path / "j"), other, 0x2) == f"{tmp_path / 'j'}: a link or a junction"
     assert flooracl.denied(tree, other) == 0   # its target untouched
 
+    via = tmp_path / "j" / "sub" / "h.sh"   # a folder on its way is a junction (renamed and replaced once checked)
+    why = flooracl.deny_exact(str(via), other, 0x2)
+    assert why.startswith(f"{via}: resolves to ") and flooracl.denied(tree / "sub" / "h.sh", other) == 0
+
+
+def _control(path):
+    import ctypes
+    from ctypes import wintypes as w
+    adv = ctypes.WinDLL("advapi32", use_last_error=True)
+    adv.GetFileSecurityW.argtypes = [w.LPCWSTR, w.DWORD, ctypes.c_void_p, w.DWORD, ctypes.POINTER(w.DWORD)]
+    adv.GetSecurityDescriptorControl.argtypes = [ctypes.c_void_p, ctypes.POINTER(w.WORD), ctypes.POINTER(w.DWORD)]
+    need = w.DWORD(0)
+    adv.GetFileSecurityW(str(path), 0x4, None, 0, ctypes.byref(need))
+    sd = ctypes.create_string_buffer(need.value)
+    control, rev = w.WORD(), w.DWORD()
+    assert adv.GetFileSecurityW(str(path), 0x4, sd, need, ctypes.byref(need))
+    assert adv.GetSecurityDescriptorControl(sd, ctypes.byref(control), ctypes.byref(rev))
+    return control.value & 0x1400   # SE_DACL_AUTO_INHERITED, SE_DACL_PROTECTED
+
+
+@pytest.mark.skipif(os.name != "nt", reason="Windows' ACLs")
+def test_a_deny_and_its_removal_keep_the_dacl_s_control_bits(tmp_path):
+    """Review (CI round 4 fix): a raw write drops SE_DACL_AUTO_INHERITED unless it asks it back
+    (SE_DACL_AUTO_INHERIT_REQ); a protected DACL stays protected. A SID no token holds: no elevation needed."""
+    import subprocess
+    other = "S-1-5-21-1111111111-2222222222-3333333333-1001"
+    plain, cut = tmp_path / "plain", tmp_path / "cut"
+    plain.mkdir()
+    cut.mkdir()
+    for p, how in ((plain, "/reset"), (cut, "/inheritance:d")):   # inherited, auto-inherited; protected
+        assert subprocess.run(["icacls", str(p), how], capture_output=True, timeout=60).returncode == 0
+    for p in (plain, cut):
+        before = _control(p)
+        assert flooracl.deny_exact(str(p), other, 0x2) == "" and _control(p) == before, p
+        assert flooracl.undeny(str(p), other) == "" and _control(p) == before, p
+    assert _control(plain) & 0x400 and _control(cut) & 0x1000

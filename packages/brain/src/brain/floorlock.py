@@ -621,7 +621,7 @@ def lock_data(p: dict, interp: Path, gdir: Path, tools: dict | None = None) -> d
 
 def unlock(is_elevated=None, run=subprocess.run, cfg=None, account: str | None = None) -> list[str]:
     """Give the account its Claude Code files back when the lock denied them (each path still the lock's: there, no
-    link, owned by Administrators; LockError if a command fails: the lock stays, whole), then remove the lock file
+    link, owned by Administrators; LockError if a command fails: the lock file stays), then remove the lock file
     and the managed hooks together (both restored if either fails), then the guard's copies but the one this
     interpreter runs from (elevated); the lines to print. A lock file that cannot be read says nothing of its ACL
     step: ``account`` (--account) then rebuilds its paths from ``cfg`` (config.json), else the unlock stops."""
@@ -667,13 +667,15 @@ def _unlock_acl(lock: dict | None, cfg, account: str | None) -> dict | None:
 
 
 def _give_back(a: dict | None, run) -> list[str]:
-    """Run the step's undo (LockError when a command fails: the lock stays, whole); what was left alone."""
+    """Run the step's undo (LockError when a command fails: the lock file and the managed hooks stay, the other
+    entries lifted, an unlock again ends it); what was left alone."""
     if not a:
         return []
     cmds, left = flooracl.undo(a)
     failed = flooracl.run_all(cmds, run)
     if failed:
-        raise LockError("unlock stopped, the lock is whole: the ACL step was not undone: " + "; ".join(failed[:6]))
+        raise LockError("unlock stopped, the lock file and the managed hooks stay; these deny entries are still there "
+                        "(the others are lifted; run the unlock again): " + "; ".join(failed[:6]))
     return left
 
 
