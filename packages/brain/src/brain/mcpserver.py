@@ -48,7 +48,7 @@ from pathlib import Path
 from typing import Callable
 from urllib.parse import quote, unquote
 
-from . import __version__, ipcauth, mcpguards, neutral, secretscan
+from . import __version__, ipcauth, mcpguards, neutral, secretscan, tokenguard
 
 PROTOCOLS = ("2025-06-18", "2025-03-26", "2024-11-05")   # the newest first: offered when the client asks another
 DEFAULT_PORT = 8791
@@ -335,8 +335,10 @@ class Server:
         if handler is None:
             return _error(mid, METHOD_NOT_FOUND, f"method not found: {method}")
         try:
-            # the texts are scanned where they are made (clean); the whole result again, names and descriptions too
-            return {"jsonrpc": "2.0", "id": mid, "result": secretscan.clean(handler(self, params))[0]}
+            # the texts are scanned where they are made (clean); the whole result again, names and descriptions too,
+            # and the machine's token redacted wherever it appears (brain.tokenguard: a random string has no shape)
+            result = tokenguard.redact(handler(self, params))
+            return {"jsonrpc": "2.0", "id": mid, "result": secretscan.clean(result)[0]}
         except RpcError as exc:
             return _error(mid, exc.code, str(exc))
         except Exception as exc:   # never a traceback to the client: its type only, the rest on stderr

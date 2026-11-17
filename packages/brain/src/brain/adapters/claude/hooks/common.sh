@@ -77,12 +77,12 @@ brain_config() {
   done
 }
 
-# floor_setting CONFIG KEY: prints 1 when config.json's top-level "floor" object holds "KEY": true (brain/floor.py's
-# settings: a "floor" nested in another object is not the setting, the last of two keys of one name wins). awk walks
-# the JSON's strings and depth.
+# floor_setting CONFIG KEY [SECTION]: prints 1 when config.json's top-level "floor" object (or SECTION's: guards, for
+# guards.refuse_token_read) holds "KEY": true (brain/floor.py's settings: a "floor" nested in another object is not
+# the setting, the last of two keys of one name wins). awk walks the JSON's strings and depth.
 floor_setting() {
   [ -f "$1" ] || return 0
-  LC_ALL=C awk -v want="$2" 'BEGIN { RS = "\001" } {
+  LC_ALL=C awk -v want="$2" -v sec="${3:-floor}" 'BEGIN { RS = "\001" } {
     s = $0; n = length(s); d = 0; str = 0; esc = 0; tok = ""; key = ""; fd = 0; on = 0
     for (i = 1; i <= n; i++) {
       c = substr(s, i, 1)
@@ -90,9 +90,9 @@ floor_setting() {
       if (c == "\"") { str = 1; tok = ""; continue }
       if (c == ":") {
         key = tok
-        if (d == 1 && key == "floor") on = 0
+        if (d == 1 && key == sec) on = 0
         if (fd && d == 2 && key == want) { v = substr(s, i + 1); sub(/^[ \t\r\n]+/, "", v); on = (v ~ /^true([^A-Za-z0-9_]|$)/) }
-      } else if (c == "{" || c == "[") { fd = fd || (d == 1 && c == "{" && key == "floor"); d++; key = "" }
+      } else if (c == "{" || c == "[") { fd = fd || (d == 1 && c == "{" && key == sec); d++; key = "" }
       else if (c == "}" || c == "]") { d--; if (d <= 1) fd = 0; key = "" }
       else if (c == ",") key = ""
     }

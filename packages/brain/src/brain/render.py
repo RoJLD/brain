@@ -7,7 +7,8 @@ Antigravity, Grok / Hermes decided 2026-10-30; formats checked in each tool's do
   them), ``skills/<procedure>/``, ``.mcp.json`` and the engine's Claude hooks (package data, copied when they live
   elsewhere). It reproduces the hand-written step 1 byte for byte, so its files carry no marker: ``brain check``
   re-renders and refuses a hand edit. An opt-in hook (:data:`OPTIONAL_HOOKS`: the read hint, config.json
-  ``hints.read``) is registered in the rendered hooks.json only when the brain's config.json turns it on.
+  ``hints.read``; the token guard's Read and Grep hook, ``guards.refuse_token_read``) is registered in the rendered
+  hooks.json only when the brain's config.json turns it on.
 - **agents**: the common base, in the project's repo: ``AGENTS.md``, the project's chain flattened (the global rules,
   each ancestor's, then the project's own CLAUDE.md, nearest last: AGENTS.md readers take the nearest file), the
   memory and decisions pointers; ``.agents/skills/<procedure>/`` for the packs that apply to the project. Claude Code
@@ -118,7 +119,8 @@ def claude_hooks() -> Path:
 
 # The engine's opt-in hooks: {script: the config.json key path that turns it on}. Off (the default), hooks.json is
 # rendered without the groups that run the script, so no session pays its cost; the script itself is still copied.
-OPTIONAL_HOOKS = {"readhint.sh": ("hints", "read")}
+OPTIONAL_HOOKS = {"readhint.sh": ("hints", "read"),
+                  "tokenguard.sh": ("guards", "refuse_token_read")}   # brain.tokenguard's Read and Grep hook
 
 
 def _own_config(src: neutral.Source) -> dict:

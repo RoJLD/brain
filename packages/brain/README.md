@@ -1855,6 +1855,14 @@ and a test checks that each one is refused to an agent's session. config.json `g
 refusals 0.5.1 brings (off by default). `guards.gestures_wide: true` (off by default) matches them through words the guard
 cannot resolve (`brain schedule install $FLAG`) and Python's inline code that drives brain's modules.
 
+**The machine's token** (`brain.tokenguard`, [docs/guards.md](docs/guards.md#the-machines-token)): under config.json
+`guards.refuse_token_read: true` (off by default), the owner guard (check `token`) refuses a session's `Read`, `Grep`,
+tool edit or shell call that reaches `<BRAIN_HOME>/ipc/token` (or `$BRAIN_IPC_TOKEN_FILE`), as it refuses `brain ipc
+otel-headers`: `cat`, `Get-Content`, a copy of the file, its folder or `<BRAIN_HOME>`, a redirection, a glob, a pipe,
+inline code or a heredoc that names it, a link to it; `ls`, `stat`, `Test-Path` and `brain ipc token` pass. Read and
+Grep go through the opt-in hook `tokenguard.sh`, registered only when the key is on. The MCP server runs the check
+whatever the key, and redacts the token from every answer.
+
 **The read hint** (`readhint.sh`, `brain.readhint`, PreToolUse on Read, Grep, Bash and PowerShell) never refuses: when
 a call reads a registered brain's graph YAML (a store's `nodes/` or `edges/`, or the store), its decision log, its
 journal or a generated view (`*_graph.md`, `decision_queue.md`, `FEATURES.md`) by hand, it adds one line of hook

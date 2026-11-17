@@ -79,7 +79,10 @@ configuration file, which an agent may be able to edit. The rest of the server's
 configuration: whoever writes that file also chooses `BRAIN_HOME`, `BRAIN_PROJECTS` (the production checkouts) and
 `BRAIN_CAPTURE`, as for any `brain` command; keep it the owner's file. A refusal reaches the client as a tool error, `refused by the <guard> guard: <reason>`,
 and goes to the guards ledger (`<BRAIN_HOME>/ledger/guards-<month>.jsonl`, when it exists) with the tool as
-`mcp:<name>` and the client's name as its session. Then every answer passes the secret scan (above).
+`mcp:<name>` and the client's name as its session. Then every answer passes the secret scan (above), and the
+machine's token, which has no key's shape, is redacted wherever it appears (`brain.tokenguard.redact`). The owner
+guard's check `token` (a call that reaches the token's file, docs/guards.md « The machine's token ») is on here
+whatever config.json `guards.refuse_token_read` says.
 
 | Claude Code hook | For an MCP client |
 |---|---|
@@ -140,7 +143,9 @@ One token per machine for every local service the Brain starts (`brain.ipcauth`)
   « The Brain's other local services »).
 
 The token is printed only by `brain ipc otel-headers`, to the helper that runs it; it is never in a log line (the
-server logs the request line and the status only) and never in the image.
+server logs the request line and the status only) and never in the image. A session reads neither: the owner guard
+refuses `brain ipc otel-headers` to it, and, under config.json `guards.refuse_token_read: true`, any call that
+reaches the file (docs/guards.md, « The machine's token »).
 
 ## The Brain's other local services (`wi-brain-local-ipc-auth`)
 

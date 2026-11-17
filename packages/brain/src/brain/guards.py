@@ -32,8 +32,10 @@ on Windows, else bash (TERMINAL_TOOL), in its cwd, else the session's. Nine guar
   config.json guards.owner_strict also vault open, drill, device init and forget-previous, reseal --apply, update,
   uninstall --apply, queue apply) are brain.gestures' one list, judged first: one in a never-grantable category is an action the
   owner can queue, any other is refused naming the owner's terminal. A category the file does
-  not declare is not guarded; money and legal have no command, only their deny rules. Also refused: setting
-  BRAIN_GUARD_ALLOW for later sessions (setx, the registry, Claude Code's settings, a shell profile; check override).
+  not declare is not guarded; money and legal have no command, only their deny rules. Under config.json
+  guards.refuse_token_read (off by default), its check ``token`` (brain.tokenguard) refuses a Read, Grep, tool edit
+  or shell call that reaches the machine's IPC token file (Read and Grep: the opt-in hook tokenguard.sh). Also
+  refused: setting BRAIN_GUARD_ALLOW for later sessions (setx, the registry, Claude Code's settings, a shell profile; check override).
   A session's Remote Control and permission mode (security-settings, never lifted) are refused but in Remote Control's
   three exceptions (wi-brain-guard-rc-archive, remote_control): off on a finished session the caller started; at a
   handover between Brain coordinators, on for the coordinator the caller started to succeed it and off on itself,
@@ -3882,6 +3884,10 @@ def refusals(payload: dict, strict: bool = False):
     if TERMINAL_TOOL.match(tool):
         tool = terminal_shell()
         cwd = _path(inp["cwd"], cwd) if isinstance(inp.get("cwd"), str) and inp["cwd"] else cwd
+    from . import tokenguard   # the machine's IPC token (wi-brain-ipc-token-read-guard); it imports this module
+    if tool in tokenguard.READ_TOOLS:   # Read and Grep: the token check alone, before the floor (which never sees them)
+        yield from _token(lambda: tokenguard.check(tool, inp, cwd, strict=strict), strict)
+        return
     try:
         cfg = config.load()   # read once per call: the floor's settings and the file that sets them
         lock = floor.read_lock()   # the machine's lock (brain floor lock), out of a session's reach once applied
@@ -3897,6 +3903,7 @@ def refusals(payload: dict, strict: bool = False):
                                 f"{config.owner_of()} runs brain floor lock (its plan prints the elevated command)",
                None)
         return
+    mcp = strict   # the MCP server's own strictness: the token check is on there whatever the key
     strict = strict or fl["refuse"] or fl["only"]   # the floor on: a check that cannot judge the call refuses it
     only = fl["only"]     # floor only: the floor's refusals, the secrets check and the override protection
     if strict and (fl["refuse"] or fl["only"]):
@@ -3913,6 +3920,7 @@ def refusals(payload: dict, strict: bool = False):
         reason = floorguard.check_files(tool, inp, [], cwd, fl, cfg.file) if floorguard else None
         if reason:
             yield "floor", "config", reason, None
+        yield from _token(lambda: tokenguard.check(tool, inp, cwd, strict=mcp), strict)   # whatever the floor
         return
     if SCHEDULED_TOOL.match(tool) or session_setting(tool, inp):
         hit = check_owner(tool, inp, [], cwd)
@@ -3928,11 +3936,14 @@ def refusals(payload: dict, strict: bool = False):
     floor_checks = (("floor", "config", lambda: floorguard.check_files(tool, inp, cmds, cwd, fl, cfg.file, command)),
                     ("floor", None, lambda: floorguard.check_floor(cmds, fl, command, shell))) if floorguard else ()
     checks = ((("owner", "override", lambda: check_override(cmds, powershell, command)),
+               ("owner", tokenguard.CHECK, lambda: tokenguard.check(tool, inp, cwd, cmds, command, powershell, mcp)),
                ("public", "config", lambda: check_config(cmds)), ("secrets", "secrets", lambda: check_secrets(cmds)))
               if only else
               (("production", "git", lambda: check_production(tool, inp, cmds, cwd)),
                ("production", "shell-write", lambda: check_shell_writes(cmds, powershell)),
                ("owner", None, lambda: check_owner(tool, inp, cmds, cwd, powershell, command)),
+               ("owner", tokenguard.CHECK, lambda: tokenguard.check(tool, inp, cwd, cmds, command, powershell,
+                                                                     mcp)),
                ("power", None, lambda: check_power(cmds, powershell, command)),
                ("third-party", None, lambda: check_third_party(cmds, cwd, powershell, command)),
                ("attribution", "attribution", lambda: check_attribution(command, cmds)),
@@ -3955,6 +3966,21 @@ def refusals(payload: dict, strict: bool = False):
             yield guard, check, out, None
         elif out:
             yield guard, *out
+
+
+def _token(run, strict: bool):
+    """The owner guard's check token (brain.tokenguard) on a tool call: its refusal, else nothing; an error lets the
+    call through but under ``strict``, as the shell checks."""
+    from . import tokenguard
+    try:
+        reason = run()
+    except Exception as exc:
+        _log("owner", exc)
+        if strict:
+            yield "owner", tokenguard.CHECK, f"the owner guard could not judge the call ({type(exc).__name__})", None
+        return
+    if reason:
+        yield "owner", tokenguard.CHECK, reason, None
 
 
 def check_override(cmds, powershell: bool = False, command: str = ""):
