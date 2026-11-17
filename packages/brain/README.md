@@ -2037,6 +2037,19 @@ the cost of a session-hour, the agents' included, as information: the governor's
 with `usage.guard.session_hour_measured` true (default false), and then when it is above `usage.guard.session_hour_usd`;
 `brain usage guard` shows the measured value and whether it is applied.
 
+**Where the tokens go** (`brain usage --by context` and `--by output`, `brain.spend`, zero token): the scanner keeps,
+per session, each message's context and cost and each output put into the context, the main thread's and its agents'
+apart. `--by context` gives the cost by token kind (cache read, cache write, output, input) and the context reloads,
+the base (the first message's context) of the sessions and of their agents and what re-reading it costs, and the
+messages and their cost by the context they were sent with (100k buckets) per role: a coordinator (a session that
+started two sub-sessions or more), a sub-session, any other session, the agents apart; then the hand-over simulation:
+each session replayed with a hand-over each time its context passes 300k, 400k or 500k above the last restart, a fresh
+session restarting at 120k; what it saves in cache reads, less `--handover-usd` per hand-over (default 3: the note,
+the restart, the cache written again), and the ceiling that saves the most for each role. `--by output` ranks each
+kind of output (a tool's result by tool, a shell command's by program and subcommand, prompts, injected text,
+attachments such as the skill listing or the deferred tools, a hook's context by event) by its downstream cost: its
+tokens (estimated at 3.6 characters a token) written once, then re-read by every later message until a compaction.
+
 **Where a session ran** (`brain.provenance`, wi-brain-session-provenance, wi-brain-sr-provenance-fields): the
 session record also holds the model's `provider` (anthropic, bedrock, vertex, foundry...), the `harness` that ran it
 (claude-code, cursor...; it takes over `tool`, still written for older engines and read when `harness` is absent) and

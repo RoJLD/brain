@@ -57,9 +57,18 @@ from pathlib import Path
 
 from . import faults, paths, secretscan, stateio, toolids, transcript
 
-SCAN_V = 4  # a row scanned by an older scanner is scanned again while its transcript exists (2: the hours; 3: the
-#            subagents and workflow runs apart, ``agents``; 4: the usage counters by tool id, ``tooling``, ``refused``)
+SCAN_V = 5  # a row scanned by an older scanner is scanned again while its transcript exists (2: the hours; 3: the
+#            subagents and workflow runs apart, ``agents``; 4: the usage counters by tool id, ``tooling``, ``refused``;
+#            5: the context buckets, the hand-over simulation, the outputs' downstream cost and the base, ``spend``)
 START_MESSAGES = 10
+CTX_STEP = 100_000  # the context buckets of ``spend`` (brain usage --by context)
+SIM_CEILINGS = (300_000, 400_000, 500_000)  # the hand-over simulation's ceilings
+SIM_RESTART = 120_000  # a fresh session's context after a hand-over: the base, the hand-over note, a re-read
+CHARS_PER_TOKEN = 3.6  # an output's tokens, estimated from its characters
+IMAGE_CHARS = 6_000  # an image in a tool result, counted as this many characters
+OUTPUT_KEEP = 40  # output classes kept per row, the main thread's and the agents' each (the costliest downstream)
+BASES_KEEP = 200  # agents' first-message contexts kept per row
+SPEND_SKIP = {"prompt_snapshot"}  # attachments that are not sent to the model
 REFUSED_KEEP = 200  # a session's refused tool calls kept by tool use id, for the guards ledger's join
 HOOK_FAILS = ("hook_cancelled", "hook_blocking_error", "hook_non_blocking_error", "hook_error_during_execution")
 RELOAD_MIN = 20_000  # a context below this is not a reload
@@ -137,20 +146,42 @@ def _price_table(model: str, prices: dict | None = None) -> tuple | None:
     return None
 
 
-def message_cost(part: dict, model: str, speed: str = "", prices: dict | None = None) -> float | None:
-    """The API price of one message's tokens (``transcript._usage_tokens``), None for an unknown model."""
+def _table_for(part: dict, model: str, prices: dict | None = None) -> tuple | None:
+    """The price list that applies to one message: its model's, the long-prompt prices above their threshold."""
     table = _price_table(model, prices)
+    long = LONG_PROMPT.get(model)
+    if table and long and part.get("input", 0) + part.get("cache_read", 0) + part.get("cache_write", 0) > long[0]:
+        table = long[1]
+    return table
+
+
+def cost_parts(part: dict, model: str, speed: str = "", prices: dict | None = None) -> dict | None:
+    """One message's price split into input, output, cache read and cache write (USD), None for an unknown model."""
+    table = _table_for(part, model, prices)
     if table is None:
         return None
-    long = LONG_PROMPT.get(model)
-    if long and part.get("input", 0) + part.get("cache_read", 0) + part.get("cache_write", 0) > long[0]:
-        table = long[1]
     p_in, p_out, p_read, p_w5, p_w1 = table
     w1, w5 = part.get("cache_write_1h", 0), part.get("cache_write_5m", 0)
     rest = max(0, part.get("cache_write", 0) - w1 - w5)  # a write with no TTL split: priced at 5 min
-    usd = (part.get("input", 0) * p_in + part.get("output", 0) * p_out + part.get("cache_read", 0) * p_read
-           + (w5 + rest) * p_w5 + w1 * p_w1) / 1e6
-    return usd * (FAST if speed == "fast" else 1.0)
+    m = (FAST if speed == "fast" else 1.0) / 1e6
+    return {"input": part.get("input", 0) * p_in * m, "output": part.get("output", 0) * p_out * m,
+            "read": part.get("cache_read", 0) * p_read * m, "write": ((w5 + rest) * p_w5 + w1 * p_w1) * m}
+
+
+def message_cost(part: dict, model: str, speed: str = "", prices: dict | None = None) -> float | None:
+    """The API price of one message's tokens (``transcript._usage_tokens``), None for an unknown model."""
+    parts = cost_parts(part, model, speed, prices)
+    return None if parts is None else parts["input"] + parts["output"] + parts["read"] + parts["write"]
+
+
+def token_rates(part: dict, model: str, speed: str = "", prices: dict | None = None) -> tuple[float, float]:
+    """(read, write) USD per token for one message: what a token of its context costs it, and what writing a new
+    token costs (the TTL it wrote with: 1 h when it wrote any 1 h token, else 5 min); (0, 0) for an unknown model."""
+    table = _table_for(part, model, prices)
+    if table is None:
+        return 0.0, 0.0
+    m = (FAST if speed == "fast" else 1.0) / 1e6
+    return table[2] * m, (table[4] if part.get("cache_write_1h", 0) else table[3]) * m
 
 
 def tokens_cost(by_model: dict, prices: dict | None = None) -> float:
@@ -298,6 +329,112 @@ def _add_to(d: dict, key: str, **vals) -> None:
 
 # --- the scan ---
 
+class Spend:
+    """Where a thread's tokens go (wi-brain-cache-report; spec token-spend 1.3, 1.5, 1.6): each message's context, cost
+    and token rates, and each output put into the context (a tool result, a prompt, an attachment, a hook's context),
+    so that ``brain usage --by context`` and ``--by output`` read them back from the ledger:
+
+      buckets   the messages and their cost by the context they were sent with (``CTX_STEP`` buckets);
+      split     the cost by token kind: input, output, cache read, cache write;
+      sim       the hand-over simulation: past each ceiling of ``SIM_CEILINGS`` above the last restart, a fresh
+                session restarts at ``SIM_RESTART`` tokens; the cache reads it saves (gross, USD) and the hand-overs
+                it takes (the report charges each hand-over its price);
+      outputs   by class (a tool's name, a shell command's program and subcommand, ``prompt``, ``injected``,
+                ``attachment:<type>``, ``hook:<event>``): count, estimated tokens (characters / ``CHARS_PER_TOKEN``)
+                and downstream cost: written once by the next message, then read by every later message of the same
+                segment (a compaction ends a segment);
+      base      the first message's context.
+    """
+
+    def __init__(self) -> None:
+        self.msgs: list[tuple[int, float, float, float, int]] = []  # (context, cost, read rate, write rate, segment)
+        self.outs: list[tuple[str, int, int, int]] = []  # (class, characters, index of the next message, segment)
+        self.segment = 0
+        self.split = {"input": 0.0, "output": 0.0, "read": 0.0, "write": 0.0}
+
+    def message(self, part: dict, usd: float, parts: dict | None, rates: tuple[float, float]) -> None:
+        ctx = part.get("input", 0) + part.get("cache_read", 0) + part.get("cache_write", 0)
+        self.msgs.append((ctx, usd, rates[0], rates[1], self.segment))
+        for k, v in (parts or {}).items():
+            self.split[k] += v
+
+    def output(self, cls: str, chars: int, pending: bool = False) -> None:
+        """An output put into the context; ``pending``: an assistant message seen but not yet counted precedes it."""
+        if cls and chars > 0:
+            self.outs.append((cls, chars, len(self.msgs) + (1 if pending else 0), self.segment))
+
+    def compaction(self) -> None:
+        self.segment += 1
+
+    def buckets(self) -> dict[str, list]:
+        """{bucket's lower bound in k: [messages, USD]}."""
+        out: dict[str, list] = {}
+        for ctx, usd, *_ in self.msgs:
+            b = out.setdefault(str(ctx // CTX_STEP * (CTX_STEP // 1000)), [0, 0.0])
+            b[0] += 1
+            b[1] += usd
+        return {k: [n, round(c, 4)] for k, (n, c) in out.items()}
+
+    def base(self) -> int:
+        return self.msgs[0][0] if self.msgs else 0
+
+    def simulate(self) -> dict[str, list]:
+        """{ceiling in k: [cache reads saved (USD), hand-overs]}: the thread replayed with a hand-over each time its
+        context passes the ceiling above the last restart's offset; a context that drops below the offset (a
+        compaction) ends the offset."""
+        out = {}
+        for th in SIM_CEILINGS:
+            off, saved, n = 0, 0.0, 0
+            for ctx, _usd, read, _w, _s in self.msgs:
+                if ctx - off > th:
+                    off, n = ctx - SIM_RESTART, n + 1
+                if ctx < off:
+                    off = 0
+                saved += min(off, ctx) * read
+            out[str(th // 1000)] = [round(saved, 4), n]
+        return out
+
+    def outputs(self) -> dict[str, list]:
+        """{class: [count, estimated tokens, downstream USD]}, the ``OUTPUT_KEEP`` costliest."""
+        reads = [0.0] * (len(self.msgs) + 1)  # reads[i]: the read rates of messages i.. within message i's segment
+        for i in range(len(self.msgs) - 1, -1, -1):
+            same = i + 1 < len(self.msgs) and self.msgs[i + 1][4] == self.msgs[i][4]
+            reads[i] = self.msgs[i][2] + (reads[i + 1] if same else 0.0)
+        agg: dict[str, list] = {}
+        for cls, chars, idx, seg in self.outs:
+            tok = chars / CHARS_PER_TOKEN
+            sent = idx < len(self.msgs) and self.msgs[idx][4] == seg
+            a = agg.setdefault(cls, [0, 0.0, 0.0])
+            a[0] += 1
+            a[1] += tok
+            a[2] += tok * (reads[idx] + self.msgs[idx][3]) if sent else 0.0
+        top = sorted(agg.items(), key=lambda kv: (-kv[1][2], kv[0]))[:OUTPUT_KEEP]
+        return {k: [n, int(round(t)), round(d, 4)] for k, (n, t, d) in top}
+
+
+def merge_outputs(many: list[dict]) -> dict[str, list]:
+    """Several threads' ``Spend.outputs`` summed, the ``OUTPUT_KEEP`` costliest."""
+    agg: dict[str, list] = {}
+    for outs in many:
+        for k, (n, t, d) in outs.items():
+            a = agg.setdefault(k, [0, 0, 0.0])
+            a[0] += n
+            a[1] += t
+            a[2] += d
+    top = sorted(agg.items(), key=lambda kv: (-kv[1][2], kv[0]))[:OUTPUT_KEEP]
+    return {k: [n, t, round(d, 4)] for k, (n, t, d) in top}
+
+
+def _sum_lists(many: list[dict]) -> dict[str, list]:
+    out: dict[str, list] = {}
+    for d in many:
+        for k, vals in d.items():
+            row = out.setdefault(k, [0] * len(vals))
+            for i, v in enumerate(vals):
+                row[i] += v
+    return {k: [round(v, 4) if isinstance(v, float) else v for v in vals] for k, vals in out.items()}
+
+
 class Scan:
     """One transcript's records into a ledger row; a subagent's transcript is scanned apart and merged."""
 
@@ -339,6 +476,7 @@ class Scan:
         self.refused: dict[str, str] = {}   # {tool use id: the guard that refused it}
         self.tool_skill = ""
         self.cwd = ""
+        self.spend = Spend()   # --by context and --by output (wi-brain-cache-report)
 
     # --- records ---
     def feed_file(self, path: str | Path) -> None:
@@ -377,11 +515,13 @@ class Scan:
             if mid and model != "<synthetic>" and mid not in self.seen:
                 self.seen.add(mid)
                 part = transcript._usage_tokens(msg.get("usage") or {})
-                usd = message_cost(part, model, (msg.get("usage") or {}).get("speed") or "", self.prices)
+                speed = (msg.get("usage") or {}).get("speed") or ""
+                parts = cost_parts(part, model, speed, self.prices)
+                usd = None if parts is None else sum(parts.values())
                 if usd is None:
                     self.unpriced += 1
                     usd = 0.0
-                self.msg.update(cost=usd, part=part)
+                self.msg.update(cost=usd, part=part, parts=parts, rates=token_rates(part, model, speed, self.prices))
         self.msg["uses"] += [b for b in msg.get("content") or [] if isinstance(b, dict) and b.get("type") == "tool_use"]
         self._cited(msg.get("content"))
 
@@ -409,6 +549,7 @@ class Scan:
             total = part["input"] + part["output"] + part["cache_read"] + part["cache_write"]
             _add_to(self.days, _day(ts), cost=usd, messages=1, output=part["output"], tokens=total)
             _add_to(self.hours, _hour(ts), cost=usd, messages=1, tokens=total)
+            self.spend.message(part, usd, m.get("parts"), m.get("rates") or (0.0, 0.0))
             ctx = part["input"] + part["cache_read"] + part["cache_write"]
             reload_usd = 0.0
             if n and ctx > RELOAD_MIN and part["cache_write"] > 0.5 * ctx:
@@ -541,6 +682,10 @@ class Scan:
             return
         a = rec.get("attachment")
         kind = str(a.get("type") or "") if isinstance(a, dict) else ""
+        if kind and kind not in SPEND_SKIP:
+            event = a.get("hookEvent") or str(a.get("hookName") or "?").split(":")[0]
+            self.spend.output(f"hook:{event}" if kind.startswith("hook_") else f"attachment:{kind}",
+                              len(json.dumps(a, ensure_ascii=False)), pending=self.msg is not None)
         if kind.startswith("hook_"):
             self._hook_attachment(a, kind, ts)
         elif kind in ("instructions", "nested_memory"):
@@ -551,6 +696,7 @@ class Scan:
     def _system(self, rec: dict, ts: str) -> None:
         if rec.get("subtype") == "compact_boundary":
             self._flush()
+            self.spend.compaction()
         elif rec.get("subtype") == "stop_hook_summary":
             self._hook("Stop", str(rec.get("toolUseID") or ts), runs=int(rec.get("hookCount") or 0),
                        fails=1 if rec.get("hookErrors") else 0)
@@ -585,11 +731,10 @@ class Scan:
             for b in results:
                 self._result(b, ts)
             return
-        if rec.get("isMeta"):
-            return
         text = content if isinstance(content, str) else "\n".join(b.get("text", "") for b in blocks
                                                                   if b.get("type") == "text")
-        if not text.strip():
+        self.spend.output("injected" if rec.get("isMeta") else "prompt", len(text))
+        if rec.get("isMeta") or not text.strip():
             return
         self.sig["prompts"] += 1
         if self.last_ts:
@@ -610,6 +755,8 @@ class Scan:
         text = c if isinstance(c, str) else "\n".join(x.get("text", "") for x in c if isinstance(x, dict)) \
             if isinstance(c, list) else ""
         _add_to(self.tools, name, result_chars=len(text))
+        images = sum(1 for x in c if isinstance(x, dict) and x.get("type") == "image") if isinstance(c, list) else 0
+        self.spend.output(keys[0] if name in SHELL_TOOLS and keys else name, len(text) + images * IMAGE_CHARS)
         self._result_tooling(counted, text, b)
         if name in _WAIT_TOOLS and at:
             self.sig["ask_wait_s"] += int(max(0.0, _secs(at, ts)))
@@ -653,6 +800,18 @@ class Scan:
         self.refused.update(sub.refused)
         self.edited |= sub.edited
         self.max_streak = max(self.max_streak, sub.max_streak)
+
+    def spend_row(self, subs: list[tuple[dict, "Scan"]]) -> dict:
+        """The row's ``spend`` (:class:`Spend`): the main thread's and its agents' apart."""
+        sp, agents = self.spend, [s.spend for _, s in subs]
+        return {"step": CTX_STEP // 1000, "restart": SIM_RESTART, "messages": len(sp.msgs), "base": sp.base(),
+                "buckets": sp.buckets(), "split": {k: round(v, 4) for k, v in sp.split.items()},
+                "sim": sp.simulate(), "outputs": sp.outputs(),
+                "agents": {"messages": sum(len(a.msgs) for a in agents),
+                           "bases": [a.base() for a in agents if a.msgs][:BASES_KEEP],
+                           "buckets": _sum_lists([a.buckets() for a in agents]),
+                           "split": {k: round(sum(a.split[k] for a in agents), 4) for k in sp.split},
+                           "outputs": merge_outputs([a.outputs() for a in agents])}}
 
     def row(self, path: Path, sig: list, subs: list[tuple[dict, "Scan"]]) -> dict:
         st = self.st
@@ -700,6 +859,7 @@ class Scan:
             "context": {"peak": st.ctx_peak, "compactions": st.compactions},
             "start_cost": {k: round(v, 4) if isinstance(v, float) else v for k, v in self.start.items()},
             "signals": signals,
+            "spend": self.spend_row(subs),
         }
         cleaned, _ = secretscan.clean(row)
         return cleaned
