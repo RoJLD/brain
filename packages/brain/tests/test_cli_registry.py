@@ -8,7 +8,7 @@ from pathlib import Path
 import pytest
 
 import help_dump
-from brain import audit, cli, commands, inventory
+from brain import audit, audit_measure, cli, commands, inventory
 from brain.commands import _registry
 from brain.commands import audit as audit_cmd
 from brain.commands import (bundle, capture, catalogue, check, code_map, collisions, decision, docgraph, down,
@@ -84,7 +84,7 @@ def test_the_commands_that_run_before_a_root_is_resolved_keep_their_phase():
 
 
 def test_brain_cli_adds_no_parser_itself():
-    assert audit._parsers_added(Path(cli.__file__).read_text(encoding="utf-8")) == []
+    assert audit_measure._parsers_added(Path(cli.__file__).read_text(encoding="utf-8")) == []
 
 
 def _fake(**handlers):
