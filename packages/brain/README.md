@@ -904,15 +904,25 @@ The session that asks the owner records the answers, in one PR per batch (wi-bra
    one commit, one PR (`gh`), then merged; when the merge is refused because main moved, it merges main, takes main's
    side of the generated files, refreshes again, pushes and retries (`--retries`, default 3; `--no-merge` stops at
    the PR). A record that conflicts stops it. A decision answered meanwhile is left (`--again` replaces it). A
-   capture names its DDR by its full id: one the default branch does not hold yet (asked on a branch not merged)
-   is left captured and said, the others recorded; a DDR whose id merely contains it is never answered instead.
+   capture names its DDR by its full id: one neither the default branch nor the asking checkout holds yet (asked on
+   a branch not merged, recorded from elsewhere) is left captured and said, the others recorded; a DDR whose id
+   merely contains it is never answered instead.
    A capture with no answer (an older engine's placeholder rows) or an `unmapped` label is refused, listed and
    retired (`ledger/answer-recorded-<month>.jsonl`, `retired`); so is a stale one, older than the answer the DDR
    already holds (answered by hand or by `--batch` meanwhile), `--again` included. An older capture of a DDR whose
    later capture was recorded never comes back. An answer captured before a low-stakes deadline replaces the
    default another branch's refresh took meanwhile. The command prints the retired captures (« retired, never
-   recorded », each with its reason; `--dry-run` marks the refused ones) apart from the decisions left because they
-   are no longer pending (« not pending, left », which `--again` replaces).
+   recorded », each with its reason; `--dry-run` marks the refused ones and says where each answer would go) apart
+   from the decisions left because they are no longer pending (« not pending, left », which `--again` replaces).
+   When the command runs in the asking session's own checkout (a checkout of the project's repo, a worktree or the
+   main one, on a branch other than the default one), each answer goes where its DDR lives, in one run: one whose
+   DDR only that checkout holds (asked on its branch, not on the default branch yet) is written there, refreshed,
+   committed on that branch and pushed (to its upstream when it tracks one other than the default branch), with no
+   PR of its own (that branch's PR carries it); one whose DDR the default branch holds takes the flow above, judged
+   on the default branch's copy (answered meanwhile, stale, a default taken). A checkout with uncommitted changes is
+   refused, so the commit holds the answers alone; a failure before that commit puts the checkout back exactly as it
+   was (nothing recorded there, the captures left for a rerun); a failed push keeps the commit, prints git's message
+   and exits non-zero.
 
 `--batch` is strict: a value is an option's exact label (any case, `(Recommandé)` ignored) or its number; a shortened
 label is refused with the label it shortens, and the owner's own text is marked as such, `{"other": "..."}`. Its file
