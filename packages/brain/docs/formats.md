@@ -128,7 +128,8 @@ nothing else keeps. Such a file is read and written through `brain.stateio` (`lo
   update »; an OSError other than a missing file (a lock, a permission) is read-only too, and nothing is moved;
 - **writes** a backup first, `<name>.bak` beside the file (the same folder, so the same store and data class; a file
   under `$BRAIN_HOME/secrets` is never copied), then a temporary file, synced and moved over the file
-  (`os.replace`). The `v` on disk is checked again just before: a newer brain that wrote since the load wins;
+  (`os.replace`, tried again for a second while Windows refuses it because a reader holds the file open). The `v`
+  on disk is checked again just before: a newer brain that wrote since the load wins;
 - keeps the keys it does not know (a newer brain's additive ones) through the round trip.
 - with **integrity** on (config.json `integrity.sidecars: true`, or `BRAIN_STATE_INTEGRITY=1`; off by default),
   writes a sidecar beside each file it saves, `<name>.sha256` (`{"v": 1, "sha256", "size", "mtime_ns"}`), and
