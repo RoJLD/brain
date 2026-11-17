@@ -273,8 +273,10 @@ the people and their keys). `brain access explain PERSON [--scope REF] [--client
 [--json]` prints a person's grade on a node (Global and each node a grant of theirs names, by default), the verbs it
 gives with the grant behind each (direct, or through which groups), the roles, the grants that do not count today,
 and, with `--client`, an agent's reach. Read only, zero token. **A solo brain** (no `members.yaml`, or one owner on
-Global) sees no change. The fields need brain 0.6.0 on every machine: an older one notes them as unknown (CI refuses
-them) and reports a grant to a group as a membership without a `person_id`.
+Global) sees no change. The fields need brain 0.6.0 on every machine: an older one ignores them silently (CI, strict,
+refuses them), reports a grant to a group as a membership without a `person_id`, and reads a `decider` or `releaser`
+granted by `scope:` alone as the whole brain's: write `project:` for a project's (both engines read it), and grant
+one on a container only once every machine runs 0.6.0 (`brain check` warns of it).
 
 ## Commands
 

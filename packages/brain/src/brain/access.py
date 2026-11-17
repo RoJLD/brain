@@ -20,7 +20,10 @@ called by the CLI, the guards and the MCP server) is a later slice; this one mak
   read and propose by default (writes per client wait on wi-brain-agent-attribution); an owner's gesture and a
   decision are never an agent's.
 - **The unknown**: a grade this engine does not know reads as none (never above), noted (strict, CI: an error); an
-  unknown key in a grant is the schema's note.
+  unknown key in a grant is the schema's (ignored in read mode, refused in strict mode, as every members.yaml key).
+- **Signatures stay narrow** (brain.identity.signs): only a person named alone, on the whole brain or the DDR's own
+  node, within the grant's dates, verifies; a ``decider`` or ``releaser`` granted by ``scope:`` alone is warned (an
+  engine before 0.6.0 reads it as the whole brain's).
 
 :func:`errors` is what ``brain check`` and ``brain identity check`` add to members.yaml's (warnings, errors under
 config.json ``identity.require_signed``, as every identity finding); :func:`explain` is ``brain access explain
@@ -251,7 +254,22 @@ def _grant_errors(where: str, m: dict, people: set, gs: dict, tree) -> list[str]
     since, until = _day(m.get("since")), _day(m.get("until"))
     if since and until and until < since:
         out.append(f"{where}: until {until} is before since {since}")
-    return out
+    return out + _older_signer(where, m)
+
+
+SIGNER_ROLES = ("decider", "releaser")
+
+
+def _older_signer(where: str, m: dict) -> list[str]:
+    """A decider or releaser granted on a node by ``scope:`` alone: an engine before 0.6.0 drops the key it does not
+    know and reads the role as the whole brain's (a signature verified everywhere). ``project:`` names the same node
+    for both engines when the node is a project."""
+    roles = m.get("roles") if isinstance(m.get("roles"), list) else []
+    signer = [r for r in SIGNER_ROLES if r in roles]
+    if not signer or "project" in m or "group" in m or m.get("scope") in (None, GLOBAL):
+        return []
+    return [f"{where}: {' and '.join(signer)} on scope {m['scope']!r}: an engine before 0.6.0 reads it as the whole "
+            "brain's; write project: instead (a project), or give the role once every machine runs 0.6.0"]
 
 
 def _subject_errors(where: str, m: dict, gs: dict) -> list[str]:

@@ -270,7 +270,7 @@ def test_a_grant_on_a_node_never_widens_who_verifies_a_signature(brain):
           "memberships:\n  - {person_id: carol, scope: finance, roles: [decider, releaser]}\n"
           "  - {group: crew, roles: [decider, releaser]}\n  - {person_id: carol, scope: global, roles: [owner]}\n")
     m = identity.load(brain.root)
-    assert m.findings == []
+    assert m.errors == [] and len(m.access) == 1   # the scope: signer is warned for older engines
     assert identity.deciders(m.data) == {}   # neither is a decider of the whole brain
     assert list(identity.deciders(m.data, "finance")) == ["carol"]   # the node's own
     assert tagsig._releaser_ids(m.data) == set()
@@ -356,6 +356,16 @@ def test_an_organization_membership_takes_no_grade_nor_group(brain):
     found = identity.load(brain.root).findings
     assert any("memberships[0]: an organization's or a tenant's membership" in f and "not grade" in f for f in found)
     assert any("memberships[1]: an organization's or a tenant's membership" in f and "not group" in f for f in found)
+
+
+def test_a_signer_granted_by_scope_alone_is_warned_for_older_engines(brain):
+    brain(MEMBERS + "  - {person_id: carol, scope: ledger, roles: [decider]}\n"
+          "  - {person_id: carol, project: site, roles: [releaser]}\n")
+    found = identity.load(brain.root).access
+    assert any("memberships[5]: decider on scope 'ledger': an engine before 0.6.0 reads it as the whole brain's" in f
+               for f in found)
+    assert not any("memberships[6]" in f for f in found)   # project: is read by both engines
+    assert not any("memberships[2]" in f for f in found)   # a group's decider: no signer on either engine
 
 
 def test_explain_json_says_why_it_fails(brain, capsys):
