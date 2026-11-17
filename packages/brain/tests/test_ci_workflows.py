@@ -130,21 +130,24 @@ def suite_jobs_without_textual(data: dict) -> list[str]:
     the cockpit's tests (test_tui*.py, ``pytest.importorskip("textual")``) are skipped, unseen, and the coverage
     counts none of them. A commented-out install is none; the working directory is the step's, else the job's
     ``defaults.run``."""
-    missing = []
-    for job, spec in (data.get("jobs") or {}).items():
-        spec = spec or {}
-        home = ((spec.get("defaults") or {}).get("run") or {}).get("working-directory") or ""
-        installed = False
-        for s in spec.get("steps") or []:
-            if not (isinstance(s, dict) and isinstance(s.get("run"), str)):
-                continue
-            cmds = _commands(s["run"])
-            if any(_runs_suite(c, s.get("working-directory") or home) for c in cmds) and not installed:
-                missing.append(job)
-                break
-            installed = installed or any("install" in c and any(w.strip("'\"").startswith("textual") for w in c)
-                                         for c in cmds)
-    return missing
+    return [job for job, spec in (data.get("jobs") or {}).items() if _suite_before_textual(spec or {})]
+
+
+def _installs_textual(words: list[str]) -> bool:
+    return "install" in words and any(w.strip("'\"").startswith("textual") for w in words)
+
+
+def _suite_before_textual(spec: dict) -> bool:
+    """A step of the job runs the suite before any step installed Textual."""
+    home = ((spec.get("defaults") or {}).get("run") or {}).get("working-directory") or ""
+    steps = [s for s in spec.get("steps") or [] if isinstance(s, dict) and isinstance(s.get("run"), str)]
+    for s in steps:
+        cmds = _commands(s["run"])
+        if any(_runs_suite(c, s.get("working-directory") or home) for c in cmds):
+            return True
+        if any(_installs_textual(c) for c in cmds):
+            return False
+    return False
 
 
 def test_the_jobs_that_run_the_brain_suite_install_textual():
