@@ -588,7 +588,11 @@ A later pending wave labelled as the current wave's jump makes the release ambig
 naming both. An item carried again keeps the
 waves it went through (`props.carried_via`). `brain wave check X.Y.Z` is the rule alone, and `release_check.py --store
 DIR` applies it to a version PR, which also wants the wave reached and no pending wave left below the version (its
-« the wave X.Y.Z in DIR » line names the engine that read the store). `brain wave add [X.Y.Z] --parent MS [--week W]`
+« the wave X.Y.Z in DIR » line names the wave checked and the engine that read the store). A wave reached without
+`props.shipped_as` (by hand, or by an engine up to 0.5.0) is read through the last tag (`release_check.py` knows it;
+`brain wave check X.Y.Z --tag vP`): the wave labelled so shipped as itself, the one reached after it ships as X.Y.Z;
+when the tag does not tell and it could have shipped as X.Y.Z, both refuse until `props.shipped_as` records it.
+`brain wave add [X.Y.Z] --parent MS [--week W]`
 adds a wave at once, `wave-sN` with its computed release (no DDR, unlike `brain milestone add`; X.Y.Z, when given,
 must be that release, and a store's first wave names it); `brain wave rename WAVE [NEW] [--write]` renames a legacy
 `wave-X.Y.Z` once (default `wave-sN`): the YAML values that name it (its id, the edges' `from` and `to`, `carried_to`,

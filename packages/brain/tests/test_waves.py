@@ -563,6 +563,8 @@ def test_a_release_that_jumps_closes_the_current_wave_and_the_later_ones_follow(
     assert after.resolve("1.1.0") == "wave-1.0.1" and after.resolve("1.0.1") == "wave-1.0.1"
     assert waves.closure_problems(after, "1.1.0") == []
     assert cli.main(base + ["check", "1.1.0"]) == 0   # brain wave check and release_check --store resolve alike
+    assert ("wave 1.1.0: wave-1.0.1 (1.0.1, closed as 1.1.0, its props.shipped_as) closed (its version PR may go)"
+            in capsys.readouterr().out)   # the wave it closed, named (wi-brain-release-check-shipped-wave)
     assert waves.next_report(after)["current"]["release"] == "1.1.1"
     assert cli.main(base + ["rename", "wave-s3", "wave-s4"]) == 1 and "already a node" in capsys.readouterr().err
 
@@ -747,3 +749,97 @@ def test_a_pinned_release_below_the_computed_one_is_refused_and_a_superscript_is
     nodes = JUMP_NODES.replace("props: {kind: wave, seq: 4}", "props: {kind: wave, seq: \"\u00b2\"}")
     got = waves.problems(waves.load(_write(tmp_path / "other", nodes, JUMP_EDGES)))
     assert "wave-s4: props.seq is a whole number from 1 (not '\u00b2')" in got
+
+
+def test_a_wave_reached_by_hand_is_said_when_the_next_release_names_none(tmp_path, capsys):
+    """wi-brain-release-check-shipped-wave: wave 1.0.1 closed by hand (reached, no props.shipped_as) before a version
+    PR of 1.1.0, which names no wave: brain wave check refuses it instead of passing unread, until what the wave
+    shipped as is recorded; the previous wave is the last reached one below the release. Legacy waves: the next one
+    pinned 1.2.0, so 1.1.0 is no jump of it."""
+    nodes = """\
+- {id: ms-x, type: Milestone, status: pending, title: X}
+- {id: wave-1.0.0, type: Milestone, status: reached, title: "Wave 1.0.0", props: {kind: wave, release: 1.0.0}}
+- {id: wave-1.0.1, type: Milestone, status: reached, title: "Wave 1.0.1", props: {kind: wave, release: 1.0.1}}
+- {id: wave-1.2.0, type: Milestone, status: pending, title: "Wave 1.2.0", props: {kind: wave, release: 1.2.0}}
+"""
+    store = _write(tmp_path / "root" / "notes" / "graph", nodes, "")
+    plan = waves.load(store)
+    assert plan.for_release("1.1.0") is None
+    assert plan.status("wave-1.0.1") == "reached" and waveclose.previous_wave(plan, "1.1.0") == "wave-1.0.1"
+    assert waveclose.previous_wave(plan, "1.0.0") is None and waveclose.previous_wave(plan, "x") is None
+    got = waves.closure_problems(plan, "1.1.0")
+    assert got == ["release 1.1.0 names no wave, but wave-1.0.1 (1.0.1) before it was reached without a well-formed "
+                   "props.shipped_as (by hand, or by an engine up to 0.5.0) and may be the wave 1.1.0 ships: record "
+                   "it, brain item set wave-1.0.1 props.shipped_as=1.1.0 (or =1.0.1 if it shipped as 1.0.1), then "
+                   "brain sync"]
+    assert waves.closure_problems(plan, "1.0.2") == []   # a patch: no jump of 1.0.1, it could not have shipped so
+    base = ["--root", str(store.parents[1]), "wave", "check", "1.1.0"]
+    assert cli.main(base) == 1 and "error: release 1.1.0 names no wave" in capsys.readouterr().out
+    shipped = nodes.replace('title: "Wave 1.0.1", props: {kind: wave, release: 1.0.1}',
+                            'title: "Wave 1.0.1", props: {kind: wave, release: 1.0.1, shipped_as: 1.0.1}')
+    assert shipped != nodes
+    plan = waves.load(_write(tmp_path / "other" / "notes" / "graph", shipped, ""))
+    assert waves.closure_problems(plan, "1.1.0") == [] and waveclose.closing(plan, "1.1.0") == ""
+    for bad, said in (("1.1", "(got 1.1)"), ("[1]", "(got [1])"), ("x", "(got 'x')")):   # not a release: said so
+        plan = waves.load(_write(tmp_path / bad.strip("[]") / "notes" / "graph",
+                                 shipped.replace("shipped_as: 1.0.1", f"shipped_as: {bad}"), ""))
+        assert f"without a well-formed props.shipped_as {said}" in waves.closure_problems(plan, "1.1.0")[0]
+    # the last tag tells it: v1.0.1, the wave shipped as itself (1.1.0 names none); v1.0.0, it ships as 1.1.0
+    assert cli.main(base + ["--tag", "v1.0.1"]) == 0
+    assert "wave 1.1.0: no wave of that release (its version PR may go)" in capsys.readouterr().out
+    assert cli.main(base + ["--tag", "v1.0.0"]) == 0
+    assert ("wave 1.1.0: wave-1.0.1 (1.0.1, closed as 1.1.0, reached after the last tag v1.0.0) closed"
+            in capsys.readouterr().out)
+    with pytest.raises(SystemExit):
+        cli.main(base + ["--tag", "latest"])
+    assert "'latest': a release tag, vX.Y.Z" in capsys.readouterr().err
+
+
+SHIPPED_NODES = """\
+- {id: ms-x, type: Milestone, status: pending, title: X}
+- {id: wave-s1, type: Milestone, status: reached, title: "Wave s1", props: {kind: wave, seq: 1, release: 0.3.2}}
+- {id: wave-s2, type: Milestone, status: reached, title: "Wave s2", props: {kind: wave, seq: 2}}
+- {id: wave-s3, type: Milestone, status: pending, title: "Wave s3", props: {kind: wave, seq: 3}}
+- {id: wi-shipped, type: WorkItem, status: done, title: Shipped}
+- {id: wi-later, type: WorkItem, status: todo, title: Later}
+"""
+SHIPPED_EDGES = """\
+- {from: wi-shipped, to: wave-s2, type: part_of}
+- {from: wi-later, to: wave-s3, type: part_of}
+"""
+
+
+def test_a_version_whose_jump_counts_from_a_wave_reached_by_hand_is_refused_until_told(tmp_path, capsys):
+    """wi-brain-release-check-shipped-wave (the blocker): wave-s2 (0.3.3) reached by hand without props.shipped_as,
+    wave-s3 pending (computed 0.3.4, an open item), a version PR of 0.4.0. 0.4.0 is the jump of wave-s3 only if
+    wave-s2 shipped as 0.3.3; if wave-s2 is what ships as 0.4.0, the jump reads the wrong wave and its remedy would
+    close wave-s3 as 0.4.0. So it is refused, naming wave-s2, until its shipped_as is recorded or the last tag tells
+    it (brain.waveclose.as_tagged): v0.3.3, the jump onto wave-s3 is read; v0.3.2, wave-s2 is the wave 0.4.0 ships."""
+    store = _write(tmp_path / "root" / "notes" / "graph", SHIPPED_NODES, SHIPPED_EDGES)
+    plan = waves.load(store)
+    assert [plan.label(w) for w in plan.waves] == ["0.3.2", "0.3.3", "0.3.4"]
+    assert plan.for_release("0.4.0") == "wave-s3"   # the jump the version would take
+    got = waves.closure_problems(plan, "0.4.0")
+    assert got == ["release 0.4.0 would close wave-s3 (0.3.4) as a jump, but wave-s2 (0.3.3) before it was reached "
+                   "without a well-formed props.shipped_as (by hand, or by an engine up to 0.5.0) and may be the wave "
+                   "0.4.0 ships: record it, brain item set wave-s2 props.shipped_as=0.4.0 (or =0.3.3 if it shipped "
+                   "as 0.3.3), then brain sync"]
+    assert not any("--carry-to" in line for line in got)   # no remedy that closes wave-s3 as 0.4.0
+    assert waves.closure_problems(plan, "0.3.4") and "holds 1 open item" in waves.closure_problems(plan, "0.3.4")[0]
+    told = waveclose.as_tagged(plan, "0.4.0", "v0.3.3")   # wave-s2 shipped as itself: 0.4.0 is wave-s3's jump
+    assert told.shipped("wave-s2") == "0.3.3" and plan.shipped("wave-s2") == "0.3.3"
+    assert "wave 0.4.0 (wave-s3) holds 1 open item(s)" in waves.closure_problems(told, "0.4.0")[0]
+    assert waveclose.closing(told, "0.4.0") == "wave-s3 (0.3.4, closed as 0.4.0, a jump)"
+    told = waveclose.as_tagged(plan, "0.4.0", "v0.3.2")   # wave-s2 reached after the last tag: it ships as 0.4.0
+    assert told.for_release("0.4.0") == "wave-s2" and waves.closure_problems(told, "0.4.0") == []
+    assert waveclose.closing(told, "0.4.0") == "wave-s2 (0.3.3, closed as 0.4.0, reached after the last tag v0.3.2)"
+    assert told.label("wave-s3") == "0.4.1"   # the later waves count from what it shipped as
+    assert "shipped_as" not in waves._props(plan.nodes["wave-s2"])   # in memory only: the plan read is left as is
+    assert waveclose.as_tagged(plan, "0.4.0", "") is plan and waveclose.as_tagged(plan, "0.3.2", "v0.3.2") is plan
+    base = ["--root", str(store.parents[1]), "wave", "check", "0.4.0"]
+    assert cli.main(base) == 1 and "error: release 0.4.0 would close wave-s3" in capsys.readouterr().out
+    assert cli.main(base + ["--tag", "v0.3.2"]) == 0
+    recorded = SHIPPED_NODES.replace('props: {kind: wave, seq: 2}', 'props: {kind: wave, seq: 2, shipped_as: 0.3.3}')
+    plan = waves.load(_write(tmp_path / "other" / "notes" / "graph", recorded, SHIPPED_EDGES))
+    assert "wave 0.4.0 (wave-s3) holds 1 open item(s)" in waves.closure_problems(plan, "0.4.0")[0]
+    assert waveclose.closing(plan, "wave-s3") == "wave-s3 (0.3.4)"   # named by its id: no "closed as wave-s3"
