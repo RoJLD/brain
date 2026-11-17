@@ -227,3 +227,10 @@ def test_a_test_that_scans_the_sources_runs_with_any_python_change(make_repo):
         assert targeted.SCANS.search(scanner), scanner
     for other in ("ast.walk(tree)", "p.glob('*.md')", "os.path.join(a, b)", "tmp.iterdir()"):
         assert not targeted.SCANS.search(other), other
+
+
+def test_a_pytest_killed_by_a_signal_is_no_pass(tmp_path, monkeypatch):
+    """A negative exit code (a signal on POSIX) was max()ed away into a pass: it is 128 + the signal now."""
+    assert [targeted.exit_code(rc) for rc in (0, 5, 1, 2, -9, -15)] == [0, 0, 1, 2, 137, 143]
+    monkeypatch.setattr(targeted.subprocess, "run", lambda *a, **k: targeted.subprocess.CompletedProcess(a, -9))
+    assert targeted.run(tmp_path, ["tests/test_a.py"], echo=lambda line: None) == 137

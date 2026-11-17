@@ -6,8 +6,8 @@ The steps, in order (the cheap ones first; each runs even when one before it fai
 1. **clean**: no file changed, added or left untracked outside ``.gitignore`` that HEAD lacks (a push carries the
    commit, not the working tree: a new module never added passes the audit, which reads the working tree, and is
    missing from the push);
-2. **merge-check**: the base fetched again and ``brain merge-check`` against it: the branch holds a fresh main
-   (behind: merge it) and lost nothing main brought;
+2. **merge-check**: ``brain merge-check`` against the base, a remote one (``origin/main``) fetched again first: the
+   branch holds a fresh main (behind: merge it) and lost nothing main brought;
 3. **review**: ``brain review stamp`` recorded the review of HEAD with no finding open (or HEAD is only git's own
    merge of the base into a reviewed head: brain.mergeready.carried_review);
 4. **views**: in a repo with a graph store (``notes/graph/schema.yaml``), ``brain refresh --offline``: the views
@@ -16,13 +16,14 @@ The steps, in order (the cheap ones first; each runs even when one before it fai
    of a worktree, for a change that spans two repos);
 6. **public**: for a public repo (config.json ``public.repos``), ``brain check --public --history`` on HEAD (a head
    whose stamp is valid passes without running it again);
-7. **tests**: ``brain test --changed BASE`` (the targeted tests; ``--strict`` runs the whole suite when the
-   selection widens); the failed tests' ids in the verdict.
+7. **tests**: ``brain test --changed BASE`` (the targeted tests, run by ``--python`` when the repo's tests need
+   their own interpreter; ``--strict`` runs the whole suite when the selection widens); the failed tests' ids in the
+   verdict.
 
-A step that does not apply (no graph store, a private repo) is skipped with its reason; ``--skip STEP`` skips one on
-purpose, said in the verdict. Each step's command and output go to ``<n>-<step>.log`` in the run's folder
+A step that does not apply (no graph store, a private repo) is skipped with its reason. ``--skip STEP`` skips one on
+purpose: the verdict says INCOMPLETE and the exit is 1 even when nothing failed (a skipped check is no pass). Each step's command and output go to ``<n>-<step>.log`` in the run's folder
 (brain.verdict: ``<temp>/brain-gate/<repo>-<head>-<UTC stamp>/``, or ``--logs``), the verdict to ``verdict.json``.
-The steps' commands run with this Python (``-m brain``), through one injectable runner with a timeout that stops the
+The steps' commands run with this Python (``-m brain``: the engine running the gate), through one injectable runner with a timeout that stops the
 whole process tree (brain.ship.run): the tests fake it.
 """
 
@@ -42,6 +43,7 @@ STEPS = ("clean", "merge-check", "review", "views", "audit", "public", "tests")
 CHECK_TIMEOUT = 900
 TEST_TIMEOUT = 3600
 GRAPH = Path("notes") / "graph" / "schema.yaml"
+ON_PURPOSE = "--skip"   # the detail of a step skipped by --skip
 
 
 class GateError(Exception):
@@ -66,16 +68,27 @@ class Report:
     steps: list[Step] = field(default_factory=list)
 
     @property
+    def skipped_on_purpose(self) -> list[str]:
+        return [s.name for s in self.steps if s.ok is None and s.detail == ON_PURPOSE]
+
+    @property
     def ok(self) -> bool:
-        return all(s.ok is not False for s in self.steps)
+        """No step failed, and none was skipped on purpose (a skipped check is no pass)."""
+        return all(s.ok is not False for s in self.steps) and not self.skipped_on_purpose
 
     def lines(self) -> list[str]:
         failed = [s for s in self.steps if s.ok is False]
-        nxt = failed[0].next if failed else "git push (then gh pr create, or brain ship PR once the PR is open)"
+        if failed:
+            nxt = failed[0].next
+        elif self.skipped_on_purpose:
+            nxt = f"brain gate without --skip ({', '.join(self.skipped_on_purpose)}) before the push"
+        else:
+            nxt = "git push (then gh pr create, or brain ship PR once the PR is open)"
         return verdict.three_lines(KIND, [s.name for s in self.steps if s.ok],
                                    [(s.name, s.detail) for s in failed],
                                    [(s.name, s.detail) for s in self.steps if s.ok is None],
-                                   Path(self.logs) if self.logs else None, nxt)
+                                   Path(self.logs) if self.logs else None, nxt,
+                                   state="" if failed or not self.skipped_on_purpose else "INCOMPLETE")
 
     def to_json(self) -> dict:
         return {"ok": self.ok, "repo": self.repo, "head": self.head, "base": self.base, "logs": self.logs,
@@ -112,7 +125,8 @@ class Gate:
             raise GateError(f"--skip {', '.join(unknown)}: not a step (the steps: {', '.join(STEPS)})")
         self.top = top
         self.skip, self.strict, self.fail_fast, self.store = set(skip), strict, fail_fast, store
-        self.python = python or sys.executable
+        self.python = python or sys.executable   # the tests' interpreter (brain test --python)
+        self.engine = sys.executable              # the one that runs every brain step: this engine
         self.runner = runner or _default_runner()
         self.is_public, self.stamp_valid = is_public or _is_public, stamp_valid or _stamp_valid
         self.say = say or (lambda line: None)
@@ -122,6 +136,8 @@ class Gate:
             raise GateError(str(exc)) from None
         from . import mergecheck
         self.base = base or mergecheck.default_base(top)
+        if not self._base_sha():
+            raise GateError(f"--base {self.base}: not a commit of this checkout (a remote one: git fetch first)")
         self.folder = logs if logs is not None else verdict.run_folder(KIND, f"{top.name}-{self.head[:8]}")
         self.folder.mkdir(parents=True, exist_ok=True)
         self.report = Report(top.name, self.head, self.base, self.folder.as_posix())
@@ -130,7 +146,7 @@ class Gate:
     # --- helpers ---
 
     def _brain(self, *args: str) -> list[str]:
-        return [self.python, "-m", "brain", *args]
+        return [self.engine, "-m", "brain", *args]
 
     def _log_path(self, name: str) -> Path:
         self._n += 1
@@ -245,28 +261,29 @@ class Gate:
         s = verdict.pytest_summary(r.out + "\n" + r.err)
         counts = ", ".join(f"{n} {k}" for k, n in sorted(s.counts.items()))
         widened = "shadow mode: the whole suite is the answer" in r.err
+        wide = "; widened: the CI runs the whole suite" if widened else ""
         if not r.ok:
             ids = ", ".join(s.failed[:5]) + (f" and {len(s.failed) - 5} more" if len(s.failed) > 5 else "")
             why = (f"{counts}: {ids}" if ids else counts) or verdict.last_line(r.err, r.out) or f"exit {r.rc}"
             return Step("tests", False, why, f"python -m pytest {' '.join(s.failed[:3]) or '<the failed tests>'} "
                                              f"(in the suite's folder; the log: {log}), fix, then brain gate", log)
         if "no test module to run" in r.err:
-            return Step("tests", True, "no test module the change touches", log=log)
-        return Step("tests", True, (counts or "ran") + ("; widened: the CI runs the whole suite" if widened else ""),
-                    log=log)
+            return Step("tests", True, ("no test module selected" if widened else "no test module the change "
+                                                                                  "touches") + wide, log=log)
+        return Step("tests", True, (counts or "ran") + wide, log=log)
 
     # --- the run ---
 
     def run(self) -> Report:
         for name in STEPS:
             if name in self.skip:
-                step = Step(name, None, "--skip")
+                step = Step(name, None, ON_PURPOSE)
             else:
                 try:
                     step = getattr(self, name.replace("-", "_"))()
                 except (AuditError, OSError, ValueError) as exc:
-                    step = Step(name, False, f"could not run: {exc}"[:verdict.DETAIL], f"brain gate --skip {name} "
-                                "(and run the step by hand)")
+                    step = Step(name, False, f"could not run: {exc}"[:verdict.DETAIL],
+                                f"run the {name} step's command by hand (brain gate's docs), fix, then brain gate")
             self.report.steps.append(step)
             self.say(f"brain gate: {name}: " + {True: "ok", False: "FAILED", None: "skipped"}[step.ok]
                      + (f": {step.detail}" if step.detail else ""))

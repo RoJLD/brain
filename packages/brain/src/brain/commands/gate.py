@@ -19,7 +19,9 @@ USAGE = """\
                         --public --history), tests (brain test --changed; --strict runs the whole suite when the
                         selection widens). Each step's log in <temp>/brain-gate/<run>/ (or --logs), then three lines:
                         what passed, what failed and why, the next command. Exit 0 only when every step that applies
-                        passes; 2 when it cannot start
+                        passes (a --skip says INCOMPLETE, exit 1); 2 when it cannot start (not a git checkout, a
+                        --base that is no commit here). --python: the tests' interpreter (the brain steps run with
+                        this engine); a remote --base (origin/main) is fetched again
 """
 
 
@@ -50,13 +52,16 @@ def register(sub, ctx) -> None:
     g = sub.add_parser("gate", help="the pre-push checks in one call (clean, merge-check, review, views, audit, "
                                     "public, tests): each step's log in a file, a three-line verdict; exit 0 only "
                                     "when all pass")
-    g.add_argument("--base", metavar="REF", help="the base (default: origin's default branch), fetched again")
+    g.add_argument("--base", metavar="REF", help="the base (default: origin's default branch); a remote one "
+                                                 "(origin/main) fetched again first")
     g.add_argument("--repo-dir", metavar="D", help="the checkout (default: the current folder)")
     g.add_argument("--skip", action="append", choices=STEPS, metavar="STEP",
-                   help=f"skip a step on purpose, said in the verdict (repeatable): {', '.join(STEPS)}")
+                   help=f"skip a step on purpose (repeatable): the verdict says INCOMPLETE, exit 1: "
+                        f"{', '.join(STEPS)}")
     g.add_argument("--strict", action="store_true", help="tests: the whole suite when the selection widens")
     g.add_argument("--fail-fast", action="store_true", help="stop at the first step that fails")
-    g.add_argument("--python", default="", help="the Python that runs the steps and the tests (default: this one)")
+    g.add_argument("--python", default="", help="the Python that runs the tests (default: this one; the brain "
+                                                "steps always run with the engine running the gate)")
     g.add_argument("--logs", metavar="DIR", help="the folder of this run's logs (default: <temp>/brain-gate/<run>)")
     g.add_argument("--store", metavar="DIR", help="audit: a code store in a worktree (a change across two repos)")
     g.add_argument("--json", action="store_true", help="the report as JSON (the steps, their logs, the verdict)")
