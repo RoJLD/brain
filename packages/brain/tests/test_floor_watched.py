@@ -121,10 +121,11 @@ def test_a_worktree_of_the_same_repository_passes(tree):
     for path in (checkout.as_posix(), w.as_posix()):
         for command in _forms(path):
             assert not refused(w, command), command
-    win = str(w)   # backslashes: quoted in bash, as PowerShell writes them
-    assert not refused(w, f'BRAIN_CONFIG="{win}\\config.json" brain x')
-    assert not refused(w, f"$env:BRAIN_PROJECTS = '{win}\\projects.yaml'; brain audit --diff", ps=True)
-    assert not refused(w, f'$env:BRAIN_CONFIG = "{win}\\config.json"', ps=True)
+    if os.name == "nt":   # backslashes: quoted in bash, as PowerShell writes them
+        win = str(w)
+        assert not refused(w, f'BRAIN_CONFIG="{win}\\config.json" brain x')
+        assert not refused(w, f"$env:BRAIN_PROJECTS = '{win}\\projects.yaml'; brain audit --diff", ps=True)
+        assert not refused(w, f'$env:BRAIN_CONFIG = "{win}\\config.json"', ps=True)
     if os.name == "nt":   # Git Bash's /e/x is E:/x for a native program
         msys = "/" + w.as_posix()[0].lower() + w.as_posix()[2:]
         assert not refused(w, f"BRAIN_PROJECTS={msys}/projects.yaml brain audit")
@@ -318,6 +319,8 @@ def test_every_prefilter_shape_is_one_the_floor_refuses(tree, monkeypatch):
     """The pre-filter's list is the floor's: each shape above is refused once Python judges it."""
     monkeypatch.setattr(faults, "scratch", lambda: False)
     for command in PREFILTER:
+        if os.name != "nt" and command.startswith("brain_ho"):   # a lowercase name is another variable on POSIX
+            continue
         assert refused(tree[0], command, ps=command in PS_SHAPES), command
 
 
