@@ -20,14 +20,16 @@ What reads the pins:
 
 - ``brain impact --diff`` lists each pinned decision whose code the change touches, with its line and its date;
 - ``brain review check HEAD --pr N`` (or ``--body FILE``) and ``brain merge-ready`` refuse until the PR body says, for
-  each one, ``Keeps <id>`` (a decision in force) or ``Overrides <id>: <why>`` (a decision a later ADR supersedes,
-  in the log at the head); a change of a pin's own row counts as touching it;
+  each one, ``Keeps <id or alias>`` (a decision in force) or ``Overrides <id or alias>: <why>`` (a decision a later
+  ADR supersedes, in the log at the head); a change of a pin's own row counts as touching it;
 - ``brain check`` warns on a pin of an unknown or pending decision, a superseded decision still pinned, a malformed
-  row and two rows of one decision.
+  row, two rows of one decision, an alias the public check would refuse and one alias given to two decisions.
 
 A PR of a public repo cannot name a private decision's id (``brain check --public`` refuses it): each pin has a public
 alias, its ``alias`` or ``pin-<8 hex of the decision id's sha-256>``, and ``Keeps <alias>`` answers it as
-``Keeps <id>`` does (wi-brain-pins-private-ids).
+``Keeps <id>`` does (wi-brain-pins-private-ids). An alias the public check would refuse (the shape of a graph id, an
+ADR's title: brain.privateids) is refused by ``brain adr pin``; in a row written by hand it is warned on and the
+computed alias answers in its place, the pin staying in the gate.
 """
 
 from __future__ import annotations
@@ -37,7 +39,7 @@ import re
 from dataclasses import dataclass
 from pathlib import Path
 
-from . import graph, inventory
+from . import graph, inventory, privateids
 
 FILE = "pins.yaml"
 HEAD = ("# Decision pins (brain adr pin; the engine's docs/pins.md): each decision, the invariant it holds and the "
@@ -54,7 +56,7 @@ _ID_IN_RE = re.compile(r"\(`([A-Za-z0-9_.-]+)`\)")
 _GLOB = set("*?[")
 ANSWERED = ("answered", "integrated", "archived")   # a DDR's statuses once the owner answered it
 ALIAS_RE = re.compile(r"[a-z0-9][a-z0-9-]*[a-z0-9]\Z")
-PRIVATE_SHAPES = ("wi-", "adr-", "feat-", "ddr-", "spec-", "les-")   # brain.privateids: a public repo refuses them
+PRIVATE_SHAPES = tuple(f"{p}-" for p in privateids.PREFIXES)   # the graph ids a public repo refuses
 
 
 class PinError(ValueError):
@@ -124,35 +126,52 @@ def _touch_problem(t) -> str:
     return ""
 
 
-def alias_of(pin: dict) -> str:
-    """The pin's public name, what a public repo's PR body says in place of the decision's private id: its ``alias``,
-    else ``pin-`` and the first 8 hex digits of the decision id's sha-256 (stable, and naming nothing private)."""
+def alias_of(pin: dict, known: dict[str, Decision] | None = None) -> str:
+    """The pin's public name, what a public repo's PR body says in place of the decision's private id: its ``alias``
+    when :func:`alias_problem` finds nothing wrong with it (``known``: the decisions whose ids and titles it may not
+    hold), else ``pin-`` and the first 8 hex digits of the decision id's sha-256 (stable, and naming nothing
+    private). So a malformed alias never takes a pin out of the gate: the computed one answers in its place."""
     given = pin.get("alias")
-    if isinstance(given, str) and given.strip():
-        return given.strip()
+    if given is not None and not alias_problem(given, known):
+        return given
     return "pin-" + hashlib.sha256(str(pin.get("decision") or "").strip().encode("utf-8")).hexdigest()[:8]
 
 
-def alias_problem(alias) -> str:
-    """What is wrong with a given alias, '' when nothing: lower-case letters, digits and dashes, and not the shape of
-    a private graph id (a public repo refuses those)."""
+def alias_problem(alias, known: dict[str, Decision] | None = None) -> str:
+    """What is wrong with a given alias, '' when nothing: lower-case letters, digits and dashes, and nothing the
+    public check refuses (brain.privateids, by its own rules): not the shape of a private graph id, and, of the
+    ``known`` decisions, neither an id nor an ADR's title (its first words, 4 or more, whatever the dashes)."""
     if alias is None:
         return ""
     if not isinstance(alias, str) or not ALIAS_RE.match(alias):
         return f"alias {alias!r}: lower-case letters, digits and dashes (retry-count)"
-    if alias.startswith(PRIVATE_SHAPES):
+    if privateids.TOKEN.match(alias):
         return (f"alias {alias}: the shape of a private graph id ({', '.join(PRIVATE_SHAPES)}), which a public repo "
                 "refuses")
+    if known and alias in known:
+        return f"alias {alias}: the id of the decision {alias}, which a public repo's PR does not name"
+    found = privateids.find(f"Keeps {alias}", _titles(known)) if known else []
+    if found:
+        return f"alias {alias}: it holds {found[0]}, which a public repo refuses"
     return ""
 
 
+def _titles(known: dict[str, Decision]) -> privateids.Index:
+    """The decisions' titles as brain.privateids refuses them (its own index, built by its own function)."""
+    idx = privateids.Index()
+    for d in known.values():
+        if d.kind in ("adr", "sdr") and d.title:
+            privateids.add_title(idx, d.id, d.title)
+    return idx
+
+
 def problems(pin: dict) -> list[str]:
-    """What is wrong with one pin's shape ([] when well formed); the decision is resolved apart."""
+    """What is wrong with one pin's shape ([] when well formed); the decision is resolved apart. Its alias is not
+    part of it: a malformed one is warned on (:func:`check_lines`), never taken as a reason to leave the pin out of
+    the gate (:func:`alias_of` falls back to the computed alias)."""
     out = []
     if not str(pin.get("decision") or "").strip():
         out.append("no decision")
-    if alias_problem(pin.get("alias")):
-        out.append(alias_problem(pin.get("alias")))
     holds = pin.get("holds")
     if not isinstance(holds, str) or not holds.strip() or "\n" in holds.strip():
         out.append("holds is one line: the invariant the decision keeps")
@@ -256,24 +275,37 @@ def _row(decision: str, mine: list[dict], touches: list[str], holds: str, day: s
     return (dict(row, alias=alias) if alias else row), "extended"
 
 
+def _refused(new: dict, alias: str, others: list[dict], known: dict[str, Decision]) -> list[str]:
+    """Why :func:`add` refuses the row ``new`` ([] when it does not): its shape, its decision, the ``alias`` given
+    (:func:`alias_problem`), or an alias one of the ``others`` (the other decisions' pins) answers to already."""
+    bad = problems(new) or ([why_not(new, known)] if why_not(new, known) else [])
+    bad += [alias_problem(alias, known)] if alias and alias_problem(alias, known) else []
+    taken = [str(p.get("decision")) for p in others if alias_of(p, known) == alias_of(new, known)]
+    return bad or ([f"alias {alias_of(new, known)} is {taken[0]}'s already"] if taken else [])
+
+
 def add(project, decision: str, touches: list[str], holds: str = "", day: str = "",
         alias: str = "") -> tuple[dict, str]:
     """Pin ``decision`` (or add ``touches`` to its pin, every row of it merged into one, ``alias`` set when given);
-    returns (the pin, 'pinned' or 'extended'). :class:`PinError` on a decision that cannot be pinned, a malformed row,
-    a file with entries that are not pins (it is not rewritten), a ``holds`` that differs from the pin's (an
-    override: a new ADR), or an alias another pin has."""
+    returns (the pin, 'pinned' or 'extended', with the alias it replaces when it changes). :class:`PinError` on a
+    decision that cannot be pinned, a new pin without touches, a malformed row, a file with entries that are not pins
+    (it is not rewritten), a ``holds`` that differs from the pin's (an override: a new ADR), an alias the public check
+    would refuse (:func:`alias_problem`) or one another pin has."""
     dropped: list[int] = []
     pins = load(project, dropped)
     if dropped and dropped[0]:
         raise PinError(f"{path_of(project)}: {dropped[0]} entry(ies) that are not pins: fix the file by hand first")
     known = decisions_of(project)
-    new, verb = _row(decision, [p for p in pins if p.get("decision") == decision], touches, holds, day, alias)
-    bad = problems(new) or ([why_not(new, known)] if why_not(new, known) else [])
-    taken = [str(p.get("decision")) for p in pins if p.get("decision") != decision and alias_of(p) == alias_of(new)]
-    if taken and not bad:
-        bad = [f"alias {alias_of(new)} is {taken[0]}'s already"]
+    mine = [p for p in pins if p.get("decision") == decision]
+    if not mine and not touches:
+        raise PinError(f"{decision}: a new pin needs its touches (brain adr pin {decision} --touches PATH|CODEREF)")
+    new, verb = _row(decision, mine, touches, holds, day, alias)
+    bad = _refused(new, alias, [p for p in pins if p.get("decision") != decision], known)
     if bad:
         raise PinError(f"{decision}: {'; '.join(bad)}")
+    before = alias_of(mine[0], known) if mine else ""
+    if before and before != alias_of(new, known):   # the PR bodies that said the former alias no longer answer
+        verb += f", alias {alias_of(new, known)} replaces {before}"
     rest = [p for p in pins if p.get("decision") != decision]
     f = path_of(project)
     f.parent.mkdir(parents=True, exist_ok=True)
@@ -352,9 +384,10 @@ def touched(project, files, repos, refs: set[str] | None = None, known: set[str]
             pins: list[dict] | None = None, decided: dict[str, Decision] | None = None,
             changed_rows: set[str] = frozenset()) -> list[dict]:
     """The pinned decisions a change touches: [{id, holds, day, since, hits, title, superseded_by, alias}], by id.
-    ``pins`` and ``decided`` (default: the project's files) are a change's own, read at its base and head; ``changed_rows``:
-    the decisions whose row the change edits or removes, touched as such. The pins that are malformed or name no
-    decision, or a DDR not answered, are left out (brain check names them); a superseded one stays."""
+    ``pins`` and ``decided`` (default: the project's files) are a change's own, read at its base and head;
+    ``changed_rows``: the decisions whose row the change edits or removes, touched as such. The pins that are
+    malformed or name no decision, or a DDR not answered, are left out (brain check names them); a superseded one
+    stays, and so does one whose alias is malformed (the computed alias answers in its place)."""
     if pins is None:
         try:
             pins = load(project)
@@ -373,7 +406,8 @@ def touched(project, files, repos, refs: set[str] | None = None, known: set[str]
         if h:
             d = decided[did]
             out.append({"id": d.id, "holds": str(p["holds"]).strip(), "day": d.day, "since": str(p.get("since") or ""),
-                        "hits": h, "title": d.title, "superseded_by": d.superseded_by, "alias": alias_of(p)})
+                        "hits": h, "title": d.title, "superseded_by": d.superseded_by,
+                        "alias": alias_of(p, decided)})
     return sorted(out, key=lambda x: x["id"])
 
 
@@ -398,34 +432,48 @@ def answers(body: str) -> dict[str, dict[str, str]]:
 
 def verdict(project, pinned: list[dict], body: str | None) -> list[str]:
     """What blocks the merge ([] when nothing): each pinned decision the change touches needs, in the PR body,
-    ``Keeps <id>`` when it is in force, ``Overrides <id>: <why>`` when a later ADR supersedes it (the override written
-    first, as a new ADR); one id both kept and overridden blocks. The pin's public alias answers as its id does: a
-    public repo's PR names no private decision (:func:`alias_of`)."""
+    ``Keeps <id or alias>`` when it is in force, ``Overrides <id or alias>: <why>`` when a later ADR supersedes it (the
+    override written first, as a new ADR); one decision both kept and overridden blocks. The pin's public alias
+    answers as its id does, and every message gives it: a public repo's PR names no private decision
+    (:func:`alias_of`)."""
     if not pinned:
         return []
     if body is None:
-        return [f"{len(pinned)} pinned decision(s) touched ({', '.join(p['id'] for p in pinned)}): the PR body is "
-                "needed (--pr N or --body FILE)"]
+        return [f"{len(pinned)} pinned decision(s) touched ({', '.join(_named(p) for p in pinned)}): the PR body "
+                "is needed (--pr N or --body FILE)"]
     said = answers(body)
     out = []
     for p in pinned:
-        alias = p.get("alias") or alias_of({"decision": p["id"]})
-        words = {**said.get(alias.lower(), {}), **said.get(p["id"].lower(), {})}
-        public = f" (in a public repo's PR, by its alias: {alias})"
-        if "keeps" in words and "overrides" in words:
-            out.append(f"{p['id']}: the PR body both keeps and overrides it")
-        elif p.get("superseded_by"):
-            if "overrides" not in words:
-                out.append(f"{p['id']} is superseded by {p['superseded_by']}: the PR body says Overrides {p['id']}: "
-                           f"<why>{public}")
-            elif not words["overrides"]:
-                out.append(f"Overrides {p['id']}: the reason is missing")
-        elif "overrides" in words:
-            out.append(f"Overrides {p['id']}: no later ADR supersedes it yet (brain adr new --reverses {p['id']})")
-        elif "keeps" not in words:
-            out.append(f"{p['id']} ({p['holds']}): the PR body says neither Keeps {p['id']} nor Overrides "
-                       f"{p['id']}: <why>{public}")
+        words = {**said.get(_alias(p).lower(), {}), **said.get(p["id"].lower(), {})}
+        why = _block(p, words)
+        if why:
+            out.append(f"{why} (in a public repo's PR, by its alias: {_alias(p)})")
     return out
+
+
+def _alias(p: dict) -> str:
+    """A touched row's alias (:func:`touched`), else the computed one of its id."""
+    return p.get("alias") or alias_of({"decision": p["id"]})
+
+
+def _named(p: dict) -> str:
+    return f"{p['id']} (alias {_alias(p)})"
+
+
+def _block(p: dict, words: dict[str, str]) -> str:
+    """What blocks one touched pin given what the PR body says of it (``words``: keeps/overrides -> the reason)."""
+    did = p["id"]
+    if "keeps" in words and "overrides" in words:
+        return f"{did}: the PR body both keeps and overrides it"
+    if p.get("superseded_by"):
+        if "overrides" not in words:
+            return f"{did} is superseded by {p['superseded_by']}: the PR body says Overrides {did}: <why>"
+        return "" if words["overrides"] else f"Overrides {did}: the reason is missing"
+    if "overrides" in words:
+        return f"Overrides {did}: no later ADR supersedes it yet (brain adr new --reverses {did})"
+    if "keeps" not in words:
+        return f"{did} ({p['holds']}): the PR body says neither Keeps {did} nor Overrides {did}: <why>"
+    return ""
 
 
 # --- brain check ---
@@ -440,18 +488,7 @@ def check_lines(project) -> list[str]:
         return [f"warning: {exc}"]
     if not pins and not (dropped and dropped[0]):
         return []
-    known = decisions_of(project)
-    bad, seen, twice, aliases = [], set(), [], {}
-    for p in pins:
-        did = str(p.get("decision") or "?")
-        if did not in seen:
-            aliases.setdefault(alias_of(p), []).append(did)
-        why = "; ".join(problems(p)) or why_not(p, known)
-        if why:
-            bad.append(f"{did} ({why})")
-        if did in seen:
-            twice.append(did)
-        seen.add(did)
+    bad, twice, aliases = _rows_said(pins, decisions_of(project))
     if dropped and dropped[0]:
         bad.append(f"{dropped[0]} entry(ies) that are not pins")
     rel = notes_rel(project, f)
@@ -462,6 +499,26 @@ def check_lines(project) -> list[str]:
     if shared:
         out.append(f"warning: {rel} gives one alias to several decisions: {', '.join(shared)}")
     return out
+
+
+def _rows_said(pins: list[dict], known: dict[str, Decision]) -> tuple[list[str], list[str], dict[str, list[str]]]:
+    """(each row to fix and why, the decisions pinned twice, each alias -> its decisions, one each) for
+    :func:`check_lines`. A malformed alias is said with the computed alias that answers in its place: the pin stays
+    in the gate."""
+    bad, seen, twice, aliases = [], set(), [], {}
+    for p in pins:
+        did = str(p.get("decision") or "?")
+        if did not in seen:
+            aliases.setdefault(alias_of(p, known), []).append(did)
+        why = "; ".join(problems(p)) or why_not(p, known)
+        alias = alias_problem(p.get("alias"), known)
+        why = "; ".join(w for w in (why, alias and f"{alias}; {alias_of(p, known)} answers instead") if w)
+        if why:
+            bad.append(f"{did} ({why})")
+        if did in seen:
+            twice.append(did)
+        seen.add(did)
+    return bad, twice, aliases
 
 
 def notes_rel(project, f: Path) -> str:
