@@ -100,7 +100,7 @@ def test_each_step_moves_as_the_release_goes(tmp_path, net):
     assert rep["next"]["name"] == "pin" and rep["next"]["next"] == "review and merge #9"
     rep = rs.status(root, "0.2.0", runner=Fake(main_pin="v0.2.0"), installed="0.1.0", rec={})
     assert _steps(rep)["pin"] == ("done", "engine.pin v0.2.0 on the default branch")
-    assert rep["next"]["name"] == "install" and rep["next"]["owner"] == "owner"
+    assert rep["next"]["name"] == "install" and rep["next"]["owner"] == "Ada"
     assert rep["next"]["next"].startswith("install.ps1 -Apply")
     rep = rs.status(root, "0.2.0", runner=Fake(main_pin="v0.2.0"), installed="0.2.0",
                     rec={"version": "0.2.0", "ok": False, "at": "T", "checks": [{"name": "tests", "ok": False}]})
@@ -131,7 +131,7 @@ def test_a_tool_that_cannot_run_is_unknown_never_a_crash(tmp_path, net, monkeypa
     st = _steps(rep)
     assert st["tag"] == ("unknown", "git ls-remote owner/engine: exit 128")
     assert st["version"][0] == "unknown" and "gh could not run" in st["version"][1]
-    assert st["pin"][0] == "pending"   # the pin read from git show still says where it is
+    assert st["pin"][0] == "unknown"   # no pin PR could be listed: never a « no PR yet »
 
 
 def test_the_version_defaults_to_the_pin_once_no_wave_is_above_it(tmp_path, net):
@@ -226,3 +226,63 @@ def test_the_version_check_reads_brain_version_against_the_pin():
     assert rs._version_verdict("brain 0.2.0\n", None) == (True, "brain 0.2.0, no pin")
     assert rs._version_verdict("brain 0.1.9\n", "v0.2.0") == (False, "brain 0.1.9, the pin is v0.2.0")
     assert rs._version_verdict("", "v0.2.0") == (False, "no version in ''")
+
+
+def test_a_closed_wave_counts_as_the_release_it_shipped_as(tmp_path, net):
+    root = _brain(tmp_path)
+    jumped = NODES.replace("status: active, title: \"two\", props: {kind: wave, release: 0.2.0, seq: 2}",
+                           "status: reached, title: \"two\", props: {kind: wave, release: 0.2.0, shipped_as: 0.3.0, "
+                           "seq: 2}")
+    (root / "notes" / "graph" / "nodes" / "plan.yaml").write_text(jumped, encoding="utf-8")
+    store = root / "notes" / "graph"
+    assert rs.default_version(store, root, "v0.1.0") == "0.3.0"
+    assert rs.wave_step(store, root, "0.3.0").state == "done"
+
+
+def test_a_tag_that_could_not_be_checked_is_unknown_not_the_owners_to_sign(tmp_path, net):
+    root = _brain(tmp_path)
+    net["tags"].append("v0.2.0")
+    net["verdict"] = tagsig.UNVERIFIABLE
+    st = _steps(rs.status(root, "0.2.0", runner=Fake(), installed="0.1.0", rec={}))
+    assert st["tag"] == ("unknown", "v0.2.0 cut, not verified: no signature")
+    net["verdict"] = tagsig.UNKNOWN_KEY
+    rep = rs.status(root, "0.2.0", runner=Fake(), installed="0.1.0", rec={})
+    assert _steps(rep)["tag"][0] == "pending"
+
+
+def test_a_pin_that_cannot_be_read_is_unknown(tmp_path, net):
+    class NoShow(Fake):
+        def __call__(self, argv, **kw):
+            if argv[0] == "git" and "show" in argv:
+                self.calls.append(argv)
+                return subprocess.CompletedProcess(argv, 128, "", "fatal: invalid object name\n")
+            return super().__call__(argv, **kw)
+    root = _brain(tmp_path)
+    st = _steps(rs.status(root, "0.2.0", runner=NoShow(), installed="0.1.0", rec={}))
+    assert st["pin"] == ("unknown", "the default branch's pin unknown (git show origin/main:config.json failed)")
+    st = _steps(rs.status(root, "0.2.0", runner=Fake(fail={"gh"}), installed="0.1.0", rec={}))
+    assert st["pin"][0] == "unknown" and "gh could not run" in st["pin"][1]
+    fake = Fake()
+    rs.status(root, "0.2.0", offline=True, runner=fake, installed="0.1.0", rec={})
+    assert not any("ls-remote" in c for c in fake.calls)   # offline: origin/HEAD read locally, else main
+
+
+def test_a_record_that_cannot_be_written_removes_the_previous_pass(tmp_path, monkeypatch):
+    from brain import stateio
+    root = _brain(tmp_path, pin="v0.2.0")
+    rs.verify(root, tests=False, runner=_check_runner({"version": (0, "brain 0.2.0")}))
+    assert rs.last_verify()["ok"] is True
+
+    def full(path, text):
+        raise OSError(28, "No space left on device")
+    monkeypatch.setattr(stateio, "write_atomic", full)
+    said = []
+    rec = rs.verify(root, tests=False, runner=_check_runner({"version": (0, "brain 0.1.0")}), say=said.append)
+    assert rec["ok"] is False and rs.last_verify() == {}
+    assert said[-1] == "record   not written (OSError), the previous one removed"
+
+
+def test_another_planning_brains_verify_is_not_this_ones(tmp_path):
+    rec = {"version": "0.2.0", "ok": True, "at": "T", "root": str(tmp_path / "other")}
+    assert rs.verify_step("0.2.0", rec, tmp_path / "planning").state == "pending"
+    assert rs.verify_step("0.2.0", rec, tmp_path / "other").state == "done"

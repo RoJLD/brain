@@ -333,12 +333,12 @@ given, else the lowest live wave's release above the pin, else the pin's own. Si
 | wave | the wave of that release is `reached` (`brain wave close`) | the coordinator closes it |
 | version | the version PR, whose title names « Release » and the version, is merged (or the tag is cut) | the coordinator: `brain release prepare`, then its PR's review and merge |
 | tag | the tag is on the engine repo and signed by a releaser of `allowed_signers` (brain.tagsig, the tag fetched alone into a temporary folder) | the owner, named by their display name: « 3. The tag » |
-| pin | `engine.pin` on the planning brain's default branch is at the tag | the coordinator: `brain release pin vX.Y.Z --write` in a pin branch, its PR, the merge |
+| pin | `engine.pin` on the planning brain's default branch is at the tag (read from the local refs: as of the last fetch); while not, an open PR whose title names « pin » and the version | the coordinator: `brain release pin vX.Y.Z --write` in a pin branch, its PR, the merge |
 | install | the engine running is at the version, on this machine | the owner: the brain's installer `-Apply`, else `brain update` |
 | verified | this machine's last `brain release verify` passed at the version | the session: `brain release verify` |
 
 Every read is bounded (60 s) and none writes. A read that fails (gh or git missing, the network down) leaves its step
-`unknown` with why; `--offline` reads no network (the version, tag and pin PR steps). `--json` prints the steps. The
+`unknown` with why, never a « not started » it could not see (a tag whose signature could not be checked, a pin that could not be read); `--offline` reads no network (the version, tag and pin PR steps; the default branch from `origin/HEAD`, else `main`). `--json` prints the steps. The
 install and the verify are this machine's: each machine runs `brain release verify` after its install.
 
 `brain release verify` runs the after-install checks in one call, each with this interpreter (the engine installed),

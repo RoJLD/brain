@@ -168,7 +168,7 @@ projects) keeps its `v` 1 unwritten, so that brain 0.2.5, which reads every key 
 | `memory-sync/state.json` | `v` 1 | the memory sync refuses before any fetch: `last.json` says « failed » and the alert names brain update |
 | `ship/queue.json` | `v` 1 | `brain ship` refuses to queue a PR or to run the merger (exit 1, the refusal said); `--list` still reads it |
 | `formats/<project>.json` | `v` 1 | `brain formats check` runs and reports as usual, and remembers no result: each check runs again next time |
-| `release/verified.json` | `v` 1 (derived: written whole by each verify, not through `brain.stateio`) | `brain release verify` runs and reports its checks and says it recorded nothing; `brain release status` then reads no verify on this machine |
+| `release/verified.json` | `v` 1 (derived: written whole by each verify, not through `brain.stateio`) | `brain release verify` runs and reports its checks, says it recorded nothing and removes the previous record, so `brain release status` reads no verify on this machine rather than an older pass |
 | `vault/device.json` | `v` 1 | `brain vault device init` (`--rotate` too) and `device forget-previous` refuse before the keystore is touched |
 | `sessions/<id>.json`, `<id>.state.json` | `v` 1 (the SR's schema, `capture.SR_V`; `STATS_V`) | the Stop hook writes neither (a newer brain's session) and logs nothing |
 | `sessions/<id>.report.json`, `<id>.plan.json` | `v` 1 | `sessions.write_report` returns None, the plan hook keeps the file |

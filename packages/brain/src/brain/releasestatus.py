@@ -103,32 +103,40 @@ def engine_of(cfg) -> dict:
     return eng if isinstance(eng, dict) else {}
 
 
-def pin_of(root: Path, runner: Runner = subprocess.run) -> tuple[str | None, str | None]:
-    """(the pin on the planning brain's default branch, the pin in its checkout): config.json engine.pin of
-    origin/<default>, read with git show (None when git cannot), and of the working copy."""
+def pin_of(root: Path, runner: Runner = subprocess.run, offline: bool = False) -> tuple[str | None, str | None, str]:
+    """(the pin on the planning brain's default branch, the pin in its checkout, why the first is unknown):
+    config.json engine.pin of origin/<default>, read with git show from the local refs (as of the last fetch), and
+    of the working copy. The default branch is origin/HEAD, else asked of the remote (not ``offline``), else main."""
     from . import release
     pin = engine_of(config_of(root)).get("pin")
     local = pin if isinstance(pin, str) and pin else None
-    branch = release._default_branch(root, runner) or "main"
-    rc, out, _ = _run(runner, ["git", "-C", str(root), "show", f"origin/{branch}:config.json"])
-    main = None
-    if rc == 0:
-        try:
-            eng = json.loads(out.lstrip("﻿")).get("engine")
-            main = eng.get("pin") if isinstance(eng, dict) and isinstance(eng.get("pin"), str) else None
-        except (ValueError, AttributeError):
-            main = None
-    return main, local
+    branch = _local_default(root, runner) or ("" if offline else release._default_branch(root, runner)) or "main"
+    rc, out, err = _run(runner, ["git", "-C", str(root), "show", f"origin/{branch}:config.json"])
+    if rc != 0:
+        return None, local, err.strip() if rc is None else f"git show origin/{branch}:config.json failed"
+    try:
+        eng = json.loads(out.lstrip("﻿")).get("engine")
+    except (ValueError, AttributeError):
+        return None, local, f"origin/{branch}:config.json is not a JSON object"
+    main = eng.get("pin") if isinstance(eng, dict) and isinstance(eng.get("pin"), str) else None
+    return main, local, ""
+
+
+def _local_default(root: Path, runner: Runner) -> str:
+    """origin/HEAD as the clone set it ('' when it did not): no network."""
+    rc, out, _ = _run(runner, ["git", "-C", str(root), "symbolic-ref", "--short", "refs/remotes/origin/HEAD"])
+    return out.strip().split("/", 1)[-1] if rc == 0 and out.strip() else ""
 
 
 def default_version(store: Path, root: Path, pin: str | None) -> str:
-    """The lowest live wave's release above the pin, else the pin's own version."""
+    """The lowest live wave's release above the pin (a closed wave's: the release it shipped as), else the pin's."""
     from . import waves
     floor = key(pin or "") or (0, 0, 0)
     found = []
     if (store / "nodes").is_dir():
         plan = waves.load(store, root)
-        found = sorted(k for k in (key(plan.label(w)) for w in plan.live) if k and k > floor)
+        named = (plan.shipped(w) if plan.status(w) == "reached" else plan.label(w) for w in plan.live)
+        found = sorted(k for k in (key(n) for n in named) if k and k > floor)
     if found:
         return ".".join(map(str, found[0]))
     if key(pin or ""):
@@ -136,21 +144,26 @@ def default_version(store: Path, root: Path, pin: str | None) -> str:
     raise StatusError("no version given, no wave above the pin and no pin: name the version (X.Y.Z)")
 
 
-def _prs(runner: Runner, cwd: Path | None, repo: str | None, version: str, state: str) -> tuple[list[dict], str]:
-    """The PRs (gh pr list --state STATE) whose title names the version; ([], why) when gh cannot list them."""
+def _prs(runner: Runner, cwd: Path | None, repo: str | None, version: str, state: str,
+         word: str) -> tuple[list[dict], str]:
+    """The PRs (gh pr list --state STATE) whose title names the version (X.Y.Z or vX.Y.Z) and ``word``; ([], why)
+    when gh cannot list them. GitHub's search is asked for ``word`` only: it splits « v0.5.1 » unlike « 0.5.1 »."""
     argv = ["gh", "pr", "list", "--state", state, "--limit", "100", "--json", "number,title,state,headRefName",
-            "--search", f"{version} in:title"]
+            "--search", f"{word} in:title"]
     if repo:
         argv += ["--repo", repo]
     rc, out, err = _run(runner, argv, cwd)
+    if rc is None:
+        return [], err.strip()
     if rc != 0:
-        return [], ("gh pr list failed: " + ((err or out).strip().splitlines() or ["no output"])[-1]) if rc else err
+        return [], "gh pr list failed: " + ((err or out).strip().splitlines() or ["no output"])[-1]
     try:
         prs = json.loads(out or "[]")
     except ValueError:
         return [], "gh pr list gave no JSON"
     named = re.compile(rf"(?<![\d.])v?{re.escape(version)}(?![\d]|\.\d)")
-    return [p for p in prs if isinstance(p, dict) and named.search(str(p.get("title") or ""))], ""
+    return [p for p in prs if isinstance(p, dict) and named.search(str(p.get("title") or ""))
+            and word in str(p.get("title") or "").lower()], ""
 
 
 def record_file() -> Path:
@@ -174,7 +187,7 @@ def wave_step(store: Path, root: Path, version: str) -> Step:
     if not (store / "nodes").is_dir():
         return Step("wave", UNKNOWN, f"no graph store at {store}")
     plan = waves.load(store, root)
-    wid = plan.resolve(version)
+    wid = plan.resolve(version) or plan.for_release(version)   # for_release: the current wave, a release jumped
     if not wid:
         return Step("wave", NA, f"no wave of {version}")
     if plan.status(wid) == "reached":
@@ -187,11 +200,10 @@ def version_step(version: str, repo: str, tagged: bool, offline: bool, runner: R
     if tagged:
         return Step("version", DONE, f"v{version} tagged: the version PR is merged")
     if offline:
-        return Step("version", UNKNOWN, "offline", "coordinator", f"brain release status {version} online")
-    prs, why = _prs(runner, None, repo, version, "all")
-    prs = [p for p in prs if "release" in str(p.get("title") or "").lower()]   # « Release X.Y.Z: theme »
+        return Step("version", UNKNOWN, "offline")
+    prs, why = _prs(runner, None, repo, version, "all", "release")   # « Release X.Y.Z: theme »
     if why:
-        return Step("version", UNKNOWN, why, "coordinator", f"gh pr list --repo {repo} --search '{version}'")
+        return Step("version", UNKNOWN, why)
     merged = [p for p in prs if p.get("state") == "MERGED"]
     if merged:
         return Step("version", DONE, f"#{merged[0]['number']} merged")
@@ -204,7 +216,9 @@ def version_step(version: str, repo: str, tagged: bool, offline: bool, runner: R
 
 
 def tag_step(root: Path, version: str, repo: str, offline: bool, owner: str, runner: Runner) -> tuple[Step, bool]:
-    """The tag step, and whether the tag exists."""
+    """The tag step, and whether the tag exists. A tag whose signature could not be checked (no allowed signers, the
+    fetch or ssh-keygen failed) is unknown; one checked and refused (unsigned, an unknown key, misnamed) is the
+    owner's to sign again."""
     from . import tagsig, update
     tag = f"v{version}"
     if offline:
@@ -217,43 +231,50 @@ def tag_step(root: Path, version: str, repo: str, offline: bool, owner: str, run
         return Step("tag", PENDING, f"{tag} not on {repo}", owner,
                     f"once the version PR is merged: git tag -s {tag} on it, then git push origin {tag}"), False
     v = tagsig.verify(root, repo, tag, runner=runner)
-    if v.get("status") == tagsig.VERIFIED:
+    status_ = v.get("status")
+    if status_ == tagsig.VERIFIED:
         return Step("tag", DONE, f"{tag} signed by {v.get('signer')}"), True
-    return Step("tag", PENDING, f"{tag} cut, not verified: {v.get('why') or v.get('status')}", owner,
+    why = f"{tag} cut, not verified: {v.get('why') or status_}"
+    if status_ in (tagsig.NO_SIGNERS, tagsig.UNVERIFIABLE):
+        return Step("tag", UNKNOWN, why), True
+    return Step("tag", PENDING, why, owner,
                 "sign it with a releaser key of allowed_signers (docs/release.md, « 3. The tag »)"), True
 
 
-def pin_step(root: Path, version: str, pins: tuple[str | None, str | None], offline: bool, runner: Runner) -> Step:
-    tag, (main, local) = f"v{version}", pins
-    want = key(version)
-    if key(main or "") and key(main) >= want:
+def pin_step(root: Path, version: str, pins: tuple[str | None, str | None, str], offline: bool,
+             runner: Runner) -> Step:
+    tag, (main, local, unread) = f"v{version}", pins
+    if key(main or "") and key(main) >= key(version):
         return Step("pin", DONE, f"engine.pin {main} on the default branch")
-    if offline:
-        return Step("pin", UNKNOWN if local != tag else PENDING, f"pin {main or 'none'} on the default branch"
-                    + (f", {local} in this checkout" if local == tag else ""), "coordinator",
-                    f"brain release pin {tag} --write in a pin branch, then its PR")
-    prs, why = _prs(runner, root, None, version, "open")
-    pin_prs = [p for p in prs if "pin" in str(p.get("title") or "").lower()]
-    if pin_prs:
-        return Step("pin", PENDING, f"#{pin_prs[0]['number']} open: {pin_prs[0]['title']}", "coordinator",
-                    f"review and merge #{pin_prs[0]['number']}")
+    where = f"pin {main or 'none'} on the default branch" if not unread else f"the default branch's pin unknown " \
+        f"({unread})"
+    todo = ("coordinator", f"brain release pin {tag} --write in a pin branch of the planning brain, then its PR")
     if local == tag:
-        return Step("pin", PENDING, f"{tag} in this checkout, no PR yet", "coordinator", "commit it and open its PR")
-    return Step("pin", PENDING, f"pin {main or 'none'} on the default branch" + (f" ({why})" if why else ""),
-                "coordinator", f"brain release pin {tag} --write in a pin branch of the planning brain, then its PR")
+        todo = ("coordinator", f"{tag} in this checkout: commit it and open its PR, unless one is open")
+    if offline:
+        return Step("pin", UNKNOWN, f"{where}; offline: the pin PRs not read")
+    prs, why = _prs(runner, root, None, version, "open", "pin")
+    if prs:
+        return Step("pin", PENDING, f"#{prs[0]['number']} open: {prs[0]['title']}", "coordinator",
+                    f"review and merge #{prs[0]['number']}")
+    if why or unread:
+        return Step("pin", UNKNOWN, "; ".join(x for x in (where if unread else "", why) if x))
+    return Step("pin", PENDING, where, *todo)
 
 
-def install_step(cfg, version: str, installed: str) -> Step:
+def install_step(cfg, version: str, installed: str, owner: str) -> Step:
     have, want = key(installed), key(version)
     if have and have >= want:
         return Step("install", DONE, f"brain {installed} on this machine")
     name = engine_of(cfg).get("installer")
     name = name if isinstance(name, str) and name else None
     how = f"{name} -Apply (its plan first), then restart the sessions" if name else "brain update, then y"
-    return Step("install", PENDING, f"brain {installed} on this machine", "owner", how)
+    return Step("install", PENDING, f"brain {installed} on this machine", owner, how)
 
 
-def verify_step(version: str, rec: dict) -> Step:
+def verify_step(version: str, rec: dict, root: Path | None = None) -> Step:
+    if root is not None and rec.get("root") not in (None, str(root)):
+        rec = {}   # another planning brain's verify
     if rec.get("version") == version and rec.get("ok") is True:
         return Step("verified", DONE, f"verified {rec.get('at', '')}")
     if rec.get("version") == version:
@@ -269,14 +290,14 @@ def status(root: Path, version: str = "", *, store: Path | None = None, offline:
     from . import config, update
     store = store or root / "notes" / "graph"
     cfg = config_of(root)
-    pins = pin_of(root, runner)
+    pins = pin_of(root, runner, offline)
     version = bare(version) if version else default_version(store, root, pins[0] or pins[1])
     repo = engine_of(cfg).get("repo") or update.ENGINE_REPO
     owner = config.display_name(cfg) if cfg.data else "owner"
     tag, tagged = tag_step(root, version, repo, offline, owner, runner)
     steps = [wave_step(store, root, version), version_step(version, repo, tagged, offline, runner), tag,
-             pin_step(root, version, pins, offline, runner), install_step(cfg, version, installed),
-             verify_step(version, last_verify() if rec is None else rec)]
+             pin_step(root, version, pins, offline, runner), install_step(cfg, version, installed, owner),
+             verify_step(version, last_verify() if rec is None else rec, root)]
     nxt = next((s for s in steps if s.state == PENDING), None)
     return {"version": version, "repo": repo, "root": str(root), "steps": [asdict(s) for s in steps],
             "next": asdict(nxt) if nxt else None}
@@ -358,7 +379,10 @@ def verify(root: Path, *, tests: bool = True, python: str = sys.executable, runn
            now: datetime | None = None, say: Callable[[str], object] = lambda line: None) -> dict:
     """Run the checks, each one's output into its log; the record, written to :func:`record_file`."""
     folder = record_file().parent
-    folder.mkdir(parents=True, exist_ok=True)
+    try:
+        folder.mkdir(parents=True, exist_ok=True)
+    except OSError as exc:   # the checks run all the same: no log, and the record is said not written
+        say(f"logs     {folder} cannot be created ({exc.__class__.__name__}): the checks run without logs")
     pin = engine_of(config_of(root)).get("pin")
     pin = pin if isinstance(pin, str) and pin else None
     if tests and (root / "tests").is_dir() and not _has_pytest(python, runner):
@@ -381,8 +405,13 @@ def _write(rec: dict, say: Callable[[str], object]) -> None:
     from . import stateio
     try:
         stateio.write_atomic(record_file(), json.dumps(rec, indent=1, sort_keys=True) + "\n")
-    except OSError as exc:
-        say(f"record   not written ({exc.__class__.__name__}): brain release status will not see this verify")
+    except OSError as exc:   # the previous record goes: status never reads an older pass as this verify's
+        try:
+            record_file().unlink(missing_ok=True)
+            gone = "the previous one removed"
+        except OSError:
+            gone = "the previous one could not be removed either: brain release status may read it"
+        say(f"record   not written ({exc.__class__.__name__}), {gone}")
 
 
 # --- the commands ---
