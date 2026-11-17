@@ -2306,6 +2306,11 @@ busy one, so the run no longer ends on one or two workers while the others idle;
 back. A git repository in a test is a copy of a template made once per worker (`conftest.git_init`, the `git_repo` and
 `make_repo` fixtures), not a `git init`. The test that calls the real docker client is marked `docker`: the CI runs it
 apart, on one process (`pytest packages/brain -m docker`).
+The cockpit's tests (`tests/test_tui*.py`) drive the Textual app and need the `tui` extra (Textual, psutil): without
+Textual they are skipped. The CI installs the extra's packages, Textual pinned to 8 (the major its tests are
+written against, while the extra accepts 1.0 or later; a package added to the extra is added to `ci.yml` too), so
+they run there and the coverage counts them; `tests/test_ci_workflows.py` fails if a job that runs the suite stops
+installing Textual before it.
 
 The lite suite (`pytest packages/brain -m lite`, `tests/test_lite.py`) runs the stranger test's Lite scenario on the
 checkout's engine (checked: the launcher imports this checkout's `brain` and `research_graph`) in a stranger's
