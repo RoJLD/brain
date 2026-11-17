@@ -890,10 +890,10 @@ def test_a_wave_that_ships_under_another_number_is_found_and_checked(repo, tmp_p
     write(store, "nodes/work.yaml", nodes.replace("status: pending, title: W", "status: reached, title: W"))
     from brain import waves
     old = types.SimpleNamespace(load=waves.load, closure_problems=waves.closure_problems, __file__=waves.__file__)
-    monkeypatch.setattr(release_check, "_waves", lambda repo: old)   # an installed engine older than this checkout
-    rc, text = check()   # it names no wave and reads no tag: said so, not "no wave of that release"
+    with monkeypatch.context() as mp:
+        mp.setattr(release_check, "_waves", lambda repo: old)   # an installed engine older than this checkout
+        rc, text = check()   # it names no wave and reads no tag: said so, not "no wave of that release"
     assert "(this engine names no wave)" in text and "no wave of that release" not in text, text
-    monkeypatch.undo()
     write(store, "nodes/work.yaml", nodes.replace("status: pending, title: W, props: {kind: wave, release: 0.2.6}",
                                                   "status: reached, title: W, props: {kind: wave, release: 0.2.6, "
                                                   "shipped_as: 0.3.0}"))
