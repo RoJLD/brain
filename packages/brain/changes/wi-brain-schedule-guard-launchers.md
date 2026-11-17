@@ -2,12 +2,14 @@ section: Added
 
 - The owner's gestures matched wide (`wi-brain-schedule-guard-launchers`): under config.json `guards.gestures_wide:
   true` (off by default), the owner guard refuses `brain schedule install --apply` (and every gesture of
-  `brain.gestures`) through words it cannot resolve (`brain schedule install $FLAG`, `brain schedule $(echo install)
-  --apply`, `& $brain ...`, PowerShell's `@rest` and `@('--apply')`) and through Python's inline code that drives
-  brain's modules (`python -c "... main(['schedule', 'install', '--apply'])"`); guard.sh's pre-filter now reads a
-  command's escaped words (`b\rain sched\ule install`) and starts Python for a brain usage, schedule, vault or queue
-  command with such a word; under the key, a call that clears an agent session's markers (CLAUDECODE= ..., env -u,
-  unset, $env:CLAUDECODE = '') is refused too. The gestures that act (schedule install --apply, update, uninstall
-  --apply, queue apply, handover root) now refuse themselves while any agent marker is set (CLAUDECODE,
-  CLAUDE_CODE_ENTRYPOINT, BRAIN_AGENT_SESSION), not only CLAUDECODE. The MCP server matches wide always (docs/guards.md,
-  « The owner's gestures »).
+  `brain.gestures`) through words it cannot resolve (`brain schedule install $FLAG`, `brain schedule $x`, `brain $x`,
+  `& $brain ...`, PowerShell's `@a` and `@('--apply')`), through Python's inline code that drives brain's modules
+  (`python -X utf8 -c "... main(['schedule', 'install', '--apply'])"`, the code's own arguments read too), and a call
+  that clears an agent session's markers (`CLAUDECODE= ...`, `env -u`, `unset ${!CLAUDE*}`, `export -n`,
+  `$env:CLAUDECODE = ''`, `Remove-Item Env:CLAUDE*`, .NET's environment calls); `brain usage allow` and `brain vault
+  reseal --apply` then refuse themselves in an agent's session as under `guards.owner_strict`. guard.sh's pre-filter
+  reads a command's quoted and escaped words (`b\rain`, `"us"age`, `ins''tall`) and starts Python for a brain command
+  with a word it may not resolve. The MCP server matches wide always (docs/guards.md, « The owner's gestures »).
+- The gestures that act (`schedule install --apply`, `update`, `uninstall --apply`, `queue apply`, `handover root`)
+  refuse themselves while any agent marker is set: `CLAUDECODE`, `BRAIN_AGENT_SESSION` or any `CLAUDE_CODE_*`
+  variable, not only `CLAUDECODE` (`brain.gestures.agent_session`, `brain.detail.refused`).
