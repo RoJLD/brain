@@ -1597,6 +1597,35 @@ and `brain check --all` says what to declare). A first entry the brain skips for
 cover every project registered there, and `--store prog/graph` runs as the project that lists that store.
 `examples/projects.yaml` has both.
 
+### Project ids: aliases, labels, tombstones
+
+A project's key in `projects.yaml` is its **id**, frozen at birth (`brain.projectids`): records, ledgers,
+`BRAIN_HOME` files and `--project` lines name it for ever, so a rename changes its `title` (the one line saying what
+it is) or its `label` (a short display name), never the key. The names it had go to `aliases`, which `--project` and
+a scope reference (`--scope`, a path of ids) resolve to the id with a notice on stderr. A project that ends (merged,
+split, turned into a process, retired) keeps its entry as a **tombstone**, `status: merged | split | became-process |
+archived`, holding `title`, `label`, `status`, `aliases`, `parent`, `classes` and `access` only: no command loads it
+(`--project` says it ended), `brain projects` lists it, and its id and aliases are never taken again.
+
+```yaml
+orchard: {root: ../orchard, title: the orchard's planner, label: Orchard, aliases: [old-orchard]}
+old-lab: {title: a lab merged into orchard, status: merged, aliases: [lab], parent: orchard}
+```
+
+Ids and aliases are one namespace across the registry and `scopes.yaml` (a container takes `aliases` too):
+`brain check --all` refuses an alias that is another node's id or alias, its own id, not kebab-case from a letter (2
+to 40 characters), or `global`, and a tombstone that still holds a live key (a root, a store, a production checkout:
+its guards stay on while it is red); a status it does not know is a note (strict, CI: an error), and the entry is not
+loaded either. An id that is not kebab-case is a warning only: it stays as it is, and `brain project add` mints
+kebab-case ones only, never a name another node or alias holds. An alias two nodes declare resolves to neither. A
+private project's aliases and label are as private as its id: they join the deny terms the registry derives
+(`public.derive` `projects`) and those of the tree (`public.deny_from_tree`), and so do a tombstone's names. A repo's
+`name:` is its frozen id too: `brain check --all` warns when a project's repo has no `name:` (it is named after its
+folder) while the project's graph names a repo no registered one answers to (`code:`, `doc:`, `test:` ids), the sign
+of a clone in another folder. A node id's slug (`wi-<slug>-...`) says where it was born, never where it lives: no
+command reads a project from an id. The keys need brain 0.6.0 on every machine: an older brain notes them as unknown
+(CI refuses them) and reads a tombstone as a project at the registry's folder.
+
 ### The notes home: `brain notes`
 
 The owner's notes live beside the work brain, in a private repo of their own: Markdown with wikilinks, one idea per

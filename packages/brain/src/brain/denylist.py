@@ -8,9 +8,10 @@ The sources (``public.derive`` picks them, a list of these names; absent, all of
 - ``hosts``: the machines of config.json ``hosts``, by name, and their ``aliases``;
 - ``people``: config.json ``identity.owner`` and ``identity.display_name``, and members.yaml's people (``name``,
   ``person_id``);
-- ``projects``: the projects registry's names (read-only ones too) and each project's repos, by name and by its main
-  checkout's folder (brain.projects.repos_of); a project rooted at the brain's own folder (or at the top of a
-  worktree or the main checkout of the same repo) gives its repos, not its name
+- ``projects``: the projects registry's names (read-only ones and tombstones too), their aliases and labels
+  (brain.projectids: a project's old names are as private as its id) and each project's repos, by name and by its
+  main checkout's folder (brain.projects.repos_of); a project rooted at the brain's own folder (or at the top of a
+  worktree or the main checkout of the same repo) gives its repos, not its names
   (a brain is often named as its engine: ``brain``);
 - ``specs``: the file names, without ``.md``, under the brain's ``docs/specs`` (a spec's path is its name);
 - ``modules``: the module registries of the brain's own stores (brain.modules), each entry's ``name``, and its ``id``
@@ -35,7 +36,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from . import config
+from . import config, projectids
 
 SOURCES = ("hosts", "people", "projects", "specs", "modules")
 CATEGORY = {"hosts": "hosts", "people": "people", "projects": "repos", "specs": "paths", "modules": "repos"}
@@ -161,10 +162,13 @@ def _projects(cfg: config.Config) -> list[str]:
     try:
         loaded = projects.load(cfg.root)
         names = [n for n, p in loaded.items() if not _own_root(p.root, cfg)]
-        names += list(projects.readonly(cfg.root))
+        names += list(projects.readonly(cfg.root)) + list(projects.tombstones(cfg.root))
+        reg = projects.raw(cfg.root)
     except Exception as exc:   # noqa: BLE001 - any failure to read the registry is a reason to refuse
         raise DeriveError(f"the projects registry cannot be read ({type(exc).__name__}: {exc})") from exc
     out = list(names)
+    for n in names:   # its other names (brain.projectids): as private as its id
+        out += projectids.aliases(reg.get(n)) + [t for t in [projectids.label(reg.get(n))] if t]
     for p in loaded.values():
         try:
             out += [t for r in projects.repos_of(p) for t in (r.name, r.folder) if t]

@@ -17,7 +17,8 @@ each lives:
   ``type`` (required), ``title``, ``parent`` (default: global) and ``status`` (``active``, the default, or
   ``archived``); ``classes: {floor: <class>}`` (brain classes, brain vault read it); ``vault: {recipients}``
   (brain vault); ``lifecycle`` (spec-brain-product-lifecycle); ``also_under``: shortcuts shown under other nodes,
-  for display only (SCOPE-5: they inherit nothing and count once). The settings the inheritance resolver will read
+  for display only (SCOPE-5: they inherit nothing and count once); ``aliases``: the names it had, resolved by a scope
+  reference with a notice (brain.projectids: an id is frozen, a rename changes the title). The settings the inheritance resolver will read
   (:data:`RESERVED`: rules, notify, quiet, capabilities, never, budgets, members, language) are accepted as declared
   and not read yet (wi-brain-scope-inheritance);
 - the type catalogue is :data:`TYPES`, renamed or extended per brain by config.json's ``scope_types`` (SCOPE-4):
@@ -27,7 +28,9 @@ With no ``scopes.yaml`` and no ``parent:``, every project sits flat under Global
 (:attr:`Tree.present` is False). :func:`check` (``brain check --all`` and a brain's own root) refuses an unknown
 parent, a cycle, an id used twice across projects and containers, an unknown type or one its parent's type does not
 accept, a class floor under an ancestor's (a guard only tightens) or not a class; it warns past :data:`DEPTH_WARN`
-levels under Global. ``brain scopes`` prints the tree; ``--scope <ref>`` on the views selects a node's subtree
+levels under Global; and, through brain.projectids, an alias that is another node's id or alias (ids and aliases are
+one namespace, never reused). A project that ended is a tombstone node (kind ``tombstone``, shown archived). ``brain
+scopes`` prints the tree; ``--scope <ref>`` on the views selects a node's subtree
 (:func:`select`); ``brain sync`` writes the generated view ``notes/scopes_graph.md`` (:func:`write_view`).
 """
 
@@ -38,7 +41,7 @@ import re
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from . import config, graph, projects, schema
+from . import config, graph, projectids, projects, schema
 
 FILE = "scopes.yaml"
 ENV = "BRAIN_SCOPES"
@@ -49,7 +52,7 @@ STATUSES = ("active", "archived")
 ID = re.compile(r"^[a-z0-9][a-z0-9-]*$")
 TYPE_ID = re.compile(r"^[a-z][a-z0-9-]*$")
 # a container's keys: its place and its own settings (spec 3.1, 3.5); RESERVED is read by wi-brain-scope-inheritance
-NODE_KEYS = {"type", "title", "parent", "status", "classes", "vault", "lifecycle", "also_under"}
+NODE_KEYS = {"type", "title", "parent", "status", "classes", "vault", "lifecycle", "also_under", "aliases"}
 RESERVED = {"rules", "notify", "quiet", "capabilities", "never", "budgets", "members", "language"}
 TYPE_KEYS = {"en", "fr", "children"}
 # The default catalogue (spec 3.2): id -> its labels; config.json scope_types renames or adds (SCOPE-4).
@@ -70,8 +73,9 @@ LANGS = ("en", "fr")
 # The default spheres of a person (SCOPE-1, spec 3.3): what ``brain init --examples`` writes in scopes.yaml for an
 # identity.kind person, none for a team (a team has no personal sphere); the ids stay, the titles change by an edit.
 DEFAULT_SPHERES: dict[str, str] = {"pro": "Professional", "personal": "Personal", "academic": "Academic"}
-KINDS = ("container", "project", "read", "mount", "knowledge")   # read: a read-only project; mount: a tenant
-# (another brain); knowledge: the owner's notes home (kind: knowledge, brain.knowledge), never loaded as a project
+KINDS = ("container", "project", "read", "mount", "knowledge", "tombstone")   # read: a read-only project; mount: a
+# tenant (another brain); knowledge: the owner's notes home (kind: knowledge, brain.knowledge), never loaded as a
+# project; tombstone: a project that ended (status merged, split, became-process, archived: brain.projectids)
 
 
 class ScopeError(ValueError):
@@ -99,6 +103,7 @@ class Tree:
     types: dict[str, dict] = field(default_factory=dict)
     file: Path | None = None
     problems: list[str] = field(default_factory=list)      # what made the file unreadable (check() reports it)
+    aliases: dict[str, str] = field(default_factory=dict)  # alias -> the node id it resolves to (brain.projectids)
 
     @property
     def present(self) -> bool:
@@ -217,6 +222,9 @@ def load(root: Path | None = None, cfg: config.Config | None = None) -> Tree:
         nid = str(nid)
         if nid not in tree.nodes and nid != GLOBAL:   # an id used twice: check() reports it, the project keeps it
             tree.nodes[nid] = _container(nid, spec if isinstance(spec, dict) else {})
+    tree.aliases = projectids.alias_map({n: x.data for n, x in tree.nodes.items() if x.kind != "container"},
+                                        {n: x.data for n, x in tree.nodes.items() if x.kind == "container"})
+    tree.aliases.pop(GLOBAL, None)
     return tree
 
 
@@ -237,10 +245,12 @@ def _registry_nodes(root: Path) -> dict[str, Node]:
         if (entry is not None and not isinstance(entry, dict)) or str(name) == GLOBAL:
             continue   # global is the root, never a node: check() refuses a project of that name
         entry = entry or {}
-        kind = ("mount" if projects.is_mount(entry) else "read" if projects.is_read_only(entry)
-                else "knowledge" if projects.is_knowledge(entry) else "project")
+        kind = ("mount" if projects.is_mount(entry) else "tombstone" if projects.is_tombstone(entry)
+                else "read" if projects.is_read_only(entry) else "knowledge" if projects.is_knowledge(entry)
+                else "project")
         out[str(name)] = Node(str(name), "tenant" if kind == "mount" else "project", kind,
-                              _text(entry.get("parent"), GLOBAL), _text(entry.get("title")), data=entry)
+                              _text(entry.get("parent"), GLOBAL), _text(entry.get("title")),
+                              "archived" if kind == "tombstone" else "active", data=entry)
     return out
 
 
@@ -273,7 +283,20 @@ def check(root: Path | None = None, cfg: config.Config | None = None) -> tuple[l
         warnings += _place_warnings(tree, n)
     errors += _floor_errors(tree)
     errors += _typology_errors(tree, cfg)
-    return errors, warnings
+    ids_errors, ids_warnings = _ids_check(root if root is not None else cfg.root, data if f is not None else {})
+    return errors + ids_errors, warnings + ids_warnings
+
+
+def _ids_check(root: Path, data: dict) -> tuple[list[str], list[str]]:
+    """The names (brain.projectids): every alias unique across the registry's ids, the containers' ids and every
+    other alias; an id not kebab-case warned."""
+    try:
+        reg = projects.raw(root)
+    except Exception:  # noqa: BLE001 - as in _registry_nodes: projects.check reports a registry it cannot read
+        reg = {}
+    declared = data.get("scopes") if isinstance(data, dict) else None
+    containers = {str(k): v for k, v in declared.items() if str(k) not in reg} if isinstance(declared, dict) else {}
+    return projectids.check(reg, containers)
 
 
 def _typology_errors(tree: Tree, cfg: config.Config) -> list[str]:
@@ -309,7 +332,10 @@ def _place_errors(tree: Tree, n: Node) -> list[str]:
     if n.parent == GLOBAL:
         return errors
     if n.parent not in tree.nodes:
-        return errors + [f"{where}: its parent {n.parent!r} is no node (a container of {FILE}, a project, or global)"]
+        alias = (f": it is an alias of {tree.aliases[n.parent]}, and parent: names an id"
+                 if n.parent in tree.aliases else "")
+        return errors + [f"{where}: its parent {n.parent!r} is no node (a container of {FILE}, a project, or "
+                         f"global){alias}"]
     if tree._cyclic(n.id):
         return errors + [f"{where}: its parents loop back to it ({' -> '.join([n.id, *tree.chain(n.id), n.id])})"]
     return errors + _accepts(tree, n, where)
@@ -500,6 +526,7 @@ def resolve(tree: Tree, ref: str, here: str = "") -> str:
         return node
     if "/" in ref:
         return _by_path(tree, ref)
+    ref = _alias(tree, ref)
     if ref not in tree.nodes:
         raise ScopeError(f"--scope {ref}: no node of that id (brain scopes shows the tree; known: "
                          f"{', '.join(sorted(tree.nodes)) or 'none'})")
@@ -511,10 +538,21 @@ def _by_path(tree: Tree, ref: str) -> str:
     parts = [p for p in ref.strip("/").split("/") if p]
     node = GLOBAL
     for part in parts[1:] if parts and parts[0] == GLOBAL else parts:
+        part = _alias(tree, part)
         if part not in tree.children(node):
             raise ScopeError(f"--scope {ref}: {part!r} is not a child of {node} (brain scopes shows the tree)")
         node = part
     return node
+
+
+def _alias(tree: Tree, ref: str) -> str:
+    """The id an alias names (brain.projectids), with a notice on stderr; any other reference as given."""
+    if ref in tree.nodes or ref not in tree.aliases:
+        return ref
+    nid = tree.aliases[ref]
+    import sys
+    print(projectids.notice(ref, nid, "--scope"), file=sys.stderr)
+    return nid
 
 
 def select(ref: str, root: Path | None = None, here: str = "") -> tuple[str, list[str]]:
@@ -587,6 +625,8 @@ def _line(tree: Tree, nid: str, lang: str, link: bool, archived: bool = True) ->
         bits.append(f"« {n.title} »")
     what = tree.label(n.type, lang) if n.type else "?"
     what += {"read": ", read only", "mount": ", mount", "knowledge": ", notes home"}.get(n.kind, "")
+    if n.kind == "tombstone":
+        what += f", ended: {projectids.status(n.data)}"
     bits.append(f"({what})")
     under = len([x for x in tree.projects_under(nid, archived) if x != nid])
     if under:
@@ -671,7 +711,8 @@ def private_nodes(tree: Tree) -> list[str]:
 
 def private_terms(cfg: config.Config) -> list[str]:
     """The terms config.json public.deny.repos gains when ``public.deny_from_tree`` is on: the name of every private
-    project (:func:`private_nodes`) and of each of its repos (brain audit's names and their folders), sorted, once
+    project (:func:`private_nodes`; a tombstone's too), its aliases and label (brain.projectids: as private as its
+    key), and the name of each of its repos (brain audit's names and their folders), sorted, once
     each whatever its case; a term that names a repo of public.repos is left out (that repo is public), as is one
     shorter than two characters. A project whose repos cannot be resolved keeps its own name (brain check --all says
     why)."""
@@ -681,7 +722,8 @@ def private_terms(cfg: config.Config) -> list[str]:
     public = {str(r).rsplit("/", 1)[-1].lower() for r in pub.get("repos") or [] if isinstance(r, str)}
     terms: dict[str, str] = {}
     for name in private_nodes(tree):
-        found = [name]
+        node = tree.nodes[name].data
+        found = [name, *projectids.aliases(node), *([projectids.label(node)] if projectids.label(node) else [])]
         p = loaded.get(name)
         try:
             found += [t for r in (projects.repos_of(p) if p is not None else []) for t in (r.name, r.folder) if t]

@@ -3,7 +3,7 @@
 The repo acted on is --root, else the registered project --project NAME (projects.yaml of the Brain repo), else
 $BRAIN_ROOT, else the nearest folder above with notes/graph/schema.yaml (a worktree of a registered project keeps its
 name). --project with --root: that project's layout at that root (a worktree). --project goes before or after the
-subcommand. Every view takes --project NAME or --all (every registered project), not both: status, projects, resume,
+subcommand; an alias of a project (its aliases: in projects.yaml) runs as its id, with a notice. Every view takes --project NAME or --all (every registered project), not both: status, projects, resume,
 digest, queue, decision pending, batch and view, milestone suggest, spec activate, notify status, alerts, lint rules,
 audit, sync, check, refresh, tui, usage, forecast (cost takes --project); status, resume, digest, queue, tui, usage,
 cost, audit and permissions take --scope REF too, a node of the scope tree and its subtree (brain scopes);
@@ -31,7 +31,7 @@ import codecs
 import os
 import sys
 
-from . import __version__, config, faults, gestures, nowindow, paths, plugins, projects, selftime, shutdown
+from . import __version__, config, faults, gestures, nowindow, paths, plugins, projectids, projects, selftime, shutdown
 from .commands import _registry as registry
 from .commands._common import root_of
 
@@ -109,6 +109,8 @@ def main(argv: list[str] | None = None) -> int:
         if lines:
             parser.epilog = "\n".join([parser.epilog or "", "", *lines])
     args = parser.parse_args(argv)
+    if getattr(args, "project", None):   # an alias names its project's id, said once (brain.projectids)
+        args.project = projectids.canonical(args.project, root_of(args))
     why = _refusal(argv)
     if why:
         print(f"brain: {why}", file=sys.stderr)
