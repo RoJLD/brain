@@ -14,8 +14,8 @@ path. :func:`judge` runs, in order:
 3. **the secret scan of a write's arguments**: a string argument of a write tool that matches a secret pattern is
    refused (nothing is written);
 4. **the engine's guards** (brain.guards.refusals, strict): production checkouts, the owner's never-grantable
-   categories, the machine's token file (brain.tokenguard, on here whatever config.json guards.refuse_token_read
-   says), power and cluster, third-party kits, attribution, the public and secrets checks, conflict markers, branch
+   categories, the machine's token file (brain.tokenguard, under config.json guards.refuse_token_read, off by
+   default, as at the hook), power and cluster, third-party kits, attribution, the public and secrets checks, conflict markers, branch
    names, on the effect's payload. Strict: a check that fails to judge the call refuses it, where a hook lets it
    through (a hook never breaks a session; a server never trusts its client).
 
@@ -91,7 +91,8 @@ def owner_gesture(argv: list[str]) -> str:
     for gesture in OWNER_GESTURES:
         if tuple(ws[:len(gesture)]) == gesture:
             return "brain " + " ".join(gesture)
-    g = gestures.match(["brain", *ws], wide=True)   # the engine's one list (wi-brain-owner-only-registry), strict, wide
+    g = gestures.match(["brain", *ws])   # the engine's one list (wi-brain-owner-only-registry), strict; wide under
+    # config.json guards.gestures_wide (off by default: matched as 0.5.1 matched them)
     return g.name if g else ""
 
 

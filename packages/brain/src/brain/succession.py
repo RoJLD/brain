@@ -280,7 +280,7 @@ def lines(r: dict) -> list[str]:
 def _refused(env=None) -> str:
     from . import gestures
     env = os.environ if env is None else env
-    var = gestures.agent_session(env) or ("CLAUDECODE" if "CLAUDECODE" in env else "")   # set, even empty
+    var = gestures.lock_marker(env, present=True)   # CLAUDECODE set, even empty (any marker under the key)
     return ("the chain root is the owner's mark, in their own terminal: not from a Claude Code session's shell "
             f"({var} is set)" if var else "")
 

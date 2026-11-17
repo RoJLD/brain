@@ -923,8 +923,8 @@ only; its own sessions answer the rest): another answer with `--read` is refused
 `launch`: `v1`, `grow`: `scale`, `explore`: `prototype`; another stage keeps its default, and the plan says so), so the
 standards and `lifecycle.stage` agree. `brain check` reads the entry's `lifecycle.stage` against the catalog's stages
 (a standards stage written there, `mvp`, is named with the stage it reads as), `shape` against `living` and `finite`,
-`profile` against the six profiles: an unknown value is a note, an error in strict mode (CI), as an unknown typology
-is.
+`profile` against the six profiles: an unknown value is a note; under config.json `projects.lifecycle_strict: true`
+(optional, off by default: a refusal 0.6.0 adds) an error in strict mode (CI), as an unknown typology is.
 
 It also writes `<BRAIN_HOME>/personal.json` when the machine has none, so that the hooks and commands run from any
 folder find this brain. The brain is the owner's private repo: push it to their own account, never to a public one.
@@ -1617,7 +1617,9 @@ Ids and aliases are one namespace across the registry and `scopes.yaml` (a conta
 to 40 characters), or `global`, and a tombstone that still holds a live key (a root, a store, a production checkout:
 its guards stay on while it is red); a status it does not know is a note (strict, CI: an error), and the entry is not
 loaded either. An id that is not kebab-case is a warning only: it stays as it is, and `brain project add` mints
-kebab-case ones only, never a name another node or alias holds. An alias two nodes declare resolves to neither. A
+kebab-case ones only, never a registered name or a container's id; under config.json `projects.ids_strict: true`
+(optional, off by default: the refusals 0.6.0 adds) also 2 to 40 characters only, never a name another node holds
+as an alias (off, such a name is still refused when it would add an error to `brain check --all`). An alias two nodes declare resolves to neither. A
 private project's aliases and label are as private as its id: they join the deny terms the registry derives
 (`public.derive` `projects`) and those of the tree (`public.deny_from_tree`), and so do a tombstone's names; an entry
 the walk skips (a status or an access typo, a tombstone that still names its repos) keeps its repos' names there,
@@ -1922,7 +1924,9 @@ command or flag only the owner runs (`brain usage allow`, `brain schedule instal
 `brain ipc otel-headers`, `install.ps1 -Apply`) is declared once; the owner guard and the command line read that list,
 and a test checks that each one is refused to an agent's session. config.json `guards.owner_strict: true` adds the
 refusals 0.5.1 brings (off by default). `guards.gestures_wide: true` (off by default) matches them through words the guard
-cannot resolve (`brain schedule install $FLAG`) and Python's inline code that drives brain's modules.
+cannot resolve (`brain schedule install $FLAG`) and Python's inline code that drives brain's modules, the MCP server's
+too. `guards.gestures_session_markers: true` (optional, off by default) makes the acting gestures refuse themselves
+while any agent marker is set (the variables Claude Code sets for each session too), not only `CLAUDECODE`.
 
 **The machine's token** (`brain.tokenguard`, [docs/guards.md](docs/guards.md#the-machines-token)): under config.json
 `guards.refuse_token_read: true` (off by default), the owner guard (check `token`) refuses a session's `Read`, `Grep`,
@@ -1930,7 +1934,7 @@ tool edit or shell call that reaches `<BRAIN_HOME>/ipc/token` (or `$BRAIN_IPC_TO
 otel-headers`: `cat`, `Get-Content`, a copy of the file, its folder or `<BRAIN_HOME>`, a redirection, a glob, a pipe,
 inline code or a heredoc that names it, a link to it; `ls`, `stat`, `Test-Path` and `brain ipc token` pass. Read and
 Grep go through the opt-in hook `tokenguard.sh`, registered only when the key is on. The MCP server runs the check
-whatever the key, and redacts the token from every answer.
+under the same key (optional, off by default), and redacts the token from every answer whatever the key.
 
 **The read hint** (`readhint.sh`, `brain.readhint`, PreToolUse on Read, Grep, Bash and PowerShell) never refuses: when
 a call reads a registered brain's graph YAML (a store's `nodes/` or `edges/`, or the store), its decision log, its

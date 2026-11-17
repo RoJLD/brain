@@ -8,7 +8,8 @@ section: Added
   refuses an alias that is another node's id or alias (projects and the containers of `scopes.yaml`, which take
   `aliases` too, are one namespace), and a tombstone that still holds a live key; it warns, never fails, on an id
   that is not kebab-case (frozen as it is), and when a project's repo has no `name:` while its graph's ids name a repo
-  no registered one answers to (a clone in another folder). `brain project add` never mints a name in use and takes 2
-  to 40 characters. A private project's aliases and label, and a tombstone's names, join the derived deny terms and
+  no registered one answers to (a clone in another folder). `brain project add` never mints a registered name or a
+  container's id, and under config.json `projects.ids_strict: true` (optional, off by default) takes 2 to 40
+  characters only and never another node's alias. A private project's aliases and label, and a tombstone's names, join the derived deny terms and
   those of `public.deny_from_tree`. A test holds that no engine code reads a project from a node id. A tombstone needs
   0.6.0 on every machine (`docs/formats.md`).

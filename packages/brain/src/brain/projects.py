@@ -156,8 +156,9 @@ KEYS = {
                  "paused}: typologies (the typology catalog's ids, brain typologies) give its items' clauses of done "
                  "(brain item clauses, brain item close); stage (a catalog stage), shape (living, finite) and "
                  "profile (maker, client, startup, internal, open-source, research) are checked, an unknown value a "
-                 "note (strict: an error); brain project add writes typologies, stage, since and profile from its "
-                 "qualification; the rest is read by wi-brain-lifecycle-stage",
+                 "note (strict, under config.json projects.lifecycle_strict: an error); brain project add writes "
+                 "typologies, stage, since and profile from its qualification; the rest is read by "
+                 "wi-brain-lifecycle-stage",
     "migrations": "the scout's glob check, a list of {when, add, repo}: a change of a when file comes with a new file "
                   "of each add glob (a migration, a fixture), else brain audit --diff finds it (brain.formats)",
     "aliases": "the names it had or people type, a list of ids (kebab-case from a letter): --project and a scope "
@@ -954,9 +955,11 @@ def _software_errors(where: str, entry: dict) -> list[str]:
 
 
 def _lifecycle_errors(where: str, value, root: Path | None) -> list[str]:
-    """A project's lifecycle: a mapping; its typologies a list of the typology catalog's ids, its stage one of the
-    catalog's stages, its shape one of its shapes, its profile one of :data:`LIFECYCLE_PROFILES` (each unknown value a
-    note in read mode, an error in strict mode: a later engine's); an unknown key a note in read mode."""
+    """A project's lifecycle: a mapping; its typologies a list of the typology catalog's ids (an unknown id a note in
+    read mode, an error in strict mode: a later engine's); its stage one of the catalog's stages, its shape one of its
+    shapes, its profile one of :data:`LIFECYCLE_PROFILES`, each unknown value a note, and an error in strict mode only
+    under config.json ``projects.lifecycle_strict`` (:func:`option`, off by default: 0.5.1 refused none); an unknown
+    key a note in read mode."""
     from . import config, typologies
     where = f"{where}: lifecycle"
     if not isinstance(value, dict):
@@ -964,23 +967,53 @@ def _lifecycle_errors(where: str, value, root: Path | None) -> list[str]:
     unknown = sorted(set(map(str, value)) - set(LIFECYCLE_KEYS))
     errors = schema.tolerate(f"{where}: unknown key(s) {', '.join(unknown)} (known: {', '.join(LIFECYCLE_KEYS)})"
                              ) if unknown else []
+    cfg = config.load(root)
+    found, cat = _lifecycle_values(where, value, cfg)
+    errors += found
+    typs = value.get("typologies")
+    if typs is None:
+        return errors
+    if not (isinstance(typs, list) and all(isinstance(t, str) and t for t in typs)):
+        return errors + [f"{where}: typologies is a list of typology ids (brain typologies)"]
+    return errors + typologies.unknown(f"{where}.typologies", typs, cat or typologies.load(cfg))
+
+
+def _lifecycle_values(where: str, value: dict, cfg) -> tuple[list[str], object]:
+    """(the errors, the typology catalog when it was read) of a lifecycle's stage, shape and profile: an unknown value
+    a note, an error in strict mode under config.json ``projects.lifecycle_strict`` only (off: a note even in strict
+    mode, and a catalog that cannot be read leaves the stage unread, as 0.5.1 read none of them)."""
+    from . import typologies
+    strict = None if option(cfg.data, LIFECYCLE_STRICT) else False
+    errors: list[str] = []
     cat = None
     for key, known in (("stage", None), ("shape", typologies.SHAPES), ("profile", LIFECYCLE_PROFILES)):
         got = value.get(key)
         if got is None:
             continue
         if key == "stage":
-            cat = cat or typologies.load(config.load(root))
+            try:
+                cat = typologies.load(cfg)
+            except typologies.CatalogError:
+                if strict is None:
+                    raise
+                continue
             known = tuple(cat.stages)
         if got not in known:
             errors += schema.tolerate(f"{where}: {key} {got!r} is not one of {', '.join(known)}"
-                                      + _standards_hint(key, got, cat))
-    typs = value.get("typologies")
-    if typs is None:
-        return errors
-    if not (isinstance(typs, list) and all(isinstance(t, str) and t for t in typs)):
-        return errors + [f"{where}: typologies is a list of typology ids (brain typologies)"]
-    return errors + typologies.unknown(f"{where}.typologies", typs, cat or typologies.load(config.load(root)))
+                                      + _standards_hint(key, got, cat), strict)
+    return errors, cat
+
+
+# config.json projects: the registry's optional checks, each off by default (the registry read as 0.5.1 read it)
+LIFECYCLE_STRICT = "lifecycle_strict"   # an unknown lifecycle stage, shape or profile an error in strict mode
+IDS_STRICT = "ids_strict"               # brain project add: 2 to 40 characters, never another node's alias
+
+
+def option(data, key: str) -> bool:
+    """config.json's ``projects.<key>`` (:data:`LIFECYCLE_STRICT`, :data:`IDS_STRICT`): true only when set to true;
+    absent, another value or an unreadable config.json (which loads as no data): off."""
+    section = data.get("projects") if isinstance(data, dict) else None
+    return isinstance(section, dict) and section.get(key) is True
 
 
 def _standards_hint(key: str, got, cat) -> str:

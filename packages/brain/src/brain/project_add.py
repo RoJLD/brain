@@ -62,6 +62,8 @@ import yaml
 from . import config, graph, knowledge, paths, projectids, projects, scopes, typologies
 
 NAME = projectids.ID   # an id of the tree: kebab-case from a letter, 2 to 40 characters (never read as a number)
+# the name 0.5.1 took, and this one takes unless config.json projects.ids_strict: kebab-case from a letter, any length
+LOOSE_NAME = re.compile(r"[a-z][a-z0-9-]*\Z")
 STORE = projects.DEFAULTS["stores"][0]
 VIA = "project-add"
 
@@ -150,9 +152,16 @@ def _raw(registry: Path) -> dict:
 
 
 def _check_name(name: str, registry: Path, cfg: config.Config) -> None:
-    if not NAME.match(name):
+    """A new project's name: kebab-case from a letter, not the tree's root, not registered, not a container's id.
+    Under config.json ``projects.ids_strict`` (off by default: 0.5.1's rule), also 2 to 40 characters and never a name
+    another node holds as an alias (brain.projectids)."""
+    ids = projects.option(cfg.data, projects.IDS_STRICT)
+    if ids and not NAME.match(name):
         raise AddError(f"{name!r}: a project's name is an id of the scope tree, kebab-case from a letter "
-                       "(a-z, 0-9, -), 2 to 40 characters, frozen at birth")
+                       "(a-z, 0-9, -), 2 to 40 characters, frozen at birth (config.json projects.ids_strict)")
+    if not LOOSE_NAME.match(name):
+        raise AddError(f"{name!r}: a project's name is an id of the scope tree, kebab-case from a letter "
+                       "(a-z, 0-9, -)")
     if name == scopes.GLOBAL:
         raise AddError(f"{name!r} is the tree's root")
     if name in {str(k) for k in _raw(registry)}:
@@ -160,7 +169,7 @@ def _check_name(name: str, registry: Path, cfg: config.Config) -> None:
     if name in scopes.nodes_of(cfg):
         raise AddError(f"{name} is a container of the scope tree already (ids are unique across projects and "
                        "containers)")
-    held = projectids.taken(_raw(registry), scopes.nodes_of(cfg)).get(name)
+    held = projectids.taken(_raw(registry), scopes.nodes_of(cfg)).get(name) if ids else None
     if held:   # an alias: the id or alias of a project that was, never reused (brain.projectids)
         raise AddError(f"{name} is {held} already (an id or an alias is never reused: pick another id)")
 

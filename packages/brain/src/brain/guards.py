@@ -3886,7 +3886,7 @@ def refusals(payload: dict, strict: bool = False):
         cwd = _path(inp["cwd"], cwd) if isinstance(inp.get("cwd"), str) and inp["cwd"] else cwd
     from . import tokenguard   # the machine's IPC token (wi-brain-ipc-token-read-guard); it imports this module
     if tool in tokenguard.READ_TOOLS:   # Read and Grep: the token check alone, before the floor (which never sees them)
-        yield from _token(lambda: tokenguard.check(tool, inp, cwd, strict=strict), strict)
+        yield from _token(lambda: tokenguard.check(tool, inp, cwd), strict)   # on under its key, the MCP server's too
         return
     try:
         cfg = config.load()   # read once per call: the floor's settings and the file that sets them
@@ -3904,7 +3904,6 @@ def refusals(payload: dict, strict: bool = False):
                                 f"{config.owner_of()} runs brain floor lock (its plan prints the elevated command)",
                None)
         return
-    mcp = strict   # the MCP server's own strictness: the token check is on there whatever the key
     strict = strict or fl["refuse"] or fl["only"]   # the floor on: a check that cannot judge the call refuses it
     only = fl["only"]     # floor only: the floor's refusals, the secrets check and the override protection
     if strict and (fl["refuse"] or fl["only"]):
@@ -3922,7 +3921,7 @@ def refusals(payload: dict, strict: bool = False):
             if floorguard else None
         if reason:
             yield "floor", "config", reason, None
-        yield from _token(lambda: tokenguard.check(tool, inp, cwd, strict=mcp), strict)   # whatever the floor
+        yield from _token(lambda: tokenguard.check(tool, inp, cwd), strict)   # under its key, whatever the floor
         return
     if SCHEDULED_TOOL.match(tool) or session_setting(tool, inp):
         hit = check_owner(tool, inp, [], cwd)
@@ -3939,14 +3938,13 @@ def refusals(payload: dict, strict: bool = False):
                                                                         anchor and anchor.file)),
                     ("floor", None, lambda: floorguard.check_floor(cmds, fl, command, shell))) if floorguard else ()
     checks = ((("owner", "override", lambda: check_override(cmds, powershell, command)),
-               ("owner", tokenguard.CHECK, lambda: tokenguard.check(tool, inp, cwd, cmds, command, powershell, mcp)),
+               ("owner", tokenguard.CHECK, lambda: tokenguard.check(tool, inp, cwd, cmds, command, powershell)),
                ("public", "config", lambda: check_config(cmds)), ("secrets", "secrets", lambda: check_secrets(cmds)))
               if only else
               (("production", "git", lambda: check_production(tool, inp, cmds, cwd)),
                ("production", "shell-write", lambda: check_shell_writes(cmds, powershell)),
                ("owner", None, lambda: check_owner(tool, inp, cmds, cwd, powershell, command)),
-               ("owner", tokenguard.CHECK, lambda: tokenguard.check(tool, inp, cwd, cmds, command, powershell,
-                                                                     mcp)),
+               ("owner", tokenguard.CHECK, lambda: tokenguard.check(tool, inp, cwd, cmds, command, powershell)),
                ("power", None, lambda: check_power(cmds, powershell, command)),
                ("third-party", None, lambda: check_third_party(cmds, cwd, powershell, command)),
                ("attribution", "attribution", lambda: check_attribution(command, cmds)),
