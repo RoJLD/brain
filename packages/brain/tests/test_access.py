@@ -257,3 +257,22 @@ def test_brain_check_reports_the_access_findings_as_warnings(brain, capsys):
     assert schema.mode() == schema.READ
     assert _stores._check_identity(brain.root, "hub") == 0   # a warning: nothing new is refused
     assert "warning: identity: members.yaml: memberships[5]: scope 'nowhere' is no node" in capsys.readouterr().out
+
+
+def test_a_grant_on_a_node_never_widens_who_verifies_a_signature(brain):
+    """A decider or a releaser granted on a node (scope:) is that node's, never the whole brain's; a role granted to a
+    group verifies no signature in this slice (identity.deciders and the release signers read people only)."""
+    from brain import tagsig
+    key = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIExampleExampleExampleExampleExampleExample0 x@y"
+    brain("v: 1\npeople:\n  - {person_id: carol, name: Carol, keys: {signing: [{key: \"" + key + "\"}]}}\n"
+          "  - {person_id: alice, name: Alice, keys: {signing: [{key: \"" + key + "\"}]}}\n"
+          "groups:\n  - {id: crew, members: [alice]}\n"
+          "memberships:\n  - {person_id: carol, scope: finance, roles: [decider, releaser]}\n"
+          "  - {group: crew, roles: [decider, releaser]}\n  - {person_id: carol, scope: global, roles: [owner]}\n")
+    m = identity.load(brain.root)
+    assert m.errors == []
+    assert identity.deciders(m.data) == {}   # neither is a decider of the whole brain
+    assert list(identity.deciders(m.data, "finance")) == ["carol"]   # the node's own
+    assert tagsig._releaser_ids(m.data) == set()
+    assert identity.node_of({"scope": "global"}) == "" and identity.node_of({"project": "site"}) == "site"
+    assert identity.node_of({"scope": 3}) == "<no node>"   # a wrong type names no node: never the whole brain

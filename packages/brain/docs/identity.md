@@ -252,6 +252,9 @@ memberships:                              # each one a grant: a person or a grou
 - **Capability roles**, orthogonal: `decider` (decide: answers the node's DDRs; its signature verifies an
   owner-decides answer, as above), `releaser` (signs release tags), `auditor` (reads the node's ledgers and access
   log, not its stores). A role named as a grade (`owner`, `viewer`) reads as that grade, `member` as `viewer`.
+  The signatures stay narrow: a `decider` or `releaser` granted on a node (`scope:`) is that node's, never the whole
+  brain's, and a role granted to a group verifies no signature yet (the deciders and release signers are people
+  named one by one).
 - **A node** is named by its id (`scope:`, `project:` its synonym), a container of `scopes.yaml` or a project of the
   registry: a grant holds down the tree, by union, the highest grade winning. An alias of a node is refused there (a
   grant names the frozen id). A membership of an organization or a tenant is another identity domain: no grade here.

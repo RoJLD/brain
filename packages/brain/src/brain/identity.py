@@ -151,7 +151,16 @@ def _decides(membership: dict, project: str) -> bool:
         return False
     if membership.get("organization") or membership.get("tenant"):
         return False
-    return membership.get("project") in (None, "", project)
+    return node_of(membership) in ("", project)
+
+
+def node_of(membership: dict) -> str:
+    """The node a membership names: its ``scope``, else its ``project`` (scope's synonym), '' for the whole brain
+    (none, or ``global``). A value of another type names no node a signature check accepts (the schema says why)."""
+    node = membership.get("scope", membership.get("project"))
+    if node is None or node == "global":
+        return ""
+    return node if isinstance(node, str) and node else "<no node>"
 
 
 def _signing(person: dict) -> list[dict]:
