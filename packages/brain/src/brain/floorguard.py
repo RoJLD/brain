@@ -10,8 +10,10 @@ past a wrapper, a launcher or a nested shell (brain.guards.actions); a wrapper w
 - :func:`check_files` (check ``config``): what would lift or stop the floor: a write, a copy, an extraction, a removal
   or a move of the config.json the guard reads, of its pointer, of git's configuration files, of the guard's
   interpreter (<BRAIN_HOME>/venv) or of the plugin that runs the guard (~/.claude/plugins, $CLAUDE_PLUGIN_ROOT); a
-  git command other than a read in the checkout that holds config.json; a variable of brain.floor.WATCHED_VARS
-  assigned in any form, or one of FLOOR_ENV set for later sessions, or a name the guard cannot read; any write to the
+  git command other than a read or a pull of its upstream in the checkout that holds config.json, a git remote that
+  writes in any worktree of its repository; a variable of brain.floor.watched assigned in any form (but a
+  brain.floor.WORKTREE_VARS path inside a worktree of that repository), or one of FLOOR_ENV set for later sessions,
+  or a name the guard cannot read; any write to the
   registry's Environment key; ``claude plugin disable`` or ``uninstall`` of the core plugin; Claude Code's settings
   or a profile left (the edit applied to the file) setting what stops the guards.
 
@@ -26,7 +28,7 @@ import re
 import shlex
 from pathlib import Path
 
-from . import config, floor, floorpwsh, paths
+from . import config, floor, floorenv, floorpwsh, paths
 from . import guards as g
 
 TAIL = ("; that breaks the locked floor (no push to main or master, no force-push: merge by a pull request; the "
@@ -36,7 +38,9 @@ MOVERS = {"mv", "move", "mi", "move-item", "rename-item", "ren", "rni", "rename"
 COPIERS = {"cp", "copy", "copy-item", "cpi", "xcopy", "rsync", "robocopy", "install"}
 EXTRACTORS = floorpwsh.EXTRACTORS
 OPAQUE_XARGS = {"git", "claude", "reg", "setx", *REMOVERS, *MOVERS, *COPIERS, *EXTRACTORS, *floorpwsh.LINK_PROGS,
-                "new-item", "ni", "fsutil", "cpio", "pax"}
+                "new-item", "ni", "fsutil", "cpio", "pax",
+                "env", "bash", "sh", "zsh", "dash", "ksh", "pwsh", "powershell", "cmd"}   # an environment or a shell
+                # from its input: `echo 'BRAIN_GUARD_ALLOW=floor claude' | xargs env` (round 3)
 SHELLS = {"bash", "sh", "zsh", "dash", "ksh", "pwsh", "powershell", "cmd"}
 PLAIN = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
 ROBOCOPY_OPT = re.compile(r"/[A-Za-z]+(?::\S*)?")
@@ -56,9 +60,7 @@ def on(fl: dict) -> bool:
     return bool(fl["refuse"] or fl["only"])
 
 
-def _under(path: str, folder: str) -> bool:
-    """Whether ``path`` is ``folder`` or inside it (both as _real gives them)."""
-    return bool(path) and bool(folder) and (path == folder or path.startswith(folder.rstrip("\\/") + os.sep))
+_under = floorenv.under   # whether a path is a folder or inside it (both as _real gives them)
 
 
 # Claude Code's settings files: the floor refuses any change of them but a Write or an Edit (judged on what it leaves).
@@ -95,14 +97,15 @@ class Kept:
     that runs the guard (~/.claude/plugins, $CLAUDE_PLUGIN_ROOT), and the folders of the files (the checkout,
     BRAIN_HOME)."""
 
-    def __init__(self, cfg_file):
+    def __init__(self, cfg_file, anchor_file=None):
         home = paths.brain_home()
-        self.files = [g._real(f) for f in (cfg_file, home / paths.PERSONAL) if f]
+        self.configs = [g._real(f) for f in (cfg_file, anchor_file) if f]   # the anchor: brain.config.anchored
+        self.files = [*self.configs, g._real(home / paths.PERSONAL)]
         self.runtimes = _interpreters(home)
         self.venv = g._real(home / "venv")
         self.plugins = [g._real(p) for p in (Path.home() / ".claude" / "plugins", os.environ.get("CLAUDE_PLUGIN_ROOT"))
                         if p]
-        self.folders = sorted({os.path.dirname(f) for f in self.files[:2]})
+        self.folders = sorted({os.path.dirname(f) for f in self.files})
         self.paths = [*self.files, *self.runtimes, *self.plugins]
 
     def inside(self, real: str) -> bool:
@@ -122,12 +125,14 @@ class Kept:
 
 # --- check config: what would lift or stop the floor ---------------------------------------------------------------
 
-def check_files(tool: str, inp: dict, cmds, cwd: str, fl: dict, cfg_file, command: str = "") -> str | None:
+def check_files(tool: str, inp: dict, cmds, cwd: str, fl: dict, cfg_file, command: str = "",
+                anchor_file=None) -> str | None:
     """While the floor is on, what would lift it or stop the guard for this session or the next (module docstring),
-    else None. A worktree's own config.json is another file: a pull request still changes it."""
+    else None. A worktree's own config.json is another file: a pull request still changes it. ``anchor_file``: the
+    config.json found without $BRAIN_CONFIG when it names another (brain.config.anchored), kept as well."""
     if not on(fl) or not (tool in g.EDIT_TOOLS or cmds or command):   # export X=1 alone parses to no command
         return None
-    kept = Kept(cfg_file)
+    kept = Kept(cfg_file, anchor_file)
     what = _edit(tool, inp, cwd, kept) if tool in g.EDIT_TOOLS else \
         _shell(cmds, "ps" if tool == "PowerShell" else "bash", command, kept)
     return (f"{what}; the locked floor (config.json floor) is {config.owner_of()}'s to change, in their own terminal "
@@ -163,8 +168,15 @@ def _edit(tool: str, inp: dict, cwd: str, kept: Kept) -> str | None:
 
 def _plugin_off(text: str) -> bool:
     """Whether settings text turns the core plugin (the one that carries guard.sh) off in enabledPlugins."""
-    plugin = config.claude(config.load())["plugin"]
-    return bool(re.search(rf"{re.escape(plugin)}(?:@[^\s:,]*)?\s*:\s*false", text))
+    return any(re.search(rf"{re.escape(c['plugin'])}(?:@[^\s:,]*)?\s*:\s*false", text) for c in _cores())
+
+
+def _cores() -> list[dict]:
+    """The core plugin's and marketplace's names (config.claude) of the config.json the guard reads and of its
+    anchor (brain.config.anchored): either one turned off stops the guard."""
+    cfg = config.load()
+    anchor = config.anchored(cfg)
+    return [config.claude(c) for c in (cfg, anchor) if c is not None]
 
 
 def _shell(cmds, sub: str, command: str, kept: Kept) -> str | None:
@@ -174,13 +186,13 @@ def _shell(cmds, sub: str, command: str, kept: Kept) -> str | None:
     dot = "dotglob" if floorpwsh.DOTGLOB.search(command) else "bash"   # bash's dot rule off (review round 14 #6)
     shells = [dot if s in ("bash", "ssh") else s for _, _, s, _ in full]
     plain = floor.unspelled(_code(command))
-    checks = (lambda: _opaque(cmds, acts, command), lambda: _env(plain), lambda: _registry(plain),
-              lambda: _removals(acts, kept), lambda: _acl(acts, kept), lambda: _writes(cmds, sub, kept),
+    checks = (lambda: _opaque(cmds, acts, command), lambda: floorenv.env(_code(command), sub, kept.configs),
+              lambda: _registry(plain), lambda: _removals(acts, kept), lambda: _acl(acts, kept), lambda: _writes(cmds, sub, kept),
               lambda: _copies(acts, kept, shells), lambda: floorpwsh.extractions(acts, kept, shells),
               lambda: floorpwsh.archived_settings(acts, SETTINGS), lambda: floorpwsh.links(full, cmds, sub, command, kept),
               lambda: floorpwsh.braced(command, sub), lambda: floorpwsh.scripted(full),
               lambda: floorpwsh.entered(command, sub),
-              lambda: _git_settings(acts), lambda: _checkout(acts, kept),
+              lambda: _git_settings(acts), lambda: floorenv.checkout(_git(acts), kept.folders),
               lambda: _named(acts, command), lambda: _plugin_cmd(acts), lambda: floorpwsh.piped(command, acts, kept),
               lambda: floorpwsh.methods(command, acts, kept), lambda: floorpwsh.typed(plain))
     what = next((w for check in checks if (w := check())), None)
@@ -280,13 +292,6 @@ def _start_unread(prog: str, args: list[str]) -> str:
     if program.startswith("$") or g._prog(program) in START_RISKY:
         return f"{prog} {program} -ArgumentList refused: the floor cannot read what it runs"
     return ""
-
-
-def _env(plain: str) -> str | None:
-    """A variable of brain.floor.WATCHED_VARS assigned in any form, or an assignment whose name the guard cannot read
-    (on the call's unspelled text)."""
-    m = floor.ENV_ASSIGN.search(plain) or floor.ENV_DYNAMIC.search(plain)
-    return f"{m.group(0).strip()[:60]!r} refused: a variable the floor watches (or one it cannot read) set" if m else None
 
 
 def _registry(plain: str) -> str | None:
@@ -605,45 +610,6 @@ def _revs(sub: str, args: list[str]) -> list[str]:
     return list(dict.fromkeys(revs))
 
 
-def _repo_of(folder: str) -> str:
-    """The git checkout that holds ``folder`` (the first parent with a .git), as _real gives it; '' for none."""
-    p = g._real(folder)
-    while True:
-        if os.path.exists(os.path.join(p, ".git")):
-            return p
-        parent = os.path.dirname(p)
-        if parent == p:
-            return ""
-        p = parent
-
-
-def _checkout(acts, kept: Kept) -> str | None:
-    """A git command in (or pointed at, -C) the checkout that holds config.json other than a read: CHECKOUT_SAFE,
-    git config and git remote that only read, git pull --ff-only with no remote nor refspec."""
-    roots = {r for r in (_repo_of(f) for f in kept.folders) if r}
-    if not roots:
-        return None
-    for _, folder, sub, args in _git(acts):
-        if _reads(sub, args) or sub == "!":
-            continue
-        if _repo_of(folder) in roots:
-            return f"git {sub} in {folder} refused: only reads change nothing in the checkout that holds config.json"
-    return None
-
-
-def _reads(sub: str, args: list[str]) -> bool:
-    """Whether a git command leaves the checkout's files and settings alone (_checkout)."""
-    pos = [a for a in args if not a.startswith("-")]
-    if sub == "pull":
-        return "--ff-only" in args and not pos
-    if sub == "config":
-        return bool({"--get", "--get-all", "--get-regexp", "--list", "-l"} & set(args)) or pos[:1] in (["get"], ["list"]) \
-            or (len(pos) == 1 and not set(args) & {"--add", "--replace-all", "--unset", "--unset-all"})
-    if sub == "remote":
-        return not pos or pos[0] in ("show", "get-url")
-    return sub in floor.CHECKOUT_SAFE
-
-
 def _named(acts, command: str) -> str | None:
     """A variable set for later sessions under a name the guard cannot read: setx or SetEnvironmentVariable whose
     name is a concatenation, a variable or a call, not a plain name."""
@@ -661,7 +627,7 @@ def _named(acts, command: str) -> str | None:
 def _plugin_cmd(acts) -> str | None:
     """claude plugin disable, uninstall or marketplace remove of the core plugin or its marketplace, or of a name the
     guard cannot read."""
-    cfg = config.claude(config.load())
+    cores = _cores()
     for words, _ in acts:
         if g._prog(words[0]) != "claude":
             continue
@@ -672,7 +638,7 @@ def _plugin_cmd(acts) -> str | None:
         if not ({"plugin", "plugins"} & set(low) and {"disable", "uninstall", "remove", "rm"} & set(low)):
             continue
         names = " ".join(low)
-        if cfg["plugin"].lower() in names or cfg["marketplace"].lower() in names or "$" in names:
+        if any(c["plugin"].lower() in names or c["marketplace"].lower() in names for c in cores) or "$" in names:
             return f"claude {' '.join(words[1:4])} refused: it turns off the plugin that runs the guard"
     return None
 

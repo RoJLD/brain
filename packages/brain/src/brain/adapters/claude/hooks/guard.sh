@@ -76,7 +76,19 @@ needs_python() {
   if [[ $rest == *\\* || $rest == *"'"* || $rest == *'`'* ]]; then
     plain=${rest//'\"'/}; plain=${plain//\\\\/}; plain=${plain//"'"/}; plain=${plain//'`'/}
   fi
+  # envset: what may set a variable the floor watches (brain/floor.py's watched, env_assign and ENV_DYNAMIC, any
+  # case; tests/test_floor_watched.py checks that every refused shape starts Python): a watched name given a value
+  # (an assignment, an append, an array element, a default expansion, an arithmetic one), a builtin that sets one or
+  # exports a name a substitution gives, allexport, set -a, PowerShell's env: provider and .NET's Environment. Read on
+  # the text and on it with quotes, escaping backslashes, backticks and cmd's carets dropped (BRAIN_HO''ME=).
+  local wvar='(brain_[a-z0-9_]+|git_[a-z0-9_]+|home|userprofile|xdg_config_home|bash_env|shellopts|bashopts|path|claude_config_dir|claude_plugin_root|claude_brain_dir|claude_project_dir)'
+  local edge='(^|[^A-Za-z0-9_-]|\\[nrt])' gap='([[:space:]]|\\[nrt])'
+  local envset='(^|[^A-Za-z0-9_]|\\[nrt])'"$wvar"'(\[[^]]*\])?\+?=|\$\{'"$wvar"'|\(\('"$gap"'*'"$wvar"'|'"$edge"'(export|declare|typeset)'"$gap"'[^|;&]*('"$wvar"'|[$(`])|'"$edge"'(readonly|read|for|select|getopts|mapfile|readarray)'"$gap"'[^|;&]*'"$wvar"'|printf'"$gap"'+-v|allexport|'"$edge"'set'"$gap"'[^|;&]*-[A-Za-z]*a|env:|environment|\$'"'"
+  # (and any ANSI-C string, $'...', whose escapes may spell a name: brain/floorenv.py's unescaped reads it)
+  local eplain=${text//'\"'/}
+  eplain=${eplain//\\\\/}; eplain=${eplain//"'"/}; eplain=${eplain//'`'/}; eplain=${eplain//^/}
   shopt -s nocasematch
+  [[ $text =~ $envset || $eplain =~ $envset ]] && { shopt -u nocasematch; return 0; }
   [[ $rest =~ $writers || $rest =~ $owner_power || ( -n $plain && $plain =~ $owner_power ) || ( -n $clis && $rest =~ $node_clis ) ]] && found=0 || found=1
   shopt -u nocasematch
   return $found
@@ -123,6 +135,8 @@ home="${BRAIN_HOME:-${USERPROFILE:-$HOME}/.brain}"
 # floor_on: whether config.json's locked floor is on (floor.refuse or floor.only, brain/floor.py), or the machine has
 # a lock file (brain floor lock: <ProgramData>/Brain or /etc/brain, which a session cannot remove), read only when the
 # guard cannot judge the call or would run PATH's Python: then it fails closed (wi-brain-unadopted-floor).
+# With BRAIN_CONFIG set, the config.json found without it counts too (brain/config.py's anchored): BRAIN_CONFIG never
+# lowers the floor.
 floor=
 floor_on() {
   if [ -z "$floor" ]; then
@@ -130,6 +144,10 @@ floor_on() {
     c=$(brain_config "$root")
     floor=0
     [ -n "$(floor_setting "$c" refuse)$(floor_setting "$c" only)" ] && floor=1
+    if [ -n "${BRAIN_CONFIG:-}" ]; then
+      c=$(BRAIN_CONFIG= brain_config "$root")
+      [ -n "$(floor_setting "$c" refuse)$(floor_setting "$c" only)" ] && floor=1
+    fi
     for d in "${PROGRAMDATA:-C:/ProgramData}/Brain" C:/ProgramData/Brain /etc/brain; do
       [ -e "$d/floor-lock.json" ] && floor=1
     done

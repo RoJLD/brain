@@ -65,6 +65,29 @@ def load(root: Path | None = None) -> Config:
     f = config_file(root)
     if not f or not f.is_file():
         return Config(None, Path(root or os.getcwd()).resolve(), error=f"{f} not found" if f else "")
+    return _read(f)
+
+
+def anchored(cfg: Config | None = None) -> Config | None:
+    """The config.json found as if ``$BRAIN_CONFIG`` were unset (:func:`brain.paths.bases`), when ``$BRAIN_CONFIG``
+    names another file: the guard holds the floor of both (brain.floor.effective), so that a process started with
+    BRAIN_CONFIG pointing at a file a session wrote (a worktree's config.json) never runs with a lower floor
+    (wi-brain-floor-watched-vars). None when BRAIN_CONFIG is unset, names that same file, or no other is found."""
+    if not os.environ.get("BRAIN_CONFIG"):
+        return None
+    f = next((b / FILE for b in paths.bases() if (b / FILE).is_file()), None)
+    if f is None:
+        return None
+    cfg = cfg if cfg is not None else load()
+    try:
+        if cfg.file is not None and cfg.file.resolve() == f.resolve():
+            return None
+    except OSError:
+        pass
+    return _read(f)
+
+
+def _read(f: Path) -> Config:
     try:
         data = json.loads(f.read_text(encoding="utf-8-sig"))   # a BOM, as Windows PowerShell 5.1 writes, is read
     except (OSError, ValueError) as exc:
