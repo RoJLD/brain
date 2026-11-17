@@ -7,8 +7,9 @@ import json
 import os
 import subprocess
 import sys
+import time
 from datetime import datetime, timedelta, timezone
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 
 import pytest
 from brain import filelock
@@ -121,3 +122,102 @@ def test_pid_alive():
     assert filelock.pid_alive(os.getpid()) and not filelock.pid_alive(_dead_pid()) and not filelock.pid_alive(0)
 
 
+def test_a_live_holder_here_keeps_its_lock_past_its_ttl_and_a_reused_pid_does_not(tmp_path):
+    past = (datetime.now(timezone.utc) - timedelta(hours=2)).isoformat()
+    me = filelock.proc_start(os.getpid())
+    _write_lock(tmp_path, expires=past, pstart=me)   # this host, a live pid, its TTL long passed: still held
+    with pytest.raises(filelock.Held):
+        filelock.Lock("ship", 60, tmp_path).acquire()
+    if me:   # the OS tells a process's start: a pid now another process's is gone
+        _write_lock(tmp_path, pstart=str(int(me) - 1))
+        lk = filelock.Lock("ship", 60, tmp_path).acquire()
+        assert lk.owned() and lk.broken["pstart"] == str(int(me) - 1)
+        lk.release()
+
+
+def test_the_record_holds_the_process_start(tmp_path):
+    lk = filelock.Lock("ship", 60, tmp_path).acquire()
+    try:
+        assert lk.holder()["pstart"] == filelock.proc_start(os.getpid())
+        assert filelock.pid_alive(os.getpid(), lk.holder()["pstart"])
+    finally:
+        lk.release()
+
+
+def test_the_heartbeat_renews_until_the_release(tmp_path):
+    lk = filelock.Lock("ship", 0.4, tmp_path).acquire()
+    first = lk.holder()["expires"]
+    lk.heartbeat(0.05)
+    deadline = time.monotonic() + 10
+    while lk.holder().get("expires") == first and time.monotonic() < deadline:
+        time.sleep(0.05)
+    assert lk.holder()["expires"] != first
+    assert lk.release() == "" and not (tmp_path / "ship.lock").exists() and lk._beat is None
+
+
+def test_a_release_windows_refuses_is_retried_then_said_and_read_as_released(tmp_path, monkeypatch):
+    lk = filelock.Lock("ship", 60, tmp_path).acquire()
+    real = Path.unlink
+    refused = [2]
+
+    def unlink(self, *a, **k):
+        if self.name == "ship.lock" and refused[0]:
+            refused[0] -= 1
+            raise PermissionError(32, "in use by another process")
+        return real(self, *a, **k)
+    monkeypatch.setattr(Path, "unlink", unlink)
+    monkeypatch.setattr(filelock, "RETRY_PAUSE", 0.001)
+    assert lk.release() == "" and not (tmp_path / "ship.lock").exists()   # retried past two refusals
+    lk = filelock.Lock("ship", 60, tmp_path).acquire()
+    refused[0] = 10 ** 6
+    left = lk.release()
+    assert "could not be removed" in left and (tmp_path / "ship.lock").exists()
+    refused[0] = 0
+    again = filelock.Lock("ship", 60, tmp_path).acquire()   # its own leftover: read as released, taken at once
+    assert again.owned()
+    again.release()
+
+
+def test_a_renewal_windows_refuses_once_is_retried(tmp_path, monkeypatch):
+    lk = filelock.Lock("ship", 60, tmp_path).acquire()
+    real = os.replace
+    refused = [1]
+
+    def replace(a, b):
+        if refused[0]:
+            refused[0] -= 1
+            raise PermissionError(32, "in use")
+        return real(a, b)
+    monkeypatch.setattr(filelock.os, "replace", replace)
+    monkeypatch.setattr(filelock, "RETRY_PAUSE", 0.001)
+    assert lk.renew() and not lk.lost
+    lk.release()
+
+
+def test_a_breaker_that_moved_a_fresh_lock_puts_it_back_and_never_over_a_newer_one(tmp_path):
+    seen = {"pid": _dead_pid(), "host": filelock.host(), "token": "stale"}
+    _write_lock(tmp_path, token="fresh")   # taken since the stale record was read
+    lk = filelock.Lock("ship", 60, tmp_path)
+    lk.token = "mine"
+    assert not lk._break(seen) and lk.broken is None
+    assert json.loads((tmp_path / "ship.lock").read_text(encoding="utf-8"))["token"] == "fresh"
+    aside = tmp_path / "ship.lock.aside"
+    aside.write_text(json.dumps({"token": "fresh"}), encoding="utf-8")
+    _write_lock(tmp_path, token="newer")
+    assert not lk._put_back(aside) and aside.exists()   # a newer lock stands; the moved record stays aside
+    assert json.loads((tmp_path / "ship.lock").read_text(encoding="utf-8"))["token"] == "newer"
+
+
+def test_the_mounts_table_is_decoded_and_wsl_and_fuse_mounts_are_refused(tmp_path, monkeypatch):
+    rows = "C:\\134 /mnt/c 9p rw 0 0\n//nas/share /mnt/my\\040share cifs rw 0 0\ndrvfs /mnt/d drvfs rw 0 0\n"
+    real = Path.read_text
+    monkeypatch.setattr(Path, "read_text", lambda self, *a, **k: rows if self.as_posix() == "/proc/mounts" else
+                        real(self, *a, **k))
+    assert filelock._mount_fs(PurePosixPath("/mnt/my share/brain")) == "cifs"
+    assert filelock._mount_fs(PurePosixPath("/mnt/d/x")) == "drvfs" and filelock._mount_fs(PurePosixPath("/srv/lab")) == ""
+    for fs in ("drvfs", "9p", "fuse.sshfs", "fuse.gcsfuse"):
+        monkeypatch.setattr(filelock, "_mount_fs", lambda p, fs=fs: fs)
+        if sys.platform.startswith("linux"):
+            assert filelock.on_network(tmp_path)
+    with pytest.raises(filelock.LockError, match="cannot be trusted"):
+        filelock.Lock("ship", 60, Path("//server/share/locks")).acquire()
