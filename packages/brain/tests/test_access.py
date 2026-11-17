@@ -294,6 +294,8 @@ def _signers(brain, grant: str):
     "{person_id: alice, project: null, roles: [decider, releaser]}",
     "{person_id: alice, roles: [decider, releaser], until: 2020-01-01}",   # expired
     "{person_id: alice, roles: [decider, releaser], since: 2099-01-01}",   # not started
+    "{person_id: alice, scope: global, project: finance, roles: [decider, releaser]}",   # two nodes: none
+    "{person_id: alice, group: crew, roles: [decider, releaser]}",   # a person and a group: never the person's
 ])
 def test_a_signer_out_of_its_node_or_its_dates_verifies_nothing(brain, grant):
     assert _signers(brain, grant) == ([], set())

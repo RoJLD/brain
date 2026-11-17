@@ -161,9 +161,15 @@ def _decides(membership: dict, project: str) -> bool:
     roles = membership.get("roles")
     if not isinstance(roles, list) or DECIDER not in roles:
         return False
-    if membership.get("organization") or membership.get("tenant"):
-        return False
-    return node_of(membership) in ("", project) and current(membership)
+    return signs(membership) and node_of(membership) in ("", project)
+
+
+def signs(membership: dict) -> bool:
+    """Whether a membership may make its person a signer (a decider, a releaser): one person named alone (a grant
+    that also names a group is refused, never read as the person's), of this brain's domain (not an organization's
+    or a tenant's), within its dates."""
+    return ("group" not in membership and not (membership.get("organization") or membership.get("tenant"))
+            and current(membership))
 
 
 NO_NODE = "<no node>"
@@ -175,6 +181,8 @@ def node_of(membership: dict) -> str:
     no node (:data:`NO_NODE`): never the whole brain (the schema says why)."""
     if "scope" not in membership and "project" not in membership:
         return ""
+    if "scope" in membership and "project" in membership and membership["scope"] != membership["project"]:
+        return NO_NODE   # two nodes named: none (brain.access reports it)
     node = membership["scope"] if "scope" in membership else membership["project"]
     if node == "global":
         return ""

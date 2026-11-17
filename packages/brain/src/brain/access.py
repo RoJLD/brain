@@ -161,14 +161,23 @@ def errors(data: dict, tree, cfg_data: dict | None = None) -> list[str]:
     out = _group_errors(data, people)
     gs = groups(data)
     for i, m in enumerate(_list(data, "memberships")):
-        if not isinstance(m, dict):
-            continue
-        if m.get("organization") or m.get("tenant"):
-            out += [f"memberships[{i}]: an organization's or a tenant's membership takes a person_id and roles, not "
-                    f"{k} (another identity domain: no grade on the scope tree)"
-                    for k in ("group", "grade", "scope", "since", "until") if k in m]
-            continue
-        out += _grant_errors(f"memberships[{i}]", m, people, gs, tree)
+        if isinstance(m, dict):
+            out += _membership_errors(f"memberships[{i}]", m, people, gs, tree)
+    return out + _labels_errors(cfg_data)
+
+
+def _membership_errors(where: str, m: dict, people: set, gs: dict, tree) -> list[str]:
+    """A grant's errors; an organization's or a tenant's membership takes a person_id and roles only."""
+    if m.get("organization") or m.get("tenant"):
+        return [f"{where}: an organization's or a tenant's membership takes a person_id and roles, not {k} (another "
+                "identity domain: no grade on the scope tree)" for k in ("group", "grade", "scope", "since", "until")
+                if k in m]
+    return _grant_errors(where, m, people, gs, tree)
+
+
+def _labels_errors(cfg_data: dict | None) -> list[str]:
+    """config.json grades: a mapping whose ids are grades (another one noted: a brain's own grade is not built)."""
+    out = []
     given = (cfg_data or {}).get("grades")
     if given is not None and not isinstance(given, dict):
         out.append("config.json grades is a mapping of grade id -> {en, fr}")
@@ -229,14 +238,7 @@ def _cycles(gs: dict[str, list[str]]) -> list[list[str]]:
 
 
 def _grant_errors(where: str, m: dict, people: set, gs: dict, tree) -> list[str]:
-    out = []
-    person, group = m.get("person_id"), m.get("group")
-    if (person is None) == (group is None):
-        out.append(f"{where}: names a person_id or a group, exactly one")
-    elif group is not None and not isinstance(group, str):
-        out.append(f"{where}: group is a group's id")
-    elif group is not None and group not in gs:
-        out.append(f"{where}: group {group!r} is not in groups")
+    out = _subject_errors(where, m, gs)
     if "scope" in m and "project" in m and m["scope"] != m["project"]:
         out.append(f"{where}: scope and project name two nodes ({m['scope']!r}, {m['project']!r}): project is "
                    "scope's synonym")
@@ -250,6 +252,18 @@ def _grant_errors(where: str, m: dict, people: set, gs: dict, tree) -> list[str]
     if since and until and until < since:
         out.append(f"{where}: until {until} is before since {since}")
     return out
+
+
+def _subject_errors(where: str, m: dict, gs: dict) -> list[str]:
+    """Who a grant names: a person_id or a group, exactly one; a group by its id, declared."""
+    person, group = m.get("person_id"), m.get("group")
+    if (person is None) == (group is None):
+        return [f"{where}: names a person_id or a group, exactly one"]
+    if group is not None and not isinstance(group, str):
+        return [f"{where}: group is a group's id"]
+    if group is not None and group not in gs:
+        return [f"{where}: group {group!r} is not in groups"]
+    return []
 
 
 def _node_errors(where: str, node, tree) -> list[str]:
