@@ -556,18 +556,37 @@ def test_review_answers_of_another_shape_lose_nothing_else(brain_home):
     assert _errors(brain_home) == "" and _ledger(brain_home, "ddr")[0]["status"] == "pending"
 
 
-def test_captured_records_in_the_asking_branch_when_only_it_holds_the_ddrs(origin, monkeypatch, brain_home,
-                                                                           tmp_path):
-    """wi-brain-captured-in-branch: a session asked in its own worktree, its DDR not on main yet. --captured records
-    the batch on that branch (committed, pushed: its own PR carries it), never in a fresh worktree from main where
-    the DDR does not exist; a dirty checkout is refused; a DDR main holds keeps the default flow."""
-    root, bare = origin
+
+# --- wi-brain-captured-in-branch: each answer recorded where its DDR lives ---
+
+PLAT = "ddr-2026-11-01-plat-5-what-is-public"
+
+
+def _asking(root, tmp_path, *titles):
+    """The asking session's worktree on feat/asking (forked from origin's main), its own DDRs asked and committed."""
     wt = tmp_path / "wt-asking"
     run_git(root, "worktree", "add", "-q", "-b", "feat/asking", str(wt), "origin/main")
-    new = _ask(wt, "Asked here", "Only on this branch?", ["Yes: go", "No: wait"])["id"]
+    ids = [_ask(wt, t, f"{t}, only on this branch?", ["Yes: go", "No: wait"])["id"] for t in titles]
     decisions.write_view(wt, "demo")
     run_git(wt, "add", "-A")
     run_git(wt, "commit", "-qm", "ask")
+    return wt, ids
+
+
+def _branch_log(bare, branch):
+    p = subprocess.run(["git", "--git-dir", str(bare), "log", branch, "--format=%s"], capture_output=True, text=True,
+                       timeout=60)
+    return p.stdout if p.returncode == 0 else ""
+
+
+def test_captured_records_in_the_asking_branch_when_only_it_holds_the_ddrs(origin, monkeypatch, brain_home,
+                                                                           tmp_path):
+    """A session asked in its own worktree, its DDR not on main yet: --captured records it on that branch (committed,
+    pushed: its own PR carries it), never in a fresh worktree from main where the DDR does not exist; a dirty
+    checkout is refused; the branch tracking main never pushes the answers to main."""
+    root, bare = origin
+    wt, (new,) = _asking(root, tmp_path, "Asked here")
+    run_git(wt, "branch", "-q", "--set-upstream-to", "origin/main")   # as a worktree forked from origin/main may be
     calls = []
     monkeypatch.setattr(answers, "gh", _fake_gh(calls, [True]))
     monkeypatch.setattr(answers, "refresh", _refresh)
@@ -581,16 +600,129 @@ def test_captured_records_in_the_asking_branch_when_only_it_holds_the_ddrs(origi
         answers.record_captured(_project(root), [c], owner="Ada", wait=0, at=AT, here=wt)
     (wt / "scratch.txt").unlink()
     out = answers.record_captured(_project(root), [c], owner="Ada", wait=0, at=AT, here=wt)
-    assert out["in_branch"] and out["branch"] == "feat/asking" and out["recorded"] == [new] and out["pr"] == ""
+    assert out["in_branch"]["branch"] == "feat/asking" and out["in_branch"]["pushed"] and out["recorded"] == [new]
+    assert out["pr"] == "" and out["in_pr"] == [] and out["errors"] == []
     assert calls == []   # no PR of its own, no merge: the branch's PR carries the answers
     assert yaml.safe_load((wt / "records" / "ddr" / f"{new}.yaml").read_text(encoding="utf-8"))["answer"][
         "choices"] == ["Yes"]
-    pushed = subprocess.run(["git", "--git-dir", str(bare), "log", "feat/asking", "--format=%s"], capture_output=True,
-                            text=True, check=True).stdout
-    assert "Ada's answers: H (question tool, captured, in branch)" in pushed
+    assert "Ada's answers: H (question tool, captured, in branch)" in _branch_log(bare, "feat/asking")
+    assert "in branch" not in _branch_log(bare, "main")   # its upstream was main: pushed under its own name
     assert not (root / ".claude" / "worktrees").exists() or not any((root / ".claude" / "worktrees").iterdir())
     assert answers.unrecorded("s-1") == [] and answers.read(answers.RECORDED)[-1]["branch"] == "feat/asking"
-    # a DDR main holds too: the default flow (a worktree from main, one PR), even asked from the branch
-    _cap("ddr-2026-11-01-lone-question", "2026-11-02T11:00:00Z", choices=["No"], n=1)
-    (d,) = answers.unrecorded("s-1")
-    assert answers._in_branch(root, [d], wt, "main") is None
+
+
+def test_a_mixed_batch_goes_where_each_ddr_lives_in_one_run(origin, monkeypatch, capsys, brain_home, tmp_path):
+    """Review findings 1, 2, 7, 8: from the asking worktree (the CLI's own cwd), a DDR only the branch holds is
+    committed on it; a DDR main holds takes the PR from main, judged on main's copy: one answered there meanwhile is
+    left (the branch's copy, still pending, never written), one main got after the fork (the branch lacks it) is
+    recorded; the dry run says where each goes; one run, one output."""
+    root, bare = origin
+    wt, (new,) = _asking(root, tmp_path, "Asked here")
+    other = tmp_path / "other"   # main moves after the fork: Lone answered by hand, a Late decision asked
+    subprocess.run(["git", "clone", "-q", str(bare), str(other)], check=True, timeout=60)
+    decisions.answer(other, "lone", ["No"], at=AT, by="Ada")
+    late = _ask(other, "Late", "Late question?", ["Yes: go", "No: wait"])["id"]
+    decisions.write_view(other, "demo")
+    run_git(other, "add", "-A")
+    run_git(other, "commit", "-qm", "main moved")
+    run_git(other, "push", "-q", "origin", "main")
+    for n, ddr in enumerate((new, LONE, PLAT, late)):
+        _cap(ddr, f"2026-11-02T1{n}:00:00Z", n=n, choices=["Yes"] if ddr != PLAT else [LONG])
+    calls = []
+    monkeypatch.setattr(answers, "gh", _fake_gh(calls, [True]))
+    monkeypatch.setattr(answers, "refresh", _refresh)
+    monkeypatch.setenv("CLAUDECODE", "1")
+    monkeypatch.setenv("CLAUDE_CODE_SESSION_ID", "s-1")
+    monkeypatch.chdir(wt)
+    base = ["--project", "demo", "decision", "answer", "--captured"]
+    assert cli.main(base + ["--dry-run"]) == 0
+    out = capsys.readouterr().out
+    assert f"  {new}: committed on feat/asking, the branch that asked it" in out
+    assert f"  {PLAT}: in one PR from main" in out and f"  {late}: in one PR from main" in out
+    assert f"  {LONE}: in one PR from main" in out and calls == []
+    assert cli.main(base) == 0
+    out = capsys.readouterr().out
+    assert "recorded 2 answer(s) on claude/answers-" in out and "merged" in out
+    assert f"recorded 1 answer(s) on feat/asking, the branch that asked them (its own PR carries them): {new}" in out
+    assert f"not pending, left: {LONE} (answered)" in out
+    assert [c[:2] for c in calls] == [["pr", "create"], ["pr", "merge"]]
+    assert yaml.safe_load(_main(bare, f"records/ddr/{PLAT}.yaml"))["answer"]["choices"] == [LONG]
+    assert yaml.safe_load(_main(bare, f"records/ddr/{late}.yaml"))["answer"]["choices"] == ["Yes"]
+    assert yaml.safe_load(_main(bare, f"records/ddr/{LONE}.yaml"))["answer"]["choices"] == ["No"]   # untouched
+    assert "in branch" in _branch_log(bare, "feat/asking")
+    assert _status(wt, LONE)["status"] == "pending" and _status(wt, PLAT)["status"] == "pending"   # main's part
+    assert _status(wt, new)["status"] == "answered"
+    assert [c["ddr"] for c in answers.unrecorded("s-1")] == [LONE]   # left, not recorded: --again replaces it
+
+
+def test_a_failure_in_the_asking_checkout_puts_it_back_as_it_was(origin, monkeypatch, brain_home, tmp_path):
+    """Review finding 3: the second answer raises once the first is written (a choice no option has), or the refresh
+    fails: the checkout is put back exactly (its ignored files untouched), nothing is marked recorded, a rerun
+    records; with the PR's part recorded first, the failure is the result's error, not a raise."""
+    root, bare = origin
+    wt, (one, two) = _asking(root, tmp_path, "First here", "Second here")
+    (wt / ".claude").mkdir()
+    (wt / ".claude" / "mine.txt").write_text("the session's own", encoding="utf-8")   # ignored, there before
+    head = run_git(wt, "rev-parse", "HEAD").strip()
+    _cap(one, "2026-11-02T10:00:00Z", choices=["Yes"])
+    bad = _cap(two, "2026-11-02T11:00:00Z", n=1, choices=["Nope"])
+    monkeypatch.setattr(answers, "gh", _fake_gh([], [True]))
+    monkeypatch.setattr(answers, "refresh", _refresh)
+
+    def back_as_it_was():
+        assert run_git(wt, "status", "--porcelain") == "" and run_git(wt, "rev-parse", "HEAD").strip() == head
+        assert _status(wt, one)["status"] == "pending" and (wt / ".claude" / "mine.txt").is_file()
+        assert answers.read(answers.RECORDED) == []
+
+    with pytest.raises(answers.AnswersError, match="nothing recorded on feat/asking: .*put back as it was"):
+        answers.record_captured(_project(root), answers.unrecorded("s-1"), owner="Ada", wait=0, at=AT, here=wt)
+    back_as_it_was()
+    answers._append(answers.RECORDED, [{"v": 1, "id": bad["id"], "at": AT, "ddr": two, "pr": "", "retired": "test"}])
+    with monkeypatch.context() as m:
+        m.setattr(answers, "refresh", lambda w: 1 if Path(w).resolve() == wt.resolve() else _refresh(w))
+        _cap(PLAT, "2026-11-02T12:00:00Z", n=2, choices=[LONG])
+        out = answers.record_captured(_project(root), answers.unrecorded("s-1"), owner="Ada", wait=0, at=AT, here=wt)
+    assert out["in_pr"] == [PLAT] and out["in_branch"] == {}
+    (err,) = out["errors"]
+    assert err.startswith("nothing recorded on feat/asking: brain refresh failed in ") and "put back as it was" in err
+    assert run_git(wt, "status", "--porcelain") == "" and _status(wt, one)["status"] == "pending"
+    assert [c["ddr"] for c in answers.unrecorded("s-1")] == [one]   # a rerun records it
+    out = answers.record_captured(_project(root), answers.unrecorded("s-1"), owner="Ada", wait=0, at=AT, here=wt)
+    assert out["in_branch"]["recorded"] == [one] and out["errors"] == []
+
+
+def test_a_failed_push_of_the_asking_branch_exits_non_zero(origin, monkeypatch, capsys, brain_home, tmp_path):
+    """Review finding 5: the remote branch moved (not a fast-forward): the commit is kept, git's message printed,
+    exit 1."""
+    root, bare = origin
+    wt, (new,) = _asking(root, tmp_path, "Asked here")
+    other = tmp_path / "other"
+    subprocess.run(["git", "clone", "-q", str(bare), str(other)], check=True, timeout=60)
+    (other / "elsewhere.txt").write_text("x", encoding="utf-8")
+    run_git(other, "add", "-A")
+    run_git(other, "commit", "-qm", "the remote branch moved")
+    run_git(other, "push", "-q", "origin", "HEAD:refs/heads/feat/asking")
+    _cap(new, "2026-11-02T10:00:00Z", choices=["Yes"])
+    monkeypatch.setattr(answers, "gh", _fake_gh([], [True]))
+    monkeypatch.setattr(answers, "refresh", _refresh)
+    monkeypatch.chdir(wt)
+    assert cli.main(["--project", "demo", "decision", "answer", "--captured"]) == 1
+    cap = capsys.readouterr()
+    assert "recorded 1 answer(s) on feat/asking" in cap.out and "the hooks announce" not in cap.out
+    assert "brain: not pushed: " in cap.err and "push it yourself" in cap.err
+    assert "in branch" in run_git(wt, "log", "-1", "--format=%s") and "in branch" not in _branch_log(bare,
+                                                                                                    "feat/asking")
+
+
+def test_the_asking_branch_is_pushed_to_its_upstream_of_another_name(origin, monkeypatch, brain_home, tmp_path):
+    """Review finding 4: local feat/asking tracks origin/claude/feat-asking (its PR's head): the answers go there,
+    no origin/feat/asking is made."""
+    root, bare = origin
+    wt, (new,) = _asking(root, tmp_path, "Asked here")
+    run_git(wt, "push", "-q", "-u", "origin", "feat/asking:claude/feat-asking")
+    _cap(new, "2026-11-02T10:00:00Z", choices=["Yes"])
+    monkeypatch.setattr(answers, "gh", _fake_gh([], [True]))
+    monkeypatch.setattr(answers, "refresh", _refresh)
+    out = answers.record_captured(_project(root), answers.unrecorded("s-1"), owner="Ada", wait=0, at=AT, here=wt)
+    assert out["in_branch"]["pushed"] and "in branch" in _branch_log(bare, "claude/feat-asking")
+    assert _branch_log(bare, "feat/asking") == ""
