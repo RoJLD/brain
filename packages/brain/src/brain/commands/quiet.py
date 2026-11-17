@@ -9,6 +9,7 @@ from datetime import datetime
 from .. import faults, notify, projects, quiet
 
 ORDER = 485   # its place in brain --help's list of commands (brain.commands)
+PHASE = "early"   # its handlers: early only, before any root is resolved (brain.commands)
 USAGE_ORDER = 365   # its usage lines' place in brain --help's epilog
 NO_PROJECT = ("quiet",)
 USAGE = """\

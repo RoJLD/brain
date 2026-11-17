@@ -10,6 +10,9 @@ import pytest
 import help_dump
 from brain import audit, audit_measure, cli, commands, inventory
 from brain.commands import _registry
+from brain.commands import (bundle, capture, check, code_map, collisions, decision, formats, ipc, lint, memory,
+                            merge_check, merge_driver, merge_ready, milestone, probes, profile, quiet, refresh, release,
+                            resume, retro, sessions, spec)
 from test_audit import README, _measure
 
 MODULES = _registry.load()
@@ -49,17 +52,20 @@ def test_the_help_of_every_parser_formats_and_a_second_build_is_the_same(monkeyp
 # that may hold no graph store): their module defines early, and no run; decision, resume and check define both (early
 # for announce, --hook and --public only), and profile (early when no root is found: a first install); every other
 # command needs the project's root (run only). Each module declares its phase (PHASE), its aliases and its NO_PROJECT
-# in its own file (wi-brain-cli-registry-declared): no shared list here, which every command PR used to edit.
-SAMPLE = {"early": {"capture", "memory", "sessions", "quiet", "probes", "release", "merge_driver"},
-          "both": {"decision", "resume", "check", "profile", "lint"},
-          "run": {"code_map", "collisions", "formats", "milestone", "refresh", "retro", "spec"}}
+# in its own file (wi-brain-cli-registry-declared): no shared list here, which every command PR used to edit; a sample
+# stays pinned (a new command never joins it): the move of one of them is a change to review.
+SAMPLE = {"early": (bundle, capture, ipc, memory, merge_check, merge_driver, merge_ready, probes, quiet, release,
+                    sessions),
+          "both": (check, decision, lint, profile, resume),
+          "run": (code_map, collisions, formats, milestone, refresh, retro, spec)}
 
 
 def test_every_command_module_declares_its_phase_aliases_and_no_project():
     assert _registry.undeclared() == []
+    for ph, mods in SAMPLE.items():
+        assert {m.__name__: _registry.phase(m) for m in mods} == {m.__name__: ph for m in mods}
+        assert all(m in MODULES and _registry.handled(m) == ph for m in mods)
     by_name = {m.__name__.rsplit(".", 1)[1]: m for m in MODULES}
-    for ph, names in SAMPLE.items():   # a sample pinned: the move of one of them is a change to review
-        assert {n: _registry.phase(by_name[n]) for n in names} == dict.fromkeys(names, ph)
     assert by_name["profile"].ALIASES == ("doctor",) and by_name["lesson"].ALIASES == ("lessons",)
 
 
