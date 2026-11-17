@@ -27,7 +27,9 @@ The command shares the repo's tag series with `research-graph`: `vX.Y.Z` is both
    only, never a refusal.
 
 Nothing to run for the rest: what this release could newly refuse is off until the owner turns it on, each behind an
-optional key (« Optional, off by default », under Changes).
+optional key (« Optional, off by default », under Changes), save three refusals on by default (« On by default », under
+Changes): `brain usage allow` without `--check` lifts the memory and session caps only, `brain wave add X.Y.Z` refuses
+a release other than the computed one, and a `config.json` that cannot be read turns the locked floor on.
 
 ### Added
 
@@ -337,9 +339,25 @@ optional key (« Optional, off by default », under Changes).
   - The `.gitattributes` lines `brain merge-driver install` lists (`--json`: `missing`): the reference's pages merged
     as views; without them git merges those pages as text, as before.
 - **Read by 0.5.1 only**: an engine at 0.5.0 notes `config.json` `guards`, `floor`, `rules_diff`, `knowledge`,
-  `audit.format_lints_*`, `usage.guard.wave_quota` and `usage.accounts`, and `projects.yaml` `overlays:` and
-  `schedules_owner`, in read mode and refuses them in strict mode (CI, `BRAIN_STRICT=1`); it refuses a schedule
+  `audit.format_lints_*`, `usage.guard.wave_quota` and `usage.accounts`, and `projects.yaml` `overlays:`,
+  `schedules_owner` and an entry's `kind` (the notes home's `kind: knowledge`, which it would also read as an
+  ordinary project), in read mode and refuses them in strict mode (CI, `BRAIN_STRICT=1`); it refuses a schedule
   entry's `visible` and `floor` in every mode. A brain sets one once every machine and its CI run 0.5.1.
+- **On by default**, with no key: what 0.5.0 let through and this release refuses.
+  - `brain usage allow` without `--check` lifts the memory and session caps only (`memory`, `sessions`,
+    `brainstorms`), where 0.5.0's lifted the whole usage governor: a `start_session` refused at the quota's critical
+    or warn threshold needs `brain usage allow --check critical` (or `--check warn`), which its refusal names, and no
+    allow lifts a stale quota reading any more (one `get_usage` call reads it again; `BRAIN_GUARD_ALLOW=usage` still
+    lifts it). `BRAIN_GUARD_ALLOW=usage:CHECK` lifts that check only, where any `usage:` name lifted every check: an
+    environment that relied on it sets `usage` instead. An `allow.json` written by 0.5.0 still in force lifts every
+    check but a stale reading until it ends (`wi-brain-governor-override-scope`, above).
+  - `brain wave add X.Y.Z` refuses a release other than the computed one; `brain item set wave-sN
+    props.release=X.Y.Z` pins another (`wi-brain-wave-ids-decoupled`, above).
+  - A `config.json` that exists but cannot be read or parsed (a merge's conflict markers, say), or a `BRAIN_CONFIG`
+    that names a missing file, turns the locked floor on, failing closed, whether or not the brain sets `floor`:
+    the guard then refuses what the floor refuses and every call a check cannot judge, an edit of that config.json
+    and any git command but reads in its checkout included, where 0.5.0 refused only commits and pushes. The owner
+    repairs the file in their own terminal, outside a Claude Code session.
 - **What a brain gets by itself**, with no key: `brain telemetry` reads the sovereign collector's export at zero token
   (once the collector runs; the account dropped from its records once `brain bundle apply sovereign` has written its
   new configuration and the collector is restarted, « Fixes »); `brain release prepare` and `brain release pin` for
@@ -363,7 +381,8 @@ optional key (« Optional, off by default », under Changes).
   `get_usage` call). A lifted check lets the next one decide, each refusal names the allow that lifts it (or says none
   does), an allow adds to the one in force, and each allow and its end (ended or expired) are lines of the guards
   ledger, with each call it lets through; `brain usage guard` shows what the hook decides under the override. `BRAIN_GUARD_ALLOW=usage:CHECK` now lifts that check only (`usage` and `all` still lift every check). An
-  `allow.json` written by 0.5.0 lifts what it lifted then until it ends.
+  `allow.json` written by 0.5.0 lifts every liftable check until it ends, but no longer a stale quota reading, which
+  it lifted then. On by default, with no key (« On by default », below).
 - The merge driver resolves two more things a wave's integration resolved by hand (`wi-brain-merge-generated-files`).
   A node's status both sides moved merges by its order (todo, then doing or blocked, then done; pending, then
   reached), and for each prop both sides changed the later side's value is kept whole: a branch's « doing » merged
@@ -395,7 +414,9 @@ optional key (« Optional, off by default », under Changes).
   without an edit; `brain wave check`, `release_check.py --store` and `brain wave close` resolve a wave by its id, a
   former id (`props.renamed_from`), its label or what it shipped as. New `brain wave rename WAVE [NEW] [--write]`
   renames a legacy `wave-X.Y.Z` once. Legacy waves keep their ids and read as before. `brain wave add X.Y.Z` now
-  refuses a release other than the computed one (a store's first wave names it).
+  refuses a release other than the computed one (a store's first wave names it), which 0.5.0 accepted: to plan
+  another release, add the wave with no release, then pin it, `brain item set wave-sN props.release=X.Y.Z` (« On by
+  default », below).
 
 ## 0.5.0 — 2026-11-13 — Typologies, privacy and measured plans
 
