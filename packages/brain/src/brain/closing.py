@@ -234,11 +234,17 @@ def _tidy(p: Plan, repo_dir: Path) -> None:
                 or (s.kind == "worktree" and tidy._norm(s.target) in holders)]
     p.tidy = rp
     if not rp.steps:
-        here = tidy._git_ok(repo_dir, "rev-parse", "--verify", "--quiet", f"refs/heads/{p.pr.head}")
-        p.tidy_note = (f"{p.pr.head} is not merged into {rp.default} as git sees it here (a squash or rebase merge, or "
-                       f"the default branch not fetched): kept, brain tidy decides later" if here and not holders
-                       else f"no local branch {p.pr.head} nor worktree on it: nothing to tidy" if not here
-                       else f"the worktrees on {p.pr.head} stay (see brain tidy): nothing removed")
+        p.tidy_note = _nothing_to_tidy(p.pr.head, rp.default, repo_dir, bool(holders))
+
+
+def _nothing_to_tidy(head: str, default: str, repo_dir: Path, held: bool) -> str:
+    """Why tidy's narrowed plan is empty: no such branch, or one git does not see merged, or worktrees that stay."""
+    if not tidy._git_ok(repo_dir, "rev-parse", "--verify", "--quiet", f"refs/heads/{head}"):
+        return f"no local branch {head} nor worktree on it: nothing to tidy"
+    if held:
+        return f"the worktrees on {head} stay (see brain tidy): nothing removed"
+    return (f"{head} is not merged into {default} as git sees it here (a squash or rebase merge, or the default "
+            "branch not fetched): kept, brain tidy decides later")
 
 
 def write(store: Path, journal: Path, p: Plan, today: str | None = None, title: str = "") -> list[str]:
