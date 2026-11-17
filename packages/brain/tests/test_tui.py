@@ -69,6 +69,19 @@ class FakeCockpit:
 OVER = (130, 48)  # under 140 columns: the detail opens over the list
 
 
+def _hold_the_timer(app):
+    """The periodic read stopped once the app is up, and again each time a key restarts it: under load a test of
+    several seconds met a tick between a key and its assertion (a read after r's probe, a probe before the first
+    assertion). A test of the tick calls app.tick() itself."""
+    app.timer.pause()
+    restart = app._restart_timer
+
+    def held():
+        restart()
+        app.timer.pause()
+    app._restart_timer = held
+
+
 def _run(test, size=(160, 48), **kw):
     async def main():
         fake = FakeCockpit()
@@ -76,6 +89,7 @@ def _run(test, size=(160, 48), **kw):
         async with app.run_test(size=size) as pilot:
             await pilot.pause(0.2)
             await app.workers.wait_for_complete()
+            _hold_the_timer(app)
             await pilot.pause(0.1)
             await test(app, pilot, fake)
     asyncio.run(main())
