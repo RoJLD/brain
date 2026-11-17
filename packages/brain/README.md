@@ -264,7 +264,8 @@ backup, the way back. The readers run the same steps in memory when they load an
 a file at a version its data does not have; a file no step reaches is behind, read-only. `config.json` is migrated in
 the brain's work tree and never committed: its diff is the migration, committed once every machine of the brain runs
 an engine that reads its new `v` (one with changes not committed is refused). An engine run from a source folder
-refuses `--apply` on the default home unless `--dev-engine`. `brain update` prints the migrations pending on this
+refuses `--apply` on the default home unless `--dev-engine`, and `--apply` runs with `config.json` `engine.pin`'s
+engine only, as `brain sync` (`--force` writes anyway). `brain update` prints the migrations pending on this
 machine and applies none. No format has broken yet: the engine ships no step today
 ([docs/formats.md](docs/formats.md), « Migrations »).
 

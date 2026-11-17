@@ -32,6 +32,14 @@ def add_seen(data: dict) -> dict:
     return {**data, "seen": True}
 
 
+@pytest.fixture(autouse=True)
+def pinned(monkeypatch):
+    """The running engine counts as config.json engine.pin's (a test runs a source checkout): --apply's pin refusal
+    is its own test's (test_apply_runs_with_the_pinned_engine_only_unless_forced)."""
+    from brain import skew
+    monkeypatch.setattr(skew, "of", lambda root: (None, [], []))
+
+
 @pytest.fixture
 def steps(monkeypatch):
     """A clean registry; ``bump(format, to)`` moves a format's known version up for the test, ``add(...)`` registers
@@ -430,7 +438,7 @@ def test_every_documented_migrate_line_passes_the_real_parser():
 def test_the_usage_and_help_name_both_modes():
     from brain.commands import migrate as cmd
     usage = " ".join(cmd.USAGE.split())
-    assert "brain migrate [--plan | --apply [--dev-engine]] [--json]" in usage and "$BRAIN_HOME/migrate/applied.jsonl" in usage
+    assert "brain migrate [--plan | --apply [--dev-engine] [--force]] [--json]" in usage and "$BRAIN_HOME/migrate/applied.jsonl" in usage
 
 
 # --- brain update says what is pending ---
@@ -636,3 +644,22 @@ def test_a_backup_that_fails_says_nothing_of_its_own_and_leaves_no_copy(steps, b
     out, err = capsys.readouterr()
     assert "no backup could be taken: nothing written" in out and "written without one" not in err
     assert not [p for p in f.parent.iterdir() if p.name.endswith(".tmp")]
+
+
+def test_apply_runs_with_the_pinned_engine_only_unless_forced(brain_root, steps, monkeypatch, capsys):
+    """The owner's MIGRATE-1 (2026-11-17): a session may apply, with config.json engine.pin's engine, as brain sync;
+    another engine is refused (exit 1, nothing written) unless --force; the plan always runs."""
+    from brain import skew
+    steps("cockpit", 1, add_seen)
+    f = tui()
+    before = f.read_bytes()
+    with monkeypatch.context() as m:
+        m.setattr(skew, "of", lambda root: ("v0.4.9", ["brain 0.5.0 runs here, not v0.4.9"], []))
+        m.setattr(skew, "how", lambda root, pin, engines: "run the v0.4.9 engine")
+        assert run("migrate", "--root", str(brain_root), "--apply") == 1 and f.read_bytes() == before
+        err = capsys.readouterr().err
+        assert "brain migrate --apply: the running engine is not config.json engine.pin v0.4.9" in err
+        assert run("migrate", "--root", str(brain_root), "--plan") == 0        # the plan reads with any engine
+        assert run("migrate", "--root", str(brain_root), "--apply", "--force") == 0
+        assert "(--force: written anyway)" in capsys.readouterr().err
+    assert json.loads(f.read_text(encoding="utf-8"))["seen"] is True

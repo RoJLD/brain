@@ -523,6 +523,9 @@ brain migrate --plan --json      # {engine, log, files: [{format, file, v, known
   `~/.brain/engine`) never migrates the default home (`$BRAIN_HOME` unset): the installed release would then refuse
   to write the files it moved (« written by a newer brain »). `--apply` exits 2 and says so; set `BRAIN_HOME` to a
   home of its own, or pass `--dev-engine` to migrate this one anyway. The plan always runs.
+- **The pinned engine**: `--apply` runs with `config.json` `engine.pin`'s engine only, as `brain sync` (exit 1
+  and the way out otherwise; `--force` writes anyway), so no engine ahead of the pin writes a format the installed
+  one may not read. A session may apply: the backup and the idempotence make it as safe as a sync.
 - **A repo's file** (`config.json`) is migrated in its work tree and never committed: its diff is the migration. One
   with changes not committed is refused (`blocked` in the plan), and so is one whose git status cannot be read (git
   missing, a repo of another owner: fail closed); the status is read with `git --no-optional-locks`, so the plan
