@@ -327,6 +327,69 @@ def _names_marker(word: str, named: bool) -> bool:
     return bool(_MARKER.match(w)) or "${!CLAUDE" in w.upper() or (named and _unknown(w))
 
 
+_EMPTY_VALUES = ("", "$null")
+_ENV_CLEARS_ALL = re.compile(r"-[a-z]*i")
+
+
+def _empty_assignment(words: list[str]) -> str:
+    """A leading assignment of a marker to nothing (``CLAUDECODE= cmd``), or PowerShell's ``$env:CLAUDECODE = ''``."""
+    for w in words:
+        m = re.match(r"^(?:\$env:)?([A-Za-z_]\w*)=(.*)$", w, re.I)
+        if not m:
+            break
+        if _MARKER.match(m.group(1)) and m.group(2).strip("'\"") in _EMPTY_VALUES:
+            return w
+    ps = len(words) >= 3 and words[1] == "=" and words[0].lower().startswith("$env:")
+    if ps and _MARKER.match(words[0][5:]) and words[2].strip("'\"") in _EMPTY_VALUES:
+        return " ".join(words[:3])
+    return ""
+
+
+def _env_value(args: list[str], k: int) -> str | None:
+    """The variable ``env``'s option at ``args[k]`` unsets (``-u X``, ``-uX``, ``--unset=X``), else None."""
+    a = args[k]
+    if a in ("-u", "--unset"):
+        return args[k + 1] if k + 1 < len(args) else None
+    if a.startswith("--unset="):
+        return a.split("=", 1)[1]
+    return a[2:] if a.startswith("-u") and len(a) > 2 else None
+
+
+def _env_clears(args: list[str], named: bool) -> bool:
+    """Whether ``env ARGS`` starts its program without the markers (``-i``, ``-``, or ``-u`` of one)."""
+    for k, a in enumerate(args):
+        if a in ("-", "--ignore-environment") or _ENV_CLEARS_ALL.fullmatch(a):
+            return True
+        val = _env_value(args, k)
+        if val is not None and _names_marker(val, named):
+            return True
+    return False
+
+
+def _ps_removes(args: list[str], command: str) -> bool:
+    """Whether PowerShell's Remove-Item (and its kin) removes Env: items, by path or from an Env: listing piped."""
+    paths = [a for a in args if not a.startswith("-")]
+    if any(re.match(r"(?i)^env:[\\/]?", a.strip("'\"")) for a in paths):
+        return True
+    return not paths and bool(re.search(r"(?i)\benv:[\\/]?claude", command))
+
+
+def _clears(words: list[str], named: bool, command: str) -> str:
+    """What the simple command ``words`` clears of the markers, else ''."""
+    hit = _empty_assignment(words)
+    if hit:
+        return hit
+    prog = re.split(r"[\\/]", words[0])[-1].lower().removesuffix(".exe")
+    args = words[1:]
+    flag = CLEARING.get(prog)
+    if flag is not None and (not flag or flag in args) and \
+            any(_names_marker(a, named) for a in args if not a.startswith(("-", "+"))):
+        return " ".join(words)[:120]
+    if (prog == "env" and _env_clears(args, named)) or (prog in PS_REMOVE and _ps_removes(args, command)):
+        return " ".join(words)[:120]
+    return ""
+
+
 def clears_marker(command: str) -> str:
     """What in ``command`` clears an agent session's markers, else '': read from its simple commands' words (a
     message or a search that only names the forms passes), and only when the call names CLAUDE, BRAIN_AGENT_SESSION or
@@ -341,41 +404,11 @@ def clears_marker(command: str) -> str:
     named = "claude" in low or "brain_agent_session" in low
     from . import guards
     for ps in (False, True):
-        try:
-            segs = guards.segments(command, ps)
-        except Exception:   # noqa: BLE001 - a call the reader cannot split: its text alone is read below
-            segs = []
-        for words in segs:
-            if not words or words[0].startswith(guards.REDIRECT):
-                continue
-            for i, w in enumerate(words):   # leading assignments: CLAUDECODE= cmd, X='' cmd
-                m = re.match(r"^(?:\$env:)?([A-Za-z_]\w*)=(.*)$", w, re.I)
-                if not m:
-                    break
-                if _MARKER.match(m.group(1)) and m.group(2).strip("'\"") in ("", "$null"):
-                    return w
-            if len(words) >= 3 and words[1] == "=" and _MARKER.match(words[0].removeprefix("$env:").removeprefix(
-                    "$ENV:")) and words[0].lower().startswith("$env:") and words[2].strip("'\"") in ("", "$null"):
-                return " ".join(words[:3])   # PowerShell: $env:CLAUDECODE = ''
-            prog = re.split(r"[\\/]", words[0])[-1].lower().removesuffix(".exe")
-            args = words[1:]
-            if prog in CLEARING and (not CLEARING[prog] or CLEARING[prog] in args) and \
-                    any(_names_marker(a, named) for a in args if not a.startswith(("-", "+"))):
-                return " ".join(words)[:120]
-            if prog == "env":
-                for k, a in enumerate(args):
-                    if a in ("-i", "-", "--ignore-environment") or re.fullmatch(r"-[a-z]*i", a):
-                        return " ".join(words)[:120]
-                    val = args[k + 1] if a in ("-u", "--unset") and k + 1 < len(args) else \
-                        a[2:] if a.startswith("-u") and len(a) > 2 else a.split("=", 1)[1] if a.startswith(
-                            "--unset=") else None
-                    if val is not None and _names_marker(val, named):
-                        return " ".join(words)[:120]
-            if prog in PS_REMOVE:
-                paths = [a for a in args if not a.startswith("-")]
-                if any(re.match(r"(?i)^env:[\\/]?", a.strip("'\"")) for a in paths) or \
-                        (not paths and re.search(r"(?i)\benv:[\\/]?claude", command)):
-                    return " ".join(words)[:120]
+        for words in guards.segments(command, ps):
+            if words and not words[0].startswith(guards.REDIRECT):
+                hit = _clears(words, named, command)
+                if hit:
+                    return hit
     m = CODE_CLEARS.search(command or "")
     return m.group(0) if m else ""
 
