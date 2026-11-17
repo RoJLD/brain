@@ -300,6 +300,14 @@ def test_every_install_store_of_the_registry_is_known_to_the_purge():
             assert uninstall._store_of(k.path.split("/", 1)[1])[0] == name
 
 
+def test_a_stamped_copy_at_the_top_of_the_home_is_its_files_store():
+    """brain migrate's backups of tui.json and machine.json lie beside them (stateio.backup_home): their stores."""
+    assert uninstall._store_of("tui.json.20261117T001520103291Z.bak")[0] == "cockpit"
+    assert uninstall._store_of("machine.json.20261117T001520103291Z.bak")[0] == "machine.json"
+    assert uninstall._store_of("tui.json.20261117T001520103291Z.bak.123.tmp")[0] == "cockpit"   # its half copy
+    assert uninstall._store_of("tui.json.bak")[0] == "cockpit" and uninstall._store_of("nope.20261117T0Z.bak") is None
+
+
 def test_the_command_plans_refuses_an_unknown_name_and_applies_only_outside_a_session(monkeypatch, capsys):
     home = _home("cache", "ledger")
     assert cli.main(["uninstall", "--purge"]) == 0

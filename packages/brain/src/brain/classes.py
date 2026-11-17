@@ -186,7 +186,11 @@ ENGINE_STORES = {
                      "the projects' format checks' last pass or fail, keyed by the hashes of their command and files "
                      "(brain formats check)"),
     "backup": Known("$BRAIN_HOME/backup", "sealed", "truth-local",
-                     "copies before a write-back: a work tree's settings files, <project>-<key>/<folder>, 10 each"),
+                     "copies before a write-back: a work tree's settings files and a brain's config.json before brain "
+                     "migrate --apply, <project>-<key>/<folder>, 10 each"),
+    "migrate": Known("$BRAIN_HOME/migrate", "sealed", "log",
+                     "the applied-steps log of brain migrate --apply: each step applied to a file, its versions and "
+                     "its backup"),
     "spool": Known("$BRAIN_HOME/spool", "sealed", "truth-local",
                    "the sealed copies waiting to leave the machine and their index (brain spool push)"),
     "session-archive": Known("$BRAIN_HOME/session-archive", "sealed", "truth-local",

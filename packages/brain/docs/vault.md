@@ -108,7 +108,8 @@ name its code writes there that the list does not hold, so a new store comes wit
 | `ship` | `$BRAIN_HOME/ship` | sealed | truth-local | the local merge queue: the PRs queued per repo, their state and reason (`brain ship`, `queue.json`) |
 | `merge-ready` | `$BRAIN_HOME/merge-ready` | sealed | derived | the merge gate's stamps, per repo and head (`brain merge-ready`) |
 | `formats` | `$BRAIN_HOME/formats` | sealed | derived | the projects' format checks' last pass or fail, keyed by the hashes of their command and files (`brain formats check`) |
-| `backup` | `$BRAIN_HOME/backup` | sealed | truth-local | copies taken before a write-back: a work tree's settings files (`<project>-<key>/<folder>`, the last 10 each) |
+| `backup` | `$BRAIN_HOME/backup` | sealed | truth-local | copies taken before a write-back: a work tree's settings files and a brain's `config.json` before `brain migrate --apply` (`<project>-<key>/<folder>`, the last 10 each) |
+| `migrate` | `$BRAIN_HOME/migrate` | sealed | log | the applied-steps log of `brain migrate --apply` (`applied.jsonl`: each step applied to a file, its versions and its backup) |
 | `spool` | `$BRAIN_HOME/spool` | sealed | truth-local | the sealed copies waiting to leave the machine and their index (`brain spool push`) |
 | `session-archive` | `$BRAIN_HOME/session-archive` | sealed | truth-local | the session archive's index by session record, and its staged copies while a run seals them (`brain session-archive`) |
 | `cockpit` | `$BRAIN_HOME/tui.json` | sealed | truth-local | the cockpit's settings |

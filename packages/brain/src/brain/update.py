@@ -43,6 +43,10 @@ The install is blue-green (brain.slots, wi-brain-update-blue-green): the tag goe
 (a link) and the launcher switch to it, and a watchdog switches them back when the new version does not answer
 through them. A venv whose pyvenv.cfg names no base interpreter is updated in place, as before.
 
+The plan also says the migrations this engine's ``brain migrate`` would apply on this machine (``migrations``:
+brain.migrate, wi-brain-migrate), and after an install the line to run the new engine's ``brain migrate --plan``;
+it applies none.
+
 :func:`apply` runs it: only from ``brain update --yes``, the terminal's yes or the cockpit's confirmation (which runs
 ``brain update --yes`` in a window), the owner's gesture; never from a Claude Code session's shell, never on its own.
 """
@@ -310,7 +314,7 @@ def plan(info: dict, root: Path | None = None, *, read_changelog=None, verify=No
     out = {"installed": installed, "latest": latest, "tag": f"v{latest}" if latest else None, "repo": repo,
            "checked": info.get("checked"), "source": info.get("source"), "changelog": None, "python": str(py),
            "spec": None, "launcher": None, "pin": None, "signature": None, "verify_tags": False, "blocked": "",
-           "stamps": None, "slot": None, "base": None, "root": None}
+           "stamps": None, "slot": None, "base": None, "root": None, "migrations": pending_migrations(root)}
     target = f"v{latest}" if info.get("newer") else f"v{installed}"
     pin = info.get("pin")
     editable = paths.installed_checkout()
@@ -344,6 +348,17 @@ def plan(info: dict, root: Path | None = None, *, read_changelog=None, verify=No
     out["stamps"] = _stamps_root(root)
     _plan_slot(out, py, root)
     return out
+
+
+def pending_migrations(root: Path | None = None) -> list[dict]:
+    """The steps this engine's ``brain migrate`` would apply here, read-only (brain.migrate, wi-brain-migrate):
+    [{format, file, from, to}], one per file; [] when none, or when they cannot be read (never an update's failure)."""
+    try:
+        from . import migrate
+        return [{"format": e.format, "file": str(e.file), "from": e.v, "to": e.steps[-1].to}
+                for e in migrate.pending(root)]
+    except Exception:   # a line of the plan, never a reason for the update to fail
+        return []
 
 
 def _plan_slot(out: dict, py: Path, root: Path | None) -> None:
@@ -464,12 +479,23 @@ def lines(p: dict) -> list[str]:
                      f"-Apply installs {pin['from']} back)")
     if p.get("spec"):
         steps.append(f"restart  brain tui and the sessions, to run {p['tag']}")
+        steps.append(f"migrate  then brain migrate --plan, run by {p['tag']}: the steps its formats need (brain update "
+                     "applies none)")
     if steps:
         out += ["", "The plan (brain update --yes, or the cockpit's u, runs it on the owner's yes):"
                 if runs(p) else "To do by hand:", *(f"  {s}" for s in steps)]
     if p.get("blocked") and newer:
         out += ["", f"Not applicable here: {p['blocked']}"]
-    return out
+    return out + migration_lines(p)
+
+
+def migration_lines(p: dict) -> list[str]:
+    """The plan's line on the migrations pending on this machine (none: no line)."""
+    if not p.get("migrations"):
+        return []
+    files = ", ".join(f"{Path(m['file']).name} v{m['from']} -> v{m['to']}" for m in p["migrations"])
+    return ["", f"Migrations pending for brain {p['installed']}'s formats: {files} (brain migrate --plan, then "
+                "--apply; brain update applies none)"]
 
 
 # --- applying it: the owner's gesture only ---
@@ -524,10 +550,11 @@ def write_pin(file: Path, frm: str, to: str) -> None:
     rewrite_json(file, move)
 
 
-def rewrite_json(file: Path, change) -> None:
+def rewrite_json(file: Path, change, write=None) -> None:
     """A JSON file (config.json) changed in place by ``change(data)``, its other keys, their order, its indent, its
-    line endings and its BOM kept, written atomically; ``change`` raises ValueError to write nothing, and so does a
-    file that is not JSON."""
+    line endings and its BOM kept, written atomically (``write(file, text)``: brain.stateio.write_atomic by default;
+    brain.stateio.write_state for a truth-local file, its integrity sidecar with it); ``change`` raises ValueError
+    to write nothing, and so does a file that is not JSON."""
     from . import stateio
 
     raw = file.read_bytes()
@@ -540,7 +567,7 @@ def rewrite_json(file: Path, change) -> None:
     out = json.dumps(data, indent=indent, ensure_ascii=False) + "\n"
     if "\r\n" in text:
         out = out.replace("\n", "\r\n")
-    stateio.write_atomic(file, ("﻿" if bom else "") + out)
+    (write or stateio.write_atomic)(file, ("﻿" if bom else "") + out)
 
 
 def move_pin(p: dict, runner=subprocess.run) -> tuple[int, list[str]]:

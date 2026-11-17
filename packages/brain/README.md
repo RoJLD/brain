@@ -26,6 +26,8 @@ What it does, every command reading files and git, never a model:
   its title bar the installed version and a newer one when out), a resume pack for agents (`brain resume`), digests,
   usage and cost ledgers, forecasts;
 - **updates**: `brain update` shows the plan to the latest engine tag and installs it on the owner's yes;
+  `brain migrate` plans, then applies, the steps a format's breaking change ships (a backup first, each step
+  logged, idempotent);
 - **the machine**: its profile (`brain profile`, alias `brain doctor`: Lite, Default, Recommended, Custom), what runs
   for the Brain costs (`brain resources`: CPU, memory, disk, network, the sessions' processes, the containers, the
   stores, the tokens today and the quota), stacks started on demand (`brain up|down|health`), permissions rendered for
@@ -251,6 +253,27 @@ The local data survives an upgrade and a rollback: the engine reads tolerantly a
 ([`docs/formats.md`](docs/formats.md)). A field or a key it does not know, a newer brain's, is noted and kept, and a
 rewrite keeps it; a format whose `v` is above the engine's is refused with « written by brain > X: brain update ». The
 checks read strictly in CI (`CI` set) or with `BRAIN_STRICT=1`, tolerantly elsewhere or with `BRAIN_STRICT=0`.
+
+A format whose meaning changes bumps its `v` and ships a migration: `brain migrate` (the default `--plan`) reads the
+brain's `config.json` and this machine's truth-local files (the cockpit's `tui.json`, the vault's state, the usage
+ledger...) and lists the steps each one is pending, from which version to which, writing nothing; `brain migrate
+--apply` runs them file by file: a backup first, the steps in memory, one atomic write, each step appended to
+`$BRAIN_HOME/migrate/applied.jsonl`. A file's own `v` says what is pending, so a second run applies nothing; the first
+failure (a step that raises, a full disk) leaves its file as it was and stops the run, and the log names each file's
+backup, the way back. The readers run the same steps in memory when they load an older file, so no command ever saves
+a file at a version its data does not have; a file no step reaches is behind, read-only. `config.json` is migrated in
+the brain's work tree and never committed: its diff is the migration, committed once every machine of the brain runs
+an engine that reads its new `v` (one with changes not committed is refused). An engine run from a source folder
+refuses `--apply` on the default home unless `--dev-engine`, and `--apply` runs with `config.json` `engine.pin`'s
+engine only, as `brain sync` (`--force` writes anyway). `brain update` prints the migrations pending on this
+machine and applies none. No format has broken yet: the engine ships no step today
+([docs/formats.md](docs/formats.md), « Migrations »).
+
+```bash
+brain migrate --plan             # the steps pending, per file: nothing written
+brain migrate --apply            # run them, a backup of each file first
+brain migrate --apply --json     # the run's data: each step applied, or the failure
+```
 
 ### The scout
 
@@ -1845,6 +1868,14 @@ command or flag only the owner runs (`brain usage allow`, `brain schedule instal
 and a test checks that each one is refused to an agent's session. config.json `guards.owner_strict: true` adds the
 refusals 0.5.1 brings (off by default). `guards.gestures_wide: true` (off by default) matches them through words the guard
 cannot resolve (`brain schedule install $FLAG`) and Python's inline code that drives brain's modules.
+
+**The machine's token** (`brain.tokenguard`, [docs/guards.md](docs/guards.md#the-machines-token)): under config.json
+`guards.refuse_token_read: true` (off by default), the owner guard (check `token`) refuses a session's `Read`, `Grep`,
+tool edit or shell call that reaches `<BRAIN_HOME>/ipc/token` (or `$BRAIN_IPC_TOKEN_FILE`), as it refuses `brain ipc
+otel-headers`: `cat`, `Get-Content`, a copy of the file, its folder or `<BRAIN_HOME>`, a redirection, a glob, a pipe,
+inline code or a heredoc that names it, a link to it; `ls`, `stat`, `Test-Path` and `brain ipc token` pass. Read and
+Grep go through the opt-in hook `tokenguard.sh`, registered only when the key is on. The MCP server runs the check
+whatever the key, and redacts the token from every answer.
 
 **The read hint** (`readhint.sh`, `brain.readhint`, PreToolUse on Read, Grep, Bash and PowerShell) never refuses: when
 a call reads a registered brain's graph YAML (a store's `nodes/` or `edges/`, or the store), its decision log, its
