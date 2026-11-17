@@ -18,6 +18,7 @@ from brain.commands import (bundle, capture, catalogue, check, code_map, collisi
 from brain.commands import lint, lot, merge_ready, migrate, ship, telemetry
 from brain.commands import public as public_cmd
 from brain.commands import floor as floor_cmd
+from brain.commands import gate as gate_cmd
 from brain.commands import release as release_cmd
 from brain.commands import test as test_cmd
 from brain.commands import uninstall
@@ -64,7 +65,7 @@ def test_the_help_of_every_parser_formats_and_a_second_build_is_the_same(monkeyp
 EARLY = {capture, memory, timed, perf, init, merge_driver, merge_check, sessions, schedule, update, audit_cmd, impact,
          index, up, down, health, bundle, quiet, review, probes, schema, test_cmd, merge_ready, mcp, ipc,
          handover, project, uninstall, lot, rules, release_cmd, telemetry, notes, floor_cmd, ship, migrate,
-         public_cmd}
+         public_cmd, gate_cmd}
 BOTH = {decision, resume, check, docgraph, catalogue, profile, lint}   # lint formats: any repo
 ALIASES = {"profile": ("doctor",)}
 ROOTED = {code_map, collisions, formats, milestone, refresh, retro, spec}   # a sample of the rest: they need the graph store
