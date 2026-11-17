@@ -21,12 +21,14 @@ USAGE = """\
                  its Scope (what it covers, up to which wave or era) and its Target compatibility (each future need it
                  touches, COMPAT compatible, extension-point or to-review, and what it leaves open); one without the
                  other is written TODO (docs/adr-target.md)
-  brain adr pin ID --touches PATH|CODEREF... [--holds LINE] [--date D]   pin an ADR, an SDR or an answered DDR to the
-                 code it governs, in pins.yaml beside the decision log (docs/pins.md): the invariant it holds (one
-                 line, never edited: an override is a new ADR, brain adr new --reverses) and its touches (a file, a
-                 folder/, a glob or a CodeRef; given again, added); brain impact --diff lists the pinned decisions a
-                 change touches, and brain review check --pr N / brain merge-ready refuse until the PR body says
-                 Keeps ID or Overrides ID: why
+  brain adr pin ID [--touches PATH|CODEREF...] [--holds LINE] [--alias NAME] [--date D]   pin an ADR, an SDR or an
+                 answered DDR to the code it governs, in pins.yaml beside the decision log (docs/pins.md): the
+                 invariant it holds (one line, never edited: an override is a new ADR, brain adr new --reverses) and
+                 its touches (a file, a folder/, a glob or a CodeRef; given again, added; needed for a new pin); brain
+                 impact --diff lists the pinned decisions a change touches, and brain review check --pr N / brain
+                 merge-ready refuse until the PR body says Keeps ID or Overrides ID: why. --alias: the pin's public
+                 name, which a public repo's PR body says in place of the private ID (Keeps NAME; default
+                 pin-<8 hex of the ID's sha-256>)
   brain adr target [--needs] [--json]   the advisory target check of the one-way-door ADRs (decision.target-compat-
                  missing, decision.review-trigger-missing, decision.target-unreferenced: an open need of a module the
                  ADR decides that its target compatibility does not cite); --needs: the register of future needs it
@@ -106,15 +108,15 @@ def cmd_pin(args, root: Path) -> int:
     from datetime import date
     try:
         pin, verb = pins.add(_project(args, root), args.id, list(args.touches or []), _text(args.holds) or "",
-                             args.date or date.today().isoformat())
+                             args.date or date.today().isoformat(), alias=args.alias or "")
     except pins.PinError as exc:
         print(f"brain: {exc}", file=sys.stderr)
         return 1
     except OSError as exc:
         print(f"brain: {exc}", file=sys.stderr)
         return 1
-    print(f"pin: {pin['decision']} {verb} ({len(pin['touches'])} touch(es)): holds {pin['holds']!r}; "
-          f"{pins.FILE} beside the decision log, then brain check")
+    print(f"pin: {pin['decision']} {verb} ({len(pin['touches'])} touch(es)): holds {pin['holds']!r}; public alias "
+          f"{pins.alias_of(pin)}; {pins.FILE} beside the decision log, then brain check")
     return 0
 
 
@@ -175,9 +177,12 @@ def register(sub, ctx) -> None:
     pn = ad.add_parser("pin", help="pin an ADR or an answered DDR to the code it governs: the invariant it holds "
                                    "and its touches (pins.yaml, docs/pins.md)")
     pn.add_argument("id", help="the ADR, SDR or answered DDR id")
-    pn.add_argument("--touches", action="append", required=True, metavar="PATH|CODEREF",
-                    help="a file, a folder ending with /, a glob, or code:<repo>:<path>[::<symbol>] (repeatable)")
+    pn.add_argument("--touches", action="append", metavar="PATH|CODEREF",
+                    help="a file, a folder ending with /, a glob, or code:<repo>:<path>[::<symbol>] (repeatable; "
+                         "needed for a new pin)")
     pn.add_argument("--holds", help="one line: the invariant the decision keeps (needed for a new pin)")
+    pn.add_argument("--alias", help="the pin's public name, said in a public repo's PR body in place of the private "
+                                    "id (Keeps NAME); default pin-<8 hex of the id's sha-256>")
     pn.add_argument("--date", help="YYYY-MM-DD (default: today)")
     at = ad.add_parser("target", help="the advisory target check of the one-way-door ADRs against the register of "
                                       "future needs (brain.targets); exit 0")
