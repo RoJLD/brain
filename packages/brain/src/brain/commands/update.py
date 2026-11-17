@@ -29,7 +29,8 @@ def register(sub, ctx) -> None:
              f"config.json engine.pin: written, committed and brain sync run when the "
              f"brain declares no engine.installer, else moved by a reviewed PR); run on "
              f"{who}'s yes only (y, or --yes), never from a Claude Code session: run it "
-             "in your own terminal")
+             "in your own terminal. The plan also names the migrations pending on this machine "
+             "(brain migrate --plan), and applies none")
     up = sub.add_parser("update", help=about, description=about)
     up.add_argument("--check", action="store_true", help="print the plan and exit: install nothing, move no pin")
     up.add_argument("--yes", action="store_true", help="run the plan without asking: install, and move the pin of a "

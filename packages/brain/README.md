@@ -26,6 +26,8 @@ What it does, every command reading files and git, never a model:
   its title bar the installed version and a newer one when out), a resume pack for agents (`brain resume`), digests,
   usage and cost ledgers, forecasts;
 - **updates**: `brain update` shows the plan to the latest engine tag and installs it on the owner's yes;
+  `brain migrate` plans, then applies, the steps a format's breaking change ships (a backup first, each step
+  logged, idempotent);
 - **the machine**: its profile (`brain profile`, alias `brain doctor`: Lite, Default, Recommended, Custom), what runs
   for the Brain costs (`brain resources`: CPU, memory, disk, network, the sessions' processes, the containers, the
   stores, the tokens today and the quota), stacks started on demand (`brain up|down|health`), permissions rendered for
@@ -251,6 +253,27 @@ The local data survives an upgrade and a rollback: the engine reads tolerantly a
 ([`docs/formats.md`](docs/formats.md)). A field or a key it does not know, a newer brain's, is noted and kept, and a
 rewrite keeps it; a format whose `v` is above the engine's is refused with « written by brain > X: brain update ». The
 checks read strictly in CI (`CI` set) or with `BRAIN_STRICT=1`, tolerantly elsewhere or with `BRAIN_STRICT=0`.
+
+A format whose meaning changes bumps its `v` and ships a migration: `brain migrate` (the default `--plan`) reads the
+brain's `config.json` and this machine's truth-local files (the cockpit's `tui.json`, the vault's state, the usage
+ledger...) and lists the steps each one is pending, from which version to which, writing nothing; `brain migrate
+--apply` runs them file by file: a backup first, the steps in memory, one atomic write, each step appended to
+`$BRAIN_HOME/migrate/applied.jsonl`. A file's own `v` says what is pending, so a second run applies nothing; the first
+failure (a step that raises, a full disk) leaves its file as it was and stops the run, and the log names each file's
+backup, the way back. The readers run the same steps in memory when they load an older file, so no command ever saves
+a file at a version its data does not have; a file no step reaches is behind, read-only. `config.json` is migrated in
+the brain's work tree and never committed: its diff is the migration, committed once every machine of the brain runs
+an engine that reads its new `v` (one with changes not committed is refused). An engine run from a source folder
+refuses `--apply` on the default home unless `--dev-engine`, and `--apply` runs with `config.json` `engine.pin`'s
+engine only, as `brain sync` (`--force` writes anyway). `brain update` prints the migrations pending on this
+machine and applies none. No format has broken yet: the engine ships no step today
+([docs/formats.md](docs/formats.md), « Migrations »).
+
+```bash
+brain migrate --plan             # the steps pending, per file: nothing written
+brain migrate --apply            # run them, a backup of each file first
+brain migrate --apply --json     # the run's data: each step applied, or the failure
+```
 
 ### The scout
 

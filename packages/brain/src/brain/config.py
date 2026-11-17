@@ -71,7 +71,27 @@ def load(root: Path | None = None) -> Config:
         return Config(f, f.parent.resolve(), error=f"{f.name}: not readable JSON ({exc})")
     if not isinstance(data, dict):
         return Config(f, f.parent.resolve(), error=f"{f.name}: an object, got {type(data).__name__}")
-    return Config(f, f.parent.resolve(), data)
+    return _upcast(Config(f, f.parent.resolve(), data))
+
+
+def _upcast(cfg: Config) -> Config:
+    """A config.json at a ``v`` below the engine's, seen as this engine reads it (brain.migrations): its pending
+    steps run on the data in memory, never on the file (``brain migrate --apply`` writes it); one the steps do not
+    reach is an error, which the guards read as a configuration they cannot trust (fail closed)."""
+    v = cfg.data.get("v")
+    if not isinstance(v, int) or isinstance(v, bool) or v < 1:   # not a version: brain config --check says so
+        return cfg
+    from . import migrations
+    fmt = migrations.BY_ID["config"]
+    if v >= fmt.known():
+        return cfg
+    data, reached, behind = migrations.upcast(fmt, {k: x for k, x in cfg.data.items() if k != "v"}, v)
+    if behind:
+        cfg.error = f"{FILE} {behind}"
+        return cfg
+    if reached != v:
+        cfg.data = {**data, "v": reached}
+    return cfg
 
 
 def unexpected(cfg: Config | None = None) -> str:

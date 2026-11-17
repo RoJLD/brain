@@ -14,6 +14,9 @@ A truth-local file lives on one machine, with no git behind it: ``$BRAIN_HOME/sc
   reader), but the file is *read-only* for this engine: :func:`save` raises :class:`StateError` ("brain update"),
   and the commands that would write it refuse up front;
 - a ``v`` that is not an integer: read-only too, since this engine cannot tell what wrote it;
+- **a ``v`` below the one this engine knows**, in a format of brain.migrations: its pending steps run on the data in
+  memory, so the caller sees the shape its next save writes the ``v`` of (``brain migrate --apply`` writes the same,
+  backed up and logged); one the steps do not reach (a step missing or failing) is ``behind``, read-only;
 - **an OSError other than a missing file** (a lock, a permission): read-only, and nothing is moved;
 - a read-only command (``aside=False``: status, the cockpit, a plan) never moves a file: it reads a bad one as empty
   and read-only, and the next write sets it aside. A file replaced by a writer between the read and the move is
@@ -92,7 +95,8 @@ class State:
     path: Path
     known: int
     data: dict = field(default_factory=dict)
-    status: str = "missing"        # ok, missing, aside (set aside, started afresh), newer, unreadable
+    status: str = "missing"        # ok, missing, aside (set aside, started afresh), newer, unreadable, behind
+    upcast: object = None          # the version its data was carried to on load (brain.migrations), None: as read
     v: object = None               # the version read (None without one)
     aside: Path | None = None
     why: str = ""
@@ -105,7 +109,7 @@ class State:
     def refused(self) -> bool:
         """Whether a writer will be refused, read without moving anything (``aside=False``): a newer brain's file, or
         one it cannot read at all (a lock, a permission); a file of the wrong shape is not, its writer sets it aside."""
-        return self.status == "newer" or (self.status == "unreadable" and not self.why.startswith("is not"))
+        return self.status in ("newer", "behind") or (self.status == "unreadable" and not self.why.startswith("is not"))
 
     def refusal(self) -> str:
         """Why this engine must not write the file ('' when it may)."""
@@ -114,6 +118,8 @@ class State:
                     "brain update; nothing written")
         if self.status == "unreadable":
             return f"{self.path} cannot be read ({self.why}): nothing written"
+        if self.status == "behind":
+            return f"{self.path} {self.why}; nothing written"
         return ""
 
 
@@ -269,6 +275,10 @@ def load(path: Path, *, known: int = 1, check: Callable[[dict], str] | None = No
         if st.v is not None and st.v > known:
             st.status, st.data = "newer", data
             return st
+        data, st.why = _upcast(st, data)   # an older version: its steps run in memory (brain.migrations)
+        if st.why:
+            st.status, st.data = "behind", data
+            return st
         why = (check(data) if check else "") or ""
         if not why:
             st.status, st.data = "ok", data
@@ -286,6 +296,24 @@ def load(path: Path, *, known: int = 1, check: Callable[[dict], str] | None = No
         return load(path, known=known, check=check, aside=aside)
     st.status, st.why = "aside", why
     return st
+
+
+def _upcast(st: State, data: dict) -> tuple[dict, str]:
+    """A file at a ``v`` below ``st.known`` seen as this engine reads it: its format's pending steps run on ``data``
+    in memory (brain.migrations.upcast), so the next save writes a ``v`` the data has. ('' or why it is behind: a
+    step missing or failing; read-only then.) A file at the engine's version, or of no registered format, is read as
+    it is (a file without ``v`` is at version 1)."""
+    v = 1 if st.v is None else st.v
+    if v >= st.known:
+        return data, ""
+    from . import migrations
+    fmt = migrations.home_format(st.path)
+    if fmt is None:
+        return data, ""
+    out, reached, behind = migrations.upcast(fmt, data, v, st.known)
+    if not behind and reached != v:
+        st.upcast = reached
+    return out, behind
 
 
 def _secret(path: Path) -> bool:
@@ -390,19 +418,28 @@ def save(state: State, data: dict | None = None, *, write_v: bool = True, **dump
     if newer is not None:
         state.status, state.v = "newer", newer
         raise StateError(state.refusal())
+    write_v = write_v or state.upcast is not None   # data carried past v 1 on load: its v is written, never left as 1
     body = {VKEY: state.known, **{k: v for k, v in data.items() if k != VKEY}} if write_v else dict(data)
     opts = {"indent": 1, "sort_keys": True, "ensure_ascii": False}
     opts.update(dump)
     backup(state.path)
-    on = integrity_on()
-    if on or sidecar(state.path).exists():   # off: a sidecar left from before goes, so none goes stale
-        _drop_sidecar(state.path)
-    write_atomic(state.path, json.dumps(body, **opts) + "\n")
-    if on:
-        _write_sidecar(state.path)
+    write_state(state.path, json.dumps(body, **opts) + "\n")
     state.data, state.status = data, "ok"
     if write_v:
         state.v = state.known
+
+
+def write_state(path: Path, text: str) -> None:
+    """``text`` over a truth-local file under :func:`save`'s write policy, without its checks or its backup (the
+    caller's): the integrity sidecar dropped first, the atomic write, a fresh sidecar when integrity is on (off: a
+    sidecar left from before goes, so none goes stale). brain.migrate writes a migrated file through it."""
+    path = Path(path)
+    on = integrity_on()
+    if on or sidecar(path).exists():
+        _drop_sidecar(path)
+    write_atomic(path, text)
+    if on:
+        _write_sidecar(path)
 
 
 # --- foreign files: another tool's, edited in their own keys only ---
@@ -431,13 +468,15 @@ def read_foreign(path: Path) -> tuple[dict, bytes | None]:
 HOME_BACKUPS = 10   # the copies :func:`backup_home` keeps per file
 
 
-def backup_home(path: Path, folder: Path, keep: int = HOME_BACKUPS) -> Path | None:
+def backup_home(path: Path, folder: Path, keep: int = HOME_BACKUPS, *, say: bool = True) -> Path | None:
     """A copy of ``path`` into ``folder`` (``<name>.<UTC stamp>.bak``, a store of ``$BRAIN_HOME/backup``) unless the
     newest copy there holds the same bytes (that one is returned); then the copies past ``keep`` go, the oldest
-    first. None when there is nothing to copy, the file is a secret, or the copy failed (said on stderr)."""
+    first. None when there is nothing to copy, the file is a secret, or the copy failed (said on stderr, unless
+    ``say`` is False: a caller that refuses to write without a copy says so itself); a half-made copy is removed."""
     path, folder = Path(path), Path(folder)
     if not path.is_file() or _secret(path):
         return None
+    tmp = None
     try:
         blob = path.read_bytes()
         folder.mkdir(parents=True, exist_ok=True)
@@ -453,7 +492,14 @@ def backup_home(path: Path, folder: Path, keep: int = HOME_BACKUPS) -> Path | No
         tmp.write_bytes(blob)
         os.replace(tmp, dst)
     except OSError as exc:
-        print(f"brain: {path}: no backup in {folder} ({exc.__class__.__name__}); written without one", file=sys.stderr)
+        if tmp is not None:
+            try:
+                tmp.unlink()
+            except OSError:
+                pass
+        if say:
+            print(f"brain: {path}: no backup in {folder} ({exc.__class__.__name__}); written without one",
+                  file=sys.stderr)
         return None
     for old in (olds + [dst])[:-max(keep, 1)]:
         try:
@@ -461,6 +507,13 @@ def backup_home(path: Path, folder: Path, keep: int = HOME_BACKUPS) -> Path | No
         except OSError:
             pass
     return dst
+
+
+def home_copy_base(name: str) -> str | None:
+    """The name of the file a :func:`backup_home` copy named ``name`` copies (``tui.json`` for
+    ``tui.json.<stamp>.bak``), None for any other name."""
+    m = re.fullmatch(r"(.+)\.(\d{8}T\d{12}Z)" + re.escape(BACKUP), name)
+    return m.group(1) if m else None
 
 
 def _home_copy_of(name: str, of: str) -> bool:
