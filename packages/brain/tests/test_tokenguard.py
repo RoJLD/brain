@@ -343,7 +343,8 @@ def test_prefilter_starts_python_for_the_shell_shapes(machine, tmp_path):
     from test_guards import _needs_python
     # a glob that spells neither ipc nor token nor the brain's home (ip?/*) starts no Python: a limit the docs name
     commands = [_fmt(c, True).replace(home(True), "~/.brain") for c in BASH if "ip?" not in c]
-    assert all(_needs_python(commands)), [c for c, s in zip(commands, _needs_python(commands)) if not s]
+    started = [s for k in range(0, len(commands), 12) for s in _needs_python(commands[k:k + 12])]   # bash per chunk
+    assert all(started), [c for c, s in zip(commands, started) if not s]
 
 
 # --- beside the locked floor -----------------------------------------------------------------------------------------

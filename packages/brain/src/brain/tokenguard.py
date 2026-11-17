@@ -183,27 +183,37 @@ def _candidates(word: str) -> list[str]:
     return [_local(w) for w in out if w]
 
 
+def _grep_tool(inp: dict, cwd: str, prot: Protected) -> str:
+    """What a Grep call reaches of the token, else '': its path the file, its folder, or a folder of <BRAIN_HOME>
+    that holds it, unless its type or glob cannot match the file."""
+    raw = inp.get(READ_TOOLS["Grep"])
+    where = guards._real(os.path.join(cwd, os.path.expanduser(_local(raw))) if isinstance(raw, str) and raw else cwd)
+    if where in prot.files:
+        return f"Grep in {raw}"
+    inside = any(f.startswith(where.rstrip("\\/") + os.sep) for f in prot.files)
+    in_home = any(where == h or where.startswith(h.rstrip("\\/") + os.sep) for h in prot.home)
+    if not (where in prot.folders or (inside and in_home)):
+        return ""
+    return "" if _filtered_out(inp) else f"Grep in {raw or cwd}"
+
+
+def _filtered_out(inp: dict) -> bool:
+    """Whether a Grep's type or glob cannot match the token's file (a type is extensions: the file has none; a negated
+    glob, !*.md, reads all the rest)."""
+    globs, kind = inp.get("glob"), inp.get("type")
+    if isinstance(kind, str) and kind:
+        return True
+    return isinstance(globs, str) and bool(globs) and not globs.lstrip().startswith("!") and not any(
+        _glob_hits(g, f) for f in token_files() for g in _brace(globs))
+
+
 def _read_tool(tool: str, inp: dict, cwd: str, prot: Protected) -> str:
     """What a Read or Grep call reaches of the token, else ''."""
-    raw = inp.get(READ_TOOLS[tool])
-    if tool == "Read" and isinstance(raw, str) and raw:
-        return f"Read of {raw}" if _names(raw, cwd, prot, literal=True) == "file" else ""
     if tool == "Grep":
-        where = guards._real(os.path.join(cwd, os.path.expanduser(_local(raw))) if isinstance(raw, str) and raw
-                             else cwd)
-        if where in prot.files:
-            return f"Grep in {raw}"
-        inside = any(f.startswith(where.rstrip("\\/") + os.sep) for f in prot.files)
-        in_home = any(where == h or where.startswith(h.rstrip("\\/") + os.sep) for h in prot.home)
-        if not (where in prot.folders or (inside and in_home)):
-            return ""
-        globs, kind = inp.get("glob"), inp.get("type")
-        if isinstance(kind, str) and kind:
-            return ""   # a type is a set of extensions: the token's file has none
-        if isinstance(globs, str) and globs and not globs.lstrip().startswith("!") and not any(
-                _glob_hits(g, f) for f in token_files() for g in _brace(globs)):
-            return ""   # a glob that cannot match the file's name (a negated one, !*.md, reads all the rest)
-        return f"Grep in {raw or cwd}"
+        return _grep_tool(inp, cwd, prot)
+    raw = inp.get(READ_TOOLS[tool])
+    if isinstance(raw, str) and raw and _names(raw, cwd, prot, literal=True) == "file":
+        return f"Read of {raw}"
     return ""
 
 
@@ -240,6 +250,93 @@ def _code_says(text: str, pattern: re.Pattern) -> bool:
     return bool(re.search(r"\bipcauth\b", text) or (pattern.search(text) and USES.search(text)))
 
 
+def _redirected_into(cmds, prot: Protected) -> str:
+    """An output redirection into the file (echo x > T, : > T)."""
+    for words, d in cmds:
+        if words[0].startswith(guards.REDIRECT) and len(words) > 1 and _names(words[1], d, prot) == "file":
+            return f"a redirection into {words[1]}"
+    return ""
+
+
+def _reads_stdin_code(words: list[str]) -> bool:
+    """Whether an interpreter's command names no script: its code comes from stdin (python -, python foo-less)."""
+    first = next((w for w in words[1:] if not w.startswith("-") or w == "-"), None)
+    return first in (None, "-", "/dev/stdin")
+
+
+def _printer_in_pipe(prog: str, words: list[str], d: str, prot: Protected) -> str:
+    """A program that prints the path it names, in a call that pipes or substitutes its output: refused on the file or
+    its folder, or on the home listed recursively (gci -Recurse ~/.brain | Get-Content); ls ~/.brain | head passes."""
+    deep = any(w.lower() in ("-r", "-recurse", "--recursive", "-rec") or re.fullmatch(r"-[a-z]*R[a-z]*", w)
+               for w in words[1:])
+    for w in words:
+        kind = _names(w, d, prot)
+        if kind in ("file", "folder") or (kind == "home" and deep):
+            return f"{prog} on {w} in a pipe or a substitution (the token's {kind})"
+    return ""
+
+
+def _join_path(words: list[str], d: str, prot: Protected) -> str:
+    """Join-Path $h ipc token: judged on the path it makes, not its base alone."""
+    parts = [w for w in words[1:] if not w.startswith("-")]
+    kind = _names("/".join(parts), d, prot) if parts else ""
+    return f"Join-Path {' '.join(parts)} (the token's {kind})" if kind in ("file", "folder") else ""
+
+
+def _without_pattern(words: list[str]) -> list[str]:
+    """A search's words without its pattern, which is no path: the first positional word, or -e's values (-f's value
+    is a file, kept)."""
+    given = [i + 1 for i, w in enumerate(words[:-1]) if w in ("-e", "--regexp")]
+    given += [i for i, w in enumerate(words) if re.fullmatch(r"-e.+|--regexp=.+", w)]
+    if not given and not any(w in ("-f", "--file") or w.startswith("--file=") for w in words[1:]):
+        pos = next((i for i, w in enumerate(words[1:], 1) if not w.startswith("-")), None)
+        given = [pos] if pos is not None else []
+    return [w for i, w in enumerate(words) if i not in given]
+
+
+def _as_text(words: list[str], prog: str, text: re.Pattern) -> str:
+    """What the command's text says of the token: inline code that names it and uses a path, a .NET call naming it."""
+    if INTERPRETER.match(prog) and any(CODE.search(w) and _code_says(w, text) for w in words[1:]):
+        return f"{prog} (its code names the token's file)"
+    if any(DOTNET.search(w) and text.search(w) for w in words):
+        return f"{words[0]} (a .NET call names the token's file)"
+    return ""
+
+
+def _action(words: list[str], d: str, sh: str, prot: Protected, text: re.Pattern, piped: bool) -> str:
+    """What one simple command (a wrapper's, a nested shell's) does to the token, else ''."""
+    prog = guards._prog(words[0])
+    if sh == "ssh":   # the remote file cannot be resolved here: its text alone
+        return f"{' '.join(words)[:120]} over ssh (it names the token's file)" if any(text.search(w) for w in words) \
+            else ""
+    said = _as_text(words, prog, text)
+    if said:
+        return said
+    low = [w.lower() for w in words]
+    at = gestures.runs_brain(low)
+    if at >= 0 and gestures._command(low, at + 1)[:1] == ["ipc"]:
+        return ""   # brain ipc: the gestures' (otel-headers); brain ipc token never prints it
+    if prog in METADATA:
+        return _printer_in_pipe(prog, words, d, prot) if piped and prog in PRINTERS else ""
+    if prog == "join-path":
+        return _join_path(words, d, prot)
+    for w in _without_pattern(words) if prog in SEARCHERS else words:
+        kind = _names(w, d, prot)
+        if kind:
+            return f"{prog} on {w} (the token's {kind})"
+    return ""
+
+
+def _redirected_from(command: str, powershell: bool, folders: set[str], prot: Protected) -> str:
+    """An input redirection from the file or its folder (< T)."""
+    for seg in guards.segments(command, powershell):
+        for k, w in enumerate(seg[:-1]):
+            if w.startswith(guards.REDIRECT) and "<" in w and not w.endswith("<<") and \
+                    any(_names(seg[k + 1], d, prot) for d in folders):
+                return f"an input redirection from {seg[k + 1]}"
+    return ""
+
+
 def _shell(cmds, command: str, powershell: bool, cwd: str, prot: Protected) -> str:
     """What a shell call does to the token, else ''."""
     text = _text_pattern(prot)
@@ -248,68 +345,18 @@ def _shell(cmds, command: str, powershell: bool, cwd: str, prot: Protected) -> s
     if norm != command:
         cmds = [*cmds, *guards.calls(norm, cwd, powershell)]
     piped = bool(PIPED[sub].search(command))   # a metadata program's output may reach a reader
-    for words, d in cmds:   # an output redirection into the file (echo x > T, : > T)
-        if words[0].startswith(guards.REDIRECT) and len(words) > 1 and _names(words[1], d, prot) == "file":
-            return f"a redirection into {words[1]}"
+    hit = _redirected_into(cmds, prot)
     fed = False   # an interpreter that reads its code from stdin (python -, node, cat <<X | python)
-    for words, d, sh, _ in guards.actions(cmds, sub, command=command):
-        low = [w.lower() for w in words]
-        prog = guards._prog(words[0])
-        if sh == "ssh":
-            if any(text.search(w) for w in words):
-                return f"{' '.join(words)[:120]} over ssh (it names the token's file)"
-            continue
-        if INTERPRETER.match(prog):
-            first = next((w for w in words[1:] if not w.startswith("-") or w == "-"), None)
-            fed = fed or first in (None, "-", "/dev/stdin")   # no script named: its code comes from stdin
-            if any(CODE.search(w) and _code_says(w, text) for w in words[1:]):
-                return f"{prog} (its code names the token's file)"
-        if any(DOTNET.search(w) and text.search(w) for w in words):
-            return f"{words[0]} (a .NET call names the token's file)"
-        at = gestures.runs_brain(low)
-        if at >= 0 and gestures._command(low, at + 1)[:1] == ["ipc"]:
-            continue   # brain ipc: the gestures' (otel-headers); brain ipc token never prints it
-        if prog in METADATA:
-            if not (piped and prog in PRINTERS):
-                continue
-            # its output may reach a reader: refused when it names the file or its folder, or lists the home
-            # recursively (gci -Recurse ~/.brain | Get-Content); ls ~/.brain | head passes
-            deep = any(w.lower() in ("-r", "-recurse", "--recursive", "-rec") or re.fullmatch(r"-[a-z]*R[a-z]*", w)
-                       for w in words[1:])
-            for w in words:
-                kind = _names(w, d, prot)
-                if kind in ("file", "folder") or (kind == "home" and deep):
-                    return f"{prog} on {w} in a pipe or a substitution (the token's {kind})"
-            continue
-        if prog == "join-path":   # Join-Path $h ipc token: the path it makes, not its base alone
-            parts = [w for w in words[1:] if not w.startswith("-")]
-            kind = _names("/".join(parts), d, prot) if parts else ""
-            if kind in ("file", "folder"):
-                return f"Join-Path {' '.join(parts)} (the token's {kind})"
-            continue
-        if prog in SEARCHERS:   # the pattern is no path: the first positional word, or -e's values (-f's is a file)
-            given = [i + 1 for i, w in enumerate(words[:-1]) if w in ("-e", "--regexp")]
-            given += [i for i, w in enumerate(words) if re.fullmatch(r"-e.+|--regexp=.+", w)]
-            if given or any(w in ("-f", "--file") or w.startswith("--file=") for w in words[1:]):
-                words = [w for i, w in enumerate(words) if i not in given]
-            else:
-                pos = next((i for i, w in enumerate(words[1:], 1) if not w.startswith("-")), None)
-                words = [w for i, w in enumerate(words) if i != pos]
-        for w in words:
-            kind = _names(w, d, prot)
-            if kind:
-                return f"{prog} on {w} (the token's {kind})"
-    if fed:
-        for body in guards._heredocs(command):   # code fed to an interpreter by a heredoc
-            if _code_says(body, text):
-                return "an interpreter's heredoc (it names the token's file)"
-    folders_seen = {d for _, d in cmds} or {cwd}
-    for seg in guards.segments(command, powershell):
-        for k, w in enumerate(seg[:-1]):
-            if w.startswith(guards.REDIRECT) and "<" in w and not w.endswith("<<"):
-                if any(_names(seg[k + 1], d, prot) for d in folders_seen):
-                    return f"an input redirection from {seg[k + 1]}"
-    return ""
+    for words, d, sh, _ in ([] if hit else guards.actions(cmds, sub, command=command)):
+        fed = fed or (sh != "ssh" and bool(INTERPRETER.match(guards._prog(words[0]))) and _reads_stdin_code(words))
+        hit = _action(words, d, sh, prot, text, piped)
+        if hit:
+            return hit
+    if hit:
+        return hit
+    if fed and any(_code_says(body, text) for body in guards._heredocs(command)):
+        return "an interpreter's heredoc (it names the token's file)"
+    return _redirected_from(command, powershell, {d for _, d in cmds} or {cwd}, prot)
 
 
 def check(tool: str, inp: dict, cwd: str, cmds=None, command: str = "", powershell: bool = False,
