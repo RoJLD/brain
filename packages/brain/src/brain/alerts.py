@@ -861,14 +861,9 @@ def _ckey(path: str | Path) -> str:
 
 
 def checkouts(root: Path | None = None) -> Checkouts:
-    """A run's :class:`Checkouts`, its owners read from the registry (none when it cannot be read: brain check says
-    it)."""
-    try:
-        reg = projects.load(root)
-    except Exception:   # noqa: BLE001 - a bad registry is brain check's to report, not this probe's
-        reg = {}
+    """A run's :class:`Checkouts`, its owners read from the registry (the run's projects came from it)."""
     owners: dict[str, str] = {}
-    for q in reg.values():
+    for q in projects.load(root).values():
         try:
             spans = {_ckey(r.path) for r in projects.repos_of(q)}
         except projects.RepoError:
@@ -935,29 +930,32 @@ def checkout_alerts(cfg: Config, rows, starts: dict[str, dict] | None = None,
         starts, _ = sessions.ledger_events()   # read once for every dirty checkout
     out = []
     for row in rows:
-        repo, where = row["repo"], row["path"]
-        key = f"checkout:{repo}"
         if row.get("error"):
-            was = (last_open or {}).get(key) or {}
-            if was.get("level") in RANK and was.get("message") and UNREAD not in was["message"]:   # dirty last read
-                out.append(Alert(cfg.project, key, was["level"], "checkout", repo, was["message"],
-                                 was.get("since") or ""))
-                continue
-            out.append(Alert(cfg.project, key, "info", "checkout", repo,
-                             f"main checkout {where}: {UNREAD} ({row['error']})"))
-            continue
-        files = row.get("files") or []
-        if not files:
-            continue
-        shown = ", ".join(json.dumps(ln[3:], ensure_ascii=False) for ln in files[:CHECKOUT_SHOWN])
-        more = f" and {len(files) - CHECKOUT_SHOWN} more" if len(files) > CHECKOUT_SHOWN else ""
-        who = last_session_in(where, starts)
-        by = (f"; the last session there: {who.get('name') or who.get('host_id') or who.get('session')} "
-              f"(started {who.get('started') or '?'})" if who else "; no session of the ledger worked there")
-        out.append(Alert(cfg.project, key, cfg.levels.get("checkout") or "warn", "checkout",
-                         repo, f"main checkout {where} holds {len(files)} modified or untracked file(s): {shown}"
-                               f"{more}: work belongs in a worktree (git status there, then restore or move it){by}"))
+            out.append(_unread(cfg, row, (last_open or {}).get(f"checkout:{row['repo']}") or {}))
+        elif row.get("files"):
+            out.append(_dirty(cfg, row, starts or {}))
     return out
+
+
+def _unread(cfg: Config, row: dict, was: dict) -> Alert:
+    """A checkout git could not read: its last known alert when it was dirty (``was``), else said at info."""
+    repo, key = row["repo"], f"checkout:{row['repo']}"
+    if was.get("level") in RANK and was.get("message") and UNREAD not in was["message"]:   # dirty when last read
+        return Alert(cfg.project, key, was["level"], "checkout", repo, was["message"], was.get("since") or "")
+    return Alert(cfg.project, key, "info", "checkout", repo, f"main checkout {row['path']}: {UNREAD} ({row['error']})")
+
+
+def _dirty(cfg: Config, row: dict, starts: dict[str, dict]) -> Alert:
+    """A checkout with modified or untracked files: the first ones named, and the last session that worked there."""
+    repo, where, files = row["repo"], row["path"], row["files"]
+    shown = ", ".join(json.dumps(ln[3:], ensure_ascii=False) for ln in files[:CHECKOUT_SHOWN])
+    more = f" and {len(files) - CHECKOUT_SHOWN} more" if len(files) > CHECKOUT_SHOWN else ""
+    who = last_session_in(where, starts)
+    by = (f"; the last session there: {who.get('name') or who.get('host_id') or who.get('session')} "
+          f"(started {who.get('started') or '?'})" if who else "; no session of the ledger worked there")
+    return Alert(cfg.project, f"checkout:{repo}", cfg.levels.get("checkout") or "warn", "checkout", repo,
+                 f"main checkout {where} holds {len(files)} modified or untracked file(s): {shown}{more}: work "
+                 f"belongs in a worktree (git status there, then restore or move it){by}")
 
 
 # --- one project ---

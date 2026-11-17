@@ -427,7 +427,7 @@ def test_cli_view_fail_on_raise_resolve_and_notify(tmp_path, monkeypatch, capsys
 def _git(cwd, *args):
     import subprocess
     subprocess.run(["git", "-C", str(cwd), "-c", "user.name=Ada", "-c", "user.email=ada@example.invalid", *args],
-                   check=True, capture_output=True, stdin=subprocess.DEVNULL)
+                   check=True, capture_output=True, stdin=subprocess.DEVNULL, timeout=60)
 
 
 def _repo(path):
