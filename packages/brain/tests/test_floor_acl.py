@@ -10,7 +10,7 @@ import os
 from pathlib import Path
 
 import pytest
-from brain import flooracl, floor, floorlock, guards
+from brain import floor, flooracl, floorlock, guards
 from test_floorlock import _Done, _install, _lock, _setup
 
 SID = "S-1-5-21-1111111111-2222222222-3333333333-1001"
@@ -114,15 +114,16 @@ def _plan(home="H", files=("H/settings.json",), trees=("H/hooks",), folders=("P/
 
 
 def test_the_commands_act_on_the_path_itself_and_deny_the_account():
-    sid, q = f"*{SID}", ["/L", "/C", "/Q"]
-    cmds = [c[1:] for c in flooracl.commands(_plan(), nt=True)]
-    assert cmds == [["H", "/setowner", "*S-1-5-32-544", *q], ["H", "/deny", f"{sid}:(DC,WDAC,WO)", *q],
-                    ["P/.claude", "/setowner", "*S-1-5-32-544", *q],   # a project's .claude before what it holds
-                    ["P/.claude", "/deny", f"{sid}:(WD,AD,WEA,WA,D,DC,WDAC,WO)", *q],
-                    ["H/settings.json", "/setowner", "*S-1-5-32-544", *q],
-                    ["H/settings.json", "/deny", f"{sid}:(WD,AD,WEA,WA,DC,D,WDAC,WO)", *q],
-                    ["H/hooks", "/setowner", "*S-1-5-32-544", *q],
-                    ["H/hooks", "/deny", f"{sid}:(OI)(CI)(WD,AD,WEA,WA,D,DC,WDAC,WO)", *q]]
+    """Each path's owner made Administrators and its deny added by one command on one handle (deny_exact): ~/.claude
+    first, a project's .claude before what it holds, a tree's root before its walk."""
+    sid, own = f"*{SID}", ["/setowner", "*S-1-5-32-544", "/L"]
+    full = flooracl.commands(_plan())
+    assert {c[0] for c in full} == {flooracl.DENY}   # no icacls: its /setowner and /deny under /C hid a failure
+    cmds = [c[1:] for c in full]
+    assert cmds == [["H", "/deny", f"{sid}:(DC,WDAC,WO)", *own],
+                    ["P/.claude", "/deny", f"{sid}:(WD,AD,WEA,WA,D,DC,WDAC,WO)", *own],
+                    ["H/settings.json", "/deny", f"{sid}:(WD,AD,WEA,WA,DC,D,WDAC,WO)", *own],
+                    ["H/hooks", "/deny", f"{sid}:(OI)(CI)(WD,AD,WEA,WA,D,DC,WDAC,WO)", *own]]
     assert not [c for c in cmds if "/T" in c or any("*" in w and not w.startswith("*S-") for w in c)]   # round 2
     for c in cmds:   # never icacls' W, M or F: they carry SYNCHRONIZE and READ_CONTROL, and the files must still read
         assert not any(":" in w and ("(W)" in w or "(M)" in w or "F)" in w) for w in c), c
@@ -134,15 +135,16 @@ def test_undo_gives_back_only_what_is_still_the_lock_s(tmp_path):
     (h / "settings.json").write_text("{}", encoding="utf-8")
     (h / "hooks" / "x.sh").write_text("x", encoding="utf-8")
     a = _plan(str(h), [str(h / "settings.json"), str(h / "gone.json")], [str(h / "hooks")], [])
-    cmds, left = flooracl.undo(a, nt=True, owner=lambda p: "S-1-5-32-544")
-    sid, q = f"*{SID}", ["/L", "/C", "/Q"]
-    assert [c[1:] for c in cmds] == [[str(h / "hooks"), "/remove:d", sid, *q],          # trees first, entry by entry
-                                     [str(h / "hooks" / "x.sh"), "/remove:d", sid, *q],
-                                     [str(h / "settings.json"), "/remove:d", sid, *q],
-                                     [str(h), "/remove:d", sid, *q]]                     # ~/.claude last
+    cmds, left = flooracl.undo(a, owner=lambda p: "S-1-5-32-544")
+    sid = f"*{SID}"
+    assert {c[0] for c in cmds} == {flooracl.UNDENY}   # never icacls' /remove:d: its own deny refused it, /C hid that
+    assert [c[1:] for c in cmds] == [[str(h / "hooks"), "/remove:d", sid, "/L"],          # trees first, entry by entry
+                                     [str(h / "hooks" / "x.sh"), "/remove:d", sid, "/L", "/inherited"],
+                                     [str(h / "settings.json"), "/remove:d", sid, "/L"],
+                                     [str(h), "/remove:d", sid, "/L"]]                     # ~/.claude last
     assert not [c for c in cmds if "/setowner" in c or "/T" in c]   # round 3: an elevated step gives no owner away
     assert left == [f"{h / 'gone.json'}: gone"]                     # a recorded path gone: skipped (review #6)
-    cmds, left = flooracl.undo(a, nt=True, owner=lambda p: SID)     # a folder a session made again: never handed over
+    cmds, left = flooracl.undo(a, owner=lambda p: SID)     # a folder a session made again: never handed over
     assert cmds == [] and all("not owned by Administrators" in x or "gone" in x for x in left)
 
 
@@ -170,7 +172,7 @@ def test_links_are_found_before_any_command(tmp_path):
         pytest.skip("no junction")
     a = _plan(str(h), [], [str(h / "hooks"), str(h / "agents")], [])
     assert set(flooracl.all_links(a)) == {str(h / "agents"), str(h / "hooks" / "inner")}
-    cmds, left = flooracl.undo(a, nt=True, owner=lambda p: "S-1-5-32-544")
+    cmds, left = flooracl.undo(a, owner=lambda p: "S-1-5-32-544")
     assert not [c for c in cmds if str(h / "agents") in c or str(h / "hooks") in c]
     assert any("a link or a junction" in x for x in left)
 
@@ -437,9 +439,12 @@ def test_the_account_its_kind_and_its_profile():
 
 @pytest.mark.skipif(os.name != "nt", reason="Windows' ACLs")
 def test_a_real_acl_step_on_a_scratch_profile(tmp_path, monkeypatch):
-    """The step's icacls commands for real, on a scratch profile and this process's own account: only in an elevated
-    terminal (CI's Windows runner); verify() then finds every right denied, and undo lifts every deny (the owner stays
-    the administrators'). The real owner read (the autouse fixture fakes it for the planning tests)."""
+    """The step for real, on a scratch profile and this process's own account: only in an elevated terminal (CI's
+    Windows runner). The elevated step runs as the account it denies, under pytest's folders whose OWNER RIGHTS entry
+    takes the owner's implicit WRITE_DAC away: CI round 4 (each child's deny, propagated from its tree's root, refused
+    the child's own next ACL write, error 5). verify() then finds every right denied, a write refused and a read
+    still served; a relock changes nothing; undo lifts every deny (the owner stays the administrators'). The real
+    owner read (the autouse fixture fakes it for the planning tests)."""
     if not floorlock.elevated():
         pytest.skip("needs an elevated terminal: a session never elevates")
     monkeypatch.setattr(floor, "owner", REAL_OWNER)
@@ -452,17 +457,22 @@ def test_a_real_acl_step_on_a_scratch_profile(tmp_path, monkeypatch):
     a = {"account": sid, "home": str(home), "files": [str(home / "settings.json")], "trees": [str(home / "hooks")],
          "folders": [], "create": []}
     try:
-        for cmd in flooracl.commands(a):   # the deny entries through deny_exact (icacls' /deny blocked reading)
-            assert flooracl.run_acl(cmd, subprocess.run) == "", cmd
-        assert flooracl.lock_trees(a, subprocess.run) == []
-        assert flooracl.verify(a) == []
-        assert flooracl.denied(home / "hooks" / "sub" / "h.sh", sid) & flooracl.mask_of(flooracl.FOLDER) == \
-            flooracl.mask_of(flooracl.FOLDER)
+        for _ in range(2):   # the lock, then a relock over it: the entries there already, nothing changes
+            assert flooracl.run_all(flooracl.commands(a), subprocess.run) == []
+            assert flooracl.lock_trees(a, subprocess.run) == []
+            assert flooracl.verify(a) == []
+        for p in (home / "hooks" / "sub", home / "hooks" / "sub" / "h.sh"):
+            assert flooracl.explicit_deny(p, sid)   # an entry of its own on each entry, none merely inherited
+            assert flooracl.denied(p, sid) & flooracl.mask_of(flooracl.FOLDER) == flooracl.mask_of(flooracl.FOLDER)
         assert json.loads((home / "settings.json").read_text(encoding="utf-8")) == {}   # still readable
+        with pytest.raises(PermissionError):
+            (home / "settings.json").write_text("{\"x\": 1}", encoding="utf-8")   # the account's own write refused
     finally:
-        for cmd in flooracl.undo(a)[0]:
-            subprocess.run(cmd, capture_output=True, timeout=300)
-    assert flooracl.denied(home / "settings.json", sid) == 0 == flooracl.denied(home / "hooks" / "sub" / "h.sh", sid)
+        undone = flooracl.run_all(flooracl.undo(a)[0], subprocess.run)
+    assert undone == []
+    for p in (home, home / "settings.json", home / "hooks", home / "hooks" / "sub", home / "hooks" / "sub" / "h.sh"):
+        assert flooracl.denied(p, sid) == 0, p
+    (home / "hooks" / "sub" / "h.sh").write_text("y", encoding="utf-8")   # lifted: the account writes again
     assert floor.owner(home / "settings.json") == "S-1-5-32-544"   # an elevated step gives no owner away (round 3)
 
 
@@ -482,21 +492,18 @@ def test_lock_trees_walks_top_down_one_entry_at_a_time_and_refuses_a_link(tmp_pa
     (h / "hooks" / "sub" / "x.sh").write_text("x", encoding="utf-8")
     (h / "hooks" / "a.sh").write_text("x", encoding="utf-8")
     ran = []
-    failed = flooracl.lock_trees(_plan(str(h), [], [str(h / "hooks")], []), _ran(ran), nt=True)
-    q, deny = ["/L", "/C", "/Q"], ["/deny", f"*{SID}:{flooracl.TREE}"]
-    assert failed == [] and ran == [[str(h / "hooks" / "a.sh"), "/setowner", "*S-1-5-32-544", *q],
-                                    [str(h / "hooks" / "a.sh"), *deny, *q],
-                                    [str(h / "hooks" / "sub"), "/setowner", "*S-1-5-32-544", *q],
-                                    [str(h / "hooks" / "sub"), *deny, *q],
-                                    [str(h / "hooks" / "sub" / "x.sh"), "/setowner", "*S-1-5-32-544", *q],
-                                    [str(h / "hooks" / "sub" / "x.sh"), *deny, *q]]
+    failed = flooracl.lock_trees(_plan(str(h), [], [str(h / "hooks")], []), _ran(ran))
+    deny = ["/deny", f"*{SID}:{flooracl.TREE}", "/setowner", "*S-1-5-32-544", "/L"]
+    assert failed == [] and ran == [[str(h / "hooks" / "a.sh"), *deny],
+                                    [str(h / "hooks" / "sub"), *deny],
+                                    [str(h / "hooks" / "sub" / "x.sh"), *deny]]
     try:
         import _winapi
         _winapi.CreateJunction(str(tmp_path), str(h / "hooks" / "sub" / "j"))
     except (ImportError, OSError):
         return
     ran.clear()
-    failed = flooracl.lock_trees(_plan(str(h), [], [str(h / "hooks")], []), _ran(ran), nt=True)
+    failed = flooracl.lock_trees(_plan(str(h), [], [str(h / "hooks")], []), _ran(ran))
     assert failed == [f"{h / 'hooks' / 'sub' / 'j'}: a link or a junction"]
     assert not [c for c in ran if Path(c[0]).name == "j"]
 
@@ -564,10 +571,117 @@ def test_no_deny_holds_a_right_reading_needs(monkeypatch):
     for rights in (flooracl.FILE, flooracl.TREE, flooracl.FOLDER, flooracl.HOME):
         assert not flooracl.mask_of(rights) & flooracl.READ_RIGHTS, rights
     assert "reading needs" in flooracl.deny_exact("x", SID, 0x100000)
-    assert all(c[0] == flooracl.DENY for c in flooracl.commands(_plan(), nt=True) if "/deny" in c)
+    assert all(c[0] == flooracl.DENY for c in flooracl.commands(_plan()) if "/deny" in c)
     ran = []
     assert flooracl.run_acl([flooracl.DENY, "x", "/deny", f"*{SID}:{flooracl.FILE}"], lambda c, **k: (ran.append(c), _Done())[1]) == ""
     assert ran   # a fake runner gets it: no real ACL is written in a test
     monkeypatch.setattr(floor, "owner", lambda p: "S-1-5-32-544")
     assert flooracl._wrong(__file__, SID, 0, False, lambda p, s: 0x100000, lambda p: []) == \
         [f"{__file__}: {SID} denied a right reading needs (0x100000)"]
+
+
+# CI round 4 (90e8f219, the elevated runner): each tree entry's deny failed with error 5. SetNamedSecurityInfo had
+# written the tree root's inheritable deny into every child, and the elevated step runs as the account it denies: the
+# child's own next ACL write was refused (pytest's 0o700 folders carry an OWNER RIGHTS entry, which takes the owner's
+# implicit WRITE_DAC away). The entries are now written raw on one handle (no propagation), top down, each before any
+# deny of the account lands on it, the backup and restore privileges asked for a relock and the unlock.
+
+ADMINS_BIN = bytes([1, 2, 0, 0, 0, 0, 0, 5]) + (32).to_bytes(4, "little") + (544).to_bytes(4, "little")
+
+
+def _acl(*entries):
+    return flooracl.build_acl(2, list(entries))
+
+
+def _ace(kind, flags, mask, who):
+    import struct
+    return struct.pack("<BBHI", kind, flags, 8 + len(who), mask) + who
+
+
+def test_a_sid_s_bytes_and_a_malformed_one():
+    assert flooracl.sid_bytes("S-1-5-32-544") == ADMINS_BIN
+    me = flooracl.sid_bytes(SID)
+    assert me[:8] == bytes([1, 5, 0, 0, 0, 0, 0, 5]) and len(me) == 8 + 4 * 5
+    assert int.from_bytes(me[-4:], "little") == 1001
+    for bad in ("", "S-1", "S-2-5-21", "S-1-5-x", "1-5-21-1", f"S-1-5-{1 << 32}-1", "S-1-5" + "-1" * 16):
+        with pytest.raises(ValueError):
+            flooracl.sid_bytes(bad)
+    assert "is no SID" in flooracl.deny_exact("x", "S-1-x", 0x2)
+
+
+def test_the_deny_entry_goes_first_with_its_exact_mask_once():
+    """Explicit denies before any allow (the canonical order); a relock adds nothing; another inheritance is new."""
+    me, mask = flooracl.sid_bytes(SID), flooracl.mask_of(flooracl.TREE)
+    allow = _ace(0, 0x13, 0x1F01FF, ADMINS_BIN)   # an inherited FullControl
+    acl = _acl(allow)
+    out = flooracl.with_deny(acl, me, mask, 0x3)
+    rev, entries = flooracl.acl_entries(out)
+    assert rev == 2 and entries == [_ace(1, 0x3, mask, me), allow]
+    assert not mask & flooracl.READ_RIGHTS
+    assert flooracl.with_deny(out, me, mask, 0x3) is None                 # there already: unchanged
+    assert flooracl.with_deny(out, me, 0x2, 0x3) is None                  # a narrower one is held by it
+    assert flooracl.with_deny(out, me, mask, 0) is not None               # another inheritance: added
+    inherited_only = _acl(_ace(1, 0x13, mask, me), allow)                 # a copy its parent gave it is not its own
+    assert flooracl.acl_entries(flooracl.with_deny(inherited_only, me, mask, 0x3))[1][0] == _ace(1, 0x3, mask, me)
+
+
+def test_undeny_removes_the_account_s_own_entries_and_its_tree_s_copies_only_when_asked():
+    me, other = flooracl.sid_bytes(SID), flooracl.sid_bytes("S-1-5-21-9-9-9-1002")
+    own, copy, theirs = _ace(1, 0x3, 0x2, me), _ace(1, 0x13, 0x2, me), _ace(1, 0x3, 0x2, other)
+    allow = _ace(0, 0x3, 0x1F01FF, me)
+    acl = _acl(own, theirs, allow, copy)
+    assert flooracl.acl_entries(flooracl.without_deny(acl, me, False))[1] == [theirs, allow, copy]
+    assert flooracl.acl_entries(flooracl.without_deny(acl, me, True))[1] == [theirs, allow]
+    assert flooracl.without_deny(_acl(theirs, allow), me, True) is None   # none there: nothing written
+    with pytest.raises(ValueError):
+        flooracl.acl_entries(_acl(own)[:-4])                              # a truncated ACL is refused
+
+
+def test_run_acl_hands_each_command_to_its_writer(monkeypatch):
+    """The real runner: a DENY command to deny_exact (its owner, mask and inheritance), an UNDENY one to undeny (a
+    tree entry's copies too); never icacls."""
+    import subprocess
+    calls = []
+    monkeypatch.setattr(flooracl, "deny_exact", lambda *a, **k: (calls.append(("deny", a, k)), "")[1])
+    monkeypatch.setattr(flooracl, "undeny", lambda *a, **k: (calls.append(("undeny", a, k)), "")[1])
+    a = _plan(trees=())
+    assert flooracl.run_all([*flooracl.commands(a), [flooracl.UNDENY, "H/x", "/remove:d", f"*{SID}", "/L", "/inherited"],
+                             [flooracl.UNDENY, "H", "/remove:d", f"*{SID}", "/L"]], subprocess.run) == []
+    assert calls[0] == ("deny", ("H", SID, flooracl.mask_of(flooracl.HOME)), {"inherit": False, "owner": "S-1-5-32-544"})
+    tree = flooracl.run_acl(flooracl._deny("T", SID, flooracl.TREE), subprocess.run)
+    assert tree == "" and calls[-1][2]["inherit"] is True
+    assert ("undeny", ("H/x", SID), {"inherited": True}) in calls and ("undeny", ("H", SID), {"inherited": False}) in calls
+
+
+@pytest.mark.skipif(os.name != "nt", reason="Windows' ACLs")
+def test_a_real_deny_reaches_no_existing_child_and_is_lifted(tmp_path):
+    """No elevation needed (a SID no token holds, no owner change): the deny lands first in the path's own DACL with
+    its exact mask, reaches none of the entries already there (SetNamedSecurityInfo wrote it into each, which then
+    refused the elevated step's next write of their ACL), is written once, and undeny lifts it; a junction is refused
+    on its handle."""
+    other = "S-1-5-21-1111111111-2222222222-3333333333-1001"
+    tree = tmp_path / "hooks"
+    (tree / "sub").mkdir(parents=True)
+    (tree / "sub" / "h.sh").write_text("x", encoding="utf-8")
+    mask = flooracl.mask_of(flooracl.TREE)
+    try:
+        assert flooracl.deny_exact(str(tree), other, mask, inherit=True) == ""
+        first = flooracl._aces(tree)[0]
+        assert first == (1, 0x3, mask, other)
+        assert flooracl.denied(tree / "sub", other) == 0 == flooracl.denied(tree / "sub" / "h.sh", other)
+        size = len(flooracl._aces(tree))
+        assert flooracl.deny_exact(str(tree), other, mask, inherit=True) == "" and len(flooracl._aces(tree)) == size
+        assert flooracl.deny_exact(str(tree / "sub" / "h.sh"), other, mask, inherit=True) == ""
+        assert flooracl.explicit_deny(tree / "sub" / "h.sh", other)
+        assert (tree / "sub" / "h.sh").read_text(encoding="utf-8") == "x"
+    finally:
+        lifted = [flooracl.undeny(str(p), other, inherited=True) for p in (tree, tree / "sub" / "h.sh")]
+    assert lifted == ["", ""] and flooracl.denied(tree, other) == 0 == flooracl.denied(tree / "sub" / "h.sh", other)
+    try:
+        import _winapi
+        _winapi.CreateJunction(str(tree), str(tmp_path / "j"))
+    except (ImportError, OSError):
+        return
+    assert flooracl.deny_exact(str(tmp_path / "j"), other, 0x2) == f"{tmp_path / 'j'}: a link or a junction"
+    assert flooracl.denied(tree, other) == 0   # its target untouched
+

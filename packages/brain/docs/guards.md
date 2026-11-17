@@ -199,16 +199,25 @@ as every change of them, whatever writes them:
   and removes its own files there (sessions, todos).
 
 The rights are named one by one, and the deny entries are written with that exact mask through the Win32 API
-(`brain.flooracl.deny_exact`: `SetEntriesInAcl`, `SetNamedSecurityInfo`), never by icacls' `/deny`, which adds
-`SYNCHRONIZE` to the entry (CI's elevated runner: the locked settings.json no longer read): a read asks `SYNCHRONIZE`
-and `READ_CONTROL`, and Claude Code must still read the files; the apply's check refuses a deny holding a right reading
-needs. Each path's owner becomes Administrators before its deny lands (an owner keeps `WRITE_DAC` whatever
-its ACL says; the account's normal token holds Administrators as deny-only), `~/.claude` first so that nothing under it
-is renamed meanwhile. The elevated step never follows a link: every command acts on one path with `/L`, never a
-wildcard nor `/T` (icacls follows a link in a path's middle components); the apply refuses, before anything runs, a
-path that is a link or a junction, sits under one or holds one; and a tree is walked top down once its root is denied
-(nothing is added to it or removed through it from then on), each entry owned by the administrators and denied before
-its own entries are listed, a link met there refusing the step. A path still goes through its parents by name: a
+(`brain.flooracl.deny_exact`), never by icacls' `/deny`, which adds `SYNCHRONIZE` to the entry (CI's elevated runner:
+the locked settings.json no longer read): a read asks `SYNCHRONIZE` and `READ_CONTROL`, and Claude Code must still read
+the files; the apply's check refuses a deny holding a right reading needs. Each path is opened once, by itself
+(`FILE_FLAG_OPEN_REPARSE_POINT`: a link or a junction is refused on its handle, never followed), its owner made
+Administrators (the account, as owner, would keep `WRITE_DAC`; its normal token holds Administrators as deny-only) and
+its deny put first in its DACL, on that handle (`SetKernelObjectSecurity`), with nothing computed for or propagated to
+what it holds. The elevated step often runs as the account it denies, whose deny then holds the step too, and an
+`OWNER RIGHTS` entry (which Python's `mkdir(mode=0o700)` writes) takes the owner's implicit `WRITE_DAC` away: when
+`SetNamedSecurityInfo` wrote a tree root's inheritable deny into every entry, the walk could no longer write an entry's
+own ACL (CI's elevated runner, error 5). So each entry is written before any deny of the account lands on it, and the
+step asks its token's backup and restore privileges (an elevated administrator's, off until asked) to open a path
+already denied (a relock over a lock, the unlock); a deny already there is not written again. `~/.claude` comes first,
+so that nothing under it is renamed meanwhile. No command takes a wildcard nor recurses (icacls followed a link in a
+path's middle components); the apply refuses, before anything runs, a path that is a link or a junction, sits under one
+or holds one; and a tree is walked top down once its root is denied (nothing is added to it or removed through it from
+then on), each entry owned by the administrators and given a deny of its own before its own entries are listed, a
+link met there refusing the step. The unlock removes the account's deny entries the same way (`brain.flooracl.undeny`,
+a tree entry's inherited copies too), never by icacls' `/remove:d`, which an entry's own deny refused while `/C`
+reported it done. A path still goes through its parents by name: a
 session that renames `~/.claude` or a project's `.claude` through a parent it owns while the elevated step runs could
 send one of its commands to a folder of its choosing; the commands only make the administrators its owner and add a
 deny for the account (never a reset, never an owner given away), so such a folder is never opened to the account.

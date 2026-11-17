@@ -6,9 +6,11 @@ customization of the brain's projects. brain floor unlock --apply gives them bac
 
 - The rights are named one by one, never icacls' W or M (they carry SYNCHRONIZE and READ_CONTROL, and Claude Code must
   still read the files), and they hold every right the per-call check reads (brain.floor.WRITE_RIGHTS).
-- The owner of each path becomes Administrators: an owner keeps WRITE_DAC whatever its ACL says.
+- The owner of each path becomes Administrators: an owner keeps WRITE_DAC unless an OWNER RIGHTS entry says otherwise.
 - The elevated step follows no link: a path that is a link or a junction, or holds one, refuses the step (a session
-  could aim an administrator's icacls at a folder of the system's), and every command takes /L.
+  could aim an administrator's write at a folder of the system's), and each path is opened by itself, a link refused.
+- The step writes each path's ACL raw on its own handle (deny_exact, undeny), propagating nothing, each before any deny
+  of the account lands on it, with the token's backup and restore privileges asked: it often runs as the account.
 - What the per-call check holds (brain.floor.unlocked): each path present, out of the session's reach, owned by
   Administrators, SYSTEM or TrustedInstaller; the account the lock denies is the session's; CLAUDE_CONFIG_DIR unset.
 """
@@ -128,7 +130,7 @@ def project_roots(cfg) -> list[Path]:
         raise _error(f"the registry beside config.json does not load ({type(exc).__name__}: {exc}): fix it (brain "
                      "check), then plan again") from None
     out: list[Path] = []
-    for r in [*roots, *(w for r in roots for w in _worktrees(r))]:
+    for r in [*roots, *(w for root in roots for w in _worktrees(root))]:
         r = Path(os.path.realpath(r))
         if r.is_dir() and r not in out:
             out.append(r)
@@ -153,34 +155,31 @@ def _worktrees(root: Path) -> list[Path]:
     return out
 
 
-def _icacls(nt: bool | None) -> str:
-    from .floorlock import _system_tool
-    return _system_tool("icacls") if os.name == "nt" and nt is not False else "icacls"
+def _deny(path: str, sid: str, rights: str) -> list[str]:
+    """The step's command for one path: its owner made Administrators and its deny entry added, on one handle."""
+    return [DENY, path, "/deny", f"*{sid}:{rights}", "/setowner", ADMINS, "/L"]
 
 
-def commands(a: dict, nt: bool | None = None) -> list[list[str]]:
-    """The icacls commands that deny the account its paths (:func:`plan`), each on the path itself (/L, never a
-    link's target; no wildcard, no /T, whose middle components icacls follows): its owner made Administrators first (an
-    owner keeps WRITE_DAC), then its deny entry; ~/.claude first, so nothing under it is renamed meanwhile. A tree's
-    root ends it: :func:`lock_trees` then walks what it holds."""
-    icacls, sid, q = _icacls(nt), f"*{a['account']}", ("/L", "/C", "/Q")
-    out = [[icacls, a["home"], "/setowner", ADMINS, *q], [DENY, a["home"], "/deny", f"{sid}:{HOME}", *q]]
-    for d in a["folders"]:   # a project's .claude before what it holds
-        out += [[icacls, d, "/setowner", ADMINS, *q], [DENY, d, "/deny", f"{sid}:{FOLDER}", *q]]
-    for f in a["files"]:
-        out += [[icacls, f, "/setowner", ADMINS, *q], [DENY, f, "/deny", f"{sid}:{FILE}", *q]]
-    for d in a["trees"]:
-        out += [[icacls, d, "/setowner", ADMINS, *q], [DENY, d, "/deny", f"{sid}:{TREE}", *q]]
+def commands(a: dict) -> list[list[str]]:
+    """The commands that deny the account its paths (:func:`plan`), each on the path itself (:func:`deny_exact`: one
+    handle, never a link's target; no wildcard, nothing recursive): its owner made Administrators (an owner keeps
+    WRITE_DAC) and its deny entry added; ~/.claude first, so nothing under it is renamed meanwhile. A tree's root ends
+    it: :func:`lock_trees` then walks what it holds."""
+    sid = a["account"]
+    out = [_deny(a["home"], sid, HOME)]
+    out += [_deny(d, sid, FOLDER) for d in a["folders"]]   # a project's .claude before what it holds
+    out += [_deny(f, sid, FILE) for f in a["files"]]
+    out += [_deny(d, sid, TREE) for d in a["trees"]]
     return out
 
 
-def lock_trees(a: dict, run, nt: bool | None = None) -> list[str]:
+def lock_trees(a: dict, run) -> list[str]:
     """Walk each tree from its root (already denied: nothing is added to it or removed through it any more), top down:
-    each entry's owner made Administrators, then a deny entry of its own for the account (never a reset, which would
-    weaken a folder swapped in for it), one entry at a time with /L, before its own entries are listed; a link or a
-    junction met is refused, never followed. What failed."""
-    from .floorlock import _run
-    icacls, sid, q = _icacls(nt), f"*{a['account']}", ("/L", "/C", "/Q")
+    each entry's owner made Administrators and a deny entry of its own for the account (never a reset, which would
+    weaken a folder swapped in for it), one entry at a time, before its own entries are listed; a link or a junction
+    met is refused, never followed. Each entry is written before any deny of the account lands on it (deny_exact
+    propagates nothing): the elevated step often runs as the account itself. What failed."""
+    sid = a["account"]
     failed: list[str] = []
     stack = list(reversed(a["trees"]))
     while stack:
@@ -194,20 +193,21 @@ def lock_trees(a: dict, run, nt: bool | None = None) -> list[str]:
             if e.is_symlink() or _junction(e.path) or floor._real(e.path) != os.path.normcase(os.path.abspath(e.path)):
                 failed.append(f"{e.path}: a link or a junction")
                 continue
-            failed += [w for w in (_run([icacls, e.path, "/setowner", ADMINS, *q], run),
-                                   run_acl([DENY, e.path, "/deny", f"{sid}:{TREE}", *q], run)) if w]
-            if e.is_dir(follow_symlinks=False):
+            w = run_acl(_deny(e.path, sid, TREE), run)
+            if w:
+                failed.append(w)
+            elif e.is_dir(follow_symlinks=False):
                 stack.append(e.path)
     return failed
 
 
-def undo(a: dict, nt: bool | None = None, owner=None) -> tuple[list[list[str]], list[str]]:
+def undo(a: dict, owner=None) -> tuple[list[list[str]], list[str]]:
     """(the commands that lift the account's deny entries, trees first, each of their entries, and ~/.claude last, on
-    the path itself with /L; what is left alone and why): only a path still there, no link nor holding one, owned by
-    Administrators (``owner``: floor.owner). The ownership stays the administrators': an elevated step never gives a
-    path's owner away (a folder a session swapped in for one of them would be handed to the account); the account
-    keeps the rights it inherits, and takes the ownership back itself if it wants (takeown /f <path> /r)."""
-    icacls, sid, q = _icacls(nt), f"*{a['account']}", ("/L", "/C", "/Q")
+    the path itself (:func:`undeny`); what is left alone and why): only a path still there, no link nor holding one,
+    owned by Administrators (``owner``: floor.owner). The ownership stays the administrators': an elevated step never
+    gives a path's owner away (a folder a session swapped in for one of them would be handed to the account); the
+    account keeps the rights it inherits, and takes the ownership back itself if it wants (takeown /f <path> /r)."""
+    sid = f"*{a['account']}"
     owner = owner or floor.owner
     out, left = [], []
     for p, tree in [*((x, True) for x in a.get("trees", [])),
@@ -216,10 +216,11 @@ def undo(a: dict, nt: bool | None = None, owner=None) -> tuple[list[list[str]], 
         if why:
             left.append(f"{p}: {why}")
             continue
-        out.append([icacls, p, "/remove:d", sid, *q])
-        if tree:
+        out.append([UNDENY, p, "/remove:d", sid, "/L"])
+        if tree:   # an entry's copies of its tree's deny go too (one an administrator's new entry inherited)
             for root, dirs, files in os.walk(p):
-                out += [[icacls, os.path.join(root, n), "/remove:d", sid, *q] for n in sorted((*dirs, *files))]
+                out += [[UNDENY, os.path.join(root, n), "/remove:d", sid, "/L", "/inherited"]
+                        for n in sorted((*dirs, *files))]
     return out, left
 
 
@@ -318,58 +319,256 @@ def _wrong(p: str, sid: str, mask: int, own_entries: bool, denied, writers) -> l
 
 # What opening a file or a folder to read asks (FILE_GENERIC_READ, FILE_TRAVERSE): never denied.
 READ_RIGHTS = 0x1 | 0x8 | 0x20 | 0x80 | 0x20000 | 0x100000
-DENY = "brain-deny"   # a command's first word: deny_exact, not icacls (which adds rights reading needs to a deny)
+DENY = "brain-deny"       # a command's first word: deny_exact, not icacls (which adds rights reading needs to a deny)
+UNDENY = "brain-undeny"   # undeny, not icacls' /remove:d (which an entry's own deny refuses, and /C reports as done)
+ACCESS_DENIED_ACE = 1
+# The step's own token: the elevated step often runs as the account it denies (its own deny then holds it too), and an
+# OWNER RIGHTS entry (S-1-3-4, which Python's mkdir(mode=0o700) writes) takes the owner's implicit WRITE_DAC away; the
+# backup and restore privileges (an administrator's, off until asked) open a path for its ACL and owner whatever it
+# denies.
+PRIVILEGES = ("SeRestorePrivilege", "SeBackupPrivilege", "SeTakeOwnershipPrivilege")
 
 
 def run_acl(cmd: list[str], run) -> str:
-    """Run one command of the step: a DENY one by :func:`deny_exact` when ``run`` is the real subprocess.run (a test's
-    fake runner gets it as it gets the others), any other through brain.floorlock._run; '' when it succeeded."""
+    """Run one command of the step: a DENY one by :func:`deny_exact`, an UNDENY one by :func:`undeny`, when ``run``
+    is the real subprocess.run (a test's fake runner gets them as it gets the others), any other through
+    brain.floorlock._run; '' when it succeeded."""
     import subprocess
+
     from .floorlock import _run
-    if cmd[0] == DENY and run is subprocess.run:
-        sid, rights = cmd[3].lstrip("*").split(":", 1)
-        return deny_exact(cmd[1], sid, mask_of(rights), inherit="(OI)(CI)" in rights)
+    if cmd[0] in (DENY, UNDENY) and run is subprocess.run:
+        sid, _, rights = cmd[3].lstrip("*").partition(":")
+        if cmd[0] == UNDENY:
+            return undeny(cmd[1], sid, inherited="/inherited" in cmd)
+        owner = cmd[cmd.index("/setowner") + 1].lstrip("*") if "/setowner" in cmd else None
+        return deny_exact(cmd[1], sid, mask_of(rights), inherit="(OI)(CI)" in rights, owner=owner)
     return _run(cmd, run)
 
 
-def deny_exact(path: str, sid: str, mask: int, inherit: bool = False) -> str:
-    """Add an access-denied entry for ``sid`` with exactly ``mask`` (and, ``inherit``, inherited by every child) to the
-    DACL of ``path``, in canonical order (SetEntriesInAcl, SetNamedSecurityInfo): icacls' /deny adds SYNCHRONIZE to
-    it, which a read of the file asks, so Claude Code could no longer read its settings. '' when done, else why."""
+def run_all(cmds: list[list[str]], run) -> list[str]:
+    """:func:`run_acl` of each command; what failed."""
+    return [w for w in (run_acl(c, run) for c in cmds) if w]
+
+
+def deny_exact(path: str, sid: str, mask: int, inherit: bool = False, owner: str | None = None) -> str:
+    """Add an access-denied entry for ``sid`` with exactly ``mask`` (and, ``inherit``, inherited by what is made in it
+    later) first in the DACL of ``path`` itself, and make ``owner`` its owner, on one handle (never a link's target),
+    the backup and restore privileges asked (:data:`PRIVILEGES`). icacls' /deny adds SYNCHRONIZE to it, which a read
+    of the file asks (Claude Code could no longer read its settings); SetNamedSecurityInfo also writes the entry into
+    every child, which then denies the next write of its own ACL. Nothing changes when the entry is there already
+    (a relock). '' when done, else why."""
     if mask & READ_RIGHTS:
         return f"{path}: a deny mask holding a right reading needs (0x{mask:x})"
     try:
-        import ctypes
-        from ctypes import wintypes
-
-        class TRUSTEE(ctypes.Structure):
-            _fields_ = [("pMultipleTrustee", ctypes.c_void_p), ("MultipleTrusteeOperation", ctypes.c_int),
-                        ("TrusteeForm", ctypes.c_int), ("TrusteeType", ctypes.c_int), ("ptstrName", ctypes.c_void_p)]
-
-        class EXPLICIT_ACCESS(ctypes.Structure):
-            _fields_ = [("grfAccessPermissions", wintypes.DWORD), ("grfAccessMode", ctypes.c_int),
-                        ("grfInheritance", wintypes.DWORD), ("Trustee", TRUSTEE)]
-        adv, k32 = ctypes.WinDLL("advapi32", use_last_error=True), ctypes.WinDLL("kernel32", use_last_error=True)
-        psid, pdacl, psd, pnew = ctypes.c_void_p(), ctypes.c_void_p(), ctypes.c_void_p(), ctypes.c_void_p()
-        if not adv.ConvertStringSidToSidW(ctypes.c_wchar_p(sid), ctypes.byref(psid)):
-            return f"{path}: {sid} is no SID"
-        try:
-            err = adv.GetNamedSecurityInfoW(ctypes.c_wchar_p(path), 1, 0x4, None, None, ctypes.byref(pdacl), None,
-                                            ctypes.byref(psd))   # SE_FILE_OBJECT, DACL_SECURITY_INFORMATION
-            if err:
-                return f"{path}: its DACL cannot be read (error {err})"
-            ea = EXPLICIT_ACCESS(mask, 3, 3 if inherit else 0, TRUSTEE(None, 0, 0, 1, psid))   # DENY_ACCESS; SID; USER
-            err = adv.SetEntriesInAclW(1, ctypes.byref(ea), pdacl, ctypes.byref(pnew))
-            if err:
-                return f"{path}: the deny entry cannot be made (error {err})"
-            err = adv.SetNamedSecurityInfoW(ctypes.c_wchar_p(path), 1, 0x4, None, None, pnew, None)
-            return f"{path}: the deny entry cannot be written (error {err})" if err else ""
-        finally:
-            for p in (pnew, psd, psid):
-                if p.value:
-                    k32.LocalFree(p)
-    except (OSError, AttributeError, ValueError) as exc:
+        who = sid_bytes(sid)
+        new_owner = sid_bytes(owner) if owner else None
+    except ValueError as exc:
         return f"{path}: {exc}"
+    return _rewrite(path, lambda acl: with_deny(acl, who, mask, 0x3 if inherit else 0), new_owner, "the deny entry")
+
+
+def undeny(path: str, sid: str, inherited: bool = False) -> str:
+    """Remove every access-denied entry for ``sid`` of the DACL of ``path`` itself (``inherited``: the ones it
+    inherited too: a tree's entry), on one handle (never a link's target), the backup and restore privileges asked;
+    the owner stays. '' when done or none was there, else why."""
+    try:
+        who = sid_bytes(sid)
+    except ValueError as exc:
+        return f"{path}: {exc}"
+    return _rewrite(path, lambda acl: without_deny(acl, who, inherited), None, "the deny entries' removal")
+
+
+def sid_bytes(sid: str) -> bytes:
+    """The binary SID of 'S-1-5-21-...' (revision, count, authority big-endian, sub-authorities little-endian)."""
+    import struct
+    parts = (sid or "").split("-")
+    if len(parts) < 3 or parts[0] != "S" or parts[1] != "1" or not all(p.isdigit() for p in parts[2:]) \
+            or len(parts) - 3 > 15:
+        raise ValueError(f"{sid or 'no account'} is no SID")
+    subs = [int(p) for p in parts[3:]]
+    if int(parts[2]) >= 1 << 48 or any(s >= 1 << 32 for s in subs):
+        raise ValueError(f"{sid} is no SID")
+    return bytes([1, len(subs)]) + int(parts[2]).to_bytes(6, "big") + b"".join(struct.pack("<I", s) for s in subs)
+
+
+def acl_entries(acl: bytes) -> tuple[int, list[bytes]]:
+    """(revision, each entry's bytes) of a binary ACL."""
+    import struct
+    if len(acl) < 8:
+        raise ValueError("a malformed ACL")
+    rev, _, size, count, _ = struct.unpack_from("<BBHHH", acl)
+    size = min(size, len(acl))
+    out, at = [], 8
+    for _ in range(count):
+        n = struct.unpack_from("<H", acl, at + 2)[0] if at + 4 <= size else 0
+        if n < 8 or at + n > size:
+            raise ValueError("a malformed ACL")
+        out.append(bytes(acl[at:at + n]))
+        at += n
+    return rev, out
+
+
+def build_acl(rev: int, entries: list[bytes]) -> bytes:
+    import struct
+    body = b"".join(entries)
+    return struct.pack("<BBHHH", rev, 0, 8 + len(body), len(entries), 0) + body
+
+
+def _deny_of(entry: bytes, who: bytes) -> tuple[int, int] | None:
+    """(flags, mask) of an access-denied entry for ``who``; None for any other entry."""
+    import struct
+    if entry[0] != ACCESS_DENIED_ACE or entry[8:] != who:
+        return None
+    return entry[1], struct.unpack_from("<I", entry, 4)[0]
+
+
+def with_deny(acl: bytes, who: bytes, mask: int, flags: int) -> bytes | None:
+    """``acl`` with an explicit deny entry for ``who`` first (the canonical order: explicit denies before any allow);
+    None when one of its own already denies ``mask`` with the same inheritance."""
+    import struct
+    rev, entries = acl_entries(acl)
+    for e in entries:
+        d = _deny_of(e, who)
+        if d and not d[0] & (INHERITED | INHERIT_ONLY) and d[0] & 0x3 == flags & 0x3 and d[1] & mask == mask:
+            return None
+    ace = struct.pack("<BBHI", ACCESS_DENIED_ACE, flags, 8 + len(who), mask) + who
+    return build_acl(max(rev, 2), [ace, *entries])
+
+
+def without_deny(acl: bytes, who: bytes, inherited: bool) -> bytes | None:
+    """``acl`` without the deny entries for ``who`` (its own; ``inherited``: the inherited ones too); None when it
+    holds none."""
+    rev, entries = acl_entries(acl)
+    keep = [e for e in entries if not ((d := _deny_of(e, who)) and (inherited or not d[0] & INHERITED))]
+    return None if len(keep) == len(entries) else build_acl(rev, keep)
+
+
+def _rewrite(path: str, edit, owner: bytes | None, what: str) -> str:
+    """Open ``path`` itself (FILE_FLAG_OPEN_REPARSE_POINT: never a link's target; a link or a junction refused) for
+    its ACL (and ``owner``: its owner), the privileges asked, then write ``edit`` of its DACL (None: unchanged) and the
+    owner as they are, with no inheritance computed nor propagated (SetKernelObjectSecurity), its control bits kept.
+    '' when done, else why."""
+    import ctypes
+    import struct
+    from ctypes import wintypes as w
+    if os.name != "nt":
+        return f"{path}: an ACL is a Windows one"
+    try:
+        adv, k32 = _api()
+    except (OSError, AttributeError) as exc:
+        return f"{path}: {exc}"
+    restore = _privileged(adv, k32)
+    try:
+        access = 0x20000 | 0x40000 | (0x80000 if owner else 0)   # READ_CONTROL, WRITE_DAC, WRITE_OWNER
+        h = k32.CreateFileW(path, access, 0x7, None, 3, 0x02000000 | 0x00200000, None)   # OPEN_EXISTING;
+        if h in (None, ctypes.c_void_p(-1).value):          # BACKUP_SEMANTICS (a folder, the privileges), REPARSE_POINT
+            return f"{path}: cannot be opened for its ACL (error {ctypes.get_last_error()})"
+        try:
+            info = ctypes.create_string_buffer(64)   # BY_HANDLE_FILE_INFORMATION: dwFileAttributes first
+            if not k32.GetFileInformationByHandle(h, info):
+                return f"{path}: its attributes cannot be read (error {ctypes.get_last_error()})"
+            if struct.unpack_from("<I", info.raw)[0] & 0x400:   # FILE_ATTRIBUTE_REPARSE_POINT
+                return f"{path}: a link or a junction"
+            need = w.DWORD(0)
+            adv.GetKernelObjectSecurity(h, 0x1 | 0x4, None, 0, ctypes.byref(need))   # OWNER, DACL
+            sd = ctypes.create_string_buffer(need.value or 1)
+            present, defaulted = w.BOOL(), w.BOOL()
+            pdacl, powner, control, rev = ctypes.c_void_p(), ctypes.c_void_p(), w.WORD(), w.DWORD()
+            if not (need.value and adv.GetKernelObjectSecurity(h, 0x1 | 0x4, sd, need, ctypes.byref(need))
+                    and adv.GetSecurityDescriptorDacl(sd, ctypes.byref(present), ctypes.byref(pdacl),
+                                                      ctypes.byref(defaulted))
+                    and adv.GetSecurityDescriptorOwner(sd, ctypes.byref(powner), ctypes.byref(defaulted))
+                    and adv.GetSecurityDescriptorControl(sd, ctypes.byref(control), ctypes.byref(rev))):
+                return f"{path}: its ACL cannot be read (error {ctypes.get_last_error()})"
+            if not present or not pdacl.value:
+                return f"{path}: no DACL (anyone may do anything): give it one first"
+            size = struct.unpack_from("<H", ctypes.string_at(pdacl.value, 4), 2)[0]
+            new_acl = edit(ctypes.string_at(pdacl.value, size))
+            same_owner = owner is None or (powner.value and
+                                           ctypes.string_at(powner.value, adv.GetLengthSid(powner)) == owner)
+            if new_acl is None and same_owner:
+                return ""
+            dacl = ctypes.create_string_buffer(new_acl or ctypes.string_at(pdacl.value, size))
+            sid = ctypes.create_string_buffer(owner or b"\0")
+            new = ctypes.create_string_buffer(64)   # an absolute SECURITY_DESCRIPTOR (40 bytes on x64)
+            kept = control.value & 0x1400            # SE_DACL_AUTO_INHERITED, SE_DACL_PROTECTED
+            if not (adv.InitializeSecurityDescriptor(new, 1)
+                    and adv.SetSecurityDescriptorDacl(new, True, dacl, False)
+                    and adv.SetSecurityDescriptorControl(new, 0x1400, kept)
+                    and (same_owner or adv.SetSecurityDescriptorOwner(new, sid, False))):
+                return f"{path}: {what} cannot be made (error {ctypes.get_last_error()})"
+            if not adv.SetKernelObjectSecurity(h, 0x4 | (0 if same_owner else 0x1), new):
+                return f"{path}: {what} cannot be written (error {ctypes.get_last_error()})"
+            return ""
+        finally:
+            k32.CloseHandle(h)
+    except (OSError, ValueError, struct.error) as exc:
+        return f"{path}: {exc}"
+    finally:
+        restore()
+
+
+def _api():
+    """advapi32 and kernel32 with the signatures the step calls (their own instances: nothing shared is changed)."""
+    import ctypes
+    from ctypes import wintypes as w
+    adv, k32 = ctypes.WinDLL("advapi32", use_last_error=True), ctypes.WinDLL("kernel32", use_last_error=True)
+    p, pp = ctypes.c_void_p, ctypes.POINTER(ctypes.c_void_p)
+    k32.CreateFileW.argtypes = [w.LPCWSTR, w.DWORD, w.DWORD, p, w.DWORD, w.DWORD, w.HANDLE]
+    k32.CreateFileW.restype = w.HANDLE
+    k32.CloseHandle.argtypes = [w.HANDLE]
+    k32.GetFileInformationByHandle.argtypes = [w.HANDLE, p]
+    k32.GetCurrentProcess.restype = w.HANDLE
+    adv.GetKernelObjectSecurity.argtypes = [w.HANDLE, w.DWORD, p, w.DWORD, ctypes.POINTER(w.DWORD)]
+    adv.SetKernelObjectSecurity.argtypes = [w.HANDLE, w.DWORD, p]
+    adv.GetSecurityDescriptorDacl.argtypes = [p, ctypes.POINTER(w.BOOL), pp, ctypes.POINTER(w.BOOL)]
+    adv.GetSecurityDescriptorOwner.argtypes = [p, pp, ctypes.POINTER(w.BOOL)]
+    adv.GetSecurityDescriptorControl.argtypes = [p, ctypes.POINTER(w.WORD), ctypes.POINTER(w.DWORD)]
+    adv.SetSecurityDescriptorControl.argtypes = [p, w.WORD, w.WORD]
+    adv.InitializeSecurityDescriptor.argtypes = [p, w.DWORD]
+    adv.SetSecurityDescriptorDacl.argtypes = [p, w.BOOL, p, w.BOOL]
+    adv.SetSecurityDescriptorOwner.argtypes = [p, p, w.BOOL]
+    adv.GetLengthSid.argtypes = [p]
+    adv.GetLengthSid.restype = w.DWORD
+    adv.OpenProcessToken.argtypes = [w.HANDLE, w.DWORD, ctypes.POINTER(w.HANDLE)]
+    adv.LookupPrivilegeValueW.argtypes = [w.LPCWSTR, w.LPCWSTR, p]
+    adv.AdjustTokenPrivileges.argtypes = [w.HANDLE, w.BOOL, p, w.DWORD, p, ctypes.POINTER(w.DWORD)]
+    return adv, k32
+
+
+def _privileged(adv, k32):
+    """Turn :data:`PRIVILEGES` on in this process's token where it holds them (an elevated administrator's); the
+    function that turns them back as they were. A token that holds none (a normal one) changes nothing."""
+    import ctypes
+    from ctypes import wintypes as w
+
+    class LUID_AND_ATTRIBUTES(ctypes.Structure):
+        _fields_ = [("Low", w.DWORD), ("High", w.LONG), ("Attributes", w.DWORD)]
+
+    class TOKEN_PRIVILEGES(ctypes.Structure):
+        _fields_ = [("Count", w.DWORD), ("Privileges", LUID_AND_ATTRIBUTES * len(PRIVILEGES))]
+
+    tok = w.HANDLE()
+    if not adv.OpenProcessToken(k32.GetCurrentProcess(), 0x20 | 0x8, ctypes.byref(tok)):   # ADJUST_PRIVILEGES, QUERY
+        return lambda: None
+    want, n = TOKEN_PRIVILEGES(), 0
+    for name in PRIVILEGES:
+        luid = (w.DWORD * 2)()
+        if adv.LookupPrivilegeValueW(None, name, luid):
+            want.Privileges[n] = LUID_AND_ATTRIBUTES(luid[0], luid[1], 0x2)   # SE_PRIVILEGE_ENABLED
+            n += 1
+    want.Count = n
+    prev, size = TOKEN_PRIVILEGES(), w.DWORD(0)
+    changed = n and adv.AdjustTokenPrivileges(tok, False, ctypes.byref(want), ctypes.sizeof(prev), ctypes.byref(prev),
+                                              ctypes.byref(size))
+
+    def restore():
+        try:
+            if changed and prev.Count:
+                adv.AdjustTokenPrivileges(tok, False, ctypes.byref(prev), 0, None, None)
+        finally:
+            k32.CloseHandle(tok)
+    return restore
 
 
 def mask_of(rights: str) -> int:
@@ -464,13 +663,12 @@ def undo_beside(a: dict, other: dict | None) -> tuple[list[list[str]], list[str]
 def released(prev: dict | None, a: dict | None, run) -> list[str]:
     """Once a new lock holds: the previous lock's entries this one no longer holds given back (another account,
     other paths, or floor.acl turned off); what failed or was left, said."""
-    from .floorlock import _run_all
     if not isinstance(prev, dict) or not prev.get("account"):
         return []
     cmds, left = undo_beside(prev, a)
     if not cmds and not left:
         return []
-    failed = _run_all(cmds, run)
+    failed = run_all(cmds, run)
     return [f"the previous ACL entries given back to {prev['account']}" +
             (f", but: {'; '.join([*failed, *left][:6])}" if failed or left else "")]
 

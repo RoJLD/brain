@@ -526,7 +526,7 @@ def apply(cfg, lower: bool = False, run=subprocess.run, is_elevated=None, instal
         new, n = root / f"{stamp}-{n}", n + 1
     found = (tools or system_tools)(check)
     a, acl_started = p["acl"], False
-    if a:   # an administrator's icacls never follows a link a session made (it would hand over its target)
+    if a:   # the elevated step never follows a link a session made (it would hand over its target)
         linked = flooracl.all_links(a)
         if linked:
             raise LockError(f"the ACL step refuses a link or a junction among its paths: {', '.join(linked[:6])}; "
@@ -541,7 +541,7 @@ def apply(cfg, lower: bool = False, run=subprocess.run, is_elevated=None, instal
         if a:   # the account's own Claude Code files, before the managed hooks and the lock file that check them
             flooracl.create(a)
             acl_started = True
-            failed = [w for w in (flooracl.run_acl(c, run) for c in flooracl.commands(a)) if w]
+            failed = flooracl.run_all(flooracl.commands(a), run)
             failed = failed or flooracl.lock_trees(a, run)
             wrong = [] if failed else (acl_check or flooracl.verify)(a)
             if failed or wrong:
@@ -584,7 +584,7 @@ def _undo_added(a: dict, prev: dict | None, run) -> list[str]:
     """After a failed apply: give back what its ACL step added (not what the previous lock, restored, still holds);
     what failed or was left alone."""
     cmds, left = flooracl.undo_beside(a, prev)
-    return [*_run_all(cmds, run), *left]
+    return [*flooracl.run_all(cmds, run), *left]
 
 
 def _rendered(cfg) -> Path | None:
@@ -671,7 +671,7 @@ def _give_back(a: dict | None, run) -> list[str]:
     if not a:
         return []
     cmds, left = flooracl.undo(a)
-    failed = _run_all(cmds, run)
+    failed = flooracl.run_all(cmds, run)
     if failed:
         raise LockError("unlock stopped, the lock is whole: the ACL step was not undone: " + "; ".join(failed[:6]))
     return left

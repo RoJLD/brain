@@ -12,4 +12,6 @@ section: Added
   locked one or `CLAUDE_CONFIG_DIR` is set. `brain floor status` says whether each is held; `brain floor unlock
   --apply` lifts the account's deny entries first (`--account` when the lock file cannot be read), the ownership
   staying the administrators' (`takeown` from the owner's terminal gives it back). While locked, Claude Code's own
-  writes there fail (docs/guards.md, « The ACL step »).
+  writes there fail (docs/guards.md, « The ACL step »). Each path's ACL is written on its own handle (never a link's
+  target) with nothing propagated, before any deny of the account lands on it, the elevated token's backup and restore
+  privileges asked for a relock and the unlock: the step runs as the account it denies.
