@@ -38,6 +38,7 @@ or a junction, has only its link removed).
 from __future__ import annotations
 
 import os
+import re
 import shutil
 import stat
 import subprocess
@@ -241,8 +242,11 @@ def remove(p: Path, home: Path) -> str:
 
 
 def _store_of(name: str) -> tuple[str, classes.Known] | None:
-    """The engine store a top-level name of BRAIN_HOME is (a write's leftover: its base's store)."""
-    base = classes.HOME_TRANSIENT.split(name)[0] if classes.HOME_TRANSIENT.search(name) else name
+    """The engine store a top-level name of BRAIN_HOME is (a write's leftover, or a stamped copy of a file,
+    ``tui.json.<stamp>.bak``: its base's store)."""
+    base = re.sub(r"\.\d+\.tmp$", "", name)   # a half write's <name>.<pid>.tmp: its file's
+    base = stateio.home_copy_base(base) or base
+    base = classes.HOME_TRANSIENT.split(base)[0] if classes.HOME_TRANSIENT.search(base) else base
     for store, k in classes.ENGINE_STORES.items():
         if k.path == f"$BRAIN_HOME/{base}":
             return store, k
