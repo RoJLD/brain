@@ -92,12 +92,14 @@ packs:
 **Nothing turns on by itself** (TYPO-4). `brain typologies propose PROJECT` reads the project's `lifecycle.typologies`
 and lists every pack whose typologies it meets, the brain's and the engine's: those it takes, and for each other the
 step that gives it (a pack `from: engine` with `projects: [PROJECT]` appended under `packs:`, or `PROJECT` added to a
-brain pack's `projects`), the layers its store lacks and the standards profiles it does not opt in to. `--apply`
+brain pack's `projects`), the layers its store lacks and the standards profiles its selection does not meet (a
+sub-profile meets its entry's: a selection of `cli` meets the `software` pack's `software`). `--apply`
 writes the packs.yaml steps, comments kept, and refuses the write when `brain check` would find a new error in the
 source; the layers (`research_graph --store S layers add L --write`) and the standards opt-in (`projects.yaml`, by a PR
 of the registry) stay the owner's next steps, printed by the plan. A pack that comes from a typology is given to the
 projects named, never to every project (TYPO-6: node-local). `brain typologies packs [--json]` lists the engine's
-packs and the brain's, their parts and the projects that take them.
+packs and the brain's, their parts and the projects that take them. `brain project new` plans the same packs for a
+new project and, with `--apply`, runs this step after `brain init` (packages/brain/README.md, « brain project new »).
 
 ```bash
 brain typologies packs [--json]                     # the typology packs, the engine's and this brain's

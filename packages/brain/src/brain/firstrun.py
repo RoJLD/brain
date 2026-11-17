@@ -345,9 +345,10 @@ def _call(runner, argv: list[str], buf: io.StringIO) -> int:
         return 1
 
 
-def run(words: list[str], cwd: Path, runner=None, by: str = "") -> dict:
+def run(words: list[str], cwd: Path, runner=None, by: str = "", via: str = "init") -> dict:
     """One step, run in this process as ``brain`` would run it (offline: the same engine), its output captured and
-    printed, logged as the owner's step (``by``: the brain's owner); {command, exit, seconds, output}."""
+    printed, logged as the owner's step (``by``: the brain's owner; ``via``: the command that runs it);
+    {command, exit, seconds, output}."""
     from . import cli
     runner = runner or (lambda argv: cli.main(argv))
     start, t0 = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"), time.monotonic()
@@ -355,7 +356,7 @@ def run(words: list[str], cwd: Path, runner=None, by: str = "") -> dict:
     code = _call(runner, words[1:], buf)
     text, _ = secretscan.clean_text(buf.getvalue().strip())
     res = {"command": shown(words), "exit": code, "seconds": round(time.monotonic() - t0, 2), "output": text}
-    log({"at": start, "event": "setup-step", "via": "init", "by": by or config.owner_of(cwd), "command": res["command"],
+    log({"at": start, "event": "setup-step", "via": via, "by": by or config.owner_of(cwd), "command": res["command"],
          "cwd": str(cwd), "exit": code, "seconds": res["seconds"], "output": text[-OUTPUT_MAX:]})
     return res
 
@@ -522,8 +523,8 @@ def interactive(cat: dict, facts: dict, preset: str, with_: list[str], without: 
             out(f"refused: {exc}")
 
 
-def log_init(root: Path, words: list[str], code: int, by: str = "") -> Path:
+def log_init(root: Path, words: list[str], code: int, by: str = "", via: str = "init") -> Path:
     """brain init's own step, logged like the others (its files were written by its plan, shown before)."""
     return log({"at": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"), "event": "setup-step",
-                "via": "init", "by": by or config.owner_of(root), "command": shown(words), "cwd": str(root),
+                "via": via, "by": by or config.owner_of(root), "command": shown(words), "cwd": str(root),
                 "exit": code, "seconds": 0.0, "output": ""})

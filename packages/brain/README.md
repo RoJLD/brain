@@ -846,7 +846,26 @@ template writes; a registry shape it cannot merge into is named by the plan and 
 its first stage. The plan shows the tools with their reports and commands, the standards rows the selection makes
 required at its stage, those its tools run and those whose check does not cover its language; a re-run in the folder
 that holds the brain shows what the answers change (language, each slot's tool, report and format, floor, include)
-and writes nothing. The pack, procedures and permissions it will propose are its later slice.
+and writes nothing.
+
+Its third slice (`wi-brain-project-wizard-pack`) plans what the answers propose beyond the registry: the typology packs
+its kinds meet (`brain typologies packs`: `software` for a code product, `research`) and their parts, then its agent
+files. For each pack, the step that takes it (`source/packs.yaml` gains it `from: engine` with `projects: [NAME]`), its
+procedures and MCP servers, the guards it turns on (the core's guard hook runs them; `brain permissions --project NAME`
+lists the effective allow / ask / deny list), the standards profiles its selection does not meet (a sub-profile meets
+its entry's: `cli` meets `software`'s), and its judgement: its clauses of done, one-way doors, roles and gates by
+stage, which no script checks, written by `brain init` into the project's `CLAUDE.md` as a section « What it produces »
+(each text one line of literal Markdown: no markup, no `@path` import, no nested list; a folder's own `CLAUDE.md` is
+kept and gains no section, and an `AGENTS.md` that `brain render` did not write is kept, its step skipped). Then the core's hooks, the template's CI workflows, `CLAUDE.md` and
+`AGENTS.md`. With `--apply`, after `brain init`'s files, each part is a brain command run in order and logged as the
+owner's step in `<BRAIN_HOME>/ledger/setup-<month>.jsonl` (`via: project-new`, `brain init`'s files the first row):
+`brain --root DIR typologies propose NAME --apply`, `brain --root DIR render --target claude --write` (the marketplace
+with each pack's plugin) and `brain --root DIR --project NAME render --target agents --write` (`AGENTS.md`, its
+`CLAUDE.md` last). A step that fails does not stop the next (each reads the brain again): the run exits 1 and names
+the commands that re-run what failed; a step with nothing to write is skipped and says why. In a folder that holds
+the brain already, the same parts are planned against it (its packs taken or not, its rendered files current or not)
+and nothing runs: the steps left are listed as the owner's, by a branch and a PR of that brain, and `--apply` exits 2
+while any is left, saying what is left.
 
 `brain project add NAME (--read | --existing DIR [--store PATH] | --template T --dir DIR) [--parent NODE] [--floor
 CLASS] [--title TEXT] [--profile P] [--kind K]... [--stage S] [--team] [--interactive] [--no-notes] [--apply]` registers a project in a brain's `projects.yaml` (`wi-brain-project-add`),
