@@ -23,8 +23,10 @@ USAGE = """\
                  [--stream S]   the review of that head ran: its counts, the note's finding lines, its place
   brain review check HEAD [--pr N | --body FILE] [--base REF]   exit 0 when that head was reviewed, 1 when not (the
                  merge gate's question); with the PR body, 1 also while a pinned decision the change touches (brain
-                 adr pin, docs/pins.md) has no Keeps ID line in it (a decision in force) or Overrides ID: why (one a
-                 later ADR supersedes); without one, the pins touched are listed and the stamp alone decides
+                 adr pin, docs/pins.md) has no Keeps <ID or alias> line in it (a decision in force) or Overrides <ID
+                 or alias>: why (one a later ADR supersedes; in a public repo's PR, its alias: brain adr pin --alias,
+                 else pin-<8 hex>); without one, the pins touched are listed with their aliases and the stamp alone
+                 decides
   brain review score [--wave W] [--json]   the error score: confirmed findings per PR by severity, lens and root
                  cause, the trend per wave, and the owner's rule: the reviews lighten once it falls over two waves
 """
@@ -164,7 +166,8 @@ def _check(args, repo: Path) -> int:
         print(f"review: {rec['head'][:12]} reviewed {rec['at']}: {rec['findings']} finding(s), {rec['fixed']} fixed, "
               f"{rec['contested']} contested, {rec['open']} open")
     for x in touched:
-        print(f"  pinned: {x['id']} ({x['day'] or '?'}) holds {x['holds']} ({', '.join(x['hits'][:3])})")
+        print(f"  pinned: {x['id']} ({x['day'] or '?'}) holds {x['holds']} ({', '.join(x['hits'][:3])})"
+              + (f"; alias {x['alias']}" if x.get("alias") else ""))
     for b in blocks:
         print(f"  BLOCK {b}")
     if note:

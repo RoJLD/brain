@@ -485,9 +485,11 @@ repo's store read with its own, read-only) are walked too.
 A decision can be pinned to the code it governs ([`docs/pins.md`](docs/pins.md)): `brain adr pin ID --touches
 PATH|CODEREF --holds LINE` writes `pins.yaml` beside the decision log (an ADR, an SDR or an answered DDR; the `holds`
 line never edited, an override being a new ADR). `brain impact --diff` lists the pinned decisions a change touches,
-and `brain review check HEAD --pr N` and `brain merge-ready` refuse until the PR body says, for each, `Keeps ID` (a
-decision in force) or `Overrides ID: why` (one a later ADR supersedes, written first: `brain adr new --reverses ID`,
-an answered DDR's id included).
+and `brain review check HEAD --pr N` and `brain merge-ready` refuse until the PR body says, for each, `Keeps <ID or
+alias>` (a decision in force) or `Overrides <ID or alias>: why` (one a later ADR supersedes, written first: `brain adr
+new --reverses ID`, an answered DDR's id included). In a public repo's PR, which may not name a private decision, it
+says the pin's alias: `brain adr pin ID --alias NAME` (refused when the public check would refuse it: the shape of a
+graph id, an ADR's title), else `pin-<8 hex>`; the gate's lines give it.
 
 ### Tests linked and coverage
 

@@ -14,8 +14,9 @@ the lesson les-brain-stale-base-ci). Every check runs, and the answer is exit 0 
   and the stamp is valid now (the push guard's question);
 - **body**: the PR's title and body hold nothing ``brain check --public`` refuses (a private term, a secret, an
   address); public rules that do not load block too;
-- **pins**: each pinned decision the change touches (brain.pins) is kept or overridden in the PR body: ``Keeps <id>``
-  for one in force, ``Overrides <id>: <why>`` for one a later ADR supersedes.
+- **pins**: each pinned decision the change touches (brain.pins) is kept or overridden in the PR body: ``Keeps <id or
+  alias>`` for one in force, ``Overrides <id or alias>: <why>`` for one a later ADR supersedes (in a public repo's PR,
+  its alias: ``brain adr pin --alias``, else ``pin-<8 hex>``).
 
 A green answer writes the stamp ``<BRAIN_HOME>/merge-ready/<owner>/<repo>/<head sha>.json`` (what a merge guard
 will ask; a push after it is a new head) and names the head to merge: ``gh pr merge N --match-head-commit <sha>``
