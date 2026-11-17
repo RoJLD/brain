@@ -60,6 +60,14 @@ its root keeps research_graph's defaults (notes/, notes/decisions.md), so nothin
 :func:`layout`). A store whose views folder an earlier store at its root uses is not synced (:func:`view_clashes`).
 ``--store`` names a store of the project that lists it (:func:`lister`), so it runs with that project's layout.
 
+An entry with a ``status`` other than ``active`` is a **tombstone** (brain.projectids, spec-brain-project-ids ID-1,
+ID-2): the entry of a project that ended (merged, split, became-process, archived), kept so that its id and aliases
+are never reused and its records still resolve. It holds title, label, status, aliases, parent, classes and access
+only; :func:`load` never returns it, :func:`get` says why, :func:`tombstones` lists them. The key **narrows**: a status
+this engine does not know is never read as a live project. A project's key is its **id**, frozen at birth; ``aliases``
+are the names it had (``--project`` resolves one with a notice) and ``label`` a short display name; brain.projectids
+checks them.
+
 An entry with a ``tenant`` key is a **mount**, not a project: an HMaaS tenant is another brain, with its own root,
 registry and keys, mounted opaque in the operator's registry (wi-brain-hmaas-multitenant, spec-brain-hmaas §6;
 SCOPE-6). It holds ``title``, ``tenant``, ``parent`` (its place in the scope tree) and ``classes`` only,
@@ -82,7 +90,7 @@ import subprocess
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from . import graph, paths, schema
+from . import graph, paths, projectids, schema
 
 REGISTRY = "projects.yaml"
 DEFAULTS = {"stores": ["notes/graph"], "journal": "notes/journal.md", "decisions": "notes/decisions.md"}
@@ -152,6 +160,14 @@ KEYS = {
                  "qualification; the rest is read by wi-brain-lifecycle-stage",
     "migrations": "the scout's glob check, a list of {when, add, repo}: a change of a when file comes with a new file "
                   "of each add glob (a migration, a fixture), else brain audit --diff finds it (brain.formats)",
+    "aliases": "the names it had or people type, a list of ids (kebab-case from a letter): --project and a scope "
+               "reference resolve one to its id with a notice; unique across every id and alias of the registry and "
+               "the scope tree, never reused (brain.projectids)",
+    "label": "a short display name (title stays the one line saying what it is); its key is its id, frozen at "
+             "birth: a rename changes the title or the label, never the key (brain.projectids)",
+    "status": "active (the default), or the fate of a project that ended: merged, split, became-process, archived; "
+              "an entry of another status is a tombstone of title, label, status, aliases, parent, classes and access "
+              "only, which no command loads, its id and aliases reserved for ever (brain.projectids)",
     "software": "the software pack's keys grouped (wi-brain-software-pack), {repos, audit, code_index, production}: each "
                 "as at the top level, where it stays accepted as an alias; a key given in both places is an error",
 }
@@ -163,15 +179,16 @@ LIFECYCLE_KEYS = ("typologies", "stage", "shape", "profile", "since", "paused") 
 # LC-1's profiles (the purpose and the audience, question 1 of the qualification, spec-brain-product-lifecycle 3.10)
 LIFECYCLE_PROFILES = ("maker", "client", "startup", "internal", "open-source", "research")
 ACCESS = ("write", "read")
-READ_ONLY_KEYS = {"title", "access", "parent", "classes"}
+# every entry may hold its names besides (brain.projectids.NAME_KEYS: aliases, label), whatever its kind
+READ_ONLY_KEYS = {"title", "access", "parent", "classes", *projectids.NAME_KEYS}
 KNOWLEDGE = "knowledge"
-KNOWLEDGE_KEYS = {"title", "kind", "root", "parent", "classes"}   # a notes home: the folder brain notes reads
+KNOWLEDGE_KEYS = {"title", "kind", "root", "parent", "classes", *projectids.NAME_KEYS}   # a notes home: the folder brain notes reads
 # the decision logs research_graph covers for a store given none (research_graph.validate.DEFAULT_DECISIONS; not
 # imported: a guard reads this module on every call)
 GRAPH_DECISIONS = ("notes/scientific_decisions.md", "notes/decisions.md")
 # What a mount's tenant: mapping may hold (wi-brain-tenant-export reads the export; a mount only says where it lands).
 TENANT_KEYS = {"export": "the file the tenant's contract export is dropped into: absolute, ~, or relative to BRAIN_HOME"}
-MOUNT_KEYS = {"title", "tenant", "parent", "classes"}
+MOUNT_KEYS = {"title", "tenant", "parent", "classes", *projectids.NAME_KEYS}
 REPO_KEYS = {"path", "name", "entry", "roots", "waive", "item", "lang", "scout_limit", "tools"}
 AUDIT_KEYS = {"spec", "max_lines", "complexity"}
 REPO_NAME = re.compile(r"[a-z0-9][a-z0-9_.-]*")
@@ -307,8 +324,18 @@ def is_mount(entry) -> bool:
 
 def is_read_only(entry) -> bool:
     """A project the brain reads and never writes: ``access: read``, and only that value (a typo is
-    :func:`bad_access`, never a deliberate read-only project)."""
-    return isinstance(entry, dict) and entry.get("access") == "read"
+    :func:`bad_access`, never a deliberate read-only project); a tombstone is not one, whatever its access."""
+    return isinstance(entry, dict) and entry.get("access") == "read" and not is_tombstone(entry)
+
+
+def is_tombstone(entry) -> bool:
+    """The entry of a project that ended (a ``status`` other than active, brain.projectids): never loaded."""
+    return not is_mount(entry) and not is_knowledge(entry) and projectids.is_tombstone(entry)
+
+
+def tombstones(root: Path | None = None) -> dict[str, str]:
+    """{name: its status} of the tombstones, in the registry's order."""
+    return {str(n): projectids.status(e) for n, e in raw(root).items() if is_tombstone(e)}
 
 
 def is_knowledge(entry) -> bool:
@@ -342,7 +369,8 @@ def invalid_access(root: Path | None = None) -> dict[str, object]:
 
 def _skipped(entry) -> bool:
     """An entry the registry's walk never loads: a tenant mount, a read-only project, an invalid access."""
-    return is_mount(entry) or is_read_only(entry) or bad_access(entry) or is_knowledge(entry)
+    return (is_mount(entry) or is_tombstone(entry) or is_read_only(entry) or bad_access(entry)
+            or is_knowledge(entry))
 
 
 def load(root: Path | None = None) -> dict[str, Project]:
@@ -524,6 +552,8 @@ def unloaded(name: str, root: Path | None = None) -> str:
     if is_mount(entry):
         return (f"{name!r} is a tenant mount: another brain, opaque, that the operator does not read into (its state "
                 "comes from its contract export)")
+    if is_tombstone(entry):
+        return projectids.why_unloaded(name, entry)
     if bad_access(entry):   # a typo, named as one: brain check --all refuses it the same way
         return f"{name!r} is not loaded: access is read or write, not {entry['access']!r}"
     if is_read_only(entry):
@@ -535,7 +565,9 @@ def unloaded(name: str, root: Path | None = None) -> str:
 
 
 def get(name: str, root: Path | None = None) -> Project:
-    """A registered project; with ``root`` (``--root``, say a worktree), the same layout at that root."""
+    """A registered project; with ``root`` (``--root``, say a worktree), the same layout at that root. An alias
+    (brain.projectids) names its project, with a notice."""
+    name = projectids.canonical(name, root) or name
     reg = load(root)
     if name not in reg:
         why = unloaded(name, root)
@@ -838,6 +870,11 @@ def check(root: Path | None = None) -> list[str]:
         if is_mount(entry):
             errors += _check_mount(f"tenant {name}", entry)
             continue
+        if is_tombstone(entry):
+            errors += projectids.tombstone_errors(where, entry)
+            if bad_access(entry):
+                errors.append(f"{where}: access is read or write, not {entry['access']!r}")
+            continue
         if bad_access(entry):
             errors.append(f"{where}: access is read or write, not {entry['access']!r}")   # not loaded until it is one
             continue
@@ -998,8 +1035,8 @@ def repo_tokens(root: Path | None = None) -> set[str]:
 
 def _repo_only(entry) -> bool:
     """An entry the walk skips whose name is still a repo a CodeRef may name: a read-only project, a tenant mount, a
-    notes home."""
-    return is_read_only(entry) or is_mount(entry) or is_knowledge(entry)
+    notes home, a tombstone (an ended project's CodeRefs keep its name)."""
+    return is_read_only(entry) or is_mount(entry) or is_knowledge(entry) or is_tombstone(entry)
 
 
 def code_refs(store: Path) -> list[tuple[str, str]]:
@@ -1113,9 +1150,26 @@ def describe(p: Project) -> dict:
             "repos": repos,
             "code_index": [e if isinstance(e, str) else str((e or {}).get("path")) for e in p.code_index],
             "stacks": stacks, "shared_ids": sorted(map(str, p.shared_ids)), "plugin": p.plugin, "access": "write",
-            "shares_root_with": p.shares_root_with}
+            "shares_root_with": p.shares_root_with, "status": projectids.ACTIVE, **_names(p.name, p.registry_dir)}
 
 
-def describe_read_only(r: ReadOnly) -> dict:
-    """A read-only project as brain projects prints it: nothing but its name, title and access."""
-    return {"name": r.name, "title": r.title, "access": "read"}
+def _names(name: str, registry_dir: Path | None = None) -> dict:
+    """An entry's aliases and label as declared (brain.projectids), for brain projects."""
+    entry = raw(registry_dir).get(name)
+    return {"aliases": projectids.aliases(entry), "label": projectids.label(entry)}
+
+
+def describe_read_only(r: ReadOnly, root: Path | None = None) -> dict:
+    """A read-only project as brain projects prints it: nothing but its name, title, access and names."""
+    return {"name": r.name, "title": r.title, "access": "read", "status": projectids.ACTIVE, **_names(r.name, root)}
+
+
+def describe_tombstones(root: Path | None = None) -> list[dict]:
+    """The tombstones as brain projects prints them: name, title, status and names; access ``none`` (never loaded)."""
+    out = []
+    for name, entry in raw(root).items():
+        if is_tombstone(entry):
+            title = entry.get("title")
+            out.append({"name": str(name), "title": title if isinstance(title, str) else "", "access": "none",
+                        "status": projectids.status(entry), **_names(str(name), root)})
+    return out

@@ -147,7 +147,8 @@ def sources(root: Path, own: tuple[str, dict] | None = None, own_name: str = "")
     ``docgraph/*.json`` under ``root``, each validated. A read project's copy without its pin, a file whose name is
     not a namespace, or one named as the brain's own project (``own``'s, else ``own_name``): errors, the document
     left out of the join."""
-    read_only = set(projects.readonly(root))
+    read_only = {str(n) for n, e in projects.raw(root).items()   # a read project that ended keeps its pinned copy
+                 if isinstance(e, dict) and e.get("access") == "read"}
     out: list[Source] = []
     if own:
         name, doc = own
