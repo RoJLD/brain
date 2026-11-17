@@ -262,7 +262,7 @@ foreign one is never written here.
 | `update._read_cache` | `update.json` | derived (local) | `{}` is right: the tags are asked again |
 | `net.blocked`, `net.failed` | `net/breakers.json` | truth-local | through `brain.stateio`; losing it costs one timeout per service |
 | `outbox.put`, `outbox.replay` | `outbox/queue.json` | truth-local | through `brain.stateio`; a newer brain's is read-only (nothing queued, said) |
-| `ship.entries`, `ship.enqueue`, `ship.update` | `ship/queue.json` | truth-local | through `brain.stateio`, each write under the lock `ship-queue.lock`; an entry keeps the keys it does not know |
+| `ship.entries`, `ship.enqueue`, `ship.update`, `ship.set_red` | `ship/queue.json` | truth-local | through `brain.stateio`, each write under the lock `ship-queue.lock`; its `entries` and its `red` bases keep the keys they do not know |
 
 ## The hook contract
 

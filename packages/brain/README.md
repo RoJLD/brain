@@ -952,12 +952,16 @@ Zero-token commands for many sessions on one brain ([`docs/merge-driver.md`](doc
 - **`brain ship PR`** (brain.ship): the local merge queue. The session queues its PR (`<BRAIN_HOME>/ship/queue.json`,
   once per repo and number, its place said) and stops; `brain ship --run`, the merger, takes the lock
   `<BRAIN_HOME>/locks/ship.lock` (one merger per machine: exit 1 and the holder when another runs; a lock whose pid is
-  gone or whose TTL passed is broken) and ships the queued PRs in order: the merge gate (`brain merge-ready`'s own
-  checks, `fresh` answered by the catch-up), main merged into the PR's head in a scratch worktree with the merge
-  driver, the views regenerated once and `brain check`, `brain merge-check`, the targeted tests, the catch-up pushed,
-  `gh pr merge --match-head-commit`. A PR that fails is marked with its reason and the next goes on; every
-  `--batch N` PRs merged per repo (5), the full suite runs once, and a bisection names the culprit when it fails.
-  `brain ship --list [--json]` shows the queue, `brain ship --run --dry-run` the plan. The merger is a command:
+  gone is broken) and ships the queued PRs in order: the merge gate (`brain merge-ready`'s own checks, `fresh`
+  answered by the catch-up; a fork PR, or a branch that is the base, refused), main merged into the PR's head in a
+  scratch worktree with the merge driver, the views regenerated once and `brain check`, `brain merge-check`, the
+  targeted tests (`--strict`). A caught-up head is a new head, gated like any other: the public check's stamp before
+  its push for a public repo, its CI awaited, the merge gate again with nothing waived (its review carried only when
+  it is git's own merge of main into the reviewed head). Then `gh pr merge --match-head-commit` and the PR read back.
+  A PR that fails is marked with its reason and the next goes on; every `--batch N` PRs merged per repo and base (5),
+  the full suite runs once, a confirmed bisection names the culprit when it fails, and the base's PRs wait until
+  `brain ship --run --force`. `brain ship --list [--json]` shows the queue, `brain ship --run --dry-run` the plan.
+  The merger is a command:
   starting it as a service is the owner's decision ([`docs/merge-driver.md`](docs/merge-driver.md), « The merge
   queue »).
 - **`brain lot check [SESSION] [--branch B]... [--keep B]... [--repo-dir D]... [--scratch GLOB]... [--lot NAME]
