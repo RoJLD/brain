@@ -260,6 +260,7 @@ foreign one is never written here.
 | `sessions.app_meta` | the desktop app's session file | foreign, read only | `{}` is right: never written |
 | `codemap.read` | `code-map/<project>.json` | derived (local) | `{}` is right: rebuilt |
 | `codeindex.read_record` | `code-index.json` | derived (local) | `{}` is right: rebuilt |
+| `cbm.read_record` | `code-index/cbm/record.json` | derived (local) | `{}` is right: rebuilt (`brain index --backend cbm`) |
 | `forecast.load_latest` | `forecast/<project>/latest.json` | derived (local) | `{}` is right: rebuilt |
 | `quota.load_status` | the quota forecast | derived (local) | `{}` is right: rebuilt |
 | `update._read_cache` | `update.json` | derived (local) | `{}` is right: the tags are asked again |

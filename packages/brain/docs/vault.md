@@ -99,7 +99,7 @@ name its code writes there that the list does not hold, so a new store comes wit
 | `collector` | `$BRAIN_HOME/stacks/sovereign/data/otel-collector` | sealed | log | the telemetry collector's data |
 | `stacks` | `$BRAIN_HOME/stacks` | sealed | truth-local | the rendered stack bundles and their data |
 | `telemetry` | `$BRAIN_HOME/telemetry` | sealed | truth-local | the telemetry consent record and the report outbox |
-| `code-index` | `$BRAIN_HOME/code-index` | sealed | derived | the code index's bundles |
+| `code-index` | `$BRAIN_HOME/code-index` | sealed | derived | the code index's bundles; codebase-memory-mcp's binary, store and record (`cbm/`) |
 | `code-index-record` | `$BRAIN_HOME/code-index.json` | sealed | truth-local | the repos indexed |
 | `code-map` | `$BRAIN_HOME/code-map` | sealed | derived | the code maps |
 | `views` | `$BRAIN_HOME/views` | sealed | derived | the renderings as of a point, never in a repo (`brain reference --asof`: `reference/<project>/<point>/`) |
