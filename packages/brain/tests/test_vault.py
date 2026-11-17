@@ -7,6 +7,7 @@ import signal
 import subprocess
 import sys
 import tarfile
+import tempfile
 import time
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -90,16 +91,18 @@ def keygen(n: int, ad: vault.Adapter, deadline: float = GPG_KEYGEN_S, tmp: Path 
 
 
 def gpg_call(ad: vault.Gpg, call: str, *args, end: float, deadline: float, tmp: Path | None, **kwargs):
-    """``ad.<call>(*args, **kwargs)`` in a child Python process, its TEMP, TMP and TMPDIR the folder ``tmp`` (so the
-    gpg home it makes lands in pytest's basetemp; a short one, tmp_path_factory.mktemp: under a test's tmp_path, the
-    agent's socket path is past what gpg takes on Windows), waited on until ``end`` (time.monotonic). Past it, the child
-    is killed with its whole process tree (gpg, its agent), the agents of the homes it left are stopped and the
-    homes removed, and the test is skipped with its reason. A VaultError comes back as one (a timeout of gpg's own:
-    skipped); any other error as itself."""
+    """``ad.<call>(*args, **kwargs)`` in a child Python process (its result and log in ``tmp``, a folder of pytest's
+    basetemp), waited on until ``end`` (time.monotonic). The child keeps the system's temporary folder: gpg's agent
+    did not start under a pytest folder on the CI's Windows (its socket path too long). Past ``end``, the child is
+    killed with its whole process tree (gpg, its agent), the agents of the gpg homes that appeared during the call are
+    stopped and those homes removed, and the test is skipped with its reason. A VaultError comes back as one (a
+    timeout of gpg's own: skipped); any other error as itself."""
     assert tmp is not None, "a real gpg call needs a folder of pytest's basetemp"
     temp, run = Path(tmp), os.urandom(4).hex()
     result, child_log = temp / f"result-{run}.json", temp / f"child-{run}.log"
-    env = {**os.environ, "TEMP": str(temp), "TMP": str(temp), "TMPDIR": str(temp),
+    system_temp = Path(tempfile.gettempdir())
+    before = set(system_temp.glob("bv-*"))
+    env = {**os.environ,
            "PYTHONPATH": os.pathsep.join([str(Path(vault.__file__).resolve().parents[1]),
                                           *filter(None, [os.environ.get("PYTHONPATH")])])}
     job = {"cmd": ad.cmd, "call": call, "args": [_plain(a) for a in args],
@@ -112,7 +115,7 @@ def gpg_call(ad: vault.Gpg, call: str, *args, end: float, deadline: float, tmp: 
             child.wait(timeout=max(end - time.monotonic(), 0))
         except subprocess.TimeoutExpired:
             _kill_tree(child)
-            _remove_homes(ad, temp)
+            _remove_homes(ad, [h for h in system_temp.glob("bv-*") if h not in before])
             pytest.skip(f"gpg {call} did not end within {deadline:g} s (its agent or entropy): its process tree "
                         "killed, skipped, not waited on")
     if not result.is_file():
@@ -158,11 +161,11 @@ def _kill_tree(child: subprocess.Popen) -> None:
         pass
 
 
-def _remove_homes(ad: vault.Gpg, temp: Path) -> None:
-    """The gpg homes a killed child left under ``temp``: their agent stopped (one that left the process tree: a
-    daemon in its own session), then removed."""
+def _remove_homes(ad: vault.Gpg, homes: list[Path]) -> None:
+    """The gpg homes a killed child left: their agent stopped (one that left the process tree: a daemon in its own
+    session), then removed."""
     gpgconf = shutil.which("gpgconf")
-    for home in temp.glob("bv-*"):
+    for home in homes:
         if gpgconf:
             try:
                 subprocess.run([gpgconf, "--homedir", ad.home(home), "--kill", "gpg-agent"], capture_output=True,
@@ -201,6 +204,7 @@ def _alive(pid: int) -> bool:
 def test_a_gpg_call_that_hangs_is_killed_as_a_tree_and_skipped_with_its_reason(tmp_path):
     """On the deadline the child, and the 'gpg' it started, are killed; no gpg home is left; the skip says why."""
     pidfile = tmp_path / "gpg.pid"
+    before = set(Path(tempfile.gettempdir()).glob("bv-*"))
     start = time.monotonic()
     with pytest.raises(pytest.skip.Exception, match=r"did not end within 4 s \(its agent or entropy\): its process"):
         keygen(1, _sleeping_gpg(pidfile), deadline=4, tmp=tmp_path)
@@ -210,7 +214,7 @@ def test_a_gpg_call_that_hangs_is_killed_as_a_tree_and_skipped_with_its_reason(t
     while _alive(pid) and time.monotonic() < gone:
         time.sleep(0.2)
     assert not _alive(pid)
-    assert not list(tmp_path.rglob("bv-*"))   # no temporary gpg home left behind
+    assert set(Path(tempfile.gettempdir()).glob("bv-*")) <= before   # no temporary gpg home left behind
 
 
 def test_a_gpg_childs_outcome_is_its_value_a_skip_or_its_own_error(tmp_path):
@@ -231,7 +235,7 @@ def test_gpg_seal_then_open_with_each_of_two_recipients(brain, brain_home, tmp_p
     ad = vault.Gpg()
     if not ad.found():
         pytest.skip("gpg not available")
-    g = tmp_path_factory.mktemp("g")   # the gpg calls' temporary folder: short, in pytest's basetemp
+    g = tmp_path_factory.mktemp("g")   # the gpg calls' results and logs
     (a, a_pub), (b, b_pub), (c, _) = keygen(3, ad, tmp=g)
     keys = brain.root / "vault" / "keys"
     keys.mkdir(parents=True)
