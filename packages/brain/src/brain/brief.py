@@ -326,6 +326,18 @@ def after_merge(opts: dict) -> list[str]:
     return [str(x) for x in lines] if isinstance(lines, list) else list(AFTER_MERGE)
 
 
+def budget_warnings(budget: str, opts: dict) -> list[str]:
+    """What a brief's budget is warned about: not one of :data:`BUDGETS`, or above the ceiling (config.json
+    ``brief.ceiling``, else :data:`CEILING`): the expansion step of an unfinished task, not a start."""
+    if budget not in BUDGETS:
+        return [f"budget {budget}: the steps are {', '.join(BUDGETS)}"]
+    ceiling = opts.get("ceiling") if opts.get("ceiling") in BUDGETS else CEILING
+    if BUDGETS.index(budget) > BUDGETS.index(ceiling):
+        return [f"budget {budget} is above the ceiling {ceiling} (brief.ceiling): give it only to an unfinished "
+                "task expanded one step"]
+    return []
+
+
 def build(p: projects.Project, nid: str, *, task_class: str = "standard", budget: str = "", coordinator: str = "",
           notes: str = "", collisions_report=None) -> Brief:
     """The brief of item ``nid`` of project ``p``."""
@@ -345,13 +357,8 @@ def build(p: projects.Project, nid: str, *, task_class: str = "standard", budget
     if blockers:
         warnings.append(f"it depends on open item(s): {', '.join(blockers)}")
     cls = classes[task_class]
-    budget = budget or cls.get("budget") or "400k"
-    if budget not in BUDGETS:
-        warnings.append(f"budget {budget}: the steps are {', '.join(BUDGETS)}")
-    ceiling = opts.get("ceiling") if opts.get("ceiling") in BUDGETS else CEILING
-    if budget in BUDGETS and BUDGETS.index(budget) > BUDGETS.index(ceiling):
-        warnings.append(f"budget {budget} is above the ceiling {ceiling} (brief.ceiling): give it only to an "
-                        "unfinished task expanded one step")
+    budget = budget or cls.get("budget") or CEILING
+    warnings += budget_warnings(budget, opts)
     coordinator = coordinator or os.environ.get("CLAUDE_CODE_HOST_SESSION_ID", "")
     if not coordinator:
         warnings.append("no coordinator id: pass --coordinator (the app's local_ id of the session that reviews)")
