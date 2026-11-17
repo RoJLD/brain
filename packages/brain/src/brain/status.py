@@ -160,7 +160,7 @@ def audit_of(p: projects.Project, detail: int = 0) -> dict:
     """The findings by severity, measured as brain audit --json measures them (every repo of the project); with
     ``detail``, each repo's counts and the first ``detail`` findings, P0 first (the cockpit's audit panel)."""
     try:
-        cfgs = projects.repos_of(p)
+        cfgs = projects.repos_of(p, audit=True)   # as brain audit measures them: by kind
         trees, _, errors = audit.trees_now(cfgs)
         res = audit.measure(p, cfgs, trees)
     except (audit.AuditError, projects.RepoError) as exc:

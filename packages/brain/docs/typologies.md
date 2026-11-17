@@ -104,6 +104,35 @@ brain typologies packs [--json]                     # the typology packs, the en
 brain typologies propose shop [--apply] [--json]    # what shop's typologies propose; --apply writes packs.yaml
 ```
 
+### The software pack
+
+The software parts of the core are the `software` pack's (`wi-brain-software-pack`, TYPO-1, spec-brain-typology-packs
+§1.2 and door 3); git as the Brain's own substrate (its stores, answer batches by PR, the merge driver) stays in the
+core whatever the kind.
+
+- **Its registry keys, grouped.** `repos`, `audit`, `code_index` and `production` (its `registry` part) go under a
+  project's `software:`; at the top level, their place before the packs, they stay accepted as aliases for era 1. A
+  key given in both places is an error (`brain check`), an unknown key under `software:` a note in read mode:
+
+  ```yaml
+  shop:
+    root: ../shop
+    lifecycle: {typologies: [service]}
+    software:
+      repos: [., {path: ../shop-data, name: shop-data}]
+      production: [../shop-live]
+      code_index: [.]
+  ```
+
+- **Its code duties, by kind.** `brain audit` audits a project's root as a code repo by default, and `brain audit
+  --diff` (the scout) runs, only when the software pack applies to it: no typology declared, or one the catalog does
+  not know (the rule before the catalog, as for the clauses of done), or a kind that meets the pack's typologies (a
+  sub-profile its entry's). A project of another kind (`strategy`, `creation`...) is audited for no code repo, said
+  in the report (`not_software` in `--json`), and the scout passes saying why; a project that declares `repos` opts in
+  whatever its kind. `brain index` reads `code_index`, which a project declares only when it has code.
+- **Its clauses of done, standards catalog, layers** (`code`, `docs_tests`, `features`), gates, doors, roles and
+  guards (`branches`) are its parts in `typology_packs.yaml` (`brain typologies packs`).
+
 ## Stages
 
 The lifecycle's stages (spec-brain-product-lifecycle LC-2): `explore`, `build`, `launch`, `grow`, `mature`, `sunset`,
