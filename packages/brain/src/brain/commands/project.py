@@ -5,18 +5,24 @@ or a new one from a template, placed in the scope tree, a plan then --apply."""
 
 from __future__ import annotations
 
-from .. import init, project_add, project_new
+from .. import init, langs, project_add, project_new
 
 ORDER = 201   # its place in brain --help's list of commands (brain.commands), after brain init
 USAGE_ORDER = 231   # its usage lines' place in brain --help's epilog
 USAGE = """\
   brain project new DIR --kind K [--kind K]... [--stage prototype|mvp|v1|scale] [--template NAME|DIR]
+                 [--lang py|ts [--tool SLOT=TOOL]...] [--floor CLASS | --residency] [--personal-data]
                  [--name NAME] [--owner NAME] [--apply]   the new-project wizard: what it produces (ids of the
-                 typology catalog, brain typologies: code products and research first, STD-5), its stage, then a
-                 plan (the layers its kinds are proposed, the template, brain init's plan) and --apply: its brain
-                 written by brain init from the first kind's profile template, its registry entry recording
-                 lifecycle: {typologies, stage}; in a folder that holds its brain already, the plan shows what the
-                 answers change there (written by a PR of that brain, never here)
+                 typology catalog, brain typologies: code products and research first, STD-5), its stage, its
+                 language and each check's tool (lint, typecheck, test, coverage, format: the language's usual one
+                 unless --tool names another, none for none), its data (the class floor, a residency clause,
+                 personal data: the privacy standards included; a floor its own stores are under, which brain
+                 check refuses, is refused with them), then a plan (the layers its kinds are proposed, the tools and
+                 their reports, those the template's CI does not write, the standards rows it follows and those its
+                 tools run, the template, brain init's plan) and --apply: its brain written by brain init from the
+                 first kind's profile template, its registry entry recording lifecycle: {typologies, stage}, its
+                 repo's lang and tools, classes: {floor} and standards include; in a folder that holds its brain
+                 already, the plan shows what the answers change there (written by a PR of that brain, never here)
   brain project add NAME (--read | --existing DIR [--store PATH] | --template T --dir DIR) [--parent NODE]
                  [--floor CLASS] [--title TEXT] [--no-notes] [--apply]   a project registered in this brain's
                  projects.yaml
@@ -45,6 +51,17 @@ def register(sub, ctx) -> None:
     new.add_argument("--template", help="the profile template (default: the first kind's)")
     new.add_argument("--name", default="brain", help="its name in its projects.yaml (default brain)")
     new.add_argument("--owner", help="the person or team who decides for it (brain init --owner)")
+    new.add_argument("--lang", choices=langs.LANGS, help="the language of its own repo (repos[].lang): its tools "
+                                                         "are asked next")
+    new.add_argument("--tool", dest="tools", action="append", metavar="SLOT=TOOL",
+                     help="a check's tool (slots: lint, typecheck, test, coverage, format; TOOL none for none; "
+                          "repeatable); a slot not named takes the language's usual tool")
+    new.add_argument("--floor", help="the class floor of its data (classes: {floor: CLASS}; brain classes): "
+                                     "refused when its own stores are under it (brain check refuses them)")
+    new.add_argument("--residency", action="store_true", help="its data are under a residency clause: the floor "
+                                                              "resident, refused as --floor is")
+    new.add_argument("--personal-data", action="store_true", help="it handles personal data: the privacy standards "
+                                                                  "join its selection's include")
     new.add_argument("--apply", action="store_true", help="write it (default: the plan)")
     add = psub.add_parser("add", help="a project registered in this brain's projects.yaml: read only, an existing "
                                       "instance or a new one from a template; a plan, then --apply")

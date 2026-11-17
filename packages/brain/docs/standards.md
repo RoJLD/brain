@@ -160,7 +160,12 @@ repos:
 A report path is relative to the repo's registered checkout and stays inside it. The engine **reads** the reports and
 runs no tool: the project's CI or its developer writes them (running the declared commands, under the guards, is
 `wi-brain-lang-adapters-exec`, after a test phase). `brain.langs.DEFAULTS` names the usual tools of Python and
-TypeScript and how each writes its report; the messages quote them, nothing is assumed from them.
+TypeScript and how each writes its report; the messages quote them, nothing is assumed from them. `brain project new
+--lang py|ts [--tool SLOT=TOOL]...` writes a new project's `tools:` from `brain.langs.TOOLS` (each known tool's report
+under `reports/` and its format; the language's usual tools unless named, Python's tests and coverage being the
+reports the code templates' CI writes; a tool with an exit code only is named and not declared; the plan names the
+declared reports that CI does not write), and `--personal-data` adds the privacy rows to its selection's `include` (README, « brain project
+new »).
 
 - `brain audit` measures `lang.report` (P2, never in the scout, listed only for a repo that declares `tools:`): a
   report missing or unreadable, no test run, failed tests, lint, type or format findings, coverage under 50 % (the

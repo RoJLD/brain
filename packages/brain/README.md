@@ -781,8 +781,31 @@ profile template (`trading` takes `research`'s; `--template` names another), its
 `lifecycle: {typologies, stage}` (the lifecycle's stage: `mvp` reads as `build`), which `brain item clauses` reads.
 Run again in a folder that holds that brain, the plan shows what the answers change in its entry (typologies, stage,
 the standards' stage, the template) and writes nothing: an existing registry changes by a branch and a PR. The cockpit's Setup page
-offers it as « A new project » (without `--owner`, the owner of this machine's personal brain). The languages and tools, the data classes and the pack, procedures and permissions it
-will propose are its later slices.
+offers it as « A new project » (without `--owner`, the owner of this machine's personal brain).
+
+Its second slice (`wi-brain-project-wizard-tools`) asks the languages and tools and the data:
+`[--lang py|ts [--tool SLOT=TOOL]...] [--floor CLASS | --residency] [--personal-data]`. `--lang` is the language of the
+brain's own repo (`repos[].lang`); each check's slot (`lint`, `typecheck`, `test`, `coverage`, `format`) takes the
+language's usual tool (py: ruff, pytest, pytest-cov, `ruff format`; ts: eslint, vitest, c8, prettier) unless `--tool
+SLOT=TOOL` names another the wizard knows (`brain.langs.TOOLS`: mypy, jest, tsc...) or `none`. A tool that writes a
+report is written to the repo's `tools:` (its report under `reports/` and its format, which `brain audit` and `brain
+standards check` read); one with an exit code only (`ruff format --check`, `prettier --check .`, `tsc --noEmit`) is
+named in the plan and not declared. The Python defaults for the tests and the coverage write the reports the code
+templates' CI writes (`reports/junit.xml`, `reports/coverage.xml`); the plan names the declared reports that CI does
+not write (ruff's, mypy's: `brain audit` reads them as missing until a CI step runs their command), a template that
+writes no CI, and a language the CI does not run (it runs Python: with `--lang ts` none of the reports is written until
+its steps are replaced). `--floor CLASS` writes `classes: {floor: CLASS}` (`brain classes`; `secret` is refused) and
+`--residency` the floor `resident`; the floor is checked against the brain's own stores, since `brain check` refuses a
+store under its project's floor: a floor above one of them (with the engine's templates, the repo is `private`, memory
+and the decisions `confidential`, the machine's stores `sealed`, so `confidential` and up, `--residency` included) is
+refused by the plan, naming the stores and the floors they hold: declare them at that class first (`config.json`
+`classes.stores`), then raise the floor by a PR. `--personal-data` adds the privacy rows (`sw-privacy-by-design`,
+`sw-retention`, `sw-erasure`, `sw-crash-reports`) to its standards selection's `include` (merged into an include the
+template writes; a registry shape it cannot merge into is named by the plan and refused by `--apply`), required from
+its first stage. The plan shows the tools with their reports and commands, the standards rows the selection makes
+required at its stage, those its tools run and those whose check does not cover its language; a re-run in the folder
+that holds the brain shows what the answers change (language, each slot's tool, report and format, floor, include)
+and writes nothing. The pack, procedures and permissions it will propose are its later slice.
 
 `brain project add NAME (--read | --existing DIR [--store PATH] | --template T --dir DIR) [--parent NODE] [--floor
 CLASS] [--title TEXT] [--no-notes] [--apply]` registers a project in a brain's `projects.yaml` (`wi-brain-project-add`),
