@@ -131,12 +131,7 @@ def select(root: Path, ids: list[str], spec: str = "", project: str = "") -> lis
     """The DDRs to apply: those named (each must be answered), else every answered one of ``project`` (a DDR that
     names another project in links.project is left out); ``spec``: those naming it."""
     if ids:
-        out = []
-        for ref in ids:
-            ddr = decisions.find(root, ref)[1]
-            if ddr.get("status") != "answered":
-                raise ApplyError(f"{ddr['id']} is {ddr.get('status')}: only an answered decision is applied")
-            out.append(ddr)
+        out = [_named(root, ref) for ref in ids]
     else:
         out = [d for _, d in decisions.load(root) if d.get("status") == "answered"
                and str((d.get("links") or {}).get("project") or project) == project]
@@ -145,6 +140,19 @@ def select(root: Path, ids: list[str], spec: str = "", project: str = "") -> lis
     if not out:
         raise ApplyError("no answered decision to apply" + (f" naming {spec}" if spec else ""))
     return sorted(out, key=lambda d: (_code_key(d), str(d.get("id"))))
+
+
+def _named(root: Path, ref: str) -> dict:
+    ddr = decisions.find(root, ref)[1]
+    if ddr.get("status") != "answered":
+        raise ApplyError(f"{ddr['id']} is {ddr.get('status')}: only an answered decision is applied")
+    return ddr
+
+
+def _unknown(ddrs: list[dict], known: set[str]) -> list[str]:
+    """The items and specs the DDRs name that the store has not."""
+    named = {x for d in ddrs for k in ("items", "specs") for x in ((d.get("links") or {}).get(k) or [])}
+    return sorted(named - known)
 
 
 def _code_key(ddr: dict) -> tuple:
@@ -282,8 +290,7 @@ def plan(root: Path, store: Path, decision_log: Path, ddrs: list[dict], *, title
     curated = graph.node_index(store, generated=False)   # the items set_item can write
     known = set(curated) | {i for i, (_, n) in index.items() if n.get("type") == "Spec"}
     answers = [_answer(d, known) for d in ddrs]
-    unknown = sorted({x for d in ddrs for k in ("items", "specs") for x in ((d.get("links") or {}).get(k) or [])
-                      if x not in known})
+    unknown = _unknown(ddrs, known)
     day = day or date.today().isoformat()
     when = max(a.day for a in answers) or day
     title = _norm(title) or f"{_who(answers)}'s answers of {when} to {_codes(answers)}"
