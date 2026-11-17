@@ -156,11 +156,17 @@ def errors(data: dict, tree, cfg_data: dict | None = None) -> list[str]:
     members (a person or a group), a cycle among groups; a grant naming a person or a group (exactly one) that exists,
     a node of the scope tree by its id (an alias is named as one), a grade (an unknown one noted, strict an error), a
     grant that grants nothing, ``until`` before ``since``; config.json ``grades`` naming no grade."""
-    people = {p.get("person_id") for p in _list(data, "people") if isinstance(p, dict)}
+    people = {p["person_id"] for p in _list(data, "people") if isinstance(p, dict) and isinstance(p.get("person_id"),
+                                                                                                  str)}
     out = _group_errors(data, people)
     gs = groups(data)
     for i, m in enumerate(_list(data, "memberships")):
-        if not isinstance(m, dict) or m.get("organization") or m.get("tenant"):
+        if not isinstance(m, dict):
+            continue
+        if m.get("organization") or m.get("tenant"):
+            out += [f"memberships[{i}]: an organization's or a tenant's membership takes a person_id and roles, not "
+                    f"{k} (another identity domain: no grade on the scope tree)"
+                    for k in ("group", "grade", "scope", "since", "until") if k in m]
             continue
         out += _grant_errors(f"memberships[{i}]", m, people, gs, tree)
     given = (cfg_data or {}).get("grades")
@@ -198,25 +204,27 @@ def _group_errors(data: dict, people: set) -> list[str]:
 
 
 def _cycles(gs: dict[str, list[str]]) -> list[list[str]]:
-    """Each cycle among groups once (a group listing itself is said apart), as the path that closes it."""
+    """A cycle among groups for each edge that closes one in a depth-first walk (a group listing itself is said
+    apart), as the path that closes it: iterative and linear in the groups and their members, however deep or
+    shared the nesting."""
     found: list[list[str]] = []
-    keys: set[frozenset] = set()
-
-    def walk(g: str, path: list[str]) -> None:
-        for x in gs.get(g, []):
-            if x not in gs or x == g:
-                continue
-            if x in path:
-                cycle = path[path.index(x):] + [x]
-                key = frozenset(cycle)
-                if key not in keys:
-                    keys.add(key)
-                    found.append(cycle)
-                continue
-            walk(x, path + [x])
-
-    for g in gs:
-        walk(g, [g])
+    state: dict[str, int] = {}   # 1: on the walk's path, 2: done
+    for start in gs:
+        if start in state:
+            continue
+        path, stack = [start], [iter(gs[start])]
+        state[start] = 1
+        while stack:
+            x = next(stack[-1], None)
+            if x is None:
+                state[path.pop()] = 2
+                stack.pop()
+            elif x in gs and x != path[-1] and state.get(x) == 1:
+                found.append(path[path.index(x):] + [x])
+            elif x in gs and x not in state:
+                state[x] = 1
+                path.append(x)
+                stack.append(iter(gs[x]))
     return found
 
 
@@ -225,14 +233,15 @@ def _grant_errors(where: str, m: dict, people: set, gs: dict, tree) -> list[str]
     person, group = m.get("person_id"), m.get("group")
     if (person is None) == (group is None):
         out.append(f"{where}: names a person_id or a group, exactly one")
+    elif group is not None and not isinstance(group, str):
+        out.append(f"{where}: group is a group's id")
     elif group is not None and group not in gs:
         out.append(f"{where}: group {group!r} is not in groups")
-    scope, project = m.get("scope"), m.get("project")
-    if scope is not None and project is not None and scope != project:
-        out.append(f"{where}: scope and project name two nodes ({scope!r}, {project!r}): project is scope's synonym")
-    node = scope if scope is not None else project
-    if node is not None:
-        out += _node_errors(where, node, tree)
+    if "scope" in m and "project" in m and m["scope"] != m["project"]:
+        out.append(f"{where}: scope and project name two nodes ({m['scope']!r}, {m['project']!r}): project is "
+                   "scope's synonym")
+    if "scope" in m or "project" in m:
+        out += _node_errors(where, m["scope"] if "scope" in m else m["project"], tree)
     grade = m.get("grade")
     if grade is not None and grade not in GRADES:
         out += schema.tolerate(f"{where}: grade {grade!r} is not one of {', '.join(GRADES)} (read as none, never "

@@ -63,7 +63,7 @@ def _releaser_ids(data: dict) -> set[str]:
 
     return {identity._id(m) for m in identity._list(data, "memberships")
             if isinstance(m.get("roles"), list) and RELEASER in m["roles"]
-            and not (identity.node_of(m) or m.get("organization") or m.get("tenant"))} - {None}
+            and not (identity.node_of(m) or m.get("organization") or m.get("tenant")) and identity.current(m)} - {None}
 
 
 def _bare(key: str) -> str:

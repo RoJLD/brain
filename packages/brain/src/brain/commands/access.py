@@ -27,36 +27,41 @@ def _explain(args, root: Path) -> int:
     cfg = config.load(root)
     m = identity.load(root)
     tree = scopes.load(root, cfg)
-    owner = config.owner_of()
+    owner = config.owner(cfg)
     if m is None:   # a solo brain: nothing changes
         if args.person != owner:
-            print(f"brain: no {identity.FILE}: {args.person!r} is no member (a solo brain: its owner is "
-                  f"{owner or 'config.json identity.owner'})", file=sys.stderr)
-            return 1
+            return _fail(args, f"no {identity.FILE}: {args.person!r} is no member (a solo brain: its owner is "
+                               f"{owner or 'config.json identity.owner'})")
         line = (f"{owner}: no {identity.FILE}, a solo brain: the owner's terminal has every verb on every node; an "
                 "agent's session is held by the owner's gestures as before (nothing changes)")
         print(json.dumps({"person": owner, "solo": True}) if args.json else line)
         return 0
     if args.person not in access.people(m.data):
-        print(f"brain: {args.person!r} is not in {identity.FILE} people", file=sys.stderr)
-        return 1
+        return _fail(args, f"{args.person!r} is not in {identity.FILE} people")
     try:
         nodes = [scopes.resolve(tree, args.scope)] if args.scope else access.nodes_with_grants(m.data, args.person,
                                                                                                   tree)
     except scopes.ScopeError as exc:
-        print(f"brain: {exc}", file=sys.stderr)
-        return 1
+        return _fail(args, str(exc))
     rows = [access.explain(m.data, args.person, tree, n, args.client or "") for n in nodes]
     if args.json:
-        print(json.dumps({"person": args.person, "solo": False, "nodes": rows, "problems": m.errors},
+        print(json.dumps({"person": args.person, "solo": False, "nodes": rows, "problems": m.findings},
                          ensure_ascii=False, indent=1))
         return 0
     labels = access.labels(cfg.data)
     for r in rows:
         _print(r, tree, labels, args.lang)
-    if m.errors:
-        print(f"note: {identity.FILE} has {len(m.errors)} problem(s): brain identity check")
+    if m.findings:
+        print(f"note: {identity.FILE} has {len(m.findings)} problem(s): brain identity check")
     return 0
+
+
+def _fail(args, why: str) -> int:
+    """Exit 1, saying why on stderr; with --json, the reason as {"error"} on stdout too."""
+    print(f"brain: {why}", file=sys.stderr)
+    if args.json:
+        print(json.dumps({"error": why}, ensure_ascii=False))
+    return 1
 
 
 def _print(r: dict, tree, labels: dict, lang: str) -> None:
@@ -76,6 +81,9 @@ def _lines(r: dict) -> list[str]:
                                                  "know: kept, gives nothing)") for role, src in r["roles"].items()]
     out += [f"unknown grade {u}: read as none, never above" for u in r["unknown_grades"]]
     out += [f"not counted today: {n}" for n in r["not_counted"]]
+    if "decide" in r["verbs"]:
+        out.append("(a signature verifies only a decider granted to the person by name, on the whole brain or the "
+                   "DDR's own node: brain identity check)")
     c = r.get("client")
     if c:
         out.append(f"an agent of {c['name']} for them: {', '.join(c['verbs']) or 'nothing'} (ceiling "

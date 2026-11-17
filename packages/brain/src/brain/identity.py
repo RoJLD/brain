@@ -27,7 +27,7 @@ from __future__ import annotations
 import json
 import re
 import shutil
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import date, datetime
 from pathlib import Path
 
@@ -51,6 +51,13 @@ class Members:
     file: Path
     data: dict
     errors: list[str]
+    # the access fields' reference findings (brain.access): reported with the errors by problems(), never a gate of
+    # what reads the people and their keys (tagsig's release signers, attach): a group's typo never moves them
+    access: list[str] = field(default_factory=list)
+
+    @property
+    def findings(self) -> list[str]:
+        return self.errors + self.access
 
 
 # --- members.yaml ---
@@ -75,11 +82,10 @@ def load(root: Path) -> Members | None:
     data = plain(data)
     errors = [f"{FILE}: {e}" for e in schema.check("members", data, schema.mode())[0]]
     errors += [f"{FILE}: {e}" for e in _references(data)]
-    errors += [f"{FILE}: {e}" for e in _access(data, root)]
     text = f.read_text(encoding="utf-8", errors="replace")
     errors += [f"{FILE}:{line}: matches secret pattern {name} (public keys only)"
                for line, name in secretscan.scan_lines(text)]
-    return Members(f, data, errors)
+    return Members(f, data, errors, [f"{FILE}: {e}" for e in _access(data, root)])
 
 
 def plain(value):
@@ -157,16 +163,32 @@ def _decides(membership: dict, project: str) -> bool:
         return False
     if membership.get("organization") or membership.get("tenant"):
         return False
-    return node_of(membership) in ("", project)
+    return node_of(membership) in ("", project) and current(membership)
+
+
+NO_NODE = "<no node>"
 
 
 def node_of(membership: dict) -> str:
-    """The node a membership names: its ``scope``, else its ``project`` (scope's synonym), '' for the whole brain
-    (none, or ``global``). A value of another type names no node a signature check accepts (the schema says why)."""
-    node = membership.get("scope", membership.get("project"))
-    if node is None or node == "global":
+    """The node a membership names: its ``scope`` when the key is there, else its ``project`` (scope's synonym); ''
+    for the whole brain (neither key, or ``global``). A key there with a value of another type, null included, names
+    no node (:data:`NO_NODE`): never the whole brain (the schema says why)."""
+    if "scope" not in membership and "project" not in membership:
         return ""
-    return node if isinstance(node, str) and node else "<no node>"
+    node = membership["scope"] if "scope" in membership else membership["project"]
+    if node == "global":
+        return ""
+    return node if isinstance(node, str) and node else NO_NODE
+
+
+def current(membership: dict, today: str = "") -> bool:
+    """Whether a membership counts today: its ``since`` reached and its ``until`` not passed (dates as written; one of
+    another type counts for nothing). A decider or a releaser out of its dates verifies nothing, as a revoked key."""
+    today = today or date.today().isoformat()
+    since_, until = membership.get("since"), membership.get("until")
+    if any(v is not None and not isinstance(v, str) for v in (since_, until)):
+        return False
+    return (not since_ or since_ <= today) and (not until or today <= until)
 
 
 def _signing(person: dict) -> list[dict]:
@@ -276,7 +298,7 @@ def problems(root: Path, project: str = "") -> list[str]:
     m = load(root)
     if m is None:
         return []
-    out = list(m.errors)
+    out = m.findings
     keys = deciders(m.data, project)
     if not m.errors and not any(keys.values()):
         out.append(f"{FILE}: no person has the {DECIDER} role with a signing key: no answer can be verified")

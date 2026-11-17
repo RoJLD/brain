@@ -253,8 +253,9 @@ memberships:                              # each one a grant: a person or a grou
   owner-decides answer, as above), `releaser` (signs release tags), `auditor` (reads the node's ledgers and access
   log, not its stores). A role named as a grade (`owner`, `viewer`) reads as that grade, `member` as `viewer`.
   The signatures stay narrow: a `decider` or `releaser` granted on a node (`scope:`) is that node's, never the whole
-  brain's, and a role granted to a group verifies no signature yet (the deciders and release signers are people
-  named one by one).
+  brain's (a `scope` or `project` of the wrong type, null included, names no node); one out of its `since` and
+  `until` verifies nothing, as a revoked key; and a role granted to a group verifies no signature yet (the deciders
+  and release signers are people named one by one). `brain access explain` says so beside a `decide`.
 - **A node** is named by its id (`scope:`, `project:` its synonym), a container of `scopes.yaml` or a project of the
   registry: a grant holds down the tree, by union, the highest grade winning. An alias of a node is refused there (a
   grant names the frozen id). A membership of an organization or a tenant is another identity domain: no grade here.
@@ -265,8 +266,10 @@ memberships:                              # each one a grant: a person or a grou
   separate reads (a clone is a copy: a check cannot keep a member from reading it).
 
 `brain check` and `brain identity check` add the references (an unknown group, member or node, a cycle, a grant to a
-person and a group at once, one that grants nothing, `until` before `since`) to the other identity findings:
-warnings, errors under `identity.require_signed`. `brain access explain PERSON [--scope REF] [--client C] [--lang fr]
+person and a group at once, one that grants nothing, `until` before `since`, a grade, a group or a scope on an
+organization's or tenant's membership) to the other identity findings: warnings, errors under
+`identity.require_signed`; they never move the release signers nor make `brain identity attach` refuse (those read
+the people and their keys). `brain access explain PERSON [--scope REF] [--client C] [--lang fr]
 [--json]` prints a person's grade on a node (Global and each node a grant of theirs names, by default), the verbs it
 gives with the grant behind each (direct, or through which groups), the roles, the grants that do not count today,
 and, with `--client`, an agent's reach. Read only, zero token. **A solo brain** (no `members.yaml`, or one owner on

@@ -78,7 +78,7 @@ def test_grades_are_ordered_and_each_includes_the_one_below():
 def test_the_members_file_with_groups_and_grants_is_valid(brain):
     brain()
     m = identity.load(brain.root)
-    assert m.errors == []
+    assert m.findings == []
     assert access.memberships_of("alice", m.data) == {"finance-team": ["finance-team"],
                                                      "staff": ["finance-team", "staff"]}
 
@@ -119,7 +119,7 @@ def test_an_agent_reaches_its_persons_verbs_within_its_clients_ceiling(brain):
 def test_legacy_roles_read_as_grades_never_above(brain):
     brain("v: 1\npeople:\n  - {person_id: ada, name: Ada}\nmemberships:\n  - {person_id: ada, roles: [member]}\n"
           "  - {person_id: ada, project: site, roles: [decider]}\n")
-    assert identity.load(brain.root).errors == []
+    assert identity.load(brain.root).findings == []
     assert _x("ada", "global", brain.root)["grade"] == "viewer"   # member: viewer, never above
     site = _x("ada", "site", brain.root)
     assert "decide" in site["verbs"] and site["roles"] == {"decider": ["decider on site, memberships[1], direct"]}
@@ -128,7 +128,7 @@ def test_legacy_roles_read_as_grades_never_above(brain):
 def test_an_organization_or_tenant_membership_grants_nothing_here(brain):
     brain("v: 1\npeople:\n  - {person_id: ada, name: Ada}\norganizations:\n  - {id: acme-org, name: Acme, kind: tenant}"
           "\nmemberships:\n  - {person_id: ada, tenant: acme-org, roles: [owner]}\n")
-    assert identity.load(brain.root).errors == []
+    assert identity.load(brain.root).findings == []
     assert _x("ada", "site", brain.root)["grade"] == ""
 
 
@@ -148,7 +148,7 @@ def test_an_organization_or_tenant_membership_grants_nothing_here(brain):
 ])
 def test_members_reference_checks(brain, extra, needle):
     brain(MEMBERS + extra)
-    errors = identity.load(brain.root).errors
+    errors = identity.load(brain.root).findings
     assert any(needle in e for e in errors), errors
 
 
@@ -162,18 +162,18 @@ def test_members_reference_checks(brain, extra, needle):
 def test_group_checks(brain, groups, needle):
     brain("v: 1\npeople:\n  - {person_id: carol, name: Carol}\n  - {person_id: alice, name: Alice}\ngroups:\n"
           + groups + "memberships:\n  - {person_id: carol, roles: [owner]}\n")
-    errors = identity.load(brain.root).errors
+    errors = identity.load(brain.root).findings
     assert any(needle in e for e in errors), errors
 
 
 def test_an_unknown_grade_is_a_note_read_as_none_never_above(brain, capsys, monkeypatch):
     brain(MEMBERS + "  - {person_id: carol, scope: site, grade: steward}\n")
-    assert identity.load(brain.root).errors == []   # read mode: a newer brain's grade, noted
+    assert identity.load(brain.root).findings == []   # read mode: a newer brain's grade, noted
     assert "grade 'steward' is not one of" in capsys.readouterr().err
     x = _x("carol", "site", brain.root)
     assert x["grade"] == "owner" and x["unknown_grades"] == ["steward (steward on site, memberships[5], direct)"]
     monkeypatch.setenv("BRAIN_STRICT", "1")
-    assert any("grade 'steward' is not one of" in e for e in identity.load(brain.root).errors)
+    assert any("grade 'steward' is not one of" in e for e in identity.load(brain.root).findings)
 
 
 def test_the_findings_are_warnings_unless_require_signed(brain):
@@ -193,7 +193,7 @@ def test_a_members_file_of_before_the_grades_reads_as_before(brain):
     older = Path(__file__).parent / "fixtures" / "formats" / "members" / "v1" / "older.yaml"
     brain(older.read_text(encoding="utf-8"))
     m = identity.load(brain.root)
-    assert m.errors == []
+    assert m.findings == []
     assert list(identity.deciders(m.data)) == ["ada"]
     assert _x("ada", "site", brain.root)["grade"] == "owner"
 
@@ -206,7 +206,7 @@ def test_grades_labels_are_renamed_by_config_json(brain, capsys):
     cfg = config.load(brain.root)
     assert access.labels(cfg.data)["contributor"] == {"en": "Contributor", "fr": "Chercheur"}
     assert config.check(brain.root) == []   # the key is known (an optional key of config.json)
-    assert identity.load(brain.root).errors == []   # steward: noted, a brain's own grade is not built
+    assert identity.load(brain.root).findings == []   # steward: noted, a brain's own grade is not built
     assert "'steward' is no grade" in capsys.readouterr().err
     assert cli.main(["access", "explain", "dave", "--scope", "ledger", "--lang", "fr"]) == 0
     assert "grade contributor (Chercheur)" in capsys.readouterr().out
@@ -248,7 +248,7 @@ def test_a_solo_brain_sees_no_change(brain, capsys):
     assert json.loads(capsys.readouterr().out) == {"person": "carol", "solo": True}
     assert cli.main(["access", "explain", "zed"]) == 1
     brain("v: 1\npeople:\n  - {person_id: carol, name: Carol}\nmemberships:\n  - {person_id: carol, roles: [owner]}\n")
-    assert identity.load(brain.root).errors == []   # one owner on Global: the same, said
+    assert identity.load(brain.root).findings == []   # one owner on Global: the same, said
     assert _x("carol", "site", brain.root)["grade"] == "owner"
 
 
@@ -270,9 +270,99 @@ def test_a_grant_on_a_node_never_widens_who_verifies_a_signature(brain):
           "memberships:\n  - {person_id: carol, scope: finance, roles: [decider, releaser]}\n"
           "  - {group: crew, roles: [decider, releaser]}\n  - {person_id: carol, scope: global, roles: [owner]}\n")
     m = identity.load(brain.root)
-    assert m.errors == []
+    assert m.findings == []
     assert identity.deciders(m.data) == {}   # neither is a decider of the whole brain
     assert list(identity.deciders(m.data, "finance")) == ["carol"]   # the node's own
     assert tagsig._releaser_ids(m.data) == set()
     assert identity.node_of({"scope": "global"}) == "" and identity.node_of({"project": "site"}) == "site"
     assert identity.node_of({"scope": 3}) == "<no node>"   # a wrong type names no node: never the whole brain
+
+
+KEY = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIExampleExampleExampleExampleExampleExample0 x@y"
+
+
+def _signers(brain, grant: str):
+    from brain import tagsig
+    brain("v: 1\npeople:\n  - {person_id: alice, name: Alice, keys: {signing: [{key: \"" + KEY + "\"}]}}\n"
+          "memberships:\n  - " + grant + "\n")
+    m = identity.load(brain.root)
+    return list(identity.deciders(m.data)), tagsig._releaser_ids(m.data)
+
+
+@pytest.mark.parametrize("grant", [
+    "{person_id: alice, scope: null, project: finance, roles: [decider, releaser]}",   # scope there, null: no node
+    "{person_id: alice, project: null, roles: [decider, releaser]}",
+    "{person_id: alice, roles: [decider, releaser], until: 2020-01-01}",   # expired
+    "{person_id: alice, roles: [decider, releaser], since: 2099-01-01}",   # not started
+])
+def test_a_signer_out_of_its_node_or_its_dates_verifies_nothing(brain, grant):
+    assert _signers(brain, grant) == ([], set())
+
+
+def test_a_signer_within_its_dates_still_verifies(brain):
+    assert _signers(brain, "{person_id: alice, roles: [decider, releaser], since: 2020-01-01, until: 2099-12-31}") \
+        == (["alice"], {"alice"})
+
+
+def test_an_access_warning_never_moves_the_release_signers_nor_refuses_attach(brain):
+    """A group's typo is an access finding: reported, but neither the release signers (tagsig reads members.yaml
+    only when it has no error) nor brain identity attach depend on it."""
+    from brain import tagsig
+    brain("v: 1\npeople:\n  - {person_id: alice, name: Alice, keys: {signing: [{key: \"" + KEY + "\"}]}}\n"
+          "groups:\n  - {id: crew, members: [alicee]}\n"
+          "memberships:\n  - {person_id: alice, roles: [decider, releaser]}\n  - {group: crew, grade: viewer}\n")
+    m = identity.load(brain.root)
+    assert m.errors == [] and any("member 'alicee'" in f for f in m.access)
+    assert tagsig._from_members(brain.root) is not None   # the signers still come from members.yaml
+    assert any("member 'alicee'" in w for w in identity.check(brain.root)[1])   # and the finding is reported
+
+
+@pytest.mark.parametrize("text", [
+    "memberships:\n  - {group: [1], grade: viewer}\n",
+    "memberships:\n  - {group: {a: 1}, grade: viewer}\n",
+    "groups:\n  - {id: crew, members: [carol]}\nmemberships:\n  - {group: crew, grade: viewer}\n"
+    "  - {person_id: [carol], grade: viewer}\n",
+])
+def test_a_value_of_the_wrong_type_is_reported_never_a_crash(brain, capsys, text):
+    brain("v: 1\npeople:\n  - {person_id: carol, name: Carol}\n  - {person_id: [x], name: X}\n" + text)
+    m = identity.load(brain.root)
+    assert m.findings != []
+    assert cli.main(["access", "explain", "carol"]) == 0
+    assert cli.main(["identity", "check"]) == 0   # warnings: nothing refused
+
+
+def test_deep_or_shared_group_nesting_is_checked_in_linear_time(brain):
+    import time
+    chain_ = "".join(f"  - {{id: g{i}, members: [g{i + 1}]}}\n" for i in range(1500)) + "  - {id: g1500, members: [carol]}\n"
+    diamond = "".join(f"  - {{id: d{i}, members: [d{i + 1}a, d{i + 1}b]}}\n  - {{id: d{i + 1}a, members: [d{i + 1}]}}\n"
+                      f"  - {{id: d{i + 1}b, members: [d{i + 1}]}}\n" for i in range(40)) + "  - {id: d40, members: [carol]}\n"
+    brain("v: 1\npeople:\n  - {person_id: carol, name: Carol}\ngroups:\n" + chain_ + diamond
+          + "  - {id: loop-a, members: [loop-b]}\n  - {id: loop-b, members: [loop-a]}\n"
+          "memberships:\n  - {group: g0, grade: viewer}\n")
+    start = time.monotonic()
+    m = identity.load(brain.root)
+    assert time.monotonic() - start < 20
+    assert [f for f in m.access if "a cycle" in f] == ["members.yaml: groups: a cycle: loop-a -> loop-b -> loop-a"]
+    assert _x("carol", "global", brain.root)["grade"] == "viewer"   # through 1501 nested groups
+
+
+def test_an_organization_membership_takes_no_grade_nor_group(brain):
+    brain("v: 1\npeople:\n  - {person_id: ada, name: Ada}\norganizations:\n  - {id: acme-org, name: Acme}\n"
+          "groups:\n  - {id: crew, members: [ada]}\nmemberships:\n"
+          "  - {person_id: ada, organization: acme-org, grade: owner, roles: [member]}\n"
+          "  - {group: crew, organization: acme-org, roles: [member]}\n")
+    found = identity.load(brain.root).findings
+    assert any("memberships[0]: an organization's or a tenant's membership" in f and "not grade" in f for f in found)
+    assert any("memberships[1]: an organization's or a tenant's membership" in f and "not group" in f for f in found)
+
+
+def test_explain_json_says_why_it_fails(brain, capsys):
+    brain()
+    assert cli.main(["access", "explain", "zed", "--json"]) == 1
+    assert json.loads(capsys.readouterr().out) == {"error": "'zed' is not in members.yaml people"}
+
+
+def test_explain_says_which_decide_verifies_a_signature(brain, capsys):
+    brain()
+    assert cli.main(["access", "explain", "alice", "--scope", "ledger"]) == 0
+    assert "a signature verifies only a decider granted to the person by name" in capsys.readouterr().out
