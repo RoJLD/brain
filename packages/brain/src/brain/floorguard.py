@@ -28,7 +28,7 @@ import re
 import shlex
 from pathlib import Path
 
-from . import config, floor, floorpwsh, paths
+from . import config, floor, floorenv, floorpwsh, paths
 from . import guards as g
 
 TAIL = ("; that breaks the locked floor (no push to main or master, no force-push: merge by a pull request; the "
@@ -58,9 +58,7 @@ def on(fl: dict) -> bool:
     return bool(fl["refuse"] or fl["only"])
 
 
-def _under(path: str, folder: str) -> bool:
-    """Whether ``path`` is ``folder`` or inside it (both as _real gives them)."""
-    return bool(path) and bool(folder) and (path == folder or path.startswith(folder.rstrip("\\/") + os.sep))
+_under = floorenv.under   # whether a path is a folder or inside it (both as _real gives them)
 
 
 # Claude Code's settings files: the floor refuses any change of them but a Write or an Edit (judged on what it leaves).
@@ -186,13 +184,13 @@ def _shell(cmds, sub: str, command: str, kept: Kept) -> str | None:
     dot = "dotglob" if floorpwsh.DOTGLOB.search(command) else "bash"   # bash's dot rule off (review round 14 #6)
     shells = [dot if s in ("bash", "ssh") else s for _, _, s, _ in full]
     plain = floor.unspelled(_code(command))
-    checks = (lambda: _opaque(cmds, acts, command), lambda: _env(command, sub, kept), lambda: _registry(plain),
-              lambda: _removals(acts, kept), lambda: _acl(acts, kept), lambda: _writes(cmds, sub, kept),
+    checks = (lambda: _opaque(cmds, acts, command), lambda: floorenv.env(_code(command), sub, kept.configs),
+              lambda: _registry(plain), lambda: _removals(acts, kept), lambda: _acl(acts, kept), lambda: _writes(cmds, sub, kept),
               lambda: _copies(acts, kept, shells), lambda: floorpwsh.extractions(acts, kept, shells),
               lambda: floorpwsh.archived_settings(acts, SETTINGS), lambda: floorpwsh.links(full, cmds, sub, command, kept),
               lambda: floorpwsh.braced(command, sub), lambda: floorpwsh.scripted(full),
               lambda: floorpwsh.entered(command, sub),
-              lambda: _git_settings(acts), lambda: _checkout(acts, kept),
+              lambda: _git_settings(acts), lambda: floorenv.checkout(_git(acts), kept.folders),
               lambda: _named(acts, command), lambda: _plugin_cmd(acts), lambda: floorpwsh.piped(command, acts, kept),
               lambda: floorpwsh.methods(command, acts, kept), lambda: floorpwsh.typed(plain))
     what = next((w for check in checks if (w := check())), None)
@@ -292,64 +290,6 @@ def _start_unread(prog: str, args: list[str]) -> str:
     if program.startswith("$") or g._prog(program) in START_RISKY:
         return f"{prog} {program} -ArgumentList refused: the floor cannot read what it runs"
     return ""
-
-
-def _env(command: str, sub: str, kept: Kept) -> str | None:
-    """A variable of brain.floor.watched assigned in any form, or an assignment whose name the guard cannot read (on
-    the call's unspelled text, its prose out), once the assignments of brain.floor.WORKTREE_VARS that pass are taken
-    out (:func:`_read_paths`)."""
-    plain = floor.unspelled(_read_paths(_code(command), sub, kept))
-    m = floor.assignments().search(plain) or floor.ENV_DYNAMIC.search(plain)
-    return f"{m.group(0).strip()[:60]!r} refused: a variable the floor watches (or one it cannot read) set" if m else None
-
-
-def _read_paths(code: str, sub: str, kept: Kept) -> str:
-    """``code`` with each assignment of brain.floor.WORKTREE_ASSIGN whose value is one literal absolute path inside a
-    worktree of the repository that holds the config.json the guard reads (:func:`_worktrees`) made a space: a
-    read-path use (``BRAIN_PROJECTS=<worktree>/projects.yaml brain audit``). PowerShell's form counts in its own tool
-    only; a bash value reads no backslash outside double quotes (bash drops it)."""
-    trees: list[str] | None = None
-
-    def keep(m: re.Match) -> str:
-        nonlocal trees
-        if m.group("psname") and sub != "ps":
-            return m.group(0)
-        value = m.group("value") or m.group("psvalue") or ""
-        if value[:1] in ("'", '"'):
-            value = value[1:-1]
-        if trees is None:
-            trees = _worktrees(kept)
-        return " " if _inside(value, trees) else m.group(0)
-    return floor.WORKTREE_ASSIGN.sub(keep, code)
-
-
-def _worktrees(kept: Kept) -> list[str]:
-    """The folders of every worktree (git worktree list: the main checkout first) of the repositories that hold the
-    config.json the guard reads and its anchor, as the file system resolves them; a worktree git says is prunable, a
-    bare repository or a folder that is gone is none."""
-    out: list[str] = []
-    for root in sorted({r for r in (_repo_of(os.path.dirname(f)) for f in kept.configs) if r}):
-        for block in g._git_out(root, "worktree", "list", "--porcelain").replace("\r", "").split("\n\n"):
-            lines = block.splitlines()
-            path = next((ln[len("worktree "):] for ln in lines if ln.startswith("worktree ")), "")
-            if path and not any(ln == "bare" or ln.startswith("prunable") for ln in lines) and os.path.isdir(path):
-                out.append(g._real(path))
-    return out
-
-
-def _inside(value: str, trees: list[str]) -> bool:
-    """Whether ``value`` names an absolute local path (a drive's on Windows, where Git Bash's /e/x is E:/x) inside one
-    of ``trees``, links resolved; a network or device path never is."""
-    if os.name == "nt":
-        value = re.sub(r"^/([A-Za-z])(?=/|$)", lambda m: m.group(1) + ":", value)
-        if not re.match(r"^[A-Za-z]:[\\/]", value):
-            return False
-    elif not value.startswith("/"):
-        return False
-    if floor.UNC.match(value):
-        return False
-    real = g._real(value)
-    return any(_under(real, t) for t in trees)
 
 
 def _registry(plain: str) -> str | None:
@@ -666,101 +606,6 @@ def _revs(sub: str, args: list[str]) -> list[str]:
     revs += [args[i + 1] for i, a in enumerate(args[:-1]) if a in REV_OPTS]
     revs += {"reset": ["HEAD"], "stash": ["stash@{0}"], "pull": ["@{u}"]}.get(sub, [])
     return list(dict.fromkeys(revs))
-
-
-def _repo_of(folder: str) -> str:
-    """The git checkout that holds ``folder`` (the first parent with a .git), as _real gives it; '' for none."""
-    p = g._real(folder)
-    while True:
-        if os.path.exists(os.path.join(p, ".git")):
-            return p
-        parent = os.path.dirname(p)
-        if parent == p:
-            return ""
-        p = parent
-
-
-def _checkout(acts, kept: Kept) -> str | None:
-    """A git command in (or pointed at, -C) the checkout that holds config.json other than a read (CHECKOUT_SAFE, git
-    config and git remote that only read) or a pull of its upstream (:func:`_pull`); and, in any worktree of its
-    repository, which shares its remotes, a git remote that writes one (a pull there would then fetch elsewhere)."""
-    roots = {r for r in (_repo_of(f) for f in kept.folders) if r}
-    if not roots:
-        return None
-    shared: set[str] | None = None
-    for _, folder, sub, args in _git(acts):
-        if sub == "!":
-            continue
-        if sub == "remote" and not _reads(sub, args):
-            shared = shared if shared is not None else {_common_dir(r) for r in roots} - {""}
-            if _common_dir(folder) in shared:
-                pos = [a for a in args if not a.startswith("-")]
-                return (f"git remote {(pos or ['?'])[0]} in {folder} refused: its repository holds config.json, whose "
-                        "checkout pulls from these remotes")
-        if _repo_of(folder) not in roots:
-            continue
-        if sub == "pull":
-            why = _pull(folder, args)
-            if why:
-                return f"git pull in {folder} refused: {why}"
-            continue
-        if not _reads(sub, args):
-            return f"git {sub} in {folder} refused: only reads change nothing in the checkout that holds config.json"
-    return None
-
-
-def _common_dir(folder: str) -> str:
-    """The git common folder of the repository ``folder`` is in (shared by all its worktrees), as _real gives it;
-    '' for none."""
-    out = g._git_out(folder, "rev-parse", "--path-format=absolute", "--git-common-dir").strip()
-    return g._real(out) if out else ""
-
-
-# The options a pull in the checkout that holds config.json may take: what merges or rebases its upstream, quietly or
-# not; any other (a strategy, an interactive rebase, submodules, unrelated histories, a prefix git would take) is
-# refused.
-PULL_OPTS = {"--ff-only", "--ff", "--no-ff", "--rebase", "--rebase=true", "--rebase=false", "--rebase=merges",
-             "--no-rebase", "-r", "-q", "--quiet", "-v", "--verbose", "--stat", "-n", "--no-stat", "--autostash",
-             "--no-autostash", "--progress", "--no-progress", "--no-edit", "--prune", "-p", "--tags", "--no-tags",
-             "--verify-signatures", "--no-verify-signatures"}
-LOCAL_URL = re.compile(r"(?i)^(?:file:|[./~\\]|[A-Za-z]:(?:[\\/]|$))")
-
-
-def _pull(folder: str, args: list[str]) -> str:
-    """Why a git pull in the checkout that holds config.json may bring what the owner did not merge, '' when it
-    cannot: it brings only its branch's upstream, read from git's configuration when it is judged (whoever set it):
-    a branch checked out, whose upstream is main or master of a remote that is no local path, named by the command
-    or not; its options those of PULL_OPTS."""
-    odd = next((a for a in args if a.startswith("-") and a not in PULL_OPTS), "")
-    if odd:
-        return f"its option {odd} (a pull there takes only {', '.join(sorted(PULL_OPTS))})"
-    conf = floor.git_config(g._git_out(folder, "config", "-z", "--list"))
-    current = g._git_out(folder, "symbolic-ref", "-q", "--short", "HEAD").strip()
-    if not current:
-        return "no branch is checked out, so no upstream says what it brings"
-    remote, merge = floor.last(conf, f"branch.{current}.remote"), floor.last(conf, f"branch.{current}.merge")
-    branch = floor.HEADS.sub("", merge)
-    if not remote or remote == "." or branch not in floor.BRANCHES:
-        return (f"{current}'s upstream is {remote or 'none'}/{branch or 'none'}, not main or master of a remote: a "
-                "pull there brings only what was merged by a pull request")
-    url = floor.last(conf, f"remote.{remote}.url")
-    if not url or LOCAL_URL.match(url):
-        return f"the remote {remote} is {url or 'without a URL'}, a local path a session can write"
-    pos = [a for a in args if not a.startswith("-")]
-    if pos and (pos[0] != remote or any(floor.HEADS.sub("", p) != branch for p in pos[1:])):
-        return f"it names {' '.join(pos)}, not {current}'s upstream {remote} {branch}"
-    return ""
-
-
-def _reads(sub: str, args: list[str]) -> bool:
-    """Whether a git command leaves the checkout's files and settings alone (_checkout; a pull is judged by _pull)."""
-    pos = [a for a in args if not a.startswith("-")]
-    if sub == "config":
-        return bool({"--get", "--get-all", "--get-regexp", "--list", "-l"} & set(args)) or pos[:1] in (["get"], ["list"]) \
-            or (len(pos) == 1 and not set(args) & {"--add", "--replace-all", "--unset", "--unset-all"})
-    if sub == "remote":
-        return not pos or pos[0] in ("show", "get-url")
-    return sub in floor.CHECKOUT_SAFE
 
 
 def _named(acts, command: str) -> str | None:

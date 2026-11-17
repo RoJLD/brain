@@ -1,5 +1,5 @@
-"""The floor's watched variables, narrowed (wi-brain-floor-watched-vars; brain.floor.watched, brain.floorguard._env,
-_read_paths, _pull; docs/guards.md, « The environment »): every BRAIN_* name stays watched but those the engine says
+"""The floor's watched variables, narrowed (wi-brain-floor-watched-vars; brain.floor.watched, brain.floorenv.env,
+brain.floorenv; docs/guards.md, « The environment »): every BRAIN_* name stays watched but those the engine says
 why it lets through; BRAIN_CONFIG and BRAIN_PROJECTS pass as a literal path inside a worktree of the repository that
 holds config.json; BRAIN_CONFIG never lowers the floor the guard holds; the checkout that holds config.json pulls only
 its upstream, main or master of a remote; guard.sh's pre-filter starts Python for every watched assignment."""
@@ -8,7 +8,7 @@ import json
 import os
 
 import pytest
-from brain import config, faults, floor, floorguard, guards
+from brain import config, faults, floor, floorenv, floorguard, guards
 from conftest import run_git
 from test_floor import _floor_in, edit
 from test_guards import bash, pwsh
@@ -87,9 +87,16 @@ def test_a_name_in_any_case_where_names_have_none():
     for text in ("brain_home=C:/evil claude", "Brain_Guard_Allow=floor claude", "git_dir=x git status",
                  "export brain_python=x", "claude_config_dir=x claude"):
         assert nt.search(text) and not posix.search(text), text
-    for text in ("brain_strict=1 brain x", "path=$(pwd)", "while read -r path; do echo $path; done", "home=~"):
+    for text in ("brain_strict=1 brain x", "path=$(pwd)", "while read -r path; do echo $path; done", "home=~",
+                 "path=x; echo $path", "Write-Output $env:Path", "export X=$path",
+                 "export X=/a/path", "for path in a b; do :; done"):
         assert not nt.search(text), text
     assert nt.search("PATH=/x claude") and nt.search("$env:path = 'x'")
+    # their exported forms do reach a native program (review: export path=x; claude, home=x claude)
+    for text in ("export path=C:/evil claude -p x", "declare -x path=C:/evil claude", "export home=C:/evil",
+                 "typeset -x home=/evil", "home=C:/evil claude -p x", "path=C:/evil:$PATH claude -p x",
+                 "env path=C:/evil claude", "env home=/e claude", "local -x Path=x", "x; Home=/e git push"):
+        assert nt.search(text) and not posix.search(text), text
 
 
 # --- BRAIN_CONFIG and BRAIN_PROJECTS: a worktree of the same repository ------------------------------------------
@@ -328,5 +335,5 @@ def test_guard_sh_holds_the_anchors_floor_when_it_cannot_judge(tmp_path):
 def test_floorguard_reads_the_worktrees_of_both_configs(tree):
     checkout, w = tree
     kept = floorguard.Kept(checkout / "config.json")
-    trees = floorguard._worktrees(kept)
+    trees = floorenv.worktrees(kept.configs)
     assert floorguard.g._real(str(checkout)) in trees and floorguard.g._real(str(w)) in trees

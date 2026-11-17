@@ -212,8 +212,8 @@ def watched(scratch: bool = False, nocase: bool = False) -> str:
     plugin, and every BRAIN_* name but those of READ_PATH_VARS and, off a scratch home (``scratch`` false),
     SCRATCH_VARS. WORKTREE_VARS stay in it: brain.floorguard takes out the assignments of theirs that pass first.
     ``nocase`` (Windows, where a native program reads an environment variable's name in any case: ``brain_home=x``
-    is its BRAIN_HOME): every name in any case but HOME and PATH, which bash keeps beside a lowercase shell variable
-    of the same letters (``path=``, ``read -r home``; docs/guards.md, Limits)."""
+    is its BRAIN_HOME): every name in any case but HOME and PATH, whose lowercase shell variables (``path=$(pwd)``,
+    ``read -r home``) stay in the shell; their exported forms are :data:`NT_EXPORTED`'s."""
     free = sorted({*READ_PATH_VARS, *(() if scratch else SCRATCH_VARS)})
     brain = r"BRAIN_(?!(?:" + "|".join(n[len("BRAIN_"):] for n in free) + r")\b)\w+"
     names = (GIT_VARS + r"|USERPROFILE|XDG_CONFIG_HOME|BASH_ENV|SHELLOPTS|BASHOPTS|" + brain +
@@ -223,14 +223,22 @@ def watched(scratch: bool = False, nocase: bool = False) -> str:
 
 WATCHED_VARS = watched()
 _START = r"(?:^|(?<=[\s;&|(]))"
+# Windows: HOME and PATH in another case where the shell exports them to a native program, which reads the name in any
+# case (``home=x claude``, ``export path=x``, ``declare -x``, ``env path=x``): a command's prefix (a word follows the
+# value on its line), export and env's arguments, declare, typeset or local with -x.
+_HP = r"(?i:home|path)"
+NT_EXPORTED = (rf"{_START}{_HP}(?:\[[^\]\n]*\])?\+?=[^\s;&|]*[ \t]+[^\s;&|#)]|"
+               rf"(?<![$\w{{:-])(?:export|env)\s[^;&|\n]*?(?<![\w${{:/\\.-]){_HP}\b|"
+               rf"\b(?:declare|typeset|local)\s+(?:-\w+\s+)*-\w*x\w*\s+(?:[^;&|\n]*?\s)?{_HP}\b")
 
 
 @functools.lru_cache(maxsize=8)
 def env_assign(scratch: bool = False, nocase: bool = os.name == "nt") -> re.Pattern:
     """An assignment of a variable of :func:`watched` in any form (``nocase``: the names in any case but HOME and
-    PATH, as on Windows)."""
+    PATH, as on Windows, with :data:`NT_EXPORTED` for theirs)."""
     w = watched(scratch, nocase)
     return re.compile(
+        (NT_EXPORTED + "|" if nocase else "") +
         rf"{_START}(?:{w})(?:\[[^\]\n]*\])?\+?=|"                    # NAME=, NAME+=, NAME[0]= (bash, cmd's set)
         rf"\b(?:export|declare|typeset|readonly|read)\b[^;&|\n]*?(?<![\w${{])(?:{w})\b|"
         rf"\bprintf\s+-v\s*(?:{w})\b|"
@@ -313,7 +321,7 @@ GIT_RUNNERS = {"bisect": "run", "submodule": "foreach", "filter-branch": "", "fi
                "update-ref": ""}
 # What git may run in the checkout that holds config.json while the floor is on: reads, fetch, push (judged on its
 # own), worktree, branch and tag (they leave its files alone); git config and git remote only to read, git pull only
-# as `git pull --ff-only` with no remote nor refspec (brain.floorguard._checkout).
+# of its upstream, main or master of a remote (brain.floorenv.checkout, pull).
 CHECKOUT_SAFE = {"status", "log", "diff", "show", "fetch", "rev-parse", "ls-files", "ls-tree", "ls-remote",
                  "cat-file", "blame", "grep", "describe", "for-each-ref", "show-ref", "rev-list", "merge-base",
                  "shortlog", "name-rev", "check-ignore", "count-objects", "var", "help", "version", "push",
