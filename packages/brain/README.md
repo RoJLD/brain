@@ -1527,6 +1527,11 @@ standards' stages mapped to them; `brain typologies show ID [--stage S]` shows o
 that kind is proposed at a stage. `config.json` `typologies` renames labels (`{"software": {"fr": "Produit
 logiciel"}}`) and adds a brain's own ids (`{"podcast": {"en": "Podcast", "parent": "creation"}}`); an id the catalog
 does not know is a note in read mode, an error in strict mode (CI) ([docs/typologies.md](docs/typologies.md)).
+The typology packs bundle what a kind adds to the core (its layers, standards, gates by stage, clauses of done, one-way
+doors, roles, guards, registry keys): the engine ships `software` and `research`, a brain takes one in
+`source/packs.yaml` with `from: engine`; `brain typologies packs` lists them and `brain typologies propose PROJECT
+[--apply]` plans what a project's typologies propose, never turned on silently
+([docs/typologies.md](docs/typologies.md#typology-packs)).
 
 **The deny list from the tree.** With `config.json` `public.deny_from_tree: true`, `public.deny.repos` gains, after the
 hand list, the name of every project whose class floor along its chain is `private` or stricter (a container's
