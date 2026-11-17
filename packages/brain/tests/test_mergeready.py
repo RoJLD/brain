@@ -176,3 +176,52 @@ def test_brain_merge_ready_exits_1_with_the_blocks_and_0_when_ready(pr, monkeypa
     assert cli.main([*args, "--json"]) == 0
     out = json.loads(capsys.readouterr().out)
     assert out["ready"] and out["stamp"].endswith(f"{pr.data['headRefOid']}.json")
+
+
+def _merge_main(pr, hand: dict | None = None) -> str:
+    """origin/main merged into feat in the work clone (``hand``: files changed before the merge is committed),
+    pushed; the PR's head is the merge."""
+    run_git(pr.repo, "fetch", "-q", "origin")
+    run_git(pr.repo, "merge", "-q", "--no-ff", "--no-commit", "origin/main")
+    for rel, text in (hand or {}).items():
+        (pr.repo / rel).write_text(text, encoding="utf-8")
+    run_git(pr.repo, "add", "-A")
+    run_git(pr.repo, "commit", "-q", "--no-edit", "-m", "Merge origin/main into feat")
+    pr.data["headRefOid"] = run_git(pr.repo, "rev-parse", "HEAD").strip()   # the gate reads it in this clone
+    return pr.data["headRefOid"]
+
+
+def test_a_head_that_only_merges_main_into_the_reviewed_head_carries_its_review(pr):
+    stamped = pr.data["headRefOid"]
+    review.stamp(stamped, 2, 2)
+    pr.on_main({"b.txt": "b, on main\n"})
+    head = _merge_main(pr)
+    g = _gate(pr)
+    assert g.ready, g.checks
+    assert f"carried from {stamped[:8]}" in g.checks[4]["detail"] and review.check(head) is None
+
+
+def test_a_merge_with_a_change_by_hand_or_a_commit_after_it_needs_its_own_review(pr, make_repo):
+    review.stamp(pr.data["headRefOid"], 0, 0)
+    pr.on_main({"b.txt": "b, on main\n"})
+    _merge_main(pr, hand={"a.txt": "a, changed by hand in the merge\n"})
+    assert _blocks(_gate(pr)) == {"review"}
+    run_git(pr.repo, "reset", "-q", "--hard", "HEAD^1")
+    head = _merge_main(pr)
+    assert "review" not in _blocks(_gate(pr))
+    after = make_repo.commit(pr.repo, {"a.txt": "a, after the merge\n"})
+    pr.data["headRefOid"] = after
+    assert "review" in _blocks(_gate(pr)) and after != head
+
+
+def test_a_merge_of_a_branch_that_is_not_the_base_carries_nothing(pr, make_repo):
+    stamped = pr.data["headRefOid"]
+    review.stamp(stamped, 0, 0)
+    run_git(pr.repo, "switch", "-q", "-c", "side", "main")
+    make_repo.commit(pr.repo, {"c.txt": "c\n"})
+    run_git(pr.repo, "switch", "-q", "feat")
+    run_git(pr.repo, "merge", "-q", "--no-ff", "--no-edit", "side")
+    head = run_git(pr.repo, "rev-parse", "HEAD").strip()
+    pr.data["headRefOid"] = head
+    assert mergeready.carried_review(pr.repo, head, run_git(pr.repo, "rev-parse", "origin/main").strip()) == (None, "")
+    assert "review" in _blocks(_gate(pr))

@@ -145,7 +145,10 @@ runs, and the answer is exit 0 or the list of what blocks (exit 1; 2 when gh or 
 - **ci**: every check GitHub reports on the head completed green (success, neutral or skipped); one still running or
   failed blocks, and so does a head with no check at all;
 - **review**: `brain review stamp` recorded the review of this very head ([review.md](review.md)), with no finding left
-  open (findings minus fixed minus contested);
+  open (findings minus fixed minus contested). One narrow case carries the stamp of another head: a head that only
+  merges the base into a reviewed head, that is a merge commit of two parents, the first one stamped, the second one
+  on the base (its tip or before it), whose tree is git's own merge of the two (`git merge-tree` with the repo's merge
+  driver: no conflict, nothing changed by hand after the merge). Any other head needs its own stamp;
 - **public**: for a repo of `config.json` `public.repos`, `brain check --public --history` stamped this head and the
   stamp is still valid (the push guard's own question); n/a for another repo;
 - **body**: the PR's title and body hold nothing `brain check --public` refuses (a term of `public.deny`, a secret, an
