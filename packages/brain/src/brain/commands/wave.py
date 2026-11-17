@@ -37,8 +37,12 @@ USAGE = """\
                  changes/<item>.md, or an item id in its title), closed done with --pr "<repo> #N" and their titles as
                  the outcome; without --write, the plan; the wave's open items no merged PR names listed; a revert
                  takes its PR out; --write refused while a repo is not read (zero token, git only, as last fetched)
-  brain wave check X.Y.Z   the closure rule alone (release_check.py --store runs it on a version PR): exit 1 while the
-                 wave holds an open item neither carried nor dropped, or is not reached yet; then the release
+  brain wave check X.Y.Z [--tag vX.Y.Z]   the closure rule alone (release_check.py --store runs it on a version PR,
+                 with its last tag): exit 1 while the wave holds an open item neither carried nor dropped, or is not
+                 reached yet, or while the wave before it, reached without props.shipped_as (by hand, or by an engine
+                 up to 0.5.0), could have shipped as X.Y.Z (record it); --tag, the last release tag, tells it: the
+                 wave labelled so shipped as itself, one reached after it ships as X.Y.Z; the line names the wave
+                 checked, and how when it ships under another number; then the release
                  forecast of a wave planned as the next patch or minor: a patch or a minor, the first PR that tipped
                  it and why (release_check --preview of the engine checkout's origin/main; advisory, the exit is the
                  closure rule's)
@@ -125,6 +129,12 @@ def _positive(text: str) -> int:
     return n
 
 
+def _tag(text: str) -> str:
+    if waves.release_key(text.strip().removeprefix("v")) is None:
+        raise argparse.ArgumentTypeError(f"{text!r}: a release tag, vX.Y.Z")
+    return text.strip()
+
+
 def _plan(args, root: Path, store: Path) -> int:
     try:
         name = _project(args, root).name
@@ -142,6 +152,8 @@ def _plan(args, root: Path, store: Path) -> int:
 def _check(args, root: Path, store: Path) -> int:
     """The closure rule (its exit), then the release forecast of that wave (advisory, brain.nextrelease)."""
     plan = waves.load(store, root)
+    if args.tag:   # what a wave reached without props.shipped_as shipped as, as the last tag tells it
+        plan = waves.as_tagged(plan, args.version, args.tag)
     found = waves.closure_problems(plan, args.version)
     for line in found:
         print(f"error: {line}")
@@ -265,8 +277,13 @@ def register(sub, ctx) -> None:
     wm.add_argument("--write", action="store_true", help="close them (without: the plan)")
     wm.add_argument("--json", action="store_true", help="the plan, as JSON")
     wk = wv.add_parser("check", help="the closure rule: exit 1 while the wave holds an open item not carried or "
-                                     "dropped, or is not reached yet")
+                                     "dropped, or is not reached yet, or while a wave before it reached without "
+                                     "props.shipped_as may be the one it ships (record it, or --tag); the line names "
+                                     "the wave checked")
     wk.add_argument("version", help="the wave's release (or its id)")
+    wk.add_argument("--tag", type=_tag, metavar="vX.Y.Z", help="the last release tag: the wave labelled so, reached "
+                                                              "without props.shipped_as, shipped as itself; one "
+                                                              "reached after it ships as the version")
     wi = wv.add_parser("import", help=f"waves from the items' free-text props.wave; the rest listed for {ctx.who}")
     wi.add_argument("--from", dest="start", metavar="X.Y.Z", help="the first release to import: the earlier ones, "
                                                                     "already tagged, are listed and left out")
