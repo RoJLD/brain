@@ -245,7 +245,7 @@ def test_the_memory_cap_in_gb_of_commit_left(ada, brain_home, monkeypatch):
     mem3(monkeypatch, 80.0, 25.0, 5.0)
     decision, reason = hook(START, ada.lab, title="x")
     assert decision == "deny" and "refused by the committed memory" in reason
-    assert "5.0 GB of commit left (refused under 6 GB)" in reason
+    assert "5.00 GB of commit left (refused under 6 GB)" in reason
     assert hook("Workflow", ada.lab)[0] == "deny" and hook("Agent", ada.lab) is None   # as the percent
     mem3(monkeypatch, 80.0, 25.0, None)   # not readable: no refusal on it
     assert hook(START, ada.lab, title="x") is None
@@ -262,7 +262,7 @@ def test_the_guard_and_status_show_the_commit_left(ada, brain_home, monkeypatch,
     assert cli.main(["usage", "guard"]) == 0
     out = capsys.readouterr().out
     assert "memory under 6 GB of commit left" in out
-    assert "  memory    92.0 % committed, 6.0 GB of commit left (refused under 6 GB), 25.0 GB of RAM available" in out
+    assert "  memory    92.0 % committed, 6.00 GB of commit left (refused under 6 GB), 25.0 GB of RAM available" in out
     m = status.memory_of(ada.lab)
     assert m["commit_free_gb"] == 6.0 and m["refused"] == ""
 
@@ -759,4 +759,10 @@ def test_brain_lots_shows_the_commit_left(ada, brain_home, monkeypatch):
     mem3(monkeypatch, 92.0, 25.0, 5.0)
     ada({"memory_free_gb": 6})
     c = lots.caps_in_force(ada.lab, "")
-    assert c["memory_refuses"] and "5.0 GB of commit left (refused under 6 GB)" in c["memory"]
+    assert c["memory_refuses"] and "5.00 GB of commit left (refused under 6 GB)" in c["memory"]
+
+
+def test_the_message_reads_as_the_check(ada, brain_home, monkeypatch):
+    """The review's round 2: 5.96 GB left is refused and says 5.96, never 6.0, under a 6 GB cap."""
+    assert "5.96 GB of commit left (refused under 6 GB)" in governor.memory_text(
+        80.0, 25.0, dict(governor.DEFAULTS, memory_free_gb=6), 5.96)

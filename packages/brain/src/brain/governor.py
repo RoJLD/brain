@@ -524,7 +524,7 @@ def memory_text(committed: float | None, available_gb: float | None, lim: dict,
     a = f"{available_gb:.1f} GB of RAM available" if available_gb is not None else "available RAM unknown"
     floor, headroom = lim["memory_available_gb"], lim.get("memory_free_gb") or 0
     if headroom:
-        f = f"{free_gb:.1f} GB of commit left" if free_gb is not None else "commit left unknown"
+        f = f"{free_gb:.2f} GB of commit left" if free_gb is not None else "commit left unknown"
         c = f"{c}, {f} (refused under {headroom:g} GB)"
     else:
         c = f"{c} (refused from {lim['memory']:g} %)"
