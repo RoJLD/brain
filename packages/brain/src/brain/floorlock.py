@@ -25,6 +25,9 @@ floor lock``) prints the floor it would lock, what it installs and the command l
 Win+R (no interactive shell, which would load a profile and modules a session can write); the apply (``--apply``)
 refuses to run without elevation (a session never elevates), with the floor off, or lowering a locked floor without
 ``--lower``. ``brain floor unlock --apply`` removes the lock file and the managed file together, then the copies.
+Under config.json ``floor.acl`` on a floor-only machine (Windows), the apply also denies the account the sessions run
+as every change of its own Claude Code files and its projects' settings (the ACL step, :func:`acl_plan`), and the
+unlock gives them back first.
 brain.floor.unlocked is what the guard checks on each call; ``brain floor status`` checks every file.
 """
 
@@ -82,9 +85,11 @@ def elevated() -> bool:
 
 # --- the plan --------------------------------------------------------------------------------------------------------
 
-def plan(cfg) -> dict:
+def plan(cfg, account: str | None = None) -> dict:
     """What brain floor lock would do: the floor it locks and the one held now, the paths it writes, the command the
-    owner runs. LockError when there is no config.json to lock, or its floor is off."""
+    owner runs, and under config.json floor.acl the paths the ACL step denies ``account`` (the plan's own account when
+    None: a normal terminal's is the sessions'). LockError when there is no config.json to lock, or its floor is
+    off."""
     if cfg.file is None or cfg.error or not Path(cfg.file).is_file():
         raise LockError("no readable config.json: the lock copies the floor of the one the guard reads "
                         "(brain config shows it)")
@@ -97,7 +102,8 @@ def plan(cfg) -> dict:
     return {"floor": fl, "held": held, "lowers": bool(held) and _rank(fl) < _rank(held),
             "config": str(Path(cfg.file).resolve()), "brain_home": str(_brain_home()), "guard": floor.guard_dir(),
             "lock": floor.lock_dir(), "managed": floor.managed_file(),
-            "installed": lock if _installed(lock) else None}
+            "installed": lock if _installed(lock) else None,
+            "acl": acl_plan(cfg, account or floor.account()) if acl_wanted(cfg) else None}
 
 
 def _rank(fl: dict) -> int:
@@ -127,6 +133,8 @@ def run_command(p: dict, verb: str = "lock") -> str:
         py, args = Path(sys.executable), ["-m", "brain", "floor", verb, "--apply"]
     if p.get("lowers"):
         args.append("--lower")
+    if p.get("acl") and verb == "lock":
+        args += ["--account", p["acl"]["account"]]
     if os.name != "nt":
         return " ".join(["/usr/bin/sudo", str(py), "-I", *args])
     return " ".join(f'"{a}"' if " " in a else a for a in [str(py), "-I", *args, "--wait"])
@@ -157,6 +165,7 @@ def render_plan(p: dict) -> list[str]:
             "hook runs) and the plugin's hooks declared from the copy",
             f"  {p['lock'] / floor.LOCK_FILE}  the lock file: the floor's copy (written last, after every file is "
             "checked)",
+            *_render_acl(p.get("acl")),
             f"Needs Claude Code v{MIN_CLAUDE_CODE} or later (onFailure: block on the judging hooks).",
             "Before the apply: close every Claude Code session (a process keeps what it opened before the lock).",
             *runbook(run_command(p))]
@@ -165,6 +174,18 @@ def render_plan(p: dict) -> list[str]:
                    "write: update it from your own terminal first. Later locks run the guard's copy.)")
     out.append("Then, in a normal terminal, brain floor status checks every file.")
     return out
+
+
+def _render_acl(a: dict | None) -> list[str]:
+    if not a:
+        return []
+    made = [f"    makes first: {c}" for c in a["create"]]
+    return [f"The ACL step (config.json floor.acl): the account {a['account']} denied write, delete and any change of "
+            "ACL or owner, Administrators made their owner:",
+            *(f"  {x}" for x in (*a["files"], *a["trees"], *a["folders"])),
+            f"  {a['home']}  itself: no file removed or renamed through it", *made,
+            "  While locked, Claude Code's own writes there fail (an \"always allow\" saved to settings.local.json, a "
+            "skill installed); change them after brain floor unlock."]
 
 
 # --- the guard's copy ------------------------------------------------------------------------------------------------
@@ -437,6 +458,194 @@ def verify(path: Path) -> list[str]:
     return out
 
 
+# --- the account's own Claude Code files (config.json floor.acl, wi-brain-floor-acl-lock) ----------------------------
+# Under floor.only with config.json floor.acl (off by default), the apply also denies the session's account (a SID the
+# plan reads unelevated) every way to change what Claude Code runs or reads beside the guard: its user settings, its
+# hooks, skills, commands and agents, and the project settings of the brain's projects, whatever writes them (a script,
+# a program, inline code the guard does not read). Rights, never icacls' W or M: those carry SYNCHRONIZE and
+# READ_CONTROL, and Claude Code must still read the files. The owner of each path becomes Administrators (an owner
+# keeps WRITE_DAC whatever its ACL says); the owner's elevated unlock gives them back.
+ACL_FILE = "(WD,AD,WEA,WA,D,WDAC,WO)"              # a file: no write, append, attribute, delete, ACL or owner change
+ACL_TREE = "(OI)(CI)(WD,AD,WEA,WA,D,DC,WDAC,WO)"   # hooks, skills, commands, agents: the folder and all it holds
+ACL_FOLDER = "(WD,AD,WEA,WA,D,DC,WDAC,WO)"         # a project's .claude: nothing added to it or removed through it
+ACL_HOME = "(DC,WDAC,WO)"                          # ~/.claude: no child removed or renamed through it
+RIGHTS = {"WD": 0x2, "AD": 0x4, "WEA": 0x10, "DC": 0x40, "WA": 0x100, "D": 0x10000, "WDAC": 0x40000, "WO": 0x80000}
+SETTINGS_FILES = ("settings.json", "settings.local.json")
+CUSTOMIZATION = ("hooks", "skills", "commands", "agents")
+# A person's account: local or Microsoft (S-1-5-21-...), Entra ID (S-1-12-1-...); never a group nor a well-known SID.
+ACCOUNT = re.compile(r"^S-1-(?:5-21|12-1)(?:-\d+){2,7}$")
+
+
+def acl_wanted(cfg) -> bool:
+    """Whether config.json asks the lock for the ACL step: ``floor.acl: true`` under ``floor.only``."""
+    section = cfg.data.get("floor") if isinstance(cfg.data, dict) else None
+    return isinstance(section, dict) and section.get("acl") is True and floor.settings(cfg.data)["only"]
+
+
+def acl_plan(cfg, sid: str, nt: bool | None = None) -> dict:
+    """The paths the ACL step denies ``sid``: ``home`` (~/.claude itself, its other children kept), ``files`` (its
+    settings, and each project's that exist), ``trees`` (its hooks, skills, commands, agents), ``folders`` (each
+    project's .claude), ``create`` (what is missing and is made first, an empty settings file or folder, so that none
+    can be made later; a folder's ends with a separator); the projects are the brain's own folder and the registry's
+    that exist on this machine. LockError for an account that is not a person's, or off Windows (``nt``)."""
+    if not (os.name == "nt" if nt is None else nt):
+        raise LockError("floor.acl is a Windows deny entry for the session's account: turn it off on this machine")
+    if not ACCOUNT.match(sid or ""):
+        raise LockError(f"{sid or 'no account'} is not a person's account SID (S-1-5-21-..., S-1-12-1-...): print the "
+                        "plan in a normal terminal of the account the sessions run as")
+    home = floor.profile(sid) / ".claude"
+    out: dict = {"account": sid, "home": str(home), "files": [], "trees": [], "folders": [], "create": []}
+    if not home.is_dir():
+        out["create"].append(str(home) + os.sep)
+    for name in SETTINGS_FILES:
+        out["files"].append(str(home / name))
+        if not (home / name).exists():
+            out["create"].append(str(home / name))
+    for name in CUSTOMIZATION:
+        out["trees"].append(str(home / name))
+        if not (home / name).exists():
+            out["create"].append(str(home / name) + os.sep)
+    for root in _project_roots(cfg):
+        folder = root / ".claude"
+        if os.path.normcase(str(folder)) == os.path.normcase(str(home)):
+            continue
+        out["folders"].append(str(folder))
+        if not folder.exists():
+            out["create"].append(str(folder) + os.sep)
+        if not (folder / "worktrees").exists():   # where Claude Code makes a session's worktree: nothing new after
+            out["create"].append(str(folder / "worktrees") + os.sep)
+        out["files"] += [str(folder / n) for n in SETTINGS_FILES if (folder / n).is_file()]
+    return out
+
+
+def _project_roots(cfg) -> list[Path]:
+    """The brain's own folder and the roots of its registry's projects that exist here (projects.load), once each."""
+    from . import projects
+    roots = [Path(cfg.file).parent]
+    try:
+        roots += [p.root for p in projects.load(Path(cfg.file).parent).values()]
+    except Exception:   # noqa: BLE001 - a registry that does not load: the brain's own folder alone
+        pass
+    out: list[Path] = []
+    for r in roots:
+        r = Path(os.path.realpath(r))
+        if r.is_dir() and r not in out:
+            out.append(r)
+    return out
+
+
+def _icacls(nt: bool | None) -> str:
+    return _system_tool("icacls") if os.name == "nt" and nt is not False else "icacls"
+
+
+def acl_commands(a: dict, nt: bool | None = None) -> list[list[str]]:
+    """The icacls commands that deny the account its paths (:func:`acl_plan`): each one's owner made Administrators,
+    then its deny entry; a tree's children reset to what they inherit (an entry made before the lock goes), their
+    owner Administrators."""
+    icacls, sid, q = _icacls(nt), f"*{a['account']}", ("/C", "/Q")
+    out = [[icacls, a["home"], "/setowner", ADMINS, *q], [icacls, a["home"], "/deny", f"{sid}:{ACL_HOME}", *q]]
+    for f in a["files"]:
+        out += [[icacls, f, "/setowner", ADMINS, *q], [icacls, f, "/deny", f"{sid}:{ACL_FILE}", *q]]
+    for d in a["folders"]:
+        out += [[icacls, d, "/setowner", ADMINS, *q], [icacls, d, "/deny", f"{sid}:{ACL_FOLDER}", *q]]
+    for d in a["trees"]:
+        out += [[icacls, d, "/deny", f"{sid}:{ACL_TREE}", *q], [icacls, os.path.join(d, "*"), "/reset", "/T", *q],
+                [icacls, d, "/setowner", ADMINS, "/T", *q]]
+    return out
+
+
+def acl_undo(a: dict, nt: bool | None = None) -> list[list[str]]:
+    """The commands that give the paths back to the account: its deny entries removed first, then its ownership."""
+    icacls, sid, q = _icacls(nt), f"*{a['account']}", ("/C", "/Q")
+    out = []
+    for p in [x for x in (a.get("home"), *a.get("files", []), *a.get("folders", [])) if x]:
+        out += [[icacls, p, "/remove:d", sid, *q], [icacls, p, "/setowner", sid, *q]]
+    for d in a.get("trees", []):
+        out += [[icacls, d, "/remove:d", sid, "/T", *q], [icacls, d, "/setowner", sid, "/T", *q]]
+    return out
+
+
+def acl_create(a: dict) -> None:
+    """Make what the plan found missing: an empty folder, an empty settings file ({})."""
+    for p in a["create"]:
+        if p.endswith(os.sep):
+            Path(p).mkdir(parents=True, exist_ok=True)
+        elif not Path(p).exists():
+            Path(p).parent.mkdir(parents=True, exist_ok=True)
+            Path(p).write_text("{}\n", encoding="utf-8")
+
+
+def acl_verify(a: dict, denied=None) -> list[str]:
+    """What is not held after the ACL step: a path missing, a link or a junction, owned outside TRUSTED, or whose deny
+    entries for the account lack a right its kind needs (a tree: itself and everything under it). ``denied``:
+    :func:`denied`."""
+    denied = denied or globals()["denied"]
+    sid, out = a["account"], []
+    for kind, rights in (("home", ACL_HOME), ("files", ACL_FILE), ("folders", ACL_FOLDER), ("trees", ACL_FOLDER)):
+        mask = _mask(rights)
+        paths = [a["home"]] if kind == "home" else list(a[kind])
+        for p in list(paths) if kind == "trees" else ():
+            if os.path.isdir(p) and not os.path.islink(p):
+                for root, dirs, files in os.walk(p):
+                    paths += [os.path.join(root, n) for n in (*dirs, *files)]
+        for p in paths:
+            if not os.path.lexists(p):
+                out.append(f"{p}: missing")
+                continue
+            if floor._real(p) != os.path.normcase(os.path.abspath(p)):
+                out.append(f"{p}: a link or a junction")
+                continue
+            who = floor.owner(p)
+            if who not in TRUSTED:
+                out.append(f"{p}: owned by {who or 'an owner that cannot be read'}")
+            lack = mask & ~denied(p, sid)
+            if lack:
+                out.append(f"{p}: {sid} not denied {', '.join(k for k, v in RIGHTS.items() if v & lack)}")
+    return out
+
+
+def _mask(rights: str) -> int:
+    """The access mask of an icacls rights list, its inheritance flags aside: '(WD,D)' -> 0x10002."""
+    return sum(RIGHTS[r] for r in re.findall(r"[A-Z]+", rights.rsplit("(", 1)[-1]) if r in RIGHTS)
+
+
+def denied(path, sid: str) -> int:
+    """The rights the DACL of ``path`` denies ``sid`` (its access-denied entries, its own and inherited; an entry
+    that only its children inherit aside); 0 when it cannot be read or off Windows."""
+    if os.name != "nt":
+        return 0
+    import ctypes
+    from ctypes import wintypes
+    adv = ctypes.WinDLL("advapi32", use_last_error=True)
+    adv.GetFileSecurityW.argtypes = [wintypes.LPCWSTR, wintypes.DWORD, ctypes.c_void_p, wintypes.DWORD,
+                                     ctypes.POINTER(wintypes.DWORD)]
+    adv.GetSecurityDescriptorDacl.argtypes = [ctypes.c_void_p, ctypes.POINTER(wintypes.BOOL),
+                                              ctypes.POINTER(ctypes.c_void_p), ctypes.POINTER(wintypes.BOOL)]
+    adv.GetAce.argtypes = [ctypes.c_void_p, wintypes.DWORD, ctypes.POINTER(ctypes.c_void_p)]
+    adv.ConvertSidToStringSidW.argtypes = [ctypes.c_void_p, ctypes.POINTER(wintypes.LPWSTR)]
+    need = wintypes.DWORD(0)
+    adv.GetFileSecurityW(str(path), 0x4, None, 0, ctypes.byref(need))   # DACL_SECURITY_INFORMATION
+    sd = ctypes.create_string_buffer(need.value or 1)
+    present, acl, defaulted = wintypes.BOOL(), ctypes.c_void_p(), wintypes.BOOL()
+    if not (need.value and adv.GetFileSecurityW(str(path), 0x4, sd, need, ctypes.byref(need))
+            and adv.GetSecurityDescriptorDacl(sd, ctypes.byref(present), ctypes.byref(acl), ctypes.byref(defaulted))
+            and present and acl.value):
+        return 0
+    count = ctypes.cast(acl.value + 4, ctypes.POINTER(ctypes.c_ushort))[0]   # ACL: revision, sbz1, size, AceCount
+    out = 0
+    for i in range(count):
+        ace = ctypes.c_void_p()
+        if not adv.GetAce(acl, i, ctypes.byref(ace)):
+            return 0
+        kind, flags = ctypes.cast(ace, ctypes.POINTER(ctypes.c_ubyte * 2))[0]
+        if kind != 1 or flags & 0x08:   # ACCESS_DENIED_ACE_TYPE, not INHERIT_ONLY
+            continue
+        text = wintypes.LPWSTR()
+        if adv.ConvertSidToStringSidW(ctypes.c_void_p(ace.value + 8), ctypes.byref(text)) and text.value == sid:
+            out |= ctypes.cast(ace.value + 4, ctypes.POINTER(wintypes.DWORD))[0]
+    return out
+
+
 # --- apply, unlock, status -------------------------------------------------------------------------------------------
 
 def _need_elevation(what: str, is_elevated=None) -> None:
@@ -491,13 +700,20 @@ def _prune(root: Path, keep: Path | None) -> list[str]:
 
 
 def apply(cfg, lower: bool = False, run=subprocess.run, is_elevated=None, install=install_guard,
-          check=verify, tools=None) -> list[str]:
+          check=verify, tools=None, account: str | None = None, acl_check=acl_verify) -> list[str]:
     """Lock this machine (module docstring); the lines to print. LockError without elevation, with the floor off,
     lowering a locked floor without ``lower``, when a command fails or a file is not held: the managed file and the
     lock file are then restored as they were (no lock before: none, and a floor-only machine refuses every call) and
-    the new copy removed; the copy in use is never touched until the new one holds."""
+    the new copy removed; the copy in use is never touched until the new one holds. Under config.json floor.acl, the
+    ACL step denies ``account`` (the plan's --account: the elevated step may run as another administrator) its
+    Claude Code files once the copy holds, checked by ``acl_check``; undone if a later step fails, unless the previous
+    lock held them already."""
     _need_elevation("brain floor lock --apply", is_elevated)
-    p = plan(cfg)
+    if acl_wanted(cfg) and not account:
+        raise LockError("floor.acl needs --account SID, the account the sessions run as: brain floor lock, printed in "
+                        "a normal terminal of that account, gives the command line with it")
+    p = plan(cfg, account)
+    prev_acl = (floor.read_lock() or {}).get("acl")
     if p["lowers"] and not lower:
         raise LockError("this lowers the locked floor: check config.json's floor, then run the apply with --lower")
     root, lockdir, managed = p["guard"], p["lock"], p["managed"]
@@ -509,6 +725,7 @@ def apply(cfg, lower: bool = False, run=subprocess.run, is_elevated=None, instal
     while new.exists():   # never the copy in use, even locked twice in a second
         new, n = root / f"{stamp}-{n}", n + 1
     found = (tools or system_tools)(check)
+    a, acl_started = p["acl"], False
     try:
         root.mkdir(parents=True, exist_ok=True)
         interp = install(new, rendered=_rendered(cfg))
@@ -516,6 +733,13 @@ def apply(cfg, lower: bool = False, run=subprocess.run, is_elevated=None, instal
         wrong = [] if failed else check(root)
         if failed or wrong:
             raise LockError("; ".join([*failed, *wrong][:12]))
+        if a:   # the account's own Claude Code files, before the managed hooks and the lock file that check them
+            acl_create(a)
+            acl_started = True
+            failed = _run_all(acl_commands(a), run)
+            wrong = [] if failed else acl_check(a)
+            if failed or wrong:
+                raise LockError("the ACL step: " + "; ".join([*failed, *wrong][:12]))
         managed.parent.mkdir(parents=True, exist_ok=True)
         managed.write_text(json.dumps(hooks_settings(interp, new, found.get("bash"), cfg.data, known_marketplaces(cfg)),
                                       indent=2) + "\n", encoding="utf-8")
@@ -532,17 +756,43 @@ def apply(cfg, lower: bool = False, run=subprocess.run, is_elevated=None, instal
     except BaseException as exc:
         _restore(saved)
         _remove(new)
+        undone = _run_all(acl_undo(a), run) if acl_started and not _same_acl(prev_acl, a) else []
         if isinstance(exc, LockError):
             raise LockError("the lock is not complete, the managed settings and the lock file are back as they were "
-                            f"({'the previous lock' if saved[lock_file] else 'no lock'}): {exc}") from None
+                            f"({'the previous lock' if saved[lock_file] else 'no lock'}): {exc}"
+                            + (f"; the ACL step not undone: {'; '.join(undone[:6])}" if undone else "")) from None
         raise
     left = _prune(root, keep=new)
     lost = [] if found.get("bash") else ["no administrators' bash: the hooks of other events than PreToolUse "
                                          "(rules, announce, health, capture, budget, memory) are not declared"]
+    gone = _acl_released(prev_acl, a, run)
     return [f"locked: the floor refuse={p['floor']['refuse']}, only={p['floor']['only']} in {lock_file}; the guard in "
             f"{new}, its hooks in {managed}. Start Claude Code again (v{MIN_CLAUDE_CODE} or later), then in a normal "
             "terminal brain floor status checks every file", *lost,
+            *([f"the ACL step: {len(a['files']) + len(a['trees']) + len(a['folders'])} paths denied to "
+               f"{a['account']} (and {a['home']} itself)"] if a else []), *gone,
             *([f"older copies still there (in use): {', '.join(left)}; the next lock removes them"] if left else [])]
+
+
+def _same_acl(prev: dict | None, a: dict | None) -> bool:
+    """Whether the previous lock denied the same account the same paths (a failed relock then leaves them held)."""
+    keys = ("account", "home", "files", "trees", "folders")
+    return bool(prev and a) and all(prev.get(k) == a.get(k) for k in keys)
+
+
+def _acl_released(prev: dict | None, a: dict | None, run) -> list[str]:
+    """Once a new lock holds: the previous lock's ACL entries that this one no longer holds given back (another
+    account, or floor.acl turned off); what failed, said."""
+    if not isinstance(prev, dict) or not prev.get("account") or _same_acl(prev, a):
+        return []
+    if a and a["account"] == prev["account"]:   # the same account: give back only the paths no longer held
+        kept = {*a["files"], *a["trees"], *a["folders"], a["home"]}
+        prev = {**prev, "files": [p for p in prev.get("files", []) if p not in kept],
+                "trees": [p for p in prev.get("trees", []) if p not in kept],
+                "folders": [p for p in prev.get("folders", []) if p not in kept], "home": None}
+    failed = _run_all(acl_undo(prev), run)
+    return [f"the previous ACL entries given back to {prev['account']}" +
+            (f", but: {'; '.join(failed[:6])}" if failed else "")]
 
 
 def _rendered(cfg) -> Path | None:
@@ -567,23 +817,31 @@ def _empty(folder: Path) -> None:
 
 def lock_data(p: dict, interp: Path, gdir: Path, tools: dict | None = None) -> dict:
     """The lock file's content."""
-    tools = tools or {}
+    tools, a = tools or {}, p.get("acl")
+    acl = [*a["files"], *a["trees"], *a["folders"]] if a else []   # checked on each call: missing or writable refuses
     return {"format": floor.LOCK_FORMAT, "floor": p["floor"], "config": p["config"], "brain_home": p["brain_home"],
             "guard": str(gdir), "interpreter": str(interp), "managed": str(p["managed"]),
             "manifest": floor.file_hash(gdir / floor.MANIFEST), **tools,
             "checks": [str(x) for x in (p["guard"], gdir, gdir / floor.MANIFEST, gdir / "hook.py", gdir / "floor.py",
-                                        interp, p["managed"], *tools.values())],
+                                        interp, p["managed"], *tools.values(), *acl)],
+            **({"acl": {k: a[k] for k in ("account", "home", "files", "trees", "folders", "create")}} if a else {}),
             "locked_at": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"), "lock_dir": str(p["lock"])}
 
 
-def unlock(is_elevated=None) -> list[str]:
-    """Remove the lock file and the managed hooks together (both restored if either fails), then the guard's copies
-    but the one this interpreter runs from (elevated); the lines to print."""
+def unlock(is_elevated=None, run=subprocess.run) -> list[str]:
+    """Give the account its Claude Code files back when the lock denied them (LockError if a command fails: the lock
+    stays, whole), then remove the lock file and the managed hooks together (both restored if either fails), then the
+    guard's copies but the one this interpreter runs from (elevated); the lines to print."""
     _need_elevation("brain floor unlock --apply", is_elevated)
     lock = floor.read_lock()
     managed = floor.managed_file()
     if lock and not lock.get("error"):
         managed = Path(lock.get("managed") or managed)
+        a = lock.get("acl")
+        failed = _run_all(acl_undo(a), run) if isinstance(a, dict) and a.get("account") else []
+        if failed:
+            raise LockError("unlock stopped, the lock is whole: the ACL step was not undone: "
+                            + "; ".join(failed[:6]))
     lock_file = floor.lock_dir() / floor.LOCK_FILE
     saved = _saved(lock_file, managed)
     try:
@@ -619,6 +877,7 @@ def status(cfg) -> list[str]:
         out.append(f"lock: {floor.lock_dir() / floor.LOCK_FILE}, locked at {lock.get('locked_at', '?')}; the guard in "
                    f"{lock.get('guard')}, its hooks in {lock.get('managed')}")
         out.append(_in_force(lock))
+        out += _acl_status(lock.get("acl"))
     if not (fl["only"] or lock is not None):
         return out
     why = floor.unlocked(cfg, fl, lock) or (_whole(lock) if lock and not lock.get("error") else "")
@@ -626,6 +885,17 @@ def status(cfg) -> list[str]:
     if why and elevated():
         out.append("(this terminal is elevated: run brain floor status in a normal one to see what a session sees)")
     return out
+
+
+def _acl_status(a) -> list[str]:
+    """The ACL step's paths: held (present and out of this terminal's reach) or which are not."""
+    if not isinstance(a, dict) or not a.get("account"):
+        return ["acl: none (config.json floor.acl off when locked)"]
+    paths = [*a.get("files", []), *a.get("trees", []), *a.get("folders", [])]
+    loose = [f"{p} {'missing' if not os.path.lexists(p) else 'writable'}" for p in paths
+             if not os.path.lexists(p) or floor.writable(p)]
+    return [f"acl: {a['account']} denied {len(paths)} paths" + (f"; NOT held: {', '.join(loose[:6])}" if loose else
+                                                                ", all held")]
 
 
 def _in_force(lock: dict) -> str:

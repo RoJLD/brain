@@ -297,6 +297,7 @@ MANAGED_NAME = "brain-floor.json"      # in managed_dir()/managed-settings.d: th
 LOCK_DIR: Path | None = None
 GUARD_DIR: Path | None = None
 MANAGED_DIR: Path | None = None
+PROFILE_DIR: Path | None = None   # the account's profile folder brain floor lock's ACL step reads (profile())
 # What a session must not hold on a locked path: write or append data, write extended attributes, delete a folder's
 # entries, delete it, change its ACL or its owner (FILE_WRITE_DATA, FILE_APPEND_DATA, FILE_WRITE_EA,
 # FILE_DELETE_CHILD, DELETE, WRITE_DAC, WRITE_OWNER; a folder's add-file and add-folder are the first two).
@@ -338,6 +339,61 @@ def managed_dir() -> Path:
 def managed_file() -> Path:
     """The managed settings drop-in that declares the guard's hooks."""
     return managed_dir() / "managed-settings.d" / MANAGED_NAME
+
+
+def profile(sid: str) -> Path:
+    """The profile folder of the account ``sid`` as the machine's registry names it (HKLM ProfileList's
+    ProfileImagePath: a value only an administrator writes, and the right folder when an elevated step runs as another
+    administrator than the account); else this process's home."""
+    if PROFILE_DIR is not None:
+        return Path(PROFILE_DIR)
+    if os.name == "nt":
+        try:
+            import winreg
+            key = rf"SOFTWARE\Microsoft\Windows NT\CurrentVersion\ProfileList\{sid}"
+            with winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE, key) as k:
+                value = str(winreg.QueryValueEx(k, "ProfileImagePath")[0])
+            if value and "%" not in value:
+                return Path(value)
+        except (OSError, ImportError, ValueError):
+            pass
+    return Path.home()
+
+
+def account() -> str:
+    """This process's account as a SID string (its token's user: the account a session runs as, when the plan is
+    printed in a normal terminal); '' when it cannot be read or off Windows."""
+    if os.name != "nt":
+        return ""
+    try:
+        import ctypes
+        from ctypes import wintypes
+        adv, k32 = ctypes.WinDLL("advapi32", use_last_error=True), ctypes.WinDLL("kernel32", use_last_error=True)
+        k32.GetCurrentProcess.restype = wintypes.HANDLE
+        k32.CloseHandle.argtypes = [wintypes.HANDLE]
+        adv.OpenProcessToken.argtypes = [wintypes.HANDLE, wintypes.DWORD, ctypes.POINTER(wintypes.HANDLE)]
+        adv.GetTokenInformation.argtypes = [wintypes.HANDLE, ctypes.c_int, ctypes.c_void_p, wintypes.DWORD,
+                                            ctypes.POINTER(wintypes.DWORD)]
+        adv.ConvertSidToStringSidW.argtypes = [ctypes.c_void_p, ctypes.POINTER(wintypes.LPWSTR)]
+        token = wintypes.HANDLE()
+        if not adv.OpenProcessToken(k32.GetCurrentProcess(), 0x0008, ctypes.byref(token)):   # TOKEN_QUERY
+            return ""
+        try:
+            need = wintypes.DWORD(0)
+            adv.GetTokenInformation(token, 1, None, 0, ctypes.byref(need))   # TokenUser: a SID_AND_ATTRIBUTES
+            buf = ctypes.create_string_buffer(need.value or 1)
+            if not (need.value and adv.GetTokenInformation(token, 1, buf, need, ctypes.byref(need))):
+                return ""
+            sid, text = ctypes.cast(buf, ctypes.POINTER(ctypes.c_void_p))[0], wintypes.LPWSTR()
+            if not adv.ConvertSidToStringSidW(sid, ctypes.byref(text)):
+                return ""
+            out = text.value or ""
+            k32.LocalFree(ctypes.cast(text, ctypes.c_void_p))
+            return out
+        finally:
+            k32.CloseHandle(token)
+    except (OSError, AttributeError, ValueError):
+        return ""
 
 
 def _hklm_folder(name: str) -> str:

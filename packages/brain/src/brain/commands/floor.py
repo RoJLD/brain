@@ -12,12 +12,15 @@ from .. import config, floorlock
 ORDER = 487   # its place in brain --help's list of commands (brain.commands)
 USAGE_ORDER = 367   # its usage lines' place in brain --help's epilog
 USAGE = """\
-  brain floor lock [--apply] [--lower] [--wait] | unlock [--apply] [--wait] | status
+  brain floor lock [--apply] [--lower] [--account SID] [--wait] | unlock [--apply] [--wait] | status
                  the locked floor held by the operating system: lock prints the floor it locks, what it installs (the
                  guard's copy in Program Files, its hooks in Claude Code's managed settings, the lock file in
-                 ProgramData) and the command line to run elevated from Win+R; --apply does it, elevated only (--lower
-                 to lock a lower floor than the locked one; --wait keeps the window open on the result); unlock
-                 --apply removes them; status checks every file and says whether the managed hooks are in force
+                 ProgramData; under config.json floor.acl, the account's Claude Code settings, hooks, skills, commands
+                 and agents and its projects' settings denied to it) and the command line to run elevated from Win+R;
+                 --apply does it, elevated only (--lower to lock a lower floor than the locked one; --account, the
+                 account the plan named, for floor.acl; --wait keeps the window open on the result); unlock --apply
+                 gives the files back and removes the rest; status checks every file and says whether the managed
+                 hooks are in force
 """
 
 
@@ -29,7 +32,7 @@ def early(args) -> int:
         elif args.floor_cmd == "unlock":
             lines = floorlock.unlock() if args.apply else _unlock_plan()
         elif args.apply:
-            lines = floorlock.apply(cfg, lower=args.lower)
+            lines = floorlock.apply(cfg, lower=args.lower, account=args.account)
         else:
             lines = floorlock.render_plan(floorlock.plan(cfg))
     except floorlock.LockError as exc:
@@ -55,7 +58,10 @@ def _unlock_plan() -> list[str]:
     if lock is None and not floor.guard_dir().exists():
         return ["no lock on this machine: nothing to unlock"]
     p = {"installed": lock if floorlock._installed(lock) else None}
-    return ["brain floor unlock --apply removes, elevated: the lock file "
+    acl = (lock or {}).get("acl") if isinstance(lock, dict) else None
+    give = [f"First it gives {acl.get('account')} back its Claude Code files (their deny entries and ownership)."] \
+        if isinstance(acl, dict) and acl.get("account") else []
+    return [*give, "brain floor unlock --apply removes, elevated: the lock file "
             f"({floor.lock_dir() / floor.LOCK_FILE}) and the managed hooks ({floor.managed_file()}) together, then the "
             f"guard's copies ({floor.guard_dir()}). The plugin's guard then judges again, from the user's profile.",
             *floorlock.runbook(floorlock.run_command(p, "unlock"))]
@@ -69,6 +75,9 @@ def register(sub, ctx) -> None:
     lock.add_argument("--apply", action="store_true", help="install the guard's copy and its managed hooks, write "
                                                            "the lock file (elevated only)")
     lock.add_argument("--lower", action="store_true", help="allow a lower floor than the locked one")
+    lock.add_argument("--account", metavar="SID", help="the account the sessions run as, whose Claude Code files "
+                                                       "config.json floor.acl denies it (the plan's command line "
+                                                       "gives it)")
     lock.add_argument("--wait", action="store_true", help="wait for Enter before closing (the Win+R window)")
     unlock = fs.add_parser("unlock", help="print what unlock removes and its command line; --apply does it (elevated "
                                           "only)")

@@ -1852,7 +1852,10 @@ Ctrl+Shift+Enter, no shell): the floor's copy goes to `<ProgramData>/Brain`, a c
 declared from that copy (exec form; the judging ones block when they fail, Claude Code v2.1.295 or later), out of a
 session's reach; on a floor-only machine the guard refuses every call until then. `brain floor status` says whether a
 session can change them and whether the managed hooks are in force (Claude Code's managed sources are first-wins:
-server-managed settings or an HKLM policy skip the files).
+server-managed settings or an HKLM policy skip the files). On a floor-only machine with `floor.acl` (off by default,
+Windows), the lock also denies the account the sessions run as any change of its Claude Code settings, hooks, skills,
+commands and agents and of its projects' `.claude` settings, whatever writes them (`brain floor lock` prints the
+command line with `--account <SID>`); `brain floor unlock --apply` gives them back.
 
 A hook costs every tool call its time, so the launchers start nothing they do not need: they read their JSON and find
 Python with bash builtins (`hooks/common.sh`, no `$(...)`), and `guard.sh` starts Python only for a shell command that

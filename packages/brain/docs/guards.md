@@ -177,6 +177,37 @@ each in a folder whose parents only an administrator writes:
   `ProgramData`; `/etc/brain`): the floor's copy, the config.json and `<BRAIN_HOME>` the guard reads, the copy in use,
   the paths it checks on each call, the manifest's hash, and the administrators' git (and bash) the guard runs.
 
+**The ACL step** (config.json `floor.acl: true` under `floor.only`, off by default; Windows; `brain.floorlock`'s
+`acl_*`, wi-brain-floor-acl-lock). A shell guard cannot read code it is not shown: a script, a program, inline code
+can still write the account's own Claude Code files, whose `statusLine`, `apiKeyHelper` or `env` run outside any tool
+call. So the apply, once the guard's copy holds and before the managed hooks and the lock file, denies the account
+the sessions run as every change of them, whatever writes them:
+
+- `~/.claude/settings.json` and `settings.local.json` (made empty, `{}`, when missing), and the settings files of the
+  brain's own folder and of its registry's projects that exist on this machine: no write, append, attribute, delete,
+  ACL or owner change (icacls' `WD,AD,WEA,WA,D,WDAC,WO`);
+- `~/.claude/hooks`, `skills`, `commands` and `agents` (made when missing), with everything in them: the same and no
+  child deleted (`DC`), inherited by every child (`(OI)(CI)`), each child's own entries reset to what it inherits;
+- each project's `.claude` folder (made when missing): nothing added to it and nothing removed through it;
+- `~/.claude` itself: no child removed or renamed through it (`DC`, and its ACL and owner); Claude Code still adds its
+  own files there (sessions, todos).
+
+The rights are named one by one: icacls' `W` and `M` carry `SYNCHRONIZE` and `READ_CONTROL`, and Claude Code must still
+read the files. The owner of each path becomes Administrators: an owner keeps `WRITE_DAC` whatever its ACL says, and the
+account's normal token holds Administrators as deny-only. The account is a SID the plan reads in a normal terminal of
+the account (`brain floor lock` prints the elevated command line with `--account <SID>`: the elevated step may run as
+another administrator; its profile is read from HKLM's `ProfileList`, not the environment); a group or a well-known SID
+is refused. The apply then checks every path (present, no link, owned by Administrators, SYSTEM or TrustedInstaller,
+its deny entries for the account holding every right its kind needs, every file and folder of a tree) and records
+them in the lock file's `acl`; they join its `checks`, so a path a session reached anyway (removed and made again
+through code the guard does not read, `~/.claude` renamed through the profile) refuses every call until the owner
+locks again. A step that fails gives the entries back (unless the previous lock held the same ones); a relock without
+`floor.acl`, or for another account, gives the previous lock's back once the new one holds. `brain floor status` says
+whether each is held; `brain floor unlock --apply` gives them back first (their deny entries, then their ownership),
+and stops with the lock whole when it cannot. While locked, Claude Code's own writes there fail (an "always allow"
+saved to `settings.local.json`, a plugin or a skill installed, a project's new `.claude` file brought by a pull): the
+owner changes them after unlocking. On POSIX `floor.acl` refuses the plan (a deny entry is Windows').
+
 Each folder is given to Administrators (root): its own ACL reset, its inheritance cut with Administrators and SYSTEM
 full and the users read and run (from here no child gains the user's rights), the owner set on the whole tree, then
 every child's ACL reset to what it inherits (an entry a session added before the cut goes); POSIX `chown -R 0:0`,
@@ -423,10 +454,12 @@ Round 7 (the same classes, new spellings; on any machine with the floor on):
      a write, a copy, a move or an extraction whose target holds a substitution or a variable is refused when its text
      names a `.git` or `.claude` folder, a settings file, a `hooks` folder or git's own folder (`--git-dir`,
      `--git-path`, `GIT_DIR`), or when the folder it is read in is one; otherwise it passes, as a variable alone does.
-  Not read, and left to the operating system's lock (the next wave's ACL): a script file an interpreter runs
-  (`python p.py`), a write or a copy whose target is a variable alone (`> "$OUT"`, `cp x "$OUT"`), a program an
-  interpreter runs from a name it computes, and code that hides a link name from the rules above in a way they do not
-  read.
+  Not read, and left to the operating system's lock (the ACL step above, under `floor.only` with `floor.acl`): a
+  script file an interpreter runs (`python p.py`), a write or a copy whose target is a variable alone (`> "$OUT"`, `cp
+  x "$OUT"`), a program an interpreter runs from a name it computes, and code that hides a link name from the rules
+  above in a way they do not read. The ACL step holds the account's own Claude Code files and its projects' settings
+  whatever writes them; it does not hold a worktree made after the lock (its own `.claude` settings, read by a session
+  opened there), a repo's `.git/hooks`, nor anything on a machine without it.
   A write that adds a `hooks` key, at any depth, to a skill's, command's or agent's frontmatter (read as YAML) is
   refused, and `claude plugin install`, `enable`, `update` and `marketplace add`/`update` are refused, under
   `floor.only` too. A hard link made before the floor was on, to the settings file of a project outside those folders,
@@ -441,7 +474,8 @@ Round 7 (the same classes, new spellings; on any machine with the floor on):
   session can write a project's or the user's `.claude/settings*.json` (`disableAllHooks`) or rename the plugin folder
   from its parent (the hook then fails, a non-blocking error). A repo's `.git/hooks` are code the guard does not read
   either: a write into them is refused (class 2 above), but one made through code the guard does not read runs at the
-  next `git commit`; the operating system's lock on these files (a later wave) is the answer to that class.
+  next `git commit`; the ACL step holds the account's Claude Code files and its projects' settings, not a repo's
+  `.git/hooks` (git writes them as it works).
 - Also: a guard the hook never reaches (the core plugin removed from outside a session, on a machine that is not
   locked); a clone, which brings the cloned repo's own project settings, as any repo the owner opens does.
 
