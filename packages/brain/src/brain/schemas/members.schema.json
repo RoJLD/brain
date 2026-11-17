@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "brain/schemas/members.schema.json",
   "title": "members.yaml, the people of a brain",
-  "description": "Who belongs to a brain and with which public keys (wi-brain-identity): the people (Person), their accounts elsewhere (Account), the organizations and tenants they belong to (Organization) and their roles per project, organization or tenant (Membership). Public keys only: a private key never enters this file, the engine only verifies signatures with these keys (brain.identity). The file sits at the brain's root, next to config.json; its data class is confidential (names, accounts). Without it nothing about identity is checked.",
+  "description": "Who belongs to a brain and with which public keys (wi-brain-identity): the people (Person), their accounts elsewhere (Account), the organizations and tenants they belong to (Organization), the groups of people (Group, nested) and their grants: a grade and roles on a node of the scope tree, or roles in an organization or tenant (Membership; brain.access, spec-brain-access). Public keys only: a private key never enters this file, the engine only verifies signatures with these keys (brain.identity). The file sits at the brain's root, next to config.json; its data class is confidential (names, accounts). Without it nothing about identity is checked.",
   "type": "object",
   "required": ["v", "people"],
   "additionalProperties": false,
@@ -83,19 +83,37 @@
         }
       }
     },
-    "memberships": {
+    "groups": {
       "type": "array",
-      "description": "A person's roles: on the whole brain (no project, organization nor tenant), on one project of the registry, or in an organization or tenant. decider: the person whose signature verifies an owner-decides answer; owner, member and viewer are read by later checks.",
+      "description": "Groups of people a grant names at once (brain.access): members are person_ids or other groups' ids, nested, never in a cycle. Since 0.6.0.",
       "items": {
         "type": "object",
-        "required": ["person_id", "roles"],
+        "required": ["id", "members"],
+        "additionalProperties": false,
+        "properties": {
+          "id": {"type": "string", "pattern": "^[a-z0-9][a-z0-9-]*$", "description": "A stable id, never a person_id."},
+          "title": {"type": "string", "minLength": 1},
+          "members": {"type": "array", "items": {"type": "string", "minLength": 1}}
+        }
+      }
+    },
+    "memberships": {
+      "type": "array",
+      "description": "A grant: a person (person_id) or a group (group), exactly one, with a grade and roles on a node of the scope tree (scope, its synonym project; absent: Global, the whole brain), inherited down the tree by union, the highest grade winning; or roles in an organization or tenant (another identity domain, no grade). Grades: viewer < contributor < maintainer < owner (read, propose, write, administer); roles: decider (decide: its signature verifies an owner-decides answer), releaser (signs release tags), auditor; a role named as a grade reads as that grade, member as viewer. brain.access reads them (brain access explain), read only: nothing is refused by them yet. group, scope, grade, since and until since 0.6.0.",
+      "items": {
+        "type": "object",
         "additionalProperties": false,
         "properties": {
           "person_id": {"type": "string"},
-          "project": {"type": "string", "minLength": 1},
+          "group": {"type": "string", "minLength": 1, "description": "A group's id (groups): the grant holds for each of its members, nested ones included."},
+          "scope": {"type": "string", "minLength": 1, "description": "A node of the scope tree by its id (frozen): a container of scopes.yaml or a project of the registry; global or absent: the whole brain."},
+          "project": {"type": "string", "minLength": 1, "description": "scope's synonym (the key before the scope tree)."},
           "organization": {"type": "string", "minLength": 1},
           "tenant": {"type": "string", "minLength": 1},
-          "roles": {"type": "array", "minItems": 1, "items": {"type": "string", "pattern": "^[a-z][a-z-]*$"}}
+          "grade": {"type": "string", "pattern": "^[a-z][a-z-]*$", "description": "viewer, contributor, maintainer or owner; another value (a newer brain's grade) reads as none, never above."},
+          "roles": {"type": "array", "minItems": 1, "items": {"type": "string", "pattern": "^[a-z][a-z-]*$"}},
+          "since": {"type": "string", "format": "date", "description": "The first day the grant counts."},
+          "until": {"type": "string", "format": "date", "description": "The last day the grant counts: after it, it grants nothing."}
         }
       }
     }

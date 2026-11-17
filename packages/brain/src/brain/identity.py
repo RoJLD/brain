@@ -27,7 +27,7 @@ from __future__ import annotations
 import json
 import re
 import shutil
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import date, datetime
 from pathlib import Path
 
@@ -51,6 +51,13 @@ class Members:
     file: Path
     data: dict
     errors: list[str]
+    # the access fields' reference findings (brain.access): reported with the errors by problems(), never a gate of
+    # what reads the people and their keys (tagsig's release signers, attach): a group's typo never moves them
+    access: list[str] = field(default_factory=list)
+
+    @property
+    def findings(self) -> list[str]:
+        return self.errors + self.access
 
 
 # --- members.yaml ---
@@ -78,7 +85,7 @@ def load(root: Path) -> Members | None:
     text = f.read_text(encoding="utf-8", errors="replace")
     errors += [f"{FILE}:{line}: matches secret pattern {name} (public keys only)"
                for line, name in secretscan.scan_lines(text)]
-    return Members(f, data, errors)
+    return Members(f, data, errors, [f"{FILE}: {e}" for e in _access(data, root)])
 
 
 def plain(value):
@@ -102,14 +109,35 @@ def _id(x: dict, key: str = "person_id") -> str | None:
 
 
 def _references(data: dict) -> list[str]:
-    """What the schema cannot say: unique ids, and every person, organization and tenant named exists."""
+    """What the schema cannot say: unique ids, and every person, organization and tenant named exists (a grant to a
+    group names no person: brain.access checks it)."""
     people = [_id(p) for p in _list(data, "people")]
     dupes = {p for p in people if p is not None and people.count(p) > 1}
     errors = [f"people: person_id {p!r} is declared twice" for p in sorted(dupes)]
     errors += [f"{key}[{i}]: person_id {x.get('person_id')!r} is not in people"
                for key in ("accounts", "memberships") for i, x in enumerate(_list(data, key))
-               if _id(x) is None or _id(x) not in people]
+               if _unknown_person(x, key, people)]
+    errors += [f"memberships[{i}]: grants nothing: give it roles (or a grade)" for i, x in
+               enumerate(_list(data, "memberships")) if not x.get("roles") and x.get("grade") is None]
     return errors + _org_references(data)
+
+
+def _unknown_person(x: dict, key: str, people: list) -> bool:
+    """An account or a membership whose person_id is missing or not a person; a grant to a group names none."""
+    if _id(x) is None:
+        return not (key == "memberships" and "group" in x)
+    return _id(x) not in people
+
+
+def _access(data: dict, root: Path) -> list[str]:
+    """The access fields' references (brain.access): groups, a grant's node and grade; the scope tree read once."""
+    from . import access, scopes
+    cfg = config.load(root)
+    new = _list(data, "groups") or any(k in m for m in _list(data, "memberships")
+                                       for k in ("group", "scope", "grade", "since", "until"))
+    if not new and "grades" not in cfg.data:
+        return []   # a members.yaml of before the grades: nothing more to read (the project: key is identity's)
+    return access.errors(data, scopes.load(root, cfg), cfg.data)
 
 
 def _org_references(data: dict) -> list[str]:
@@ -133,9 +161,42 @@ def _decides(membership: dict, project: str) -> bool:
     roles = membership.get("roles")
     if not isinstance(roles, list) or DECIDER not in roles:
         return False
-    if membership.get("organization") or membership.get("tenant"):
+    return signs(membership) and node_of(membership) in ("", project)
+
+
+def signs(membership: dict) -> bool:
+    """Whether a membership may make its person a signer (a decider, a releaser): one person named alone (a grant
+    that also names a group is refused, never read as the person's), of this brain's domain (not an organization's
+    or a tenant's), within its dates."""
+    return ("group" not in membership and not (membership.get("organization") or membership.get("tenant"))
+            and current(membership))
+
+
+NO_NODE = "<no node>"
+
+
+def node_of(membership: dict) -> str:
+    """The node a membership names: its ``scope`` when the key is there, else its ``project`` (scope's synonym); ''
+    for the whole brain (neither key, or ``global``). A key there with a value of another type, null included, names
+    no node (:data:`NO_NODE`): never the whole brain (the schema says why)."""
+    if "scope" not in membership and "project" not in membership:
+        return ""
+    if "scope" in membership and "project" in membership and membership["scope"] != membership["project"]:
+        return NO_NODE   # two nodes named: none (brain.access reports it)
+    node = membership["scope"] if "scope" in membership else membership["project"]
+    if node == "global":
+        return ""
+    return node if isinstance(node, str) and node else NO_NODE
+
+
+def current(membership: dict, today: str = "") -> bool:
+    """Whether a membership counts today: its ``since`` reached and its ``until`` not passed (dates as written; one of
+    another type counts for nothing). A decider or a releaser out of its dates verifies nothing, as a revoked key."""
+    today = today or date.today().isoformat()
+    since_, until = membership.get("since"), membership.get("until")
+    if any(v is not None and not isinstance(v, str) for v in (since_, until)):
         return False
-    return membership.get("project") in (None, "", project)
+    return (not since_ or since_ <= today) and (not until or today <= until)
 
 
 def _signing(person: dict) -> list[dict]:
@@ -245,7 +306,7 @@ def problems(root: Path, project: str = "") -> list[str]:
     m = load(root)
     if m is None:
         return []
-    out = list(m.errors)
+    out = m.findings
     keys = deciders(m.data, project)
     if not m.errors and not any(keys.values()):
         out.append(f"{FILE}: no person has the {DECIDER} role with a signing key: no answer can be verified")
