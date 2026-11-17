@@ -350,7 +350,7 @@ def _machine() -> str:
     from . import machine
     try:
         return machine.name()
-    except Exception:  # the machine's name is a label only
+    except (OSError, ValueError):  # the machine's name is a label only
         return ""
 
 
