@@ -550,10 +550,11 @@ def write_pin(file: Path, frm: str, to: str) -> None:
     rewrite_json(file, move)
 
 
-def rewrite_json(file: Path, change) -> None:
+def rewrite_json(file: Path, change, write=None) -> None:
     """A JSON file (config.json) changed in place by ``change(data)``, its other keys, their order, its indent, its
-    line endings and its BOM kept, written atomically; ``change`` raises ValueError to write nothing, and so does a
-    file that is not JSON."""
+    line endings and its BOM kept, written atomically (``write(file, text)``: brain.stateio.write_atomic by default;
+    brain.stateio.write_state for a truth-local file, its integrity sidecar with it); ``change`` raises ValueError
+    to write nothing, and so does a file that is not JSON."""
     from . import stateio
 
     raw = file.read_bytes()
@@ -566,7 +567,7 @@ def rewrite_json(file: Path, change) -> None:
     out = json.dumps(data, indent=indent, ensure_ascii=False) + "\n"
     if "\r\n" in text:
         out = out.replace("\n", "\r\n")
-    stateio.write_atomic(file, ("﻿" if bom else "") + out)
+    (write or stateio.write_atomic)(file, ("﻿" if bom else "") + out)
 
 
 def move_pin(p: dict, runner=subprocess.run) -> tuple[int, list[str]]:

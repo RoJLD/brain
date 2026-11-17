@@ -126,6 +126,8 @@ nothing else keeps. Such a file is read and written through `brain.stateio` (`lo
 - reads a file whose `v` is above the engine's (or is not an integer) as it is, but treats it as **read-only**: the
   command that would write it refuses up front, « written by a newer brain (v N, this engine knows v M): brain
   update »; an OSError other than a missing file (a lock, a permission) is read-only too, and nothing is moved;
+- reads a file whose `v` is below the engine's, in a format of `brain.migrations`, with its pending steps run in
+  memory, so the next save writes a `v` its data has; one no step reaches is `behind`, read-only (« Migrations »);
 - **writes** a backup first, `<name>.bak` beside the file (the same folder, so the same store and data class; a file
   under `$BRAIN_HOME/secrets` is never copied), then a temporary file, synced and moved over the file
   (`os.replace`). The `v` on disk is checked again just before: a newer brain that wrote since the load wins;
@@ -464,48 +466,73 @@ the reads write nothing. The engine is public: the machine's user and host names
 
 ## Migrations
 
-A format whose `v` is bumped ships its migration (wi-brain-migrate): a step per version,
-run by `brain migrate`, a plan then an apply (`brain.migrate`). It covers the engine's own formats a machine holds:
-the brain's `config.json` (the `brain config migrate` of the boundary design is this command) and the truth-local
-files of `$BRAIN_HOME` that carry a `v` (`schedules/installed.json`, `alerts/state.json`, `vault/state.json`,
+A format whose `v` is bumped ships its migration (wi-brain-migrate): a step per version, in one registry,
+`brain.migrations`, which the readers and `brain migrate` both use. It covers the engine's own formats a machine
+holds: the brain's `config.json` (the `brain config migrate` of the boundary design is this command) and these
+truth-local files of `$BRAIN_HOME`: `schedules/installed.json`, `alerts/state.json`, `vault/state.json`,
 `vault/device.json`, `usage/sessions.json`, `tui.json`, `memory-sync/state.json`, `machine.json`,
-`spool/spool.json`, `session-archive/index.json`: `brain.migrate.FORMATS`). A log is never rewritten (its reader
-upcasts a line), a derived file is rebuilt, and a session's own files live as long as their session: none of them is
-migrated. A project's own formats and its database migrations are its own tool's (« A project's own formats » above:
-`migrations:` is the scout's glob check, not a step run here).
+`spool/spool.json`, `session-archive/index.json`, `net/breakers.json` and `outbox/queue.json`
+(`brain.migrations.FORMATS`). A log is never rewritten (its reader upcasts a line), a derived file is rebuilt, and a
+session's own files live as long as their session: none of them is migrated (`brain.migrations.EXCLUDED` names each
+`stateio.load` caller left out, and why). A project's own formats and its database migrations are its own tool's
+(« A project's own formats » above: `migrations:` is the scout's glob check, not a step run here).
 
 ```bash
 brain migrate --plan             # the default: each file's format, its v, the steps from it; nothing written
-brain migrate --apply            # run them; exit 1 on the first failure
-brain migrate --plan --json      # {engine, log, files: [{format, file, v, known, status, steps, why}], pending}
+brain migrate --apply            # run them; exit 1 on the first failure or a file behind
+brain migrate --plan --json      # {engine, log, files: [{format, file, v, known, status, steps, why}], pending, unfinished}
 ```
 
-- **A step** is a pure function, the record at version N (a copy, without its `v`) to the record at N+1, registered
-  for `(format, N)` (`@migrate.step("config", 1, "what it changes")`). One step per format and version, one version
-  up each, never past the version the engine reads and writes. The engine ships none yet: no format has broken since
-  its `v` was written. The first breaking change adds its step, its `v/N+1` fixture, its `Compat: migration <id>`
-  line and its Upgrade line.
-- **What is pending is the file's own `v`**: a step from it is registered. A file whose `v` has no step is read in
-  place by its reader (an additive change, or one its reader upcasts: `usage/sessions.json` v1 under `LEDGER_V` 2);
-  one above the engine's is a newer brain's, never touched (« brain update »); one that is not JSON is left to its
-  own command, which sets it aside (« Machine-local state »). So a step never runs twice: a second `--apply` applies
-  nothing.
+- **A step** is a pure function, the record at version N (a copy, without its `v`) to the record at N+1, defined in
+  `brain/migrations.py` itself (`@step("config", 1, "what it changes")`, below the registry's « the steps » line),
+  never beside its reader: a step registered only once its reader's module is imported would be missed by a command
+  that does not import it (a test refuses a step anywhere else). One step per format and version, one version up
+  each, never past the version the engine reads and writes. A format's `reads` names an older version its reader
+  still reads in place (`usage/sessions.json` v1 under `LEDGER_V` 2); every other version below the format's own has
+  its step (a test holds the registry to it). The engine ships none yet: no format has broken since its `v` was
+  written. The first breaking change adds its step, its `v/N+1` fixture, its `Compat: migration <id>` line and its
+  Upgrade line.
+- **The readers never save a version their data does not have.** `brain.stateio.load` and `brain.config.load` run a
+  file's pending steps in memory when its `v` is below the engine's, so a command that loads it (the cockpit, a hook)
+  sees the new shape and its save writes a `v` the data has; the file itself changes only by that save or by
+  `brain migrate --apply`, the eager, backed-up and logged version of the same steps. A writer that loaded a file
+  before the apply saves the migrated shape too. A file the steps do not reach (a step missing, or one that fails) is
+  **behind**: read-only for its reader (« no migration of this engine reaches v N »; a config.json behind is one the
+  guards cannot trust, so they fail closed), `behind` in the plan, and refused by `--apply` (exit 1).
+- **What is pending is the file's own `v`**: the chain from it reaches the engine's. One above the engine's is a
+  newer brain's, never touched (« brain update »); one that is not JSON is left to its own command, which sets it
+  aside, and one that cannot be read (a lock) stays read-only (« Machine-local state »). So a step never runs twice:
+  a second `--apply` applies nothing.
 - **The apply**, file by file, `config.json` first: the file read again and compared with the plan, every step run
   in memory, then a backup (`brain.stateio.backup_home`: a `$BRAIN_HOME` file beside itself,
   `<name>.<UTC stamp>.bak`, its own store and data class; a file of a git work tree under
-  `$BRAIN_HOME/backup/<project>-<key>/`, so git status stays clean; the last 10 copies of each), then one atomic write
-  (a temporary file moved over it; its key order, indent, line endings and BOM kept, the new `v` first), refused when
-  another command wrote the file meanwhile. Each step applied is then a line of the applied-steps log,
-  `$BRAIN_HOME/migrate/applied.jsonl` (store `migrate`, class sealed, a log: `{v, at, engine, format, file, step,
-  from, to, backup}`).
+  `$BRAIN_HOME/backup/<project>-<key>/`, so git status stays clean; the last 10 copies of each), a `started` line in
+  the applied-steps log naming that copy, then one atomic write (a temporary file moved over it; its key order,
+  indent, line endings and BOM kept, the new `v` first; a `$BRAIN_HOME` file's integrity sidecar rewritten with it,
+  `brain.stateio.write_state`), refused when another command wrote the file meanwhile, then one `done` line per step.
+  The log is `$BRAIN_HOME/migrate/applied.jsonl` (store `migrate`, class sealed, a log: `{v, at, engine, state,
+  format, file, step or steps, from, to, backup}`).
 - **A failure stops the run** and leaves its file as it was: a step that raises or returns no record, a record JSON
   cannot hold, a backup that cannot be taken, a write that fails (`BRAIN_FAULT=write@*tui.json:disk-full`). A run
-  killed before the move (`:killed`) leaves the file whole at its old version and logs nothing; the next run resumes,
-  since each file says where it is. A cut between the write and the log's line leaves a step applied and not logged:
-  the file, not the log, decides.
-- **A repo's file** (`config.json`) is migrated in its work tree and never committed: its diff is the migration, to
-  commit or review by PR. One with changes not committed is refused (`blocked` in the plan), so the diff is the
-  migration's alone.
+  killed before the move (`:killed`) leaves the file whole at its old version, with a `started` line and no `done`
+  one; the plan shows it (`cut`) with its backup, and the next run resumes, since each file says where it is.
+- **The way back**: the log names each file's copy (`backup`). To undo a migration, copy that file over the migrated
+  one, with no brain running that writes it (the cockpit closed, no session's hooks); an engine that knows the old
+  version reads it again at once.
+- **A dev engine** (one run from a source folder: a checkout, an editable install, not a release's clone under
+  `~/.brain/engine`) never migrates the default home (`$BRAIN_HOME` unset): the installed release would then refuse
+  to write the files it moved (« written by a newer brain »). `--apply` exits 2 and says so; set `BRAIN_HOME` to a
+  home of its own, or pass `--dev-engine` to migrate this one anyway. The plan always runs.
+- **A repo's file** (`config.json`) is migrated in its work tree and never committed: its diff is the migration. One
+  with changes not committed is refused (`blocked` in the plan), and so is one whose git status cannot be read (git
+  missing, a repo of another owner: fail closed); the status is read with `git --no-optional-locks`, so the plan
+  never takes the index's lock.
+- **The order across machines**: a brain's machines may run different engines, and an engine refuses a config.json
+  above its own `v` (its guards fail closed). So the migrated config.json is committed once every machine of the
+  brain runs an engine that reads its new `v`: its pin moved, then installed on each (`brain update`, or the
+  installer's `-Apply`); only then `brain migrate --apply` on one machine, its commit, and a pull on the others. The
+  plan and the apply say it on a `then` line under the config.json step. The truth-local files are each machine's
+  own: each runs its own `brain migrate --apply`, or lets its readers carry them at their next save.
 - **`brain update`** prints the migrations pending on this machine (« Migrations pending for brain X's formats: ... »,
   `migrations` in its `--json`), and after an install the line to run the new engine's plan; it applies none.
 
