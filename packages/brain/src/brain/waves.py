@@ -504,7 +504,10 @@ def closure_problems(plan: Plan, version: str) -> list[str]:
     """The closure rule on a version PR: the wave named by ``version`` may hold no open item that is neither carried
     to a later wave (props.carried_to) nor dropped, and it is closed (reached by brain wave close). [] when the store
     has no such wave. What brain check refuses about that wave (its release twice, an item of it in two waves) is
-    said too: the rule cannot be read through it."""
+    said too: the rule cannot be read through it. So is a wave before it reached without props.shipped_as that could
+    have shipped as ``version`` (brain.waveclose.unrecorded_ship): which wave it closes cannot be told
+    (brain.waveclose.as_tagged tells it from the last release tag)."""
+    from .waveclose import unrecorded_ship
     same = plan.same_release(version)
     if len(same) > 1:
         return [f"release {version} names {len(same)} waves ({', '.join(same)}): one wave per release (brain check)"]
@@ -512,9 +515,12 @@ def closure_problems(plan: Plan, version: str) -> list[str]:
     if amb:
         return [amb]
     w = plan.for_release(version)
+    unrecorded = unrecorded_ship(plan, version, w)
+    if unrecorded and w is not None:   # the jump counts from a wave that may be the one shipping: w is not read
+        return [unrecorded]
     behind = _behind(plan, version, w)
     if w is None:
-        return behind
+        return behind + ([unrecorded] if unrecorded and not behind else [])
     out = behind + [f"{i}: in {len(plan.planned(i))} waves ({', '.join(plan.planned(i))}), {w} among them: one wave "
                     "per item (brain check)" for i in sorted(plan.members.get(w, ())) if len(plan.planned(i)) > 1]
     left = [i for i in plan.items_of(w) if plan.status(i) in OPEN]

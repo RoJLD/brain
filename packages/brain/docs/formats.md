@@ -61,7 +61,8 @@ their default.
 | DDR signature | `records/ddr/<id>.sig`, beside its record | none: an SSH signature (namespace `brain-decision`) over the answer's payload | - | - (an older engine ignores the file and reads the record as before) |
 | permissions.yaml | the brain's root | `v` (`permissions.schema.json`, described: read by `brain.permissions`) | a note; an **allow** rule that carries an unknown key is left out (the key may narrow it), a deny or ask rule is kept | refused |
 | typologies.yaml | the engine's `src/brain/typologies.yaml` (the typology catalog, [typologies.md](typologies.md)); a brain's labels and own ids in config.json `typologies` | `v` (the engine's: a brain never writes it) | - (config.json `typologies`: a key of an id this engine does not know a note, the id read; an older engine reads `typologies` itself as an unknown config.json key: a note, refused in strict mode, CI) | - |
-| packs.yaml | `source/packs.yaml` | `v` | a note, a top-level key and a pack's key alike (a pack's since 0.4.0: an older engine refuses a pack key it does not know, so a brain writes a new pack key, `typologies` or `layers` for instance, only once its machines run 0.4.0 or later); the key is kept and the pack rendered as without it (in strict mode, CI: refused). A pack key whose value is a mapping is read as a target's own fields (`claude:`...): kept, with no note | refused |
+| typology_packs.yaml | the engine's `src/brain/typology_packs.yaml` (the typology packs it ships, [typologies.md](typologies.md#typology-packs)); a brain takes one in `source/packs.yaml` with `from: engine` | `v` (the engine's: a brain never writes it) | - (a brain's pack keys are packs.yaml's, below) | - |
+| packs.yaml | `source/packs.yaml` | `v` | a note, a top-level key and a pack's key alike (a pack's since 0.4.0: an older engine refuses a pack key it does not know, so a brain writes a new pack key only once its machines run 0.4.0 or later); the key is kept and the pack rendered as without it (in strict mode, CI: refused). A pack key whose value is a mapping is read as a target's own fields (`claude:`...): kept, with no note. A typology pack's keys (`typologies`, `layers`, `standards`, `stages`, `done`, `doors`, `roles`, `guards`, `registry`, `from`) are known from the release that ships the typology packs (wave 0.5.2): their shape is checked, an id this engine does not know in them a note. An older engine notes the list keys as unknown, keeps `standards` and `stages` (mappings) as a target's fields with no note, and renders the pack without them: a pack `from: engine` is then read without the engine's parts, so a brain writes one only once its machines run that release | refused |
 | template.yaml | a template's folder | `engine:` range | a note (in CI: refused), `extends` and `append` (wi-brain-project-templates) and `takes` (spec-brain-typology-packs E1 bis) included: a template that uses them names the engine that knows them in `engine:`; a graph's keys are strict: a graph's `layers` (wi-brain-graph-templates) is refused by an older engine, so a template that uses it names the engine that knows it in `engine:` | `engine:` is checked **first**: a template for a newer engine says "it needs brain >=X", not "unknown key(s)" |
 | graph layer | research_graph's `templates/layers/<name>.yaml` (the catalogue); a template's own `layers/<name>.yaml` | `version`, per layer, recorded in a store's `templates:` | refused (`research_graph layers` names the known keys) | - (a layer's version is compared by `brain template upgrade`, a later item) |
 | schema.yaml `templates:`, `endpoints:` | a store's `schema.yaml`, when composed from layers (`research_graph layers`) | none: the store's schema | both optional; an older engine ignores them (its `check` then verifies no endpoints) | - |
@@ -73,18 +74,22 @@ truncated write, a byte that is not UTF-8) or that its schema refuses is an erro
 `v`, a kind this engine does not know) is skipped and counted. Neither stops `brain sync`: the graph is built from the
 other lines, and a note says how many were left out. Their ids still count as recorded, so no AR is appended twice.
 
-### Where a session ran (config.json)
+### Where a session ran (SR, config.json)
 
-config.json `usage.accounts` (wi-brain-session-provenance, `brain.provenance`) is additive: an optional key, which an
-older engine notes in read mode and refuses in strict mode (CI), so a brain repo whose CI runs an older engine sets it
-once its CI runs the engine that knows it. `usage.accounts[].alias` never takes an `@` nor a UUID (an e-mail address,
+An SR's `provider`, `harness`, `account` and `plan` (wi-brain-session-provenance, `brain.provenance`) are additive
+under SR `v` 1: optional fields, so every SR written before stays valid and reads alike (its `harness` is its `tool`,
+its provider what its model's id says, its account the config.json `usage.accounts` entry in force on its day).
+`tool` stays required and is still written, the same value as `harness`, so an older engine reads a new SR as before:
+the four fields are a warning in read mode, kept by its rewrites (`brain.records.keep_unknown`), and refused only in
+strict mode (CI), as any newer brain's field. config.json `usage.accounts` is additive the same way: an older engine
+notes it in read mode and refuses it in strict mode, so a brain repo whose CI runs an older engine sets it once its CI
+runs the engine that knows it. `account` and `usage.accounts[].alias` never take an `@` nor a UUID (an e-mail address,
 an account id) anywhere in it, nor a trailing newline (the patterns end on `(?![\s\S])`, read alike by ECMA and
 Python), and `usage.accounts[].since` is a UTC day (YYYY-MM-DD). A value that breaks a schema's pattern is never
 printed back, whatever the schema: the error gives its path and length; an enum's or a format's error prints a short
-plain word only (no `@`, no UUID, at most 40 characters), else the length too. The SR and the token ledger
-(`usage/sessions.json`) do not change: a session's provider, harness, account and plan are computed when a report is
-built (the row's own fields, what the session's snapshot holds, then config.json and the model). The SR fields come
-with wi-brain-sr-provenance-fields.
+plain word only (no `@`, no UUID, at most 40 characters), else the length too. The token ledger
+(`usage/sessions.json`) does not change: its rows are read for these fields at report time (the row's own fields
+first, then what the session's snapshot captured, then config.json and the model).
 
 ### Milestone kinds (the store)
 
@@ -128,7 +133,8 @@ nothing else keeps. Such a file is read and written through `brain.stateio` (`lo
   update »; an OSError other than a missing file (a lock, a permission) is read-only too, and nothing is moved;
 - **writes** a backup first, `<name>.bak` beside the file (the same folder, so the same store and data class; a file
   under `$BRAIN_HOME/secrets` is never copied), then a temporary file, synced and moved over the file
-  (`os.replace`). The `v` on disk is checked again just before: a newer brain that wrote since the load wins;
+  (`os.replace`, tried again for a second while Windows refuses it because a reader holds the file open). The `v`
+  on disk is checked again just before: a newer brain that wrote since the load wins;
 - keeps the keys it does not know (a newer brain's additive ones) through the round trip.
 - with **integrity** on (config.json `integrity.sidecars: true`, or `BRAIN_STATE_INTEGRITY=1`; off by default),
   writes a sidecar beside each file it saves, `<name>.sha256` (`{"v": 1, "sha256", "size", "mtime_ns"}`), and
@@ -158,6 +164,7 @@ projects) keeps its `v` 1 unwritten, so that brain 0.2.5, which reads every key 
 | `usage/sessions.json` | `v` 2 (`LEDGER_V`, apart from the scanner's `SCAN_V`, which only rescans rows; `SCAN_V` 4 adds a row's `tooling` and `refused`, the usage counters by tool id: additive, a row without them, its transcript gone, is read from its `tools`, `commands` and `skills`; an engine of `SCAN_V` 3 rescans a v4 row whose transcript exists and writes it back as v3, so the newer engine rescans it once more: run one engine per machine; from `SCAN_V` 4 on, a newer scanner's row is kept) | `brain usage` brings the rows up to date in memory and says on stderr that it saved nothing |
 | `tui.json` | `v` 1 (beside the older `cockpit: 1`, kept) | the cockpit shows the saved views but does not remember new ones (« brain tui: ... written by a newer brain ... the views are not remembered ») |
 | `memory-sync/state.json` | `v` 1 | the memory sync refuses before any fetch: `last.json` says « failed » and the alert names brain update |
+| `ship/queue.json` | `v` 1 | `brain ship` refuses to queue a PR or to run the merger (exit 1, the refusal said); `--list` still reads it |
 | `formats/<project>.json` | `v` 1 | `brain formats check` runs and reports as usual, and remembers no result: each check runs again next time |
 | `vault/device.json` | `v` 1 | `brain vault device init` (`--rotate` too) and `device forget-previous` refuse before the keystore is touched |
 | `sessions/<id>.json`, `<id>.state.json` | `v` 1 (the SR's schema, `capture.SR_V`; `STATS_V`) | the Stop hook writes neither (a newer brain's session) and logs nothing |
@@ -255,11 +262,13 @@ foreign one is never written here.
 | `sessions.app_meta` | the desktop app's session file | foreign, read only | `{}` is right: never written |
 | `codemap.read` | `code-map/<project>.json` | derived (local) | `{}` is right: rebuilt |
 | `codeindex.read_record` | `code-index.json` | derived (local) | `{}` is right: rebuilt |
+| `cbm.read_record` | `code-index/cbm/record.json` | derived (local) | `{}` is right: rebuilt (`brain index --backend cbm`) |
 | `forecast.load_latest` | `forecast/<project>/latest.json` | derived (local) | `{}` is right: rebuilt |
 | `quota.load_status` | the quota forecast | derived (local) | `{}` is right: rebuilt |
 | `update._read_cache` | `update.json` | derived (local) | `{}` is right: the tags are asked again |
 | `net.blocked`, `net.failed` | `net/breakers.json` | truth-local | through `brain.stateio`; losing it costs one timeout per service |
 | `outbox.put`, `outbox.replay` | `outbox/queue.json` | truth-local | through `brain.stateio`; a newer brain's is read-only (nothing queued, said) |
+| `ship.entries`, `ship.enqueue`, `ship.update`, `ship.set_red` | `ship/queue.json` | truth-local | through `brain.stateio`, each write under the lock `ship-queue.lock`; its `entries` and its `red` bases keep the keys they do not know |
 
 ## The hook contract
 

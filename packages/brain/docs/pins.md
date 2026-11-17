@@ -20,6 +20,7 @@ A pin is one row of `pins.yaml`, beside the project's decision log (`notes/pins.
     - tests/test_retry_*.py                       # a glob: * and ? within a folder, ** across folders
     - code:demo:src/retry.py::backoff             # a CodeRef (a symbol: precise once GitNexus says which changed)
   since: 2026-11-12
+  alias: retry-count                              # optional: its public name (below)
 ```
 
 Why a file and not the ADR's own fields: the decision log is append-only and its ADR nodes are generated from it, so
@@ -44,16 +45,31 @@ brain adr pin adr-2026-11-01-retries-stay-at-four --touches code:demo:src/retry.
   and what it hits (`pins` in `--json`).
 - **`brain review check HEAD --pr N`** (or `--body FILE`, `--base REF`): exit 1 while a pinned decision the change
   touches is not answered by a line of the PR body:
-  - `Keeps <id>` for a decision in force (a reason after a colon or a dash is welcome);
-  - `Overrides <id>: <why>` for a decision a later ADR supersedes (in the decision log at the head): write the new
-    ADR first, in the same PR or before it; its reason is required.
+  - `Keeps <id or alias>` for a decision in force (a reason after a colon or a dash is welcome);
+  - `Overrides <id or alias>: <why>` for a decision a later ADR supersedes (in the decision log at the head): write
+    the new ADR first, in the same PR or before it; its reason is required.
   A line may start with a list mark (`-`, `*`, `1.`), name several ids (`Keeps a, b`), quote them in backquotes or
   bold; lines inside fenced code or an HTML comment do not count, and one id both kept and overridden blocks.
-  Without a body, the pins touched are listed and the stamp alone decides; a pin that cannot be read is a note then.
+  Without a body, the pins touched are listed, each with its alias, and the stamp alone decides; a pin that cannot
+  be read is a note then.
 - **`brain merge-ready N`**: its `pins` check (the last one) asks the same of the PR's body.
+- **A public repo's PR** cannot name a private decision: `brain check --public` and the public commit guard refuse
+  an ADR's or a DDR's id of the owner's graph in a public repo's lines, its PR body included, and an ADR's title. Each
+  pin has a public alias, which answers as its id does (`Keeps retry-count`, `Overrides retry-count: why`): its
+  `alias` (`brain adr pin ID --alias NAME`: lower-case letters, digits and dashes, one decision each, and nothing the
+  public check refuses, by its own rules: never the shape of a graph id such as `adr-` or `wi-`, a decision's id, nor
+  the words of one of the project's ADR titles, so `retries-stay-at-four` is refused for the ADR « Retries stay at
+  four »), else `pin-` and the first 8 hex digits of the sha-256 of the decision's id (`pin-3fa9c1d2`), which names
+  nothing private. It is not a secret either: whoever guesses a decision's id (a date and a few words) can check the
+  guess against it. Every message of the gate, `brain review check`'s pinned lines and `brain impact --diff` give it;
+  the gate itself runs where the pins and the decisions are, in the private brain, so the public body never needs the
+  id. A row written by hand with an alias the public check would refuse stays in the gate: `brain check` warns on it,
+  and the computed alias answers in its place. `brain adr pin ID --alias NEW` on a pin that had another alias says
+  which one it replaces: the PR bodies that said the former one no longer answer it.
 - **`brain check`** warns, once a project, on a pin of an unknown, pending or superseded decision, a malformed row
   (no `holds`, a `holds` on several lines, no `touches`, a touch that is neither a relative path nor a CodeRef), an
-  entry that is not a pin, and a decision pinned twice.
+  alias the public check would refuse (with the alias that answers instead), an entry that is not a pin, a decision
+  pinned twice and one alias given to two decisions.
 
 When the pins file lives in the changed repo (a brain's own PR), the gate reads the pins at the merge base, with the
 head's new ones, and the decision logs at the head: a PR cannot drop its own pin (a row it edits or removes counts as

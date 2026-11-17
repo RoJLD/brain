@@ -50,6 +50,11 @@ def test_the_plan_names_each_step_in_order_and_writes_nothing(repo):
                                                        "check"]
     assert steps[0].line.startswith(f"edit     versions {prev} -> {_next(prev)}: packages/brain/src/brain/__init__.py")
     assert steps[1].argv[-1] == f"v{prev}" and steps[-1].argv[-2:] == ["--store", "S"]
+    # the release's engine is ahead of the planning brain's pin until its pin PR: views.strict would refuse the renders
+    assert all(s.argv[-2:] == ["--write", "--force"] for s in steps if s.name in ("features", "reference"))
+    # features render's --out is the file, not the checkout (a folder there is a write that fails)
+    out = next(s.argv for s in steps if s.name == "features")
+    assert Path(out[out.index("--out") + 1]) == repo / "FEATURES.md"
     assert {p: p.read_bytes() for p in repo.rglob("*") if p.is_file()} == before
 
 

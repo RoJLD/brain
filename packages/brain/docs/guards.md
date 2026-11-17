@@ -51,6 +51,47 @@ anywhere in the command, its last word unresolved too (`brain ipc $x`), `--help`
 of the never-grantable list (keys, scheduled; installer when permissions.yaml declares it) makes the refusal an action
 the owner can queue (`brain queue add --guard`); the others name the gesture and the owner's terminal.
 
+Quoted or escaped words are read as the shell reads them (`'brain' "schedule" install --apply`, `b\rain sched\ule
+install --ap\ply`, `ins''tall`, PowerShell's backtick, cmd's caret), and so are the variables the call itself sets to
+one word (`x=install; brain schedule $x --apply`, `$a = '--apply'; brain schedule install $a`), through the launchers
+the guards read (brain's `.exe` or `.cmd`, a venv's, `python -m brain`, `-mbrain`, `py -3.12 -X utf8 -m brain.cli`,
+`uv run`, `uvx`, `pipx run`, `env`, `sudo`, `nohup`, `timeout`, `Start-Process`, `bash -c`, `cmd /c`, `iex`).
+**Wide** (config.json `guards.gestures_wide: true`, off by default: refusals 0.5.2 adds): a word the guard cannot
+resolve where a gesture's word or flag would stand may hold them (`brain schedule install $FLAG`, `brain schedule
+$x`, `brain schedule $(echo install) --apply`, `brain $opts schedule install --apply`, `& $brain schedule install
+--apply`, PowerShell's `@a` and `@('--apply')`; a word that may hold any gesture, `brain $x` or `brain "$@"`, is
+refused as the first one), but an option's value (`brain usage --hours $h guard` passes); Python's inline code that
+names brain and, as words, each of a gesture's words and one of its flags, in its code or its own arguments, drives it
+(`python -X utf8 -c "from brain.cli import main; main(['schedule', 'install', '--apply'])"`, `$PY -c "...main(sys.argv[1:])"
+schedule install --apply`, `schedule.install(reg, apply=True)`); and a call that clears an agent session's markers
+(`brain.gestures.MARKER_NAMES`) is refused (check `override`), read from the call's own commands: an empty
+assignment (`CLAUDECODE= ...`, `$env:CLAUDECODE = ''`), `unset`, `export -n`, `declare +x` or `env -u` of a marker,
+of `${!CLAUDE*}` or of a word the guard cannot resolve in a call that names CLAUDE (`unset $v`, `unset $(compgen -e
+| grep ^CLAUDE)`), `env -i`, PowerShell's removal of `Env:` items (`Remove-Item Env:CLAUDE*`, `Get-ChildItem
+Env:CLAUDE* | Remove-Item`), .NET's `SetEnvironmentVariable` of a marker or a variable, `-UseNewEnvironment`,
+`.Environment.Clear()`, inline code's `environ.pop`. Reading them passes (`$env:CLAUDECODE`, `CLAUDECODE=1 pytest`),
+and so does a message or a search that only names the forms (`git commit -m "unset ..."`). The MCP server matches
+wide always.
+
+**The lock under the guard.** The gestures that act check the session themselves: `brain schedule install --apply`,
+`brain update`, `brain uninstall --apply`, `brain queue apply`, `brain handover root` refuse to run while any agent
+marker is set (`brain.detail.refused`, `brain.gestures.agent_session`: `CLAUDECODE`, `CLAUDE_CODE_ENTRYPOINT`,
+`BRAIN_AGENT_SESSION`, and the variables Claude Code sets for each session, `CLAUDE_CODE_SESSION_ID`,
+`CLAUDE_CODE_HOST_SESSION_ID`, `CLAUDE_CODE_CHILD_SESSION`, `CLAUDE_CODE_EXECPATH`, `CLAUDE_CODE_MESSAGING_SOCKET`,
+`CLAUDE_PID`; never a configuration variable an owner may export, `CLAUDE_CODE_USE_BEDROCK` or the IDE's
+`CLAUDE_CODE_SSE_PORT`), and so do `brain usage allow` and `brain vault
+reseal --apply` under `guards.owner_strict` or `guards.gestures_wide` (the command line's gate), whatever launched them (a script, `python -m runpy`, `xargs`, `find
+-exec`, inline code calling `schedule.install`); the guard's reading of the command line is the earlier, advisory
+layer that queues the action for the owner. `brain ipc otel-headers` has no such lock (Claude Code runs it as its
+`otelHeadersHelper`, from a session's environment): the guard alone keeps it from a session, and
+`guards.refuse_token_read` the token's file. What neither sees: a session that clears every marker by a means the
+guard does not read (a script that rewrites its own environment; `sudo`, whose `env_reset` drops them, asks for
+the owner's password), a variable the call sets to several words (`x="install
+--apply"; brain schedule $x`, PowerShell's `$a = 'install', '--apply'`), `${x}` (the guards' reader splits a brace),
+PowerShell's parenthesised arguments (`brain schedule install ('--apply')`), an option the guard takes for one with a
+value (`brain usage --json $x`), the arguments `xargs`, `find -exec` or `parallel` add from their input, and code fed
+by a heredoc or stdin (`python - <<EOF`). Inline code is matched by its words, a heuristic: a flag's prefix (`--ap`) or a positional `True` in a call is not read, and a code that names a gesture's words only to read it (`help(usage.allow)`) is refused under the key; the command's own check holds against the first two.
+
 **Strict** (config.json `guards.owner_strict: true`, off by default): the refusals 0.5.1 adds to what the guard let
 through before. At the guard: `brain vault reseal --apply`, and the gestures whose commands refuse themselves in an
 agent's session already (`vault open`, `drill`, `device init` and `forget-previous`, `update`, `uninstall --apply`,
@@ -668,7 +709,7 @@ the digest's and the forecast's history and the changed-items reader all read gi
 |---|---|---|
 | `critical`: a window in force at `critical` % or more | all | deny |
 | `stale`: the newest reading older than `fresh_minutes`, on a machine with a reading in the last 7 days | session, workflow | deny, with the commands that note both windows |
-| `memory`: committed memory at `memory` % or more, or available RAM under `memory_available_gb` GB (default 0: no floor) | session, workflow | deny, naming both measures and the one that refused |
+| `memory`: committed memory at `memory` % or more (with `memory_free_gb` set: under that many GB of commit left, the percent not read), or available RAM under `memory_available_gb` GB (default 0: no floor) | session, workflow | deny, naming the measures and the one that refused |
 | `sessions`: the sessions running reach the cap | session | deny |
 | `brainstorms`: the open brainstorms reach the cap, for a brainstorm | session | deny |
 | `streams`: the calling session already has `max_streams` live streams (`usage.guard.wave_quota`, off by default) | a session started now | deny |
@@ -754,6 +795,12 @@ fresh master and drains its own. It is never a refusal: no guard blocks start_se
                      "memory_available_gb": 4, "wave_hours": 4, "session_hour_usd": 14, "session_hour_measured": false,
                      "fresh_minutes": 60, "live_minutes": 30, "brainstorm_hours": 12}}}
 ```
+
+`memory_free_gb` (default 0: the percent) reads the committed memory in GB of commit left instead (Windows: the commit
+limit minus the commit charge; elsewhere MemAvailable plus SwapFree): a page file of a fixed size keeps the percent at
+91-94 % with 25 GB of RAM free, where 6 GB of commit left is a session's worth and a margin (`"memory_free_gb": 6`);
+with it set, `brain usage guard`, `brain status` and `brain lots` show it beside the percent (read to the hundredth:
+5.95 GB left is under 6).
 
 Every key is optional (the defaults above, except `brainstorms`: 2, and `memory_available_gb`: 0, no floor; 4 is the
 opt-in shown). `"enabled": false` turns the governor off. A

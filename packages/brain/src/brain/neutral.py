@@ -8,8 +8,10 @@ The source is the folder ``source/`` at the brain's root (config.json ``source``
   source/packs.yaml          the marketplace and the packs: which rules, procedures and MCP servers go together,
                              with each target's own fields (claude: the plugin manifest and its marketplace entry);
                              a pack key this engine does not know (a newer brain's) is kept and noted, refused only
-                             in strict mode (CI: brain.schema.tolerate), so packs may grow keys (typologies...); a
-                             mapping is read as a target's own fields (kept, no note)
+                             in strict mode (CI: brain.schema.tolerate), so packs may grow keys; a mapping is read
+                             as a target's own fields (kept, no note); a typology pack's keys (typologies, layers,
+                             standards, stages, done, doors, roles, guards, registry; ``from: engine`` for the
+                             engine's pack of that id) are brain.typology_packs'
   source/rules/<name>.md     rules: front matter (scope, title, intro, lock, a target's own title and intro), then
                              one ``## `` section per rule, its first line ``<!-- id: rule-x -->``
                              (``; overrides: rule-y`` or ``; paths: a/**, b/*.py`` may follow)
@@ -54,7 +56,9 @@ PROJECT_RULES = ("CLAUDE.md", ".claude/CLAUDE.md")   # a project's own rules, in
 GLOBAL = "global"
 TRANSPORTS = ("stdio", "http", "sse")
 SERVER_KEYS = {"transport", "command", "args", "env", "cwd", "url", "headers", "about"}
-PACK_KEYS = {"title", "description", "core", "projects", "rules", "procedures", "mcp", "hooks"}
+PACK_KEYS = {"title", "description", "core", "projects", "rules", "procedures", "mcp", "hooks", "from",
+             # a typology pack's parts (brain.typology_packs.PARTS)
+             "typologies", "layers", "standards", "stages", "done", "doors", "roles", "guards", "registry"}
 TARGET_TEXT_KEYS = {"title", "intro"}
 RULE_FILE_KEYS = {"scope", "title", "intro", "lock"}
 META_KEYS = {"id", "overrides", "paths"}
@@ -179,7 +183,8 @@ class Server:
 @dataclass
 class Pack:
     id: str
-    spec: dict
+    spec: dict                 # as it applies: an engine pack's parts under the brain's keys (``from: engine``)
+    given: dict | None = None  # as packs.yaml writes it (None: spec)
 
     @property
     def core(self) -> bool:
@@ -315,8 +320,10 @@ def load(root: Path) -> Source:
         return src
     src.data = data if isinstance(data, dict) else {}
     packs = src.data.get("packs")
+    from . import typology_packs
     for pid, spec in (packs.items() if isinstance(packs, dict) else []):
-        src.packs.append(Pack(str(pid), spec if isinstance(spec, dict) else {}))
+        spec = spec if isinstance(spec, dict) else {}
+        src.packs.append(Pack(str(pid), typology_packs.overlay(str(pid), spec), spec))
     for rf in sorted((base / RULES).rglob("*.md")) if (base / RULES).is_dir() else []:
         rel = rf.relative_to(base).as_posix()
         default = rf.stem if rel.startswith(SCOPES + "/") else ""
@@ -453,11 +460,18 @@ def check(src: Source, nodes: list[str] | None = None) -> list[str]:
             if lid not in ids:
                 errors.append(f"{rel}: lock {lid!r} names no rule")
     errors += _check_meta_keys(src)
+    from . import config, typologies, typology_packs
+    try:   # the catalog with the brain's own ids (config.json typologies), which its packs may name
+        cat = typologies.load(config.load(src.root))
+    except typologies.CatalogError:
+        cat = None
     for p in src.packs:
-        for k in p.spec:   # a newer brain's pack key (typologies, layers, stages...): kept, a note in read mode
-            if k not in PACK_KEYS and not isinstance(p.spec[k], dict):
+        given = p.given if p.given is not None else p.spec
+        for k in given:   # a newer brain's pack key: kept, a note in read mode
+            if k not in PACK_KEYS and not isinstance(given[k], dict):
                 errors += schema.tolerate(f"{PACKS}: pack {p.id}: unknown key {k!r} (known: "
                                           f"{', '.join(sorted(PACK_KEYS))}, or a target's mapping)")
+        errors += typology_packs.source_errors(p.id, given, p.spec, cat=cat)
         for rel in p.items("rules"):
             if rel not in src.rule_files:
                 errors.append(f"{PACKS}: pack {p.id}: rules {rel!r} not in {FOLDER}/")

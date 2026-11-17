@@ -11,7 +11,7 @@ import yaml
 from research_graph import init
 from test_guards import _needs_python, bash, decide, payload, pwsh
 
-from brain import guards, permissions, projects, queue, records
+from brain import gestures, guards, permissions, projects, queue, records
 
 PERMISSIONS = Path(__file__).resolve().parent / "fixtures" / "permissions.yaml"  # an owner's hierarchy
 AT = "2026-11-02T20:00:00Z"
@@ -91,6 +91,22 @@ OWNER_REFUSED = [
     ("scheduled", "brain schedule install --apply"),
     ("scheduled", "python -I -m brain schedule install --apply"),
     ("scheduled", "~/.brain/venv/bin/python -m brain --root ~/my-brain schedule install --json --apply"),
+    # every launcher, quoted or escaped words, a word the guard cannot resolve (wi-brain-schedule-guard-launchers)
+    ("scheduled", "python -mbrain schedule install --apply"),
+    ("scheduled", "py -3.12 -X utf8 -m brain schedule install --apply"),
+    ("scheduled", "/c/x/venv/Scripts/brain.exe schedule install --apply"),
+    ("scheduled", "C:/x/venv/Scripts/python.exe -m brain.cli schedule install --apply"),
+    ("scheduled", "uv run python -m brain schedule install --apply"),
+    ("scheduled", "uvx brain schedule install --apply"),
+    ("scheduled", "'brain' \"schedule\" 'install' \"--apply\""),
+    ("scheduled", "b\\rain sched\\ule ins\\tall --ap\\ply"),
+    ("scheduled", "brain schedule install --app=1"),
+    ("scheduled", "brain --proj p schedule --project p install --task x --apply"),
+    ("scheduled", "x=install; brain schedule $x --apply"),
+    ("scheduled", "brain schedule ins''tall --apply"),   # the review (2026-11-17): empty quotes in a word
+    ("scheduled", "brain sched\"\"ule install --apply"),
+    ("scheduled", "brain schedule \"ins\"tall --apply"), ("scheduled", "brain sch'e'dule install --apply"),
+    ("scheduled", "bash -c 'python3 -m brain schedule install --apply'"),
     ("scheduled", "schtasks.exe /change /tn \\Demo\\cycle /tr x"),
     ("scheduled", "schtasks /delete /tn BrainDigest /f"),
     ("scheduled", "crontab -e"),
@@ -130,6 +146,12 @@ OWNER_REFUSED = [
 ]
 
 PS_OWNER_REFUSED = [
+    ("scheduled", "& 'C:\\x\\venv\\Scripts\\brain.exe' schedule install --apply"),
+    ("scheduled", "& \"$env:USERPROFILE\\.brain\\venv\\Scripts\\python.exe\" -m brain schedule install --apply"),
+    ("scheduled", "b`rain sch`edule install `--apply"),
+    ("scheduled", "$a = '--apply'; brain schedule install $a"),
+    ("scheduled", "Start-Process python -ArgumentList '-m brain schedule install --apply'"),
+    ("scheduled", "cmd /c \"brain sched^ule install --apply\""),
     ("installer", ".\\install.ps1 -Apply"),
     ("installer", "& 'D:\\work\\demo-brain\\install.ps1' -Ap"),
     ("installer", ". .\\install.ps1 -Apply"),
@@ -154,6 +176,172 @@ PS_OWNER_REFUSED = [
     ("keys", "Invoke-RestMethod -Method:Put -Uri https://api.github.com/repos/o/r/actions/secrets/FOO -Body $b"),
     ("scheduled", "New-ItemProperty -Path 'HKCU:/Software/Microsoft/Windows/CurrentVersion/Run' -Name x -Value y"),
 ]
+
+# config.json guards.gestures_wide (off by default): a gesture through words the guard cannot resolve, and Python's
+# inline code that drives brain's modules (wi-brain-schedule-guard-launchers)
+WIDE_REFUSED = [
+    ("Bash", "brain schedule install $FLAG"),
+    ("Bash", "brain schedule $(echo install) --apply"),
+    ("Bash", "brain $opts schedule install --apply"),
+    ("Bash", "brain schedule install \"${args[@]}\""),
+    ("Bash", "python -c \"from brain.cli import main; main(['schedule', 'install', '--apply'])\""),
+    ("Bash", "python3 -Ic \"import runpy, sys; sys.argv = ['brain', 'schedule', 'install', '--apply']; "
+             "runpy.run_module('brain', run_name='__main__')\""),
+    ("Bash", "python -c \"from brain import schedule, projects; schedule.install(projects.load(), apply=True)\""),
+    ("PowerShell", "brain schedule install @('--apply')"),
+    ("PowerShell", "brain schedule install @rest"),
+    ("PowerShell", "& $brain schedule install --apply"),
+    # the review (2026-11-17): a word that may split, python's options with a value, the code's own arguments
+    ("Bash", "brain schedule $x"), ("Bash", "brain schedule install $opts"),
+    ("PowerShell", "brain schedule @a"),
+    ("Bash", "python -X utf8 -c \"from brain.cli import main; main(['schedule', 'install', '--apply'])\""),
+    ("Bash", "python3 -W ignore -c \"import brain.cli as c; c.main(['schedule', 'install', '--apply'])\""),
+    ("Bash", "python -c \"import sys; from brain.cli import main; main(sys.argv[1:])\" schedule install --apply"),
+    ("Bash", "$PY -c \"from brain.cli import main; main(['schedule', 'install', '--apply'])\""),
+    ("Bash", "python3.13t -c \"from brain.cli import main; main(['schedule', 'install', '--apply'])\""),
+]
+
+# a word that may hold any gesture (brain $x, brain "$@", brain @rest): refused, as the first gesture it may be
+WIDE_ANY = [("Bash", "brain $x"), ("Bash", "brain \"$@\""), ("PowerShell", "brain @rest")]
+
+# clearing an agent session's markers, which the gestures' own check reads (brain.detail.refused)
+MARKERS_CLEARED = [
+    ("Bash", "CLAUDECODE= brain schedule install --apply"), ("Bash", "env -u CLAUDECODE python run.py"),
+    ("Bash", "unset CLAUDECODE CLAUDE_CODE_ENTRYPOINT; python run.py"), ("Bash", "env -i PATH=$PATH python run.py"),
+    ("Bash", "python -c \"import os; os.environ.pop('CLAUDECODE'); import runpy\""),
+    ("PowerShell", "$env:CLAUDECODE = ''; python run.py"), ("PowerShell", "Remove-Item Env:CLAUDECODE"),
+    ("PowerShell", "[Environment]::SetEnvironmentVariable('BRAIN_AGENT_SESSION', $null)"),
+    # round 2: quoted names, every CLAUDE variable at once, export -n
+    ("Bash", "env -u 'CLAUDECODE' python run.py"), ("Bash", "unset ${!CLAUDE*}; python run.py"),
+    ("Bash", "export -n CLAUDECODE; python run.py"), ("PowerShell", "Remove-Item Env:CLAUDE*"),
+]
+
+
+def _wide(tmp_path, monkeypatch, on: bool):
+    cfg = tmp_path / "wide-config.json"
+    cfg.write_text(json.dumps({"v": 1, "identity": {"owner": "Ada", "kind": "person"}, "power": POWER,
+                               "guards": {"gestures_wide": on}}), encoding="utf-8")
+    monkeypatch.setenv("BRAIN_CONFIG", str(cfg))
+
+
+@pytest.mark.parametrize("tool, command", WIDE_REFUSED)
+def test_wide_matching_refuses_what_the_guard_cannot_resolve(owner, tmp_path, monkeypatch, tool, command):
+    _wide(tmp_path, monkeypatch, True)
+    reason = (bash if tool == "Bash" else pwsh)(owner, command)
+    assert refused(reason, "owner", "scheduled") and "brain schedule install --apply" in reason, reason
+
+
+@pytest.mark.parametrize("tool, command", WIDE_ANY)
+def test_wide_matching_refuses_a_word_that_may_hold_any_gesture(owner, tmp_path, monkeypatch, tool, command):
+    _wide(tmp_path, monkeypatch, True)
+    reason = (bash if tool == "Bash" else pwsh)(owner, command)
+    assert reason is not None and f"{guards.ALLOW_ENV}=owner" in reason, reason
+
+
+@pytest.mark.parametrize("tool, command", MARKERS_CLEARED)
+def test_wide_matching_refuses_clearing_the_agent_markers(owner, tmp_path, monkeypatch, tool, command):
+    _wide(tmp_path, monkeypatch, True)
+    reason = (bash if tool == "Bash" else pwsh)(owner, command)
+    assert refused(reason, "owner", "override") and "clears an agent session's marker" in reason, reason
+    _wide(tmp_path, monkeypatch, False)
+    assert "clears an agent" not in ((bash if tool == "Bash" else pwsh)(owner, command) or "")
+
+
+def test_the_markers_named_start_python():
+    commands = [c for tool, c in MARKERS_CLEARED if tool == "Bash"] + ["brain $x", "$b usage $x allow"]
+    missed = [c for c, started in zip(commands, _needs_python(commands)) if not started]
+    assert not missed
+
+
+def test_reading_the_markers_passes_in_powershell(owner, tmp_path, monkeypatch):
+    _wide(tmp_path, monkeypatch, True)
+    for command in ("$env:CLAUDECODE", "if ($env:CLAUDECODE -eq '1') { 'session' }", "Get-ChildItem Env:CLAUDE*"):
+        assert pwsh(owner, command) is None, command
+
+
+def test_the_marker_check_costs_its_length(owner):
+    import time
+    t0 = time.monotonic()
+    gestures.clears_marker("unset " + "a " * 60_000 + " CLAUDECODE")   # bounded gaps: its length, no more
+    assert gestures.clears_marker("echo " + "x " * 60_000) == ""
+    assert time.monotonic() - t0 < 2
+
+
+def test_the_lock_reads_the_session_variables_not_the_configuration_ones():
+    """A session carries its own variables (its id, its host's, its process); an owner's terminal may carry Claude
+    Code's configuration ones (the review's round 3: CLAUDE_CODE_USE_BEDROCK, the IDE's CLAUDE_CODE_SSE_PORT), which
+    never make it an agent's session."""
+    from brain import detail, succession
+    for var in gestures.MARKER_NAMES:
+        assert gestures.agent_session({var: "x"}) == var
+        assert var in detail.refused({var: "x"}) and var in succession._refused({var: "x"})
+    owner = {"CLAUDE_CODE_SSE_PORT": "1", "CLAUDE_CODE_USE_BEDROCK": "1", "CLAUDE_CODE_GIT_BASH_PATH": "C:/x",
+             "CLAUDE_CODE_MAX_OUTPUT_TOKENS": "8000", "CLAUDE_CONFIG_DIR": "x", "PATH": "y"}
+    assert gestures.agent_session(owner) == "" and detail.refused(owner) == "" and succession._refused(owner) == ""
+
+
+@pytest.mark.parametrize("command", [
+    "unset $(compgen -e | grep ^CLAUDE)", "for v in $(compgen -e); do case $v in CLAUDE*) unset $v;; esac; done",
+    "Get-ChildItem Env:CLAUDE* | Remove-Item", "env -u \"$v\" python run.py  # CLAUDE",
+])
+def test_clearing_by_pattern_is_read(command):
+    assert gestures.clears_marker(command), command
+
+
+@pytest.mark.parametrize("command", [
+    "git commit -m \"unset ${!CLAUDE*} is refused\"", "gh pr create --body \"env -u CLAUDECODE\"",
+    "grep -rn \"unset CLAUDECODE\" docs", "[Environment]::SetEnvironmentVariable('PATH', 'x')", "$env:CLAUDECODE",
+    "CLAUDECODE=1 python -m pytest",
+])
+def test_a_mention_of_the_forms_is_no_clearing(command):
+    assert gestures.clears_marker(command) == "", command
+
+
+def test_usage_allow_refuses_itself_under_the_wide_guard(tmp_path, monkeypatch):
+    cfg = tmp_path / "w.json"
+    cfg.write_text(json.dumps({"v": 1, "identity": {"owner": "Ada", "kind": "person"},
+                               "guards": {"gestures_wide": True}}), encoding="utf-8")
+    assert "refused in an agent's session" in gestures.cli_refusal(
+        ["usage", "allow"], env={"CLAUDECODE": "1"}, data=json.loads(cfg.read_text(encoding="utf-8")))
+    assert gestures.cli_refusal(["usage", "allow"], env={"CLAUDECODE": "1"}, data={}) == ""   # off by default
+    assert gestures.cli_refusal(["usage", "allow"], env={}, data={"guards": {"gestures_wide": True}}) == ""
+
+
+def test_a_gesture_refuses_itself_whichever_agent_marker_is_set(monkeypatch):
+    """The command's own check (brain.detail.refused, schedule install --apply, update, uninstall, queue apply,
+    handover root): any of the agent markers, so that clearing one is not enough."""
+    from brain import detail
+    for var in ("CLAUDECODE", "CLAUDE_CODE_ENTRYPOINT", "BRAIN_AGENT_SESSION"):
+        assert var in detail.refused({var: "1"})
+    assert detail.refused({}) == ""
+
+
+@pytest.mark.parametrize("tool, command", WIDE_REFUSED)
+def test_wide_matching_is_off_by_default(owner, tmp_path, monkeypatch, tool, command):
+    for on in (None, False):
+        if on is not None:
+            _wide(tmp_path, monkeypatch, on)
+        assert (bash if tool == "Bash" else pwsh)(owner, command) is None, command
+
+
+def test_the_prefilter_starts_python_for_the_wide_shapes():
+    commands = [c for _, c in WIDE_REFUSED]
+    missed = [c for c, started in zip(commands, _needs_python(commands)) if not started]
+    assert not missed
+
+
+@pytest.mark.parametrize("command", [
+    "brain schedule install --plan", "brain schedule list $x", "brain usage --hours $h guard",
+    "python -c \"import brain; print(brain.__version__)\"",
+    "python -c \"from brain import schedule; print(schedule.installed())\"",
+    "python -c \"from brain import schedule; print(schedule.install.__doc__)\"",
+    "python -c \"print('schedule install --apply')\"", "python script.py brain schedule install --apply",
+    "echo $CLAUDECODE", "test -n \"$CLAUDE_CODE_ENTRYPOINT\" && echo session", "brain --project $P status",
+    "CLAUDECODE=1 python -m pytest -q", "python -c \"import os; print(os.environ.get('CLAUDECODE'))\"",
+])
+def test_wide_matching_passes_reads(owner, tmp_path, monkeypatch, command):
+    _wide(tmp_path, monkeypatch, True)
+    assert bash(owner, command) is None, command
 
 
 @pytest.mark.parametrize("category, command", OWNER_REFUSED)
@@ -186,6 +374,10 @@ def test_owner_refuses_in_powershell(owner, category, command):
     "crontab -l",
     "brain ipc token",
     "grep -n 'ipc otel-headers' docs/mcp.md",
+    "brain schedule install", "brain schedule install --json", "brain schedule list", "python -m brain schedule list",
+    "brain schedule install --apply --help", "brain usage --hours $h guard",
+    "python -c \"import brain; print(brain.__version__)\"", "python -c \"from brain import schedule; print(schedule.installed())\"",
+    "grep -rn 'schedule install --apply' docs/", "echo brain schedule install --apply",
     "systemctl status brain.service",
     "ssh-keygen -lf ~/.ssh/id_ed25519.pub",
     "ssh-keygen -R box1",

@@ -1,0 +1,45 @@
+# The boundary of this brain, file by file: which side each tracked file is on, so that whatever may one day be
+# published (code, tests, fixtures) is publishable from its first commit, and a later move copies files instead of
+# cleaning them (brain boundary, brain boundary --check; brain check runs it with the public scan of the engine side).
+#
+# A file takes the side of the first rule whose glob matches (** any folders, * and ? within a name):
+# - engine: may leave for a public repo one day, at target; it never holds a name of config.json public.deny (the
+#   readiness, held at readiness_max) nor a secret, an e-mail address or a home folder (brain check --public --engine);
+# - personal: stays in this private repo, Ada Example's content; init names the command that wrote its first version;
+# - claude: the Claude Code rendering, written by brain render --target claude (brain sync keeps it current);
+# - generated: a view a command writes.
+# A new file no rule classifies fails brain check: add a rule for it here.
+v: 1
+readiness_max: 0
+rules:
+  # --- generated views ---
+  - {glob: "notes/graph/**/_generated_*.yaml", side: generated, why: "brain sync writes them"}
+  - {glob: "notes/kanban_graph.md", side: generated, why: "brain sync (research_graph kanban --write)"}
+  - {glob: "notes/roadmap_graph.md", side: generated, why: "brain sync (research_graph kanban --write)"}
+  - {glob: "notes/decision_queue.md", side: generated, why: "brain decision view --write"}
+  - {glob: "notes/audit.md", side: generated, why: "brain audit --write"}
+  - {glob: "notes/modules_graph.md", side: generated, why: "brain sync (brain modules --write)"}
+  - {glob: "notes/plan_graph.md", side: generated, why: "brain sync (brain.waves: eras, milestones, waves)"}
+  - {glob: "notes/docs_graph.md", side: generated, why: "brain sync (brain.docsgraph: the documentation graph)"}
+  - {glob: "AGENTS.md", side: generated, why: "brain render --target agents"}
+  # --- the Claude Code rendering ---
+  - {glob: ".claude-plugin/**", side: claude, init: "brain init", why: "the local marketplace"}
+  - {glob: "plugins/**", side: claude, init: "brain init", why: "the core plugin and the engine's hooks"}
+  # --- may be published one day: nothing private in them, from the first commit ---
+  - {glob: "src/**", side: engine, target: "src/", why: "code"}
+  - {glob: "tests/**", side: engine, target: "tests/", why: "the code's tests, on fixtures"}
+  - {glob: "fixtures/**", side: engine, target: "fixtures/", why: "invented people, hosts and data for the tests"}
+  # --- Ada Example's own ---
+  - {glob: "config.json", side: personal, init: "brain init", why: "the brain's contract with the engine"}
+  - {glob: "projects.yaml", side: personal, init: "brain init", why: "the registry"}
+  - {glob: "boundary.yaml", side: personal, init: "brain init", why: "this file"}
+  - {glob: "source/**", side: personal, init: "brain init", why: "the neutral source of the agent files"}
+  - {glob: "rules/**", side: personal, init: "brain init", why: "the rules for every project"}
+  - {glob: "CLAUDE.md", side: personal, init: "brain init", why: "the repo's own rules"}
+  - {glob: "README.md", side: personal, init: "brain init", why: "what this repo is"}
+  - {glob: ".gitignore", side: personal, init: "brain init", why: "machine-local state stays out"}
+  - {glob: ".gitattributes", side: personal, init: "brain init", why: "LF endings, the hooks' scripts included"}
+  - {glob: "notes/**", side: personal, why: "the backlog graph, the decision log and the journal"}
+  - {glob: "records/**", side: personal, why: "the records: decisions asked, sessions, actions"}
+  - {glob: "memory/**", side: personal, why: "the memory notes"}
+  - {glob: "docs/**", side: personal, why: "specs and notes"}

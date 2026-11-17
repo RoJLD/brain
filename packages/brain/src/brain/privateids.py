@@ -114,11 +114,7 @@ def _build(loaded: dict, stores: list, slug: str) -> Index:
         for nid, (_, node) in nodes.items():
             kind = str(node.get("type") or "")
             if kind == "ADR" and isinstance(node.get("title"), str):
-                w = words(node["title"])
-                if len(w) >= MIN_WORDS:
-                    key = tuple(w[:WINDOW])
-                    idx.titles.setdefault(len(key), {}).setdefault(key, nid)
-                    idx.firsts.add(key[0])
+                add_title(idx, nid, node["title"])
             if not TOKEN.fullmatch(nid):
                 continue
             if kind in ALWAYS:
@@ -126,6 +122,16 @@ def _build(loaded: dict, stores: list, slug: str) -> Index:
             elif project not in idx.own:
                 idx.ids.setdefault(nid, f"the private id {nid} ({label}, not this repo's project)")
     return idx
+
+
+def add_title(idx: Index, nid: str, title: str) -> None:
+    """Refuse the ADR ``nid``'s ``title`` in ``idx``: its first :data:`WINDOW` words, when it has :data:`MIN_WORDS`
+    or more (brain.pins checks an alias against its project's decisions with it too)."""
+    w = words(title)
+    if len(w) >= MIN_WORDS:
+        key = tuple(w[:WINDOW])
+        idx.titles.setdefault(len(key), {}).setdefault(key, nid)
+        idx.firsts.add(key[0])
 
 
 def _held(token: str, idx: Index) -> str:

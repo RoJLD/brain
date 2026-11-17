@@ -66,19 +66,37 @@ def resolve(args, root: Path | None, warn=_stderr) -> tuple[projects.Project, li
             raise AuditError(projects.unloaded(args.project, root)
                              or f"unknown project {args.project!r} (known: {', '.join(reg) or 'none'})")
         reg = {args.project: reg[args.project]}
-    for p in reg.values():
-        cfgs = projects.repos_of(p)
-        for c in cfgs:
-            if c.path.resolve() in (main, top):
-                if c.path.resolve() == p.root.resolve() and top != main:
-                    p = projects.get(p.name, top)   # the project's own repo in a worktree: its stores there
-                    cfgs = projects.repos_of(p)
-                    c = next(x for x in cfgs if x.path.resolve() == top)
-                return p, cfgs, dataclasses.replace(c, path=top), top, True
+    # a code repo as brain audit sees it first (a project that declares it, or one of the software pack's kinds),
+    # then any project's root: a repo another kind's root holds and a software project declares is the latter's
+    found = _match(reg, main, top, audit=True) or _match(reg, main, top, audit=False)
+    if found:
+        return found
     warn(f"warning: {top} is in no registered project: audited with the defaults, graph checks N/A")
     p = projects.for_root(top)
     c = projects.Repo(main.name.lower(), top)
     return p, [c], c, top, False
+
+
+def _match(reg: dict, main: Path, top: Path, *, audit: bool):
+    """The first project of ``reg`` with a repo (``repos_of(p, audit=audit)``) at ``main`` or ``top``, as
+    :func:`resolve` returns it; None when there is none."""
+    for p in reg.values():
+        cfgs = projects.repos_of(p, audit=audit)
+        for c in cfgs:
+            if c.path.resolve() in (main, top):
+                if c.path.resolve() == p.root.resolve() and top != main:
+                    p = projects.get(p.name, top)   # the project's own repo in a worktree: its stores there
+                    cfgs = projects.repos_of(p, audit=audit)
+                    c = next(x for x in cfgs if x.path.resolve() == top)
+                return p, cfgs, dataclasses.replace(c, path=top), top, True
+    return None
+
+
+def _code_repo(p: projects.Project, top: Path) -> bool:
+    """Whether ``top`` is one of ``p``'s code repos as brain audit sees them (declared, a production checkout, or its
+    root for one of the software pack's kinds)."""
+    main = (paths.main_checkout(top) or top).resolve()
+    return any(r.path.resolve() in (main, top.resolve()) for r in projects.repos_of(p, audit=True))
 
 
 def changed(top: Path, base: str, new: str = "") -> list[tuple[str, str, str]]:
@@ -331,6 +349,11 @@ def base_of(top: Path, spec: str) -> tuple[str, str]:
 
 def main(args, root: Path | None) -> int:
     p, cfgs, c, top, registered = resolve(args, root)
+    if registered and not _code_repo(p, top):
+        kinds = ", ".join(str(t) for t in p.lifecycle.get("typologies") or [])
+        print(f"scout: {p.name} is of kinds {kinds}, which meet no software pack: the scout is the software pack's "
+              "(declare it in repos: or production: of its registry entry to audit its code anyway)")
+        return 0
     spec = args.diff or ""
     if ".." in spec:
         a, b = spec.split("..", 1)

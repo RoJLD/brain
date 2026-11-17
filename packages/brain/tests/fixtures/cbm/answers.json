@@ -1,0 +1,847 @@
+{
+ "version": "0.12.1",
+ "initialize": {
+  "protocolVersion": "2025-06-18",
+  "serverInfo": {
+   "name": "codebase-memory-mcp",
+   "version": "0.12.1"
+  },
+  "capabilities": {
+   "tools": {
+    "listChanged": false
+   },
+   "prompts": {
+    "listChanged": false
+   }
+  },
+  "instructions": "Graph first: search_graph for symbols, trace_path for relationships, get_code_snippet for source, query_graph for multi-hop, and get_architecture for overview. Use search_code/grep for literals or coverage gaps. The session project's index auto-refreshes; re-index others. Check cited-path coverage; paginate."
+ },
+ "index_repository": {
+  "arguments": {
+   "repo_path": "C:/work/brain-wt",
+   "name": "brain-wt-0f3c9a21",
+   "mode": "fast"
+  },
+  "result": {
+   "content": [
+    {
+     "type": "text",
+     "text": "{\"project\":\"brain-wt-0f3c9a21\",\"excluded\":{\"dirs\":[\"docs\",\"examples\",\"tests/fixtures\",\"packages/brain/docs\",\"packages/brain/tests/fixtures\"],\"count\":5,\"truncated\":false},\"not_indexed_files_count\":4,\"not_indexed_files\":{\"files\":[{\"path\":\"CHANGELOG.md\",\"reason\":\"skip-list\"},{\"path\":\"LICENSE\",\"reason\":\"skip-list\"},{\"path\":\"packages/brain/CHANGELOG.md\",\"reason\":\"skip-list\"},{\"path\":\"packages/brain/LICENSE\",\"reason\":\"skip-list\"}],\"count\":4,\"truncated\":false,\"note\":\"Excluded by design (gitignore/.cbmignore/skip-lists); examples only — full list in 'logfile'.\"},\"skipped_count\":0,\"logfile\":\"D:/cbm-home/code-index/cbm/cache/logs/brain-wt-0f3c9a21-1794866166.log\",\"parse_partial_count\":4,\"parse_partial\":{\"files\":[{\"path\":\"packages/brain/installer/install.ps1\",\"error_ranges\":\"130-130,169-194,228-230,230-230,238-238,327-332,334-336,851-851\"},{\"path\":\"packages/brain/src/brain/adapters/claude/hooks/common.sh\",\"error_ranges\":\"25-25\"},{\"path\":\"packages/brain/src/brain/templates/schemas/default.yaml\",\"error_ranges\":\"8-8\"},{\"path\":\"src/research_graph/templates/schema.yaml\",\"error_ranges\":\"8-8\"}],\"count\":4,\"truncated\":false,\"note\":\"Indexed, but constructs in these line ranges may be missing (best-effort signal); examples only — full list via index_status or 'logfile'.\"},\"parse_unusable_count\":0,\"nodes\":17537,\"edges\":99160,\"expected_nodes\":17537,\"expected_edges\":99160,\"adr_present\":false,\"adr_hint\":\"Project indexed. Consider creating an Architecture Decision Record: explore the codebase with get_architecture(aspects=['all']), then use manage_adr(mode='update') to persist architectural insights across sessions.\",\"artifact_present\":false,\"status\":\"indexed\"}"
+    }
+   ],
+   "structuredContent": {
+    "project": "brain-wt-0f3c9a21",
+    "excluded": {
+     "dirs": [
+      "docs",
+      "examples",
+      "tests/fixtures",
+      "packages/brain/docs",
+      "packages/brain/tests/fixtures"
+     ],
+     "count": 5,
+     "truncated": false
+    },
+    "not_indexed_files_count": 4,
+    "not_indexed_files": {
+     "files": [
+      {
+       "path": "CHANGELOG.md",
+       "reason": "skip-list"
+      },
+      {
+       "path": "LICENSE",
+       "reason": "skip-list"
+      },
+      {
+       "path": "packages/brain/CHANGELOG.md",
+       "reason": "skip-list"
+      },
+      {
+       "path": "packages/brain/LICENSE",
+       "reason": "skip-list"
+      }
+     ],
+     "count": 4,
+     "truncated": false,
+     "note": "Excluded by design (gitignore/.cbmignore/skip-lists); examples only — full list in 'logfile'."
+    },
+    "skipped_count": 0,
+    "logfile": "D:/cbm-home/code-index/cbm/cache/logs/brain-wt-0f3c9a21-1794866166.log",
+    "parse_partial_count": 4,
+    "parse_partial": {
+     "files": [
+      {
+       "path": "packages/brain/installer/install.ps1",
+       "error_ranges": "130-130,169-194,228-230,230-230,238-238,327-332,334-336,851-851"
+      },
+      {
+       "path": "packages/brain/src/brain/adapters/claude/hooks/common.sh",
+       "error_ranges": "25-25"
+      },
+      {
+       "path": "packages/brain/src/brain/templates/schemas/default.yaml",
+       "error_ranges": "8-8"
+      },
+      {
+       "path": "src/research_graph/templates/schema.yaml",
+       "error_ranges": "8-8"
+      }
+     ],
+     "count": 4,
+     "truncated": false,
+     "note": "Indexed, but constructs in these line ranges may be missing (best-effort signal); examples only — full list via index_status or 'logfile'."
+    },
+    "parse_unusable_count": 0,
+    "nodes": 17537,
+    "edges": 99160,
+    "expected_nodes": 17537,
+    "expected_edges": 99160,
+    "adr_present": false,
+    "adr_hint": "Project indexed. Consider creating an Architecture Decision Record: explore the codebase with get_architecture(aspects=['all']), then use manage_adr(mode='update') to persist architectural insights across sessions.",
+    "artifact_present": false,
+    "status": "indexed"
+   },
+   "isError": false
+  }
+ },
+ "detect_changes": {
+  "arguments": {
+   "project": "brain-wt-0f3c9a21",
+   "base_branch": "origin/main",
+   "format": "json",
+   "seeds": "list",
+   "depth": 2
+  },
+  "result": {
+   "content": [
+    {
+     "type": "text",
+     "text": "{\"base\":\"origin/main\",\"merge_base\":\"ac6f6e38c9d5fe83934b169d78322d0d28da3d19\",\"direction\":\"inbound\",\"changed_total\":1,\"changed_returned\":1,\"changed_has_more\":false,\"changed_files\":[\"packages/brain/src/brain/codeindex.py\"],\"seed_symbols\":1,\"seed_total\":1,\"seed_returned\":1,\"seed_has_more\":false,\"seeds\":[{\"qn\":\"brain-wt-0f3c9a21.packages.brain.src.brain.codeindex._now\",\"label\":\"Function\",\"file\":\"packages/brain/src/brain/codeindex.py\",\"start\":214,\"end\":216,\"seed_reason\":\"hunk\"}],\"impacted_total\":5,\"impacted_total_relation\":\"eq\",\"impacted_shown\":5,\"impacted\":[{\"qn\":\"brain-wt-0f3c9a21.packages.brain.src.brain.codemap.build\",\"label\":\"Function\",\"file\":\"packages/brain/src/brain/codemap.py\",\"hop\":1},{\"qn\":\"brain-wt-0f3c9a21.packages.brain.src.brain.codeindex.index_one\",\"label\":\"Function\",\"file\":\"packages/brain/src/brain/codeindex.py\",\"hop\":1},{\"qn\":\"brain-wt-0f3c9a21.packages.brain.src.brain.codemap.main\",\"label\":\"Function\",\"file\":\"packages/brain/src/brain/codemap.py\",\"hop\":2},{\"qn\":\"brain-wt-0f3c9a21.packages.brain.src.brain.impact._by_index\",\"label\":\"Function\",\"file\":\"packages/brain/src/brain/impact.py\",\"hop\":2},{\"qn\":\"brain-wt-0f3c9a21.packages.brain.src.brain.codeindex.run\",\"label\":\"Function\",\"file\":\"packages/brain/src/brain/codeindex.py\",\"hop\":2}],\"impacted_has_more\":false,\"module_total\":1,\"module_total_relation\":\"eq\",\"module_returned\":1,\"module_has_more\":false,\"impacted_modules\":[{\"module\":\"packages/brain\",\"count\":5}],\"truncated\":false}"
+    }
+   ],
+   "structuredContent": {
+    "base": "origin/main",
+    "merge_base": "ac6f6e38c9d5fe83934b169d78322d0d28da3d19",
+    "direction": "inbound",
+    "changed_total": 1,
+    "changed_returned": 1,
+    "changed_has_more": false,
+    "changed_files": [
+     "packages/brain/src/brain/codeindex.py"
+    ],
+    "seed_symbols": 1,
+    "seed_total": 1,
+    "seed_returned": 1,
+    "seed_has_more": false,
+    "seeds": [
+     {
+      "qn": "brain-wt-0f3c9a21.packages.brain.src.brain.codeindex._now",
+      "label": "Function",
+      "file": "packages/brain/src/brain/codeindex.py",
+      "start": 214,
+      "end": 216,
+      "seed_reason": "hunk"
+     }
+    ],
+    "impacted_total": 5,
+    "impacted_total_relation": "eq",
+    "impacted_shown": 5,
+    "impacted": [
+     {
+      "qn": "brain-wt-0f3c9a21.packages.brain.src.brain.codemap.build",
+      "label": "Function",
+      "file": "packages/brain/src/brain/codemap.py",
+      "hop": 1
+     },
+     {
+      "qn": "brain-wt-0f3c9a21.packages.brain.src.brain.codeindex.index_one",
+      "label": "Function",
+      "file": "packages/brain/src/brain/codeindex.py",
+      "hop": 1
+     },
+     {
+      "qn": "brain-wt-0f3c9a21.packages.brain.src.brain.codemap.main",
+      "label": "Function",
+      "file": "packages/brain/src/brain/codemap.py",
+      "hop": 2
+     },
+     {
+      "qn": "brain-wt-0f3c9a21.packages.brain.src.brain.impact._by_index",
+      "label": "Function",
+      "file": "packages/brain/src/brain/impact.py",
+      "hop": 2
+     },
+     {
+      "qn": "brain-wt-0f3c9a21.packages.brain.src.brain.codeindex.run",
+      "label": "Function",
+      "file": "packages/brain/src/brain/codeindex.py",
+      "hop": 2
+     }
+    ],
+    "impacted_has_more": false,
+    "module_total": 1,
+    "module_total_relation": "eq",
+    "module_returned": 1,
+    "module_has_more": false,
+    "impacted_modules": [
+     {
+      "module": "packages/brain",
+      "count": 5
+     }
+    ],
+    "truncated": false
+   },
+   "isError": false
+  }
+ },
+ "detect_changes_scope_files": {
+  "arguments": {
+   "project": "brain-wt-0f3c9a21",
+   "base_branch": "origin/main",
+   "format": "json",
+   "scope": "files"
+  },
+  "result": {
+   "content": [
+    {
+     "type": "text",
+     "text": "{\"base\":\"origin/main\",\"merge_base\":\"ac6f6e38c9d5fe83934b169d78322d0d28da3d19\",\"direction\":\"inbound\",\"changed_total\":1,\"changed_returned\":1,\"changed_has_more\":false,\"changed_files\":[\"packages/brain/src/brain/codeindex.py\"],\"seed_symbols\":0,\"impacted_total\":0,\"impacted_total_relation\":\"eq\",\"impacted_shown\":0,\"impacted\":[],\"impacted_has_more\":false,\"truncated\":false}"
+    }
+   ],
+   "structuredContent": {
+    "base": "origin/main",
+    "merge_base": "ac6f6e38c9d5fe83934b169d78322d0d28da3d19",
+    "direction": "inbound",
+    "changed_total": 1,
+    "changed_returned": 1,
+    "changed_has_more": false,
+    "changed_files": [
+     "packages/brain/src/brain/codeindex.py"
+    ],
+    "seed_symbols": 0,
+    "impacted_total": 0,
+    "impacted_total_relation": "eq",
+    "impacted_shown": 0,
+    "impacted": [],
+    "impacted_has_more": false,
+    "truncated": false
+   },
+   "isError": false
+  }
+ },
+ "index_status": {
+  "arguments": {
+   "project": "brain-wt-0f3c9a21",
+   "format": "json"
+  },
+  "result": {
+   "content": [
+    {
+     "type": "text",
+     "text": "{\"project\":\"brain-wt-0f3c9a21\",\"nodes\":17537,\"edges\":99160,\"status\":\"ready\",\"root_path\":\"C:/work/brain-wt\",\"indexed_at\":\"2026-11-16T21:56:05Z\",\"parse_partial\":{\"files\":[],\"count\":4,\"truncated\":true,\"omitted\":4},\"parse_unusable\":{\"files\":[],\"count\":0,\"truncated\":false},\"skipped\":{\"files\":[],\"count\":0,\"truncated\":false},\"not_indexed\":{\"dirs\":[],\"dirs_count\":5,\"files\":[],\"files_count\":4,\"truncated\":true,\"dirs_omitted\":5,\"files_omitted\":4},\"cross_repo\":{\"status\":\"never_run\"},\"doc_links\":{\"mentions\":422,\"unresolved\":{\"ambiguous\":68,\"below_bar_tier\":19,\"missing\":56,\"test_only_target\":2},\"status\":\"ok\"},\"watch\":{\"watched\":false,\"reason\":\"watcher_disabled\",\"hint\":\"Auto-sync watches only the active MCP session's project; re-run index_repository to refresh this index.\"}}"
+    }
+   ],
+   "structuredContent": {
+    "project": "brain-wt-0f3c9a21",
+    "nodes": 17537,
+    "edges": 99160,
+    "status": "ready",
+    "root_path": "C:/work/brain-wt",
+    "indexed_at": "2026-11-16T21:56:05Z",
+    "parse_partial": {
+     "files": [],
+     "count": 4,
+     "truncated": true,
+     "omitted": 4
+    },
+    "parse_unusable": {
+     "files": [],
+     "count": 0,
+     "truncated": false
+    },
+    "skipped": {
+     "files": [],
+     "count": 0,
+     "truncated": false
+    },
+    "not_indexed": {
+     "dirs": [],
+     "dirs_count": 5,
+     "files": [],
+     "files_count": 4,
+     "truncated": true,
+     "dirs_omitted": 5,
+     "files_omitted": 4
+    },
+    "cross_repo": {
+     "status": "never_run"
+    },
+    "doc_links": {
+     "mentions": 422,
+     "unresolved": {
+      "ambiguous": 68,
+      "below_bar_tier": 19,
+      "missing": 56,
+      "test_only_target": 2
+     },
+     "status": "ok"
+    },
+    "watch": {
+     "watched": false,
+     "reason": "watcher_disabled",
+     "hint": "Auto-sync watches only the active MCP session's project; re-run index_repository to refresh this index."
+    }
+   },
+   "isError": false
+  }
+ },
+ "list_projects": {
+  "arguments": {
+   "format": "json"
+  },
+  "result": {
+   "content": [
+    {
+     "type": "text",
+     "text": "{\"projects\":[{\"name\":\"alpha\",\"root_path\":\"C:/work/alpha\"},{\"name\":\"brain\",\"root_path\":\"C:/work/brain\"},{\"name\":\"beta\",\"root_path\":\"C:/work/beta\",\"branch\":\"main\"},{\"name\":\"brain-wt-0f3c9a21\",\"root_path\":\"C:/work/brain-wt\",\"branch\":\"DETACHED\"}],\"total\":4,\"offset\":0,\"limit\":50,\"returned\":4,\"has_more\":false}"
+    }
+   ],
+   "structuredContent": {
+    "projects": [
+     {
+      "name": "alpha",
+      "root_path": "C:/work/alpha"
+     },
+     {
+      "name": "brain",
+      "root_path": "C:/work/brain"
+     },
+     {
+      "name": "beta",
+      "root_path": "C:/work/beta",
+      "branch": "main"
+     },
+     {
+      "name": "brain-wt-0f3c9a21",
+      "root_path": "C:/work/brain-wt",
+      "branch": "DETACHED"
+     }
+    ],
+    "total": 4,
+    "offset": 0,
+    "limit": 50,
+    "returned": 4,
+    "has_more": false
+   },
+   "isError": false
+  }
+ },
+ "index_status_missing": {
+  "arguments": {
+   "project": "nope",
+   "format": "json"
+  },
+  "result": {
+   "content": [
+    {
+     "type": "text",
+     "text": "{\"error\":\"project not found or not indexed\",\"hint\":\"Use list_projects and pass the name whose root_path contains your working directory (or that absolute directory) as the \\\"project\\\" argument; never a repo or folder name.\",\"available_projects\":[\"brain\",\"beta\",\"brain-wt-0f3c9a21\",\"alpha\"],\"count\":4}"
+    }
+   ],
+   "structuredContent": {
+    "error": "project not found or not indexed",
+    "hint": "Use list_projects and pass the name whose root_path contains your working directory (or that absolute directory) as the \"project\" argument; never a repo or folder name.",
+    "available_projects": [
+     "brain",
+     "beta",
+     "brain-wt-0f3c9a21",
+     "alpha"
+    ],
+    "count": 4
+   },
+   "isError": true
+  }
+ },
+ "delete_project": {
+  "arguments": {
+   "project": "brain-wt-0f3c9a21"
+  },
+  "result": {
+   "content": [
+    {
+     "type": "text",
+     "text": "{\"project\":\"brain-wt-0f3c9a21\",\"status\":\"deleted\"}"
+    }
+   ],
+   "structuredContent": {
+    "project": "brain-wt-0f3c9a21",
+    "status": "deleted"
+   },
+   "isError": false
+  }
+ },
+ "tools": [
+  {
+   "name": "index_repository",
+   "description": "Index a repository. full/moderate add semantics; fast omits them; cross-repo-intelligence links services. Reports coverage gaps. Waits for the whole index by default; a large repo can exceed a client's per-call deadline. async:true starts (or joins) the index in the daemon and returns at once; poll with status:true (same repo_path) until state is succeeded, failed or cancelled. async needs a daemon that outlives the call: an MCP session or `daemon start`.",
+   "inputSchema": {
+    "type": "object",
+    "properties": {
+     "repo_path": {
+      "type": "string",
+      "description": "Repository path"
+     },
+     "mode": {
+      "type": "string",
+      "enum": [
+       "full",
+       "moderate",
+       "fast",
+       "cross-repo-intelligence"
+      ],
+      "default": "full",
+      "description": "full: all+semantic; moderate: filtered+semantic; fast: filtered only; cross-repo-intelligence: link services."
+     },
+     "target_projects": {
+      "type": "array",
+      "items": {
+       "type": "string"
+      },
+      "description": "Cross-repo targets; [\"*\"] means all."
+     },
+     "name": {
+      "type": "string",
+      "description": "Name override; Non-ASCII bytes are encoded; unsafe characters normalized."
+     },
+     "persistence": {
+      "type": "boolean",
+      "default": false,
+      "description": "Write .codebase-memory/graph.db.zst."
+     },
+     "doc_candidates": {
+      "type": "boolean",
+      "description": "Doc-code candidates; default: the doc_candidates setting, else on for full, off for moderate/fast."
+     },
+     "async": {
+      "type": "boolean",
+      "default": false,
+      "description": "Start the index in the background and return immediately; it keeps running if this call is cancelled or times out. Not with status or cross-repo-intelligence. Refused for a one-shot cli call that is the only client of a temporary daemon (run daemon start)."
+     },
+     "status": {
+      "type": "boolean",
+      "default": false,
+      "description": "Report the running or last index job (queued/running/succeeded/failed/cancelled) instead of indexing. Pass the same repo_path (and name, if any) as the index call."
+     }
+    },
+    "required": [
+     "repo_path"
+    ]
+   },
+   "annotations": {
+    "readOnlyHint": false,
+    "destructiveHint": false,
+    "idempotentHint": true,
+    "openWorldHint": false
+   }
+  },
+  {
+   "name": "index_status",
+   "description": "Project readiness, counts, root, watch state, coverage gaps, and doc_links (doc-comment references: MENTIONS edges, unresolved by reason). diagnostics adds coverage rows; verbose adds Git paths. Best-effort only; verify cited paths with check_index_coverage.",
+   "inputSchema": {
+    "type": "object",
+    "properties": {
+     "project": {
+      "type": "string"
+     },
+     "verbose": {
+      "type": "boolean",
+      "default": false,
+      "description": "Add worktree/shadow Git paths for index-location debugging."
+     },
+     "diagnostics": {
+      "type": "string",
+      "enum": [
+       "none",
+       "summary",
+       "full"
+      ],
+      "default": "none",
+      "description": "Coverage rows: counts, five samples, or up to 500."
+     },
+     "format": {
+      "type": "string",
+      "enum": [
+       "tree",
+       "json"
+      ],
+      "default": "tree"
+     }
+    },
+    "required": [
+     "project"
+    ]
+   },
+   "annotations": {
+    "readOnlyHint": true,
+    "destructiveHint": false,
+    "idempotentHint": true,
+    "openWorldHint": false
+   }
+  },
+  {
+   "name": "list_projects",
+   "description": "List projects with stable paging. Identity is lean; stats adds graph sizes.",
+   "inputSchema": {
+    "type": "object",
+    "properties": {
+     "format": {
+      "type": "string",
+      "enum": [
+       "tree",
+       "json"
+      ],
+      "default": "tree"
+     },
+     "detail": {
+      "type": "string",
+      "enum": [
+       "identity",
+       "stats"
+      ],
+      "default": "identity",
+      "description": "stats adds node/edge/database-size counts."
+     },
+     "include_details": {
+      "type": "boolean",
+      "default": false,
+      "description": "Alias for detail=stats: include branch, node/edge counts and database size. Slower."
+     },
+     "limit": {
+      "type": "integer",
+      "default": 50,
+      "minimum": 1,
+      "maximum": 500
+     },
+     "offset": {
+      "type": "integer",
+      "default": 0,
+      "minimum": 0
+     },
+     "metadata_only": {
+      "type": "boolean",
+      "default": false,
+      "description": "Compatibility: omit counts, size, and branch."
+     }
+    }
+   },
+   "annotations": {
+    "readOnlyHint": true,
+    "destructiveHint": false,
+    "idempotentHint": true,
+    "openWorldHint": false
+   }
+  },
+  {
+   "name": "delete_project",
+   "description": "Delete a project from the index",
+   "inputSchema": {
+    "type": "object",
+    "properties": {
+     "project": {
+      "type": "string"
+     }
+    },
+    "required": [
+     "project"
+    ]
+   },
+   "annotations": {
+    "readOnlyHint": false,
+    "destructiveHint": true,
+    "idempotentHint": true,
+    "openWorldHint": false
+   }
+  },
+  {
+   "name": "detect_changes",
+   "description": "Map a Git diff to files and impact. Page with snapshot cursors.",
+   "inputSchema": {
+    "type": "object",
+    "properties": {
+     "project": {
+      "type": "string"
+     },
+     "scope": {
+      "type": "string",
+      "enum": [
+       "files",
+       "impact",
+       "tests"
+      ],
+      "default": "impact"
+     },
+     "direction": {
+      "type": "string",
+      "enum": [
+       "inbound",
+       "outbound",
+       "both"
+      ],
+      "default": "inbound",
+      "description": "inbound=callers; outbound=dependencies; both=union."
+     },
+     "depth": {
+      "type": "integer",
+      "default": 2
+     },
+     "edge_types": {
+      "type": "array",
+      "items": {
+       "type": "string"
+      },
+      "description": "Inbound walk; default CALLS."
+     },
+     "fixpoint": {
+      "type": "boolean",
+      "description": "Walk to closure; no depth."
+     },
+     "via": {
+      "type": "boolean",
+      "description": "Add via_qn, via_edge."
+     },
+     "seeds": {
+      "type": "string",
+      "enum": [
+       "none",
+       "list"
+      ],
+      "default": "none",
+      "description": "List changed-symbol seeds with independent pagination."
+     },
+     "seed_filter": {
+      "type": "string",
+      "enum": [
+       "all",
+       "product"
+      ],
+      "default": "all",
+      "description": "Product excludes indexed test metadata and configured test globs."
+     },
+     "config_path": {
+      "type": "string",
+      "description": "Project config override; absolute or project-relative."
+     },
+     "seed_limit": {
+      "type": "integer",
+      "default": 50,
+      "minimum": 0,
+      "maximum": 1000
+     },
+     "seed_offset": {
+      "type": "integer",
+      "default": 0,
+      "minimum": 0
+     },
+     "seed_cursor": {
+      "type": "string",
+      "description": "Continue seeds:list; excludes nonzero seed_offset."
+     },
+     "limit": {
+      "type": "integer",
+      "default": 200,
+      "maximum": 5000
+     },
+     "impact_offset": {
+      "type": "integer",
+      "default": 0,
+      "minimum": 0
+     },
+     "impact_cursor": {
+      "type": "string"
+     },
+     "changed_limit": {
+      "type": "integer",
+      "default": 20,
+      "minimum": 0,
+      "maximum": 5000
+     },
+     "changed_offset": {
+      "type": "integer",
+      "default": 0,
+      "minimum": 0
+     },
+     "changed_cursor": {
+      "type": "string"
+     },
+     "module_limit": {
+      "type": "integer",
+      "default": 20,
+      "minimum": 0,
+      "maximum": 256
+     },
+     "module_offset": {
+      "type": "integer",
+      "default": 0,
+      "minimum": 0
+     },
+     "module_cursor": {
+      "type": "string"
+     },
+     "max_output_tokens": {
+      "type": "integer",
+      "default": 3200,
+      "minimum": 128,
+      "maximum": 1000000,
+      "description": "Sizing hint; hard ceiling is 4 UTF-8 bytes/token."
+     },
+     "base_branch": {
+      "type": "string",
+      "description": "Default: origin/HEAD, else main, else master, else the upstream."
+     },
+     "since": {
+      "type": "string"
+     },
+     "format": {
+      "type": "string",
+      "enum": [
+       "tree",
+       "json"
+      ],
+      "default": "tree"
+     }
+    },
+    "required": [
+     "project"
+    ]
+   },
+   "annotations": {
+    "readOnlyHint": true,
+    "destructiveHint": false,
+    "idempotentHint": true,
+    "openWorldHint": false
+   }
+  }
+ ],
+ "detect_changes_method": {
+  "arguments": {
+   "project": "brain-wt-0f3c9a21",
+   "base_branch": "origin/main",
+   "format": "json",
+   "seeds": "list",
+   "depth": 1,
+   "via": true
+  },
+  "result": {
+   "content": [
+    {
+     "type": "text",
+     "text": "{\"base\":\"origin/main\",\"merge_base\":\"ac6f6e38c9d5fe83934b169d78322d0d28da3d19\",\"direction\":\"inbound\",\"edge_types\":[\"CALLS\"],\"fixpoint\":false,\"changed_total\":1,\"changed_returned\":1,\"changed_has_more\":false,\"changed_files\":[\"packages/brain/src/brain/codeindex.py\"],\"seed_symbols\":2,\"seed_total\":2,\"seed_returned\":2,\"seed_has_more\":false,\"seeds\":[{\"qn\":\"brain-wt-0f3c9a21.packages.brain.src.brain.codeindex.Indexer\",\"label\":\"Class\",\"file\":\"packages/brain/src/brain/codeindex.py\",\"start\":72,\"end\":82,\"seed_reason\":\"hunk\"},{\"qn\":\"brain-wt-0f3c9a21.packages.brain.src.brain.codeindex.Indexer.target\",\"label\":\"Method\",\"file\":\"packages/brain/src/brain/codeindex.py\",\"start\":80,\"end\":82,\"seed_reason\":\"hunk\"}],\"impacted_total\":6,\"impacted_total_relation\":\"eq\",\"impacted_shown\":6,\"impacted\":[{\"qn\":\"brain-wt-0f3c9a21.packages.brain.src.brain.codeindex._entry\",\"label\":\"Function\",\"file\":\"packages/brain/src/brain/codeindex.py\",\"hop\":1,\"via_qn\":\"brain-wt-0f3c9a21.packages.brain.src.brain.codeindex.Indexer.target\",\"via_edge\":\"CALLS\"},{\"qn\":\"brain-wt-0f3c9a21.packages.brain.src.brain.codeindex._indexer\",\"label\":\"Function\",\"file\":\"packages/brain/src/brain/codeindex.py\",\"hop\":1,\"via_qn\":\"brain-wt-0f3c9a21.packages.brain.src.brain.codeindex.Indexer\",\"via_edge\":\"CALLS\"},{\"qn\":\"brain-wt-0f3c9a21.packages.brain.src.brain.codeindex.analyze\",\"label\":\"Function\",\"file\":\"packages/brain/src/brain/codeindex.py\",\"hop\":1,\"via_qn\":\"brain-wt-0f3c9a21.packages.brain.src.brain.codeindex.Indexer.target\",\"via_edge\":\"CALLS\"},{\"qn\":\"brain-wt-0f3c9a21.packages.brain.src.brain.codeindex.index_one\",\"label\":\"Function\",\"file\":\"packages/brain/src/brain/codeindex.py\",\"hop\":1,\"via_qn\":\"brain-wt-0f3c9a21.packages.brain.src.brain.codeindex.Indexer.target\",\"via_edge\":\"CALLS\"},{\"qn\":\"brain-wt-0f3c9a21.packages.brain.src.brain.codeindex.measure\",\"label\":\"Function\",\"file\":\"packages/brain/src/brain/codeindex.py\",\"hop\":1,\"via_qn\":\"brain-wt-0f3c9a21.packages.brain.src.brain.codeindex.Indexer.target\",\"via_edge\":\"CALLS\"},{\"qn\":\"brain-wt-0f3c9a21.packages.brain.tests.test_project_views.test_status_probes_audit_stacks_and_the_code_index\",\"label\":\"Function\",\"file\":\"packages/brain/tests/test_project_views.py\",\"hop\":1,\"via_qn\":\"brain-wt-0f3c9a21.packages.brain.src.brain.codeindex.Indexer\",\"via_edge\":\"CALLS\"}],\"impacted_has_more\":false,\"module_total\":1,\"module_total_relation\":\"eq\",\"module_returned\":1,\"module_has_more\":false,\"impacted_modules\":[{\"module\":\"packages/brain\",\"count\":6}],\"truncated\":false}"
+    }
+   ],
+   "structuredContent": {
+    "base": "origin/main",
+    "merge_base": "ac6f6e38c9d5fe83934b169d78322d0d28da3d19",
+    "direction": "inbound",
+    "edge_types": [
+     "CALLS"
+    ],
+    "fixpoint": false,
+    "changed_total": 1,
+    "changed_returned": 1,
+    "changed_has_more": false,
+    "changed_files": [
+     "packages/brain/src/brain/codeindex.py"
+    ],
+    "seed_symbols": 2,
+    "seed_total": 2,
+    "seed_returned": 2,
+    "seed_has_more": false,
+    "seeds": [
+     {
+      "qn": "brain-wt-0f3c9a21.packages.brain.src.brain.codeindex.Indexer",
+      "label": "Class",
+      "file": "packages/brain/src/brain/codeindex.py",
+      "start": 72,
+      "end": 82,
+      "seed_reason": "hunk"
+     },
+     {
+      "qn": "brain-wt-0f3c9a21.packages.brain.src.brain.codeindex.Indexer.target",
+      "label": "Method",
+      "file": "packages/brain/src/brain/codeindex.py",
+      "start": 80,
+      "end": 82,
+      "seed_reason": "hunk"
+     }
+    ],
+    "impacted_total": 6,
+    "impacted_total_relation": "eq",
+    "impacted_shown": 6,
+    "impacted": [
+     {
+      "qn": "brain-wt-0f3c9a21.packages.brain.src.brain.codeindex._entry",
+      "label": "Function",
+      "file": "packages/brain/src/brain/codeindex.py",
+      "hop": 1,
+      "via_qn": "brain-wt-0f3c9a21.packages.brain.src.brain.codeindex.Indexer.target",
+      "via_edge": "CALLS"
+     },
+     {
+      "qn": "brain-wt-0f3c9a21.packages.brain.src.brain.codeindex._indexer",
+      "label": "Function",
+      "file": "packages/brain/src/brain/codeindex.py",
+      "hop": 1,
+      "via_qn": "brain-wt-0f3c9a21.packages.brain.src.brain.codeindex.Indexer",
+      "via_edge": "CALLS"
+     },
+     {
+      "qn": "brain-wt-0f3c9a21.packages.brain.src.brain.codeindex.analyze",
+      "label": "Function",
+      "file": "packages/brain/src/brain/codeindex.py",
+      "hop": 1,
+      "via_qn": "brain-wt-0f3c9a21.packages.brain.src.brain.codeindex.Indexer.target",
+      "via_edge": "CALLS"
+     },
+     {
+      "qn": "brain-wt-0f3c9a21.packages.brain.src.brain.codeindex.index_one",
+      "label": "Function",
+      "file": "packages/brain/src/brain/codeindex.py",
+      "hop": 1,
+      "via_qn": "brain-wt-0f3c9a21.packages.brain.src.brain.codeindex.Indexer.target",
+      "via_edge": "CALLS"
+     },
+     {
+      "qn": "brain-wt-0f3c9a21.packages.brain.src.brain.codeindex.measure",
+      "label": "Function",
+      "file": "packages/brain/src/brain/codeindex.py",
+      "hop": 1,
+      "via_qn": "brain-wt-0f3c9a21.packages.brain.src.brain.codeindex.Indexer.target",
+      "via_edge": "CALLS"
+     },
+     {
+      "qn": "brain-wt-0f3c9a21.packages.brain.tests.test_project_views.test_status_probes_audit_stacks_and_the_code_index",
+      "label": "Function",
+      "file": "packages/brain/tests/test_project_views.py",
+      "hop": 1,
+      "via_qn": "brain-wt-0f3c9a21.packages.brain.src.brain.codeindex.Indexer",
+      "via_edge": "CALLS"
+     }
+    ],
+    "impacted_has_more": false,
+    "module_total": 1,
+    "module_total_relation": "eq",
+    "module_returned": 1,
+    "module_has_more": false,
+    "impacted_modules": [
+     {
+      "module": "packages/brain",
+      "count": 6
+     }
+    ],
+    "truncated": false
+   },
+   "isError": false
+  }
+ }
+}

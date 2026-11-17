@@ -612,6 +612,8 @@ def render_doctor(doc: dict) -> list[str]:
              f"{doc['health']}",
              f"identity  {ident.get('state', '?')}" + (f", anchor {ident['anchor'][:12]} ({ident['anchor_source']})"
                                                      if ident.get("anchor") else "")
+             + (f", no anchor ({ident.get('anchor_source')}): confirmed by hosts.{ident.get('name')}.local_id"
+                if not ident.get("anchor") and ident.get("state") in ("ok", "new") else "")
              + (f": {ident['doubt']}" if ident.get("doubt") else "")
              + (f"; declare it in config.json: {ident['declare']}" if ident.get("declare") else ""),
              f"cpu       {cpu.get('model') or '?'}, {cpu.get('cores')} logical cores (avx2 "

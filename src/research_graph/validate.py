@@ -6,9 +6,9 @@ from collections.abc import Iterable
 from pathlib import Path
 
 import networkx as nx
-import yaml
+import yaml  # noqa: F401 - kept importable as validate.yaml, as before the research pack's move
 
-from . import yamlio
+from . import yamlio  # noqa: F401 - kept importable as validate.yamlio
 
 _DECISION_FILES = ("scientific_decisions.md", "decisions.md")
 # the decision logs a store covers when none is given (--decisions): an SDR log, then an ADR log
@@ -32,15 +32,6 @@ def decision_logs(logs: Iterable[str | Path] | None = None) -> list[tuple[str, s
     :data:`DEFAULT_DECISIONS` (``[]``: none). A file named scientific_decisions.md holds SDRs, any other ADRs."""
     paths = DEFAULT_DECISIONS if logs is None else logs
     return [(_posix(p), "SDR" if Path(p).name == "scientific_decisions.md" else "ADR") for p in paths]
-
-
-def missing_experiment_nodes(graph: nx.DiGraph, repo_root: Path) -> list[str]:
-    exp_root = repo_root / "experiments"
-    if not exp_root.exists():
-        return []
-    dirs = sorted(p.name for p in exp_root.glob("exp*") if p.is_dir())
-    have = {n for n, a in graph.nodes(data=True) if a.get("type") == "Experiment"}
-    return [f"experiments/{d}: no Experiment node" for d in dirs if d not in have]
 
 
 def _node_decision_date_counts(graph: nx.DiGraph) -> dict[tuple[str, str], int]:
@@ -140,41 +131,6 @@ def unchecked_anchors(graph: nx.DiGraph, repos: dict[str, Path] | None = None) -
             for r, n in sorted(counts.items())]
 
 
-def experiments_missing_from_kanban(repo_root: str | Path) -> list[str]:
-    """Every experiments/expNNN_*/ must be mentioned in notes/kanban_experiments.md (by id or number)."""
-    repo = Path(repo_root)
-    kanban = repo / "notes" / "kanban_experiments.md"
-    exp_root = repo / "experiments"
-    if not kanban.exists() or not exp_root.exists():
-        return []
-    text = kanban.read_text(encoding="utf-8")
-    problems: list[str] = []
-    for d in sorted(p.name for p in exp_root.glob("exp*") if p.is_dir()):
-        if d not in text and d.split("_")[0] not in text:
-            problems.append(f"experiments/{d}: not mentioned in notes/kanban_experiments.md")
-    return problems
-
-
-def empty_decision_bodies(repo_root: str | Path) -> list[str]:
-    """Every dated ## heading in scientific_decisions.md / decisions.md must have a non-empty body."""
-    repo = Path(repo_root)
-    problems: list[str] = []
-    for fname in _DECISION_FILES:
-        f = repo / "notes" / fname
-        if not f.exists():
-            continue
-        lines = f.read_text(encoding="utf-8").splitlines()
-        heads = [
-            (i, m.group(1)) for i, line in enumerate(lines) for m in [_HEADING_RE.match(line)] if m
-        ]
-        for k, (i, date) in enumerate(heads):
-            end = heads[k + 1][0] if k + 1 < len(heads) else len(lines)
-            body = "\n".join(lines[i + 1 : end]).strip()
-            if not body:
-                problems.append(f"notes/{fname}: heading {date} (line {i + 1}) has an empty body")
-    return problems
-
-
 def check_coverage(
     graph: nx.DiGraph,
     repo_root: str | Path,
@@ -187,263 +143,6 @@ def check_coverage(
         missing_experiment_nodes(graph, repo)
         + missing_decision_nodes(graph, repo, decisions)
         + anchor_errors(graph, repo, repos)
-    )
-
-
-_EXP_PATH_RE = re.compile(r"experiments/(exp\d+_[a-z0-9_]+)/")
-
-
-def staged_experiment_ids(staged_files: list[str]) -> set[str]:
-    """Experiment dir ids (expNNN_*) extraits des chemins stagés (slash ou backslash)."""
-    out: set[str] = set()
-    for f in staged_files:
-        m = _EXP_PATH_RE.search(f.replace("\\", "/"))
-        if m:
-            out.add(m.group(1))
-    return out
-
-
-def _experiment_spec(repo_root: str | Path | None, exp_id: str) -> str | None:
-    """The ``spec:`` pointer in experiments/<exp_id>/config.yaml (repo-relative), or None.
-
-    The spec IS the pre-registration under the convention that replaced SDRs: the workspace
-    CLAUDE.md has mandated a spec before any plan/code since 2026-05-26, and
-    notes/scientific_decisions.md took its last entry 2026-06-28. Specs are named by slug, not by
-    expNNN, so without this key no gate can mechanically find an experiment's pre-registration.
-    """
-    if repo_root is None:
-        return None
-    cfg = Path(repo_root) / "experiments" / exp_id / "config.yaml"
-    if not cfg.exists():
-        return None
-    try:
-        data = yamlio.load(cfg) or {}
-    except yaml.YAMLError:
-        return None
-    if not isinstance(data, dict):
-        return None
-    spec = data.get("spec")
-    return spec if isinstance(spec, str) and spec.strip() else None
-
-
-def _preregistration_gap(repo: Path, exp_id: str, sdr_text: str, *, qualifier: str) -> str | None:
-    """None if <exp_id> is pre-registered, else the problem string.
-
-    ERA-AWARE: an experiment is pre-registered by a LEGACY SDR (notes/scientific_decisions.md —
-    convention closed 2026-06-28, its records stay valid for their era) OR by a ``spec:`` pointing
-    at an existing design doc (current convention). It is an OR, never a substitution: replacing
-    SDR *by* spec would flag every legacy experiment that holds a legitimate SDR — creating debt
-    while claiming to resolve it. A NEW experiment cannot obtain an SDR (the convention is closed),
-    so this rule forces ``spec:`` going forward with no special case.
-    """
-    num = exp_id.split("_")[0]
-    if exp_id in sdr_text or num in sdr_text:
-        return None
-    spec = _experiment_spec(repo, exp_id)
-    if spec is None:
-        return (
-            f"experiments/{exp_id}: {qualifier}no pre-registration (no SDR in "
-            f"notes/scientific_decisions.md, no spec: in config.yaml)"
-        )
-    if not (repo / spec).exists():
-        return f"experiments/{exp_id}: {qualifier}spec: points at a missing file ({spec})"
-    return None
-
-
-def _experiment_gaps(repo_root: str | Path, exp_ids: Iterable[str], *, staged: bool) -> list[str]:
-    """Shared rigor-debt rule for BOTH gates.
-
-    ``staged_experiment_gaps`` (pre-commit, BLOCKING) and ``all_experiment_gaps`` (repo-wide,
-    advisory) were near-duplicates and drifted: the advisory kept demanding a *Scientific* Decision
-    Record from trading/methodological experiments that the blocking gate had already exempted.
-    They share one implementation so that cannot recur. No-op if notes/ is absent. Substring match
-    (full id OR bare expNNN number).
-    """
-    repo = Path(repo_root)
-    notes = repo / "notes"
-    if not notes.is_dir():
-        return []
-
-    def _text(name: str) -> str:
-        f = notes / name
-        return f.read_text(encoding="utf-8") if f.exists() else ""
-
-    kanban = _text("kanban_experiments.md")
-    sdr = _text("scientific_decisions.md")
-    cahier = _text("cahier_laboratoire.md")
-    qualifier = "staged but " if staged else ""
-    problems: list[str] = []
-    for d in sorted(exp_ids):
-        num = d.split("_")[0]
-        if d not in kanban and num not in kanban:
-            problems.append(f"experiments/{d}: {qualifier}absent from notes/kanban_experiments.md")
-        prereg = _preregistration_gap(repo, d, sdr, qualifier=qualifier)
-        if prereg is not None:
-            problems.append(prereg)
-        ran = (repo / "experiments" / d / "results" / "manifest.json").exists()
-        # Trading experiments are exempt from the cahier: the Edge's `backtest:` prose IS their lab
-        # notebook, and it is richer than the cahier — the same reasoning the BLOCKING gate already
-        # applies when it exempts them from the Hypothesis requirement.
-        if ran and not _experiment_targets_edges(repo, d) and d not in cahier and num not in cahier:
-            problems.append(
-                f"experiments/{d}: ran (manifest.json) but absent from notes/cahier_laboratoire.md"
-            )
-    return problems
-
-
-def staged_experiment_gaps(repo_root: str | Path, staged_ids: set[str]) -> list[str]:
-    """Pour chaque exp stagée : BLOQUE si absente de kanban / non pré-enregistrée, ou (a tourné)
-    absente du cahier. Règle partagée avec l'audit repo-wide — cf. :func:`_experiment_gaps`.
-    """
-    return _experiment_gaps(repo_root, staged_ids, staged=True)
-
-
-def all_experiment_gaps(repo_root: str | Path) -> list[str]:
-    """Repo-wide completeness audit (NOT staged-scoped): every experiments/expNNN_*/ must be in the
-    kanban, be pre-registered (legacy SDR OR ``spec:``), and — unless it is a trading experiment —
-    be in the cahier if it ran.
-
-    The pre-commit gate (:func:`staged_experiment_gaps`) only sees ``git diff --cached``, so
-    already-committed *legacy* debt never trips it. This audit scans the whole ``experiments/``
-    tree to surface that debt. Advisory by construction — callers decide whether to block. No-op if
-    notes/ or experiments/ is absent.
-    """
-    repo = Path(repo_root)
-    exp_root = repo / "experiments"
-    if not exp_root.is_dir():
-        return []
-    return _experiment_gaps(
-        repo_root, (p.name for p in exp_root.glob("exp*") if p.is_dir()), staged=False
-    )
-
-
-def hypothesis_validated_without_support(graph: nx.DiGraph) -> list[str]:
-    """A Hypothesis status=validated must have >=1 'validates' edge from a validated
-    Verdict AND no incoming 'refutes' edge. (The structural guard for the H1 landmine.)"""
-    problems: list[str] = []
-    for nid, a in graph.nodes(data=True):
-        if a.get("type") != "Hypothesis" or a.get("status") != "validated":
-            continue
-        ins = list(graph.in_edges(nid, data=True))
-        refutes = [s for s, _, e in ins if e.get("type") == "refutes"]
-        supports = [
-            s
-            for s, _, e in ins
-            if e.get("type") == "validates"
-            and graph.nodes[s].get("type") == "Verdict"
-            and graph.nodes[s].get("status") == "validated"
-        ]
-        if refutes:
-            problems.append(f"{nid}: status validated but has {len(refutes)} refutes verdict(s)")
-        elif not supports:
-            problems.append(f"{nid}: status validated but no validated 'validates' verdict")
-    return problems
-
-
-def _experiment_is_methodological(repo_root: str | Path | None, exp_id: str) -> bool:
-    """True if experiments/<exp_id>/config.yaml declares ``methodological: true`` — an explicit
-    statement that the experiment validates machinery/robustness and tests no mechanism. The
-    blocking wiring gate honours this so the absence of a hypothesis reads as intentional, not an
-    oversight (a diagnostic/foundational run is not the ledger/arc divergence the gate hunts)."""
-    if repo_root is None:
-        return False
-    cfg = Path(repo_root) / "experiments" / exp_id / "config.yaml"
-    if not cfg.exists():
-        return False
-    try:
-        data = yamlio.load(cfg) or {}
-    except yaml.YAMLError:
-        return False
-    return isinstance(data, dict) and data.get("methodological") is True
-
-
-def _experiment_targets_edges(repo_root: str | Path | None, exp_id: str) -> bool:
-    """True if experiments/<exp_id>/config.yaml declares a non-empty ``edges:`` list — a TRADING
-    experiment (a backtest of trading Edges). Its claim is an Edge's viability, recorded via the
-    Edge's ``backtest`` note + the scorecard, not a research Hypothesis/mechanism. The hypothesis-
-    wiring gate honours this so a trading backtest's absence of a tested Hypothesis reads as
-    intentional (it lives on the Edge side of the graph, not the mechanism side)."""
-    if repo_root is None:
-        return False
-    cfg = Path(repo_root) / "experiments" / exp_id / "config.yaml"
-    if not cfg.exists():
-        return False
-    try:
-        data = yamlio.load(cfg) or {}
-    except yaml.YAMLError:
-        return False
-    edges = data.get("edges") if isinstance(data, dict) else None
-    return isinstance(edges, list) and len(edges) > 0
-
-
-def experiment_tests_no_hypothesis(
-    graph: nx.DiGraph, repo_root: str | Path | None = None
-) -> list[str]:
-    """Every Experiment must ``tests`` >=1 Hypothesis (detects the ledger/arc divergence), UNLESS it
-    explicitly declares ``methodological: true`` (a diagnostic/robustness/foundational run that tests
-    no mechanism) OR a non-empty ``edges:`` list (a TRADING experiment that validates an Edge, not a
-    Hypothesis) in its config. Pass ``repo_root`` to enable the exemption lookup; omit it for
-    graph-only use (then every untested Experiment is flagged)."""
-    problems: list[str] = []
-    for nid, a in graph.nodes(data=True):
-        if a.get("type") != "Experiment":
-            continue
-        tested = [
-            d
-            for _, d, e in graph.out_edges(nid, data=True)
-            if e.get("type") == "tests" and graph.nodes[d].get("type") == "Hypothesis"
-        ]
-        if tested:
-            continue
-        if _experiment_is_methodological(repo_root, nid):
-            continue
-        if _experiment_targets_edges(repo_root, nid):
-            continue
-        problems.append(f"{nid}: tests no Hypothesis")
-    return problems
-
-
-def l2_without_parent(graph: nx.DiGraph) -> list[str]:
-    """Every L2 Hypothesis must have an `instantiates` edge to a parent (L1)."""
-    problems: list[str] = []
-    for nid, a in graph.nodes(data=True):
-        if a.get("type") != "Hypothesis" or a.get("level") != "L2":
-            continue
-        parents = [
-            d for _, d, e in graph.out_edges(nid, data=True) if e.get("type") == "instantiates"
-        ]
-        if not parents:
-            problems.append(f"{nid}: L2 without instantiates -> L1 parent")
-    return problems
-
-
-def hypothesis_stub_needs_prose(graph: nx.DiGraph) -> list[str]:
-    """L0/L1 Hypothesis nodes still in `planned` status are auto-stubs awaiting curated prose."""
-    problems: list[str] = []
-    for nid, a in graph.nodes(data=True):
-        if (
-            a.get("type") == "Hypothesis"
-            and a.get("level") in {"L0", "L1"}
-            and a.get("status") == "planned"
-        ):
-            problems.append(f"{nid}: L1/L0 stub needs curated prose (status planned)")
-    return problems
-
-
-def check_wiring(graph: nx.DiGraph, repo_root: str | Path | None = None) -> list[str]:
-    """BLOCKING hypothesis-graph wiring invariants — ``graph-check`` fails (exit 1) on these.
-
-    (1) ``experiment_tests_no_hypothesis`` — every Experiment must ``tests`` a Hypothesis or declare
-    itself ``methodological``; (2) ``hypothesis_validated_without_support`` — the anti-landmine guard:
-    a ``validated`` Hypothesis must have a ``validates`` Verdict and no ``refutes`` (prevents asserting
-    a validated claim the data does not back — exactly how the H1 artefact slipped in). Kept separate
-    from ``check_coverage`` (node/decision coverage) and ``check_consistency`` (softer advisories).
-    """
-    return (
-        experiment_tests_no_hypothesis(graph, repo_root)
-        + hypothesis_validated_without_support(graph)
-        + edge_drift(graph)
-        + edge_predictive_on_contemporaneous(graph)
     )
 
 
@@ -475,93 +174,6 @@ def _fits(pairs, st: str, dt: str) -> bool:
     return any((f is None or st in f) and (t is None or dt in t) for f, t in pairs)
 
 
-def check_consistency(graph: nx.DiGraph) -> list[str]:
-    """Hypothesis-graph consistency advisories (non-blocking; surfaced but do not fail the check).
-
-    The blocking gates (Experiment-tests-a-Hypothesis, validated-claim-has-support) live in
-    ``check_wiring``; these two stay advisory — an orphan L2 and an L1/L0 stub awaiting curated prose
-    are in-progress curation, not hard structural breaks."""
-    return l2_without_parent(graph) + hypothesis_stub_needs_prose(graph) + edge_coverage(graph)
-
-
-# --- Edge Graph gates (2026-06-15) -------------------------------------------
-
-_EDGE_ASSERTED = {"live", "active"}  # an edge whose claim is in force (vs `proposed` candidate)
-
-
-def _edge_nodes(graph: nx.DiGraph):
-    return [(nid, a) for nid, a in graph.nodes(data=True) if a.get("type") == "Edge"]
-
-
-def _exploited(graph: nx.DiGraph, edge_id: str):
-    """Mechanism ids an Edge `exploits` (out-edges of type exploits)."""
-    return [d for _, d, e in graph.out_edges(edge_id, data=True) if e.get("type") == "exploits"]
-
-
-def edge_coverage(graph: nx.DiGraph) -> list[str]:
-    """Advisory: a supported L1 mechanism (status active/validated) with no incoming `exploits`
-    edge and no ``props.no_edge`` flag has no mapped trading implication — surface it."""
-    problems: list[str] = []
-    for nid, a in graph.nodes(data=True):
-        if a.get("type") != "Hypothesis" or a.get("level") != "L1":
-            continue
-        if a.get("status") not in {"active", "validated"}:
-            continue
-        if (a.get("props") or {}).get("no_edge"):
-            continue
-        exploited_by = [s for s, _, e in graph.in_edges(nid, data=True) if e.get("type") == "exploits"]
-        if not exploited_by:
-            problems.append(f"{nid}: supported mechanism with no trading Edge (exploits) mapped")
-    return problems
-
-
-def edge_drift(graph: nx.DiGraph) -> list[str]:
-    """BLOCKING: an asserted (live/active) NON-constraint Edge whose exploited mechanism is
-    rejected/inconclusive must be reconciled (retired) — keeps strategies off dead findings.
-    Constraint edges are exempt (they are SUPPOSED to ground in a rejected mechanism)."""
-    problems: list[str] = []
-    for nid, a in _edge_nodes(graph):
-        if a.get("status") not in _EDGE_ASSERTED:
-            continue
-        if (a.get("props") or {}).get("edge_type") == "constraint":
-            continue
-        for mech in _exploited(graph, nid):
-            ms = graph.nodes[mech].get("status")
-            if ms in {"rejected", "inconclusive"}:
-                problems.append(
-                    f"{nid}: {a.get('status')} edge exploits {mech} which is {ms} — reconcile (retire the edge?)"
-                )
-    return problems
-
-
-def edge_predictive_on_contemporaneous(graph: nx.DiGraph) -> list[str]:
-    """BLOCKING honesty guard: an asserted (live/active) Edge with ``props.signal_nature ==
-    predictive`` must exploit a SUPPORTED (active/validated) mechanism whose ``props.nature ==
-    predictive``. Grounding a predictive edge on a contemporaneous/structural (or rejected)
-    finding is forbidden — the trading analogue of the H1 anti-landmine. ``proposed`` edges are
-    candidates and exempt."""
-    problems: list[str] = []
-    for nid, a in _edge_nodes(graph):
-        if a.get("status") not in _EDGE_ASSERTED:
-            continue
-        if (a.get("props") or {}).get("signal_nature") != "predictive":
-            continue
-        grounded = False
-        for mech in _exploited(graph, nid):
-            m = graph.nodes[mech]
-            if (m.get("props") or {}).get("nature") == "predictive" and m.get("status") in {
-                "active",
-                "validated",
-            }:
-                grounded = True
-        if not grounded:
-            problems.append(
-                f"{nid}: predictive edge not grounded in a supported predictive mechanism "
-                f"(the research established no lead) — keep it proposed or ground it in a dedicated experiment"
-            )
-    return problems
-
-
 def staged_module_without_test(staged_files: list[str], repo_root: str | Path) -> list[str]:
     """Every staged src/<package>/**/*.py (but __init__) BLOCKS without a matching test.
 
@@ -586,3 +198,54 @@ def staged_module_without_test(staged_files: list[str], repo_root: str | Path) -
                 f"{f}: staged module with no test (expected tests/test_{stem}.py or test_*_{stem}.py)"
             )
     return problems
+
+
+def empty_decision_bodies(repo_root: str | Path) -> list[str]:
+    """Every dated ## heading in scientific_decisions.md / decisions.md must have a non-empty body."""
+    repo = Path(repo_root)
+    problems: list[str] = []
+    for fname in _DECISION_FILES:
+        f = repo / "notes" / fname
+        if not f.exists():
+            continue
+        lines = f.read_text(encoding="utf-8").splitlines()
+        heads = [
+            (i, m.group(1)) for i, line in enumerate(lines) for m in [_HEADING_RE.match(line)] if m
+        ]
+        for k, (i, date) in enumerate(heads):
+            end = heads[k + 1][0] if k + 1 < len(heads) else len(lines)
+            body = "\n".join(lines[i + 1 : end]).strip()
+            if not body:
+                problems.append(f"notes/{fname}: heading {date} (line {i + 1}) has an empty body")
+    return problems
+
+
+# The research pack's gates (wi-brain-research-pack): moved to research_graph.research_pack, importable from here as
+# before (a research project's own checks import them from validate). A monkeypatch on validate's name no
+# longer reaches the moved callers: patch research_graph.research_pack's.
+from .research_pack import (  # noqa: E402,F401 - re-exported names, after the core's own
+    # (research_pack never imports validate at module level: keep it so, or the import cycles)
+    _EDGE_ASSERTED,
+    _EXP_PATH_RE,
+    _edge_nodes,
+    _experiment_gaps,
+    _experiment_is_methodological,
+    _experiment_spec,
+    _experiment_targets_edges,
+    _exploited,
+    _preregistration_gap,
+    all_experiment_gaps,
+    check_consistency,
+    check_wiring,
+    edge_coverage,
+    edge_drift,
+    edge_predictive_on_contemporaneous,
+    experiment_tests_no_hypothesis,
+    experiments_missing_from_kanban,
+    hypothesis_stub_needs_prose,
+    hypothesis_validated_without_support,
+    l2_without_parent,
+    missing_experiment_nodes,
+    staged_experiment_gaps,
+    staged_experiment_ids,
+)

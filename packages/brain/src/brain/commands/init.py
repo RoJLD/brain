@@ -11,7 +11,7 @@ USAGE_ORDER = 230   # its usage lines' place in brain --help's epilog
 USAGE = """\
   brain init [DIR] [--owner NAME] [--template NAME|DIR] [--kind person|team] [--tenant ID] [--tier lite|default]
                  [--name NAME] [--stage prototype|mvp|v1|scale] [--preset ID] [--with MODULE]...
-                 [--without MODULE]... [--catalogue FILE] [--interactive] [--apply]
+                 [--without MODULE]... [--catalogue FILE] [--interactive] [--examples] [--apply]
                  a new personal brain from a template (generic by default; cli, local-client, service, data-pipeline
                  and research add a project profile's standards, CI, test harness, issue and ADR templates and
                  graph layers), in DIR
@@ -24,7 +24,9 @@ USAGE = """\
                  recommended, a persona of --catalogue), your machine (the probe: what runs here, what is
                  recommended), adjust (--with, --without: each module's box, cost and dependencies); --interactive
                  asks them. The choice is brain commands (brain profile set BASE, brain mod disable|enable ID, each
-                 --apply), shown in the plan and, with --apply, run and logged in <BRAIN_HOME>/ledger/setup-*.jsonl
+                 --apply), shown in the plan and, with --apply, run and logged in <BRAIN_HOME>/ledger/setup-*.jsonl.
+                 --examples: for a person, scopes.yaml with the default spheres pro, personal and academic (the scope
+                 tree's first level; none for a team), where brain project add --parent places a project
 """
 
 
@@ -59,6 +61,9 @@ def register(sub, ctx) -> None:
     ini.add_argument("--interactive", "-i", action="store_true",
                      help="the three screens asked in the terminal (who you are, your machine, adjust), then the "
                           "plan and the same choice as one command")
+    ini.add_argument("--examples", action="store_true",
+                     help="for a person, scopes.yaml with the default spheres (pro, personal, academic); none for a "
+                          "team")
     ini.add_argument("--apply", action="store_true", help="write it (default: the plan)")
 
 

@@ -1,0 +1,12 @@
+{
+  "name": "brain",
+  "owner": {
+    "name": "Ada Example"
+  },
+  "plugins": [
+    {
+      "name": "brain-core",
+      "source": "./plugins/brain-core"
+    }
+  ]
+}
