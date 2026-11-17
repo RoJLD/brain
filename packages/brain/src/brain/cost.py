@@ -68,9 +68,7 @@ ITEM_DIMS = ("item", "theme", "milestone")
 PART_DIMS = {"phase": "phases", "tool": "tools", "command": "commands", "skill": "skills"}
 TIME_DIMS = ("day", "week")
 AGENT_DIMS = ("workflow", "agent")  # a workflow run, an agent's label (wi-brain-usage-workflow-agents)
-SPEND_DIMS = ("context", "output")  # where the tokens go (brain.spend, wi-brain-cache-report)
-DIMS = ("summary", *SESSION_DIMS, *ITEM_DIMS, *PART_DIMS, "session", "family", *AGENT_DIMS, *TIME_DIMS, "sequences",
-        *SPEND_DIMS)
+DIMS = ("summary", *SESSION_DIMS, *ITEM_DIMS, *PART_DIMS, "session", "family", *AGENT_DIMS, *TIME_DIMS, "sequences")
 METRICS = ("cost", "output", "peak", "active_s", "sessions")
 # The signals explain() names; {owner}: config.owner_of(), read when it runs.
 EXPLAIN = (("review_rounds", "review rounds"), ("merges", "merge, rebase or pull commands"),
@@ -718,8 +716,7 @@ def agents_split(rows: list[dict], since: str = "", until: str = "") -> dict:
     return out
 
 
-def report(led: Ledger, since: str, until: str, by: str, plans=None,
-           handover_usd: float | None = None) -> dict:
+def report(led: Ledger, since: str, until: str, by: str, plans=None, handover_usd: float | None = None) -> dict:
     rows = led.window(since, until)
     total = sum(r.get("cost") or 0 for r in rows)
     tokens = Counter()
@@ -734,11 +731,9 @@ def report(led: Ledger, since: str, until: str, by: str, plans=None,
            "unpriced": sum(r.get("unpriced") or 0 for r in rows), "start": start,
            "agents": agents_split(rows, since, until)}
     rep["sources"] = sources(rows)
-    if by in SPEND_DIMS:
-        rep["tables"] = {}
-        rep[by] = (spend.context_view(rows, spend.HANDOVER_USD if handover_usd is None else handover_usd)
-                   if by == "context" else spend.output_view(rows))
-        return rep
+    if by in spend.DIMS:   # where the tokens go (wi-brain-cache-report)
+        h = spend.HANDOVER_USD if handover_usd is None else handover_usd
+        return {**rep, "tables": {}, by: spend.context_view(rows, h) if by == "context" else spend.output_view(rows)}
     dims = ("project", "item", "class", "phase", "tool", "command") if by == "summary" else (by,)
     rep["tables"] = {d: (sequences(rows) if d == "sequences" else table_of(led, rows, d, since, until)) for d in dims}
     if by == "summary":
@@ -808,11 +803,7 @@ def render_report(rep: dict, top: int = TOP) -> list[str]:
                      f"p90 {usage.usd(s['p90'])}")
     for dim, rows in rep["tables"].items():
         lines += ["", *_render_table(dim, rows, top)]
-    if "context" in rep:
-        lines += ["", *spend.render_context(rep["context"])]
-    if "output" in rep:
-        lines += ["", *spend.render_output(rep["output"], top)]
-    return lines
+    return lines + spend.render(rep, top)
 
 
 def _dist(r: dict) -> str:

@@ -5,7 +5,7 @@ brain usage --by context (the buckets, the cost by token kind, the base, the han
 import json
 
 import pytest
-from brain import cli, cost, projects, spend, usage
+from brain import cli, projects, spend, usage
 
 OPUS = "claude-opus-5-5"
 READ, W5, W1 = 0.2e-6, 5e-6, 8e-6   # Opus 5.5's USD per token: cache read, cache write 5 min and 1 h
@@ -65,7 +65,7 @@ def test_the_scan_keeps_buckets_split_base_and_outputs(projects_dir):
     row = usage.scan(_session(projects_dir))
     sp = row["spend"]
     assert row["v"] == usage.SCAN_V == 5
-    assert sp["messages"] == 3 and sp["base"] == 50_010 and sp["step"] == 100 and sp["restart"] == usage.SIM_RESTART
+    assert sp["messages"] == 3 and sp["base"] == 50_010 and sp["step"] == 100 and sp["restart"] == spend.SIM_RESTART
     assert {k: n for k, (n, _) in sp["buckets"].items()} == {"0": 2, "100": 1}
     assert sum(c for _, c in sp["buckets"].values()) == pytest.approx(row["main_cost"], abs=1e-3)
     assert sum(sp["split"].values()) == pytest.approx(row["main_cost"], abs=1e-4)
@@ -75,7 +75,7 @@ def test_the_scan_keeps_buckets_split_base_and_outputs(projects_dir):
     # the Read result: written by m2 (a 1 h write), read by m2; m3 is past the compaction
     assert outs["Read"] == [1, 1000, pytest.approx(1000 * (READ + W1), abs=1e-4)]
     # a shell result by its program and subcommand, an image counted; sent after the compaction only: no cost
-    assert outs["git diff"][:2] == [1, round((360 + usage.IMAGE_CHARS) / usage.CHARS_PER_TOKEN)]
+    assert outs["git diff"][:2] == [1, round((360 + spend.IMAGE_CHARS) / spend.CHARS_PER_TOKEN)]
     assert outs["git diff"][2] == 0
     assert set(outs) == {"Read", "git diff", "hook:PostToolUse", "injected", "prompt"}   # no prompt_snapshot
     assert outs["injected"][1] == 10 and outs["prompt"][0] == 1
@@ -84,17 +84,17 @@ def test_the_scan_keeps_buckets_split_base_and_outputs(projects_dir):
 
 
 def test_the_hand_over_simulation():
-    s = usage.Spend()
+    s = spend.Spend()
     for ctx in (100_000, 250_000, 350_000, 450_000, 550_000, 50_000, 400_000):   # a compaction before 50k
         s.message({"cache_read": ctx}, 0.0, None, (1e-6, 0.0))
     # 300k: hand-overs at 350k (offset 230k), 550k (430k), then after the drop at 400k (280k)
     assert s.simulate() == {"300": [pytest.approx(1.17), 3], "400": [pytest.approx(0.66), 1],
                             "500": [pytest.approx(0.43), 1]}
-    assert usage.Spend().simulate() == {"300": [0.0, 0], "400": [0.0, 0], "500": [0.0, 0]}
+    assert spend.Spend().simulate() == {"300": [0.0, 0], "400": [0.0, 0], "500": [0.0, 0]}
 
 
 def test_an_output_after_an_uncounted_message_is_read_from_the_next_one():
-    s = usage.Spend()
+    s = spend.Spend()
     s.output("attachment:x", 3600, pending=True)   # an assistant record seen, its message not yet counted
     s.message({"cache_read": 10}, 0.0, None, (1e-6, 2e-6))
     s.message({"cache_read": 10}, 0.0, None, (1e-6, 2e-6))
@@ -189,4 +189,4 @@ def test_cli_usage_by_context_and_output(project, capsys):
     for bad in (["--by", "output", "--handover-usd", "1"], ["--by", "context", "--handover-usd", "-1"]):
         with pytest.raises(SystemExit, match="--handover-usd"):
             cli.main([*base, *bad])
-    assert "context" in cost.DIMS and "output" in cost.DIMS
+    assert spend.DIMS == ("context", "output")

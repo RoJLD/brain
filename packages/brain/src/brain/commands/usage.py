@@ -164,7 +164,7 @@ def register(sub, ctx) -> None:
                                     "scopes): an id, a path of ids, global, . or ..")
     us.add_argument("--since", help="Nd, Nw, today, yesterday, last-week, last-month or YYYY-MM-DD (default 7d)")
     us.add_argument("--until", help="the same, excluded (default: now)")
-    us.add_argument("--by", choices=cost.DIMS, default="summary",
+    us.add_argument("--by", choices=(*cost.DIMS, *spend.DIMS), default="summary",
                     help="one breakdown (default: a summary of project, item, class, phase, tool, command, the "
                          "workflow runs when there are any, and the script candidates; workflow: each workflow run; "
                          "agent: each subagent's or workflow agent's label; provider, harness, account: where the "
