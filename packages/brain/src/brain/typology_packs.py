@@ -354,8 +354,10 @@ def proposals(candidates, kinds: list[str], cat, have_layers: set[str] | None, p
     """The candidates (:func:`_candidates`, :func:`engine_candidates`) a kind of ``kinds`` meets, each with what the
     project lacks: the layers its store does not hold (``have_layers``, None: unknown) and the standards profiles its
     selection (``profiles``, its ``standards.profiles``) does not meet, a sub-profile meeting its entry's (cli meets
-    software: the catalog's kinds, a brain's own sub-profiles included)."""
-    have_profiles = {k for x in (profiles if isinstance(profiles, list) else []) for k in cat.kinds(str(x))}
+    software, brain.standards.kinds: a selection names the engine's profiles only, as brain.standards.required reads
+    them)."""
+    from . import standards
+    have_profiles = {k for x in (profiles if isinstance(profiles, list) else []) for k in standards.kinds(str(x))}
     out = [_proposal(c, kinds, cat, have_layers, have_profiles) for c in candidates]
     return [pr for pr in out if pr.meets]
 
