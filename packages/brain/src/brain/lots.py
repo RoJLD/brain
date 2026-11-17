@@ -298,9 +298,10 @@ def caps_in_force(root: Path | None, project: str, at_once: int | None = None) -
     verify = max(int(at_once), 1) if at_once is not None else AT_ONCE
     try:
         mem = governor.memory_info()
-        refused = governor.memory_refusal(mem.get("committed"), mem.get("available_gb"), lim)
+        refused = governor.memory_refusal(mem.get("committed"), mem.get("available_gb"), lim,
+                                          mem.get("commit_free_gb"))
         memory = ("refuses a new session now: " if refused else "lets a start through: ") + governor.memory_text(
-            mem.get("committed"), mem.get("available_gb"), lim)
+            mem.get("committed"), mem.get("available_gb"), lim, mem.get("commit_free_gb"))
     except Exception:   # noqa: BLE001 - a machine whose memory cannot be read
         refused, memory = "", "not read on this machine"
     level, advice = quota_answer(quota.load_status(), datetime.now(timezone.utc))
