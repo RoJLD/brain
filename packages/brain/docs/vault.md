@@ -91,7 +91,7 @@ name its code writes there that the list does not hold, so a new store comes wit
 | `alerts` | `$BRAIN_HOME/alerts` | sealed | truth-local | the alerts already raised |
 | `machine.json` | `$BRAIN_HOME/machine.json` | sealed | truth-local | this machine's first sight: name, OS install anchor (a sha256), local id |
 | `facts.json` | `$BRAIN_HOME/facts.json` | sealed | derived | the machine's last facts with their source |
-| `locks` | `$BRAIN_HOME/locks` | sealed | derived | the single-instance locks (the cockpit, the alerts pass) and their holder's pid |
+| `locks` | `$BRAIN_HOME/locks` | sealed | derived | the single-instance locks (the cockpit, the alerts pass) and their holder's pid; the merge queue's lease locks, `ship.lock` and `ship-queue.lock` (brain.filelock: holder, TTL, stale break; never on a network share) |
 | `probes` | `$BRAIN_HOME/probes` | sealed | derived | the dependency probes' last run |
 | `notify` | `$BRAIN_HOME/notify` | sealed | truth-local | the notifications' state, the quiet hours |
 | `secrets` | `$BRAIN_HOME/secrets` | **secret** | truth-local | the stack bundles' secret files |
@@ -105,6 +105,7 @@ name its code writes there that the list does not hold, so a new store comes wit
 | `views` | `$BRAIN_HOME/views` | sealed | derived | the renderings as of a point, never in a repo (`brain reference --asof`: `reference/<project>/<point>/`) |
 | `public-check` | `$BRAIN_HOME/public-check` | sealed | derived | the public check's stamps |
 | `reviews` | `$BRAIN_HOME/reviews` | sealed | truth-local | the reviews' findings and stamps |
+| `ship` | `$BRAIN_HOME/ship` | sealed | truth-local | the local merge queue: the PRs queued per repo, their state and reason (`brain ship`, `queue.json`) |
 | `merge-ready` | `$BRAIN_HOME/merge-ready` | sealed | derived | the merge gate's stamps, per repo and head (`brain merge-ready`) |
 | `formats` | `$BRAIN_HOME/formats` | sealed | derived | the projects' format checks' last pass or fail, keyed by the hashes of their command and files (`brain formats check`) |
 | `backup` | `$BRAIN_HOME/backup` | sealed | truth-local | copies taken before a write-back: a work tree's settings files (`<project>-<key>/<folder>`, the last 10 each) |

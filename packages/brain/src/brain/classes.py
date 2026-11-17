@@ -155,7 +155,8 @@ ENGINE_STORES = {
     "facts.json": Known("$BRAIN_HOME/facts.json", "sealed", "derived",
                         "the machine's last facts with their source (brain doctor)"),
     "locks": Known("$BRAIN_HOME/locks", "sealed", "derived",
-                   "the single-instance locks (the cockpit, the alerts pass) and their holder's pid (brain.shutdown)"),
+                   "the single-instance locks (the cockpit, the alerts pass) and their holder's pid (brain.shutdown); "
+                   "the merge queue's lease locks, ship.lock and ship-queue.lock (brain.filelock)"),
     "probes": Known("$BRAIN_HOME/probes", "sealed", "derived", "the dependency probes' last run (brain.depprobes)"),
     "notify": Known("$BRAIN_HOME/notify", "sealed", "truth-local",
                      "the notifications' state, the quiet hours and their audit (YYYY-MM.jsonl, a log kept 6 months)"),
@@ -177,6 +178,8 @@ ENGINE_STORES = {
     "public-check": Known("$BRAIN_HOME/public-check", "sealed", "derived",
                           "the public check's stamps, per repo and commit"),
     "reviews": Known("$BRAIN_HOME/reviews", "sealed", "truth-local", "the reviews' findings and stamps"),
+    "ship": Known("$BRAIN_HOME/ship", "sealed", "truth-local",
+                  "the local merge queue: the PRs queued per repo, their state and reason (brain ship, queue.json)"),
     "merge-ready": Known("$BRAIN_HOME/merge-ready", "sealed", "derived",
                          "the merge gate's stamps, per repo and head (brain merge-ready)"),
     "formats": Known("$BRAIN_HOME/formats", "sealed", "derived",

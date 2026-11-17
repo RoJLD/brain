@@ -197,14 +197,47 @@ def _merge_check(g: Gate, repo: Path, mb: str) -> None:
                                    "of the base lost" if lost else "nothing the base brought is lost")
 
 
-def _review(g: Gate) -> None:
-    st = review.check(g.head)
+def carried_review(repo: Path, head: str, base_sha: str) -> tuple[dict | None, str]:
+    """(the review stamp ``head`` carries, how) when ``head`` is only the base merged into a reviewed head: a merge
+    commit of two parents, the first one stamped, the second one on the base (``base_sha`` or before it), and its tree
+    git's own merge of the two (the repo's merge driver, nothing resolved by hand: no conflict, no file changed after
+    the merge). (None, '') otherwise: such a head needs its own stamp."""
+    import tempfile
+
+    from . import inventory, mergetogether  # mergetogether imports this module
+    try:
+        parents = git(repo, "rev-list", "--parents", "-n", "1", head).split()[1:]
+    except AuditError:
+        return None, ""
+    if len(parents) != 2:
+        return None, ""
+    ours, theirs = parents
+    st = review.check(ours)
+    if not st or inventory._run_git(repo, ["merge-base", "--is-ancestor", theirs, base_sha])[0] != 0:
+        return None, ""
+    try:
+        with tempfile.TemporaryDirectory(prefix="brain-carry-") as d:
+            attrs = Path(d) / "attributes"
+            attrs.write_text(mergetogether._attributes(repo, theirs), encoding="utf-8")
+            tree, conflicts = mergetogether.merge_tree(repo, ours, theirs, mergetogether._driver(repo), attrs)
+        mine = git(repo, "rev-parse", f"{head}^{{tree}}").strip()
+    except (AuditError, GateError, OSError):
+        return None, ""
+    if conflicts or not tree or tree != mine:
+        return None, ""
+    return st, f"carried from {ours[:8]}: the head only merges the base into it, as git merges it"
+
+
+def _review(g: Gate, repo: Path | None = None, base_sha: str = "") -> None:
+    st, how = review.check(g.head), ""
+    if not st and repo is not None and base_sha:
+        st, how = carried_review(repo, g.head, base_sha)
     left = int((st or {}).get("open") or 0)
     if not st:
         g.add("review", False, "no review stamp for the head (brain review stamp)")
     else:
         g.add("review", not left, f"{left} finding(s) left open" if left else
-              f"reviewed: {st.get('findings', 0)} finding(s), {st.get('fixed', 0)} fixed")
+              f"reviewed: {st.get('findings', 0)} finding(s), {st.get('fixed', 0)} fixed" + (f" ({how})" if how else ""))
 
 
 def _pins(g: Gate, repo: Path, data: dict, remote: str = "origin") -> None:
@@ -263,7 +296,7 @@ def gate(repo: Path, pr: str, slug: str = "", remote: str = "", fetch: bool = Tr
     _fetched(repo, remote, g, str(data.get("headRefName") or ""), fetch)
     _merge_check(g, repo, _fresh(g, repo, f"{remote}/{g.base}"))
     g.add("ci", *ci(data.get("statusCheckRollup") or []))
-    _review(g)
+    _review(g, repo, git(repo, "rev-parse", "--verify", f"{remote}/{g.base}^{{commit}}", allow=(0, 128)).strip())
     _public(g, data, cfg)
     _pins(g, repo, data, remote)
     return g
