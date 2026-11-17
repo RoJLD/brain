@@ -373,6 +373,45 @@ def run(top: Path, tests: list[str], python: str = "", workers: str = "", extra:
     return worst
 
 
+def run_logged(top: Path, tests: list[str], log: Path, deadline: float, python: str = "", workers: str = "",
+               extra: list[str] | None = None) -> tuple[int, bool]:
+    """pytest on ``tests``, its whole output (stdout and stderr) appended to ``log``, every pytest configuration's run
+    within ``deadline`` seconds in all: (the worst exit code, 5 counting as 0; whether the deadline stopped it). At
+    the deadline the running pytest's process tree is stopped (its xdist workers too) and 124 is the exit code."""
+    import time
+
+    from .formats import _kill_tree
+    end = time.monotonic() + max(1.0, float(deadline))
+    group = {"creationflags": subprocess.CREATE_NEW_PROCESS_GROUP} if os.name == "nt" else {"start_new_session": True}
+    worst = 0
+    with log.open("a", encoding="utf-8", newline="\n") as out:
+        for cwd, cmd in commands(top, tests, python, workers, extra):
+            out.write(f"\n$ (in {posixpath.relpath(cwd.as_posix(), top.as_posix())}) {' '.join(cmd)}\n")
+            out.flush()
+            left = end - time.monotonic()
+            if left <= 0:
+                out.write("--- not run: the deadline was reached ---\n")
+                return 124, True
+            try:
+                proc = subprocess.Popen(cmd, cwd=cwd, env=dict(os.environ), stdout=out, stderr=subprocess.STDOUT,
+                                        stdin=subprocess.DEVNULL, **group)
+            except (OSError, ValueError) as exc:
+                out.write(f"--- pytest did not start: {exc} ---\n")
+                return 127, False
+            try:
+                rc = proc.wait(timeout=left)
+            except subprocess.TimeoutExpired:
+                _kill_tree(proc)
+                try:
+                    proc.wait(timeout=30)
+                except subprocess.TimeoutExpired:
+                    pass
+                out.write(f"\n--- stopped at the deadline ({int(deadline)} s): its process tree killed ---\n")
+                return 124, True
+            worst = max(worst, 0 if rc == 5 else rc)
+    return worst, False
+
+
 def record(sel: Selection, mode: str, ran: int, rc: int | None) -> Path:
     """The run's line in the shadow ledger: what a later comparison with the CI's whole suite reads."""
     f = paths.ledger_dir() / LEDGER

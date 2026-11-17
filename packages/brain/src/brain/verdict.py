@@ -93,6 +93,33 @@ def pytest_summary(text: str) -> PytestSummary:
     return PytestSummary(counts, failed)
 
 
+def test_lines(rc: int, stopped: bool, deadline: float, summary: PytestSummary, log: Path, ran: int,
+               rerun: str, after: str, note: str = "", limit: int = 10) -> list[str]:
+    """``brain test --verdict``'s three lines: PASSED, FAILED or TIMEOUT with pytest's counts and the log; the failed
+    tests' ids; the next command (``rerun`` the failed ones, ``after`` a pass)."""
+    counts = ", ".join(f"{n} {k}" for k, n in sorted(summary.counts.items()))
+    if not ran:
+        head = "test: PASSED no test module to run"
+    elif stopped:
+        head = f"test: TIMEOUT stopped at the deadline ({int(deadline)} s)" + (f", {counts} so far" if counts else "")
+    else:
+        head = f"test: {'PASSED' if rc == 0 else 'FAILED'} " + (counts or f"pytest exit {rc}")
+    head += f" ({ran} test module(s){'; ' + note if note else ''}); log: {log.as_posix()}"
+    ids = summary.failed[:limit]
+    more = f" and {len(summary.failed) - limit} more (the log)" if len(summary.failed) > limit else ""
+    if ids:
+        second = "failed: " + ", ".join(ids) + more
+    elif rc == 0 or stopped:
+        second = "failed: none" + (" so far" if stopped else "")
+    else:
+        second = f"failed: no test id in pytest's summary (exit {rc}): read the log"
+    if stopped:
+        nxt = f"{rerun} with a later --deadline (never a background run polled)"
+    else:
+        nxt = rerun if rc else after
+    return [head, second, f"next: {nxt}"]
+
+
 def three_lines(kind: str, passed: list[str], failed: list[tuple[str, str]], skipped: list[tuple[str, str]],
                 logs: Path | None, next_cmd: str) -> list[str]:
     """The verdict: what passed (and the logs' folder), what failed and why, the next command."""

@@ -524,7 +524,9 @@ that ran it by the store's coverage summary. `brain coverage --repo R --run --wr
 pytest-cov with test contexts and keeps that summary in the store (`coverage/<repo>.json`); `brain audit` then
 measures `test.coverage`, `feature.tests` reports a feature no test covers, and `FEATURES.md` shows each feature's
 coverage. `brain test --changed` runs the test modules a change touches by that summary first (shadow mode: missing
-or stale evidence widens the answer to the whole suite, which the CI runs before the merge). The rules:
+or stale evidence widens the answer to the whole suite, which the CI runs before the merge); `--verdict` keeps
+pytest's whole output in a log file, blocks until the run ends or its `--deadline`, and says three lines (PASSED,
+FAILED or TIMEOUT with the counts and the log, the failed tests' ids, the next command). The rules:
 [docs/tests-graph.md](docs/tests-graph.md).
 
 ### The module map
