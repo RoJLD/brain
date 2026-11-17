@@ -144,14 +144,23 @@ def test_the_record_holds_the_process_start(tmp_path):
         lk.release()
 
 
-def test_the_heartbeat_renews_until_the_release(tmp_path):
+def test_the_heartbeat_renews_until_the_release(tmp_path, monkeypatch):
+    """A virtual clock a second further at each reading: each renewal writes a later ``expires`` (the record is cut to
+    the second, so two renewals within one real second were equal); a read during a replace (empty on Windows) is
+    no renewal."""
+    import itertools
+    ticks = itertools.count()
+    t0 = datetime(2026, 11, 17, 10, 0, tzinfo=timezone.utc)
+    monkeypatch.setattr(filelock, "_now", lambda: t0 + timedelta(seconds=next(ticks)))
     lk = filelock.Lock("ship", 0.4, tmp_path).acquire()
     first = lk.holder()["expires"]
     lk.heartbeat(0.05)
     deadline = time.monotonic() + 10
-    while lk.holder().get("expires") == first and time.monotonic() < deadline:
+    seen = first
+    while seen in (first, None) and time.monotonic() < deadline:
         time.sleep(0.05)
-    assert lk.holder()["expires"] != first
+        seen = lk.holder().get("expires")   # empty while Windows replaces the file: read again
+    assert seen and filelock._parse(seen) > filelock._parse(first)
     assert lk.release() == "" and not (tmp_path / "ship.lock").exists() and lk._beat is None
 
 
