@@ -12,10 +12,11 @@ The engine's catalog is ``typologies.yaml`` beside this module (docs/typologies.
 - **stages**: the lifecycle's (LC-2: ``explore``, ``build``, ``launch``... for a living product, ``deliver`` and
   ``closed`` for a finite project), and ``standards_stages``, the standards' stages (``prototype``, ``mvp``, ``v1``,
   ``scale``) mapped to them (:meth:`Catalog.stage`);
-- **the definition of done** in two layers (wi-brain-done-by-typology): ``done``, the generic sentence, and an
-  entry's ``done``, its clauses (the software pack's: a PR, a test, the docs in the same PR, the scout, the
-  worktree), which an item takes by its typologies (:func:`item_typologies`, :meth:`Catalog.done_clauses`); a clause
-  whose ``evidence`` is ``pr`` makes ``brain item close`` require --pr (:func:`requires`).
+- **the definition of done** in two layers (wi-brain-done-by-typology): ``done``, the generic sentence, then the
+  clauses of the typology packs of an item's kinds (``typology_packs.yaml``, brain.typology_packs; the software
+  pack's: a PR, a test, the docs in the same PR, the scout, the worktree), which an item takes by its typologies
+  (:func:`item_typologies`, :meth:`Catalog.done_clauses`); a clause whose ``evidence`` is ``pr`` makes ``brain item
+  close`` require --pr (:func:`requires`).
 
 Ids are stable and English, never renamed nor reused. A brain renames the labels, and adds its own entries or
 sub-profiles, in config.json ``typologies`` (SCOPE-4's rule for a renamable catalogue, as ``scope_types``)::
@@ -46,7 +47,7 @@ ID = re.compile(r"^[a-z][a-z0-9-]*$")
 ANY = ("*", "any")   # what a layer (*) or a standards row (any) names for every kind of project
 LANGS = ("en", "fr")
 VISION = re.compile(r"^[A-Z][0-9]+$")   # a module id of the Vision (J1, K4...)
-ENTRY_KEYS = {"en", "fr", "description", "vision", "sub", "done"}
+ENTRY_KEYS = {"en", "fr", "description", "vision", "sub"}
 CLAUSE_KEYS = {"id", "text", "evidence"}
 EVIDENCE = ("pr",)   # a clause's evidence brain item close requires: --pr
 SUB_KEYS = {"en", "fr", "description"}
@@ -87,7 +88,7 @@ class Catalog:
     stages: dict[str, dict] = field(default_factory=dict)
     standards_stages: dict[str, str] = field(default_factory=dict)
     done: list[Clause] = field(default_factory=list)                  # the generic sentence
-    clauses: dict[str, list[Clause]] = field(default_factory=dict)   # an entry's own clauses
+    clauses: dict[str, list[Clause]] = field(default_factory=dict)   # a kind's clauses: its typology packs'
 
     def entries(self) -> list[Typology]:
         return [t for t in self.typologies.values() if not t.parent]
@@ -121,13 +122,15 @@ class Catalog:
 
     def done_clauses(self, typs) -> list[Clause]:
         """The definition of done of an item of kinds ``typs``: the generic sentence, then the clauses of each one's
-        entry, once each (a sub-profile takes its entry's; an unknown id adds none)."""
-        out, seen = list(self.done), set()
+        entry and of the id itself (a pack may name a sub-profile), a clause id once (a sub-profile takes its entry's;
+        an unknown id adds none)."""
+        out, seen = list(self.done), {c.id for c in self.done}
         for tid in typs:
-            entry = self.entry(tid)
-            if entry and entry not in seen:
-                seen.add(entry)
-                out += self.clauses.get(entry, [])
+            for kind in reversed(self.kinds(tid)) if self.known(tid) else []:   # the entry's first, then the id's
+                for c in self.clauses.get(kind, []):
+                    if c.id not in seen:
+                        seen.add(c.id)
+                        out.append(c)
         return out
 
 
@@ -157,18 +160,31 @@ def engine() -> Catalog:
     cat.stages = {str(k): dict(v or {}) for k, v in (data.get("stages") or {}).items()}
     cat.standards_stages = {str(k): str(v) for k, v in (data.get("standards_stages") or {}).items()}
     cat.done = [_clause(c) for c in data.get("done") or []]
+    cat.clauses = _pack_clauses()
     return cat
 
 
+def _pack_clauses() -> dict[str, list[Clause]]:
+    """{a typology: the clauses of done of the engine's packs that name it} (brain.typology_packs carries them)."""
+    from . import typology_packs
+    try:
+        packs = typology_packs.engine()
+    except typology_packs.PackError as exc:   # the same broken install: said as the catalog's error
+        raise CatalogError(str(exc)) from None
+    out: dict[str, list[Clause]] = {}
+    for spec in packs.values():
+        for tid in spec.get("typologies") or []:
+            out.setdefault(str(tid), []).extend(_clause(c, str(tid)) for c in spec.get("done") or [])
+    return out
+
+
 def _add_entry(cat: Catalog, eid: str, spec: dict) -> None:
-    """An entry of typologies.yaml: itself, its sub-profiles and its clauses of done."""
+    """An entry of typologies.yaml: itself and its sub-profiles."""
     cat.typologies[eid] = Typology(eid, _labels(spec), str(spec.get("description") or ""),
                                    tuple(spec.get("vision") or ()))
     for sid, sub in (spec.get("sub") or {}).items():
         sub = sub or {}
         cat.typologies[sid] = Typology(sid, _labels(sub), str(sub.get("description") or ""), parent=eid)
-    if spec.get("done"):
-        cat.clauses[eid] = [_clause(c, eid) for c in spec["done"]]
 
 
 def _clause(c: dict, typology: str = "") -> Clause:
@@ -355,13 +371,13 @@ def self_check() -> list[str]:
                if not _stage_ok(spec)]
     errors += [f"standards stage {k}: maps to {v!r}, no stage" for k, v in (data.get("standards_stages") or {}).items()
                if v not in stages]
-    errors += _clauses_errors("done", data.get("done"), required=True)
-    errors += [e for eid, spec in (data.get("entries") or {}).items() if isinstance(spec, dict)
-               for e in _clauses_errors(f"entry {eid}: done", spec.get("done"))]
+    errors += clauses_errors("done", data.get("done"), required=True)
     return errors
 
 
-def _clauses_errors(where: str, clauses, required: bool = False) -> list[str]:
+def clauses_errors(where: str, clauses, required: bool = False) -> list[str]:
+    """What a list of clauses of done breaks: each a mapping of id and text (evidence one of :data:`EVIDENCE`), an id
+    once (typologies.yaml's ``done``, a typology pack's)."""
     if clauses is None and not required:
         return []
     if not (isinstance(clauses, list) and clauses):

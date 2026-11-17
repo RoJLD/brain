@@ -131,6 +131,8 @@ def own_registry(root: Path) -> dict:
 def _repo_names(name: str, entry: dict) -> list[str]:
     """The repos an entry declares, by name, from its text alone (no path resolved: the same on every machine)."""
     root = str(entry.get("root") or name)
+    from . import projects
+    entry = projects.lifted(entry)   # the software pack's keys grouped under software: read as top-level ones
     repos = entry.get("repos") if isinstance(entry.get("repos"), list) else ["."]
     out = []
     for r in repos:

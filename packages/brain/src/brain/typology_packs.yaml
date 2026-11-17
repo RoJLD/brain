@@ -1,0 +1,62 @@
+# The typology packs the engine ships (wi-brain-typology-packs, spec-brain-typology-packs E3, TYPO-1, TYPO-4): what a
+# kind of project adds to the generic core, bundled in one place. brain.typology_packs reads it; docs/typologies.md
+# (« Typology packs ») is its contract.
+#
+# A pack names the typologies it is for (ids of typologies.yaml: an entry covers its sub-profiles) and its parts:
+#   layers      the graph layers it brings (research_graph layers)
+#   standards   {catalogs, profiles}: the standards catalogs and profiles it opts a project in to (brain standards)
+#   stages      {stage: [gate, ...]}: its gates by lifecycle stage (a stage of the catalog, or a layer's own)
+#   done        its clauses of the definition of done, after the generic sentence ({id, text, evidence})
+#   doors       its one-way doors, {id, text}
+#   roles       its roles, {id, text}
+#   guards      the guards it turns on (brain.guards.GUARDS)
+#   registry    the keys of a project's entry it reads (brain.projects.KEYS)
+#   procedures, mcp   its tools: the engine's procedures, a brain's MCP servers (source/mcp.yaml)
+# Nothing here turns on by itself: a brain takes a pack in its source/packs.yaml (`from: engine`, with the projects it
+# is for), proposed by `brain typologies propose PROJECT` from the project's lifecycle.typologies and applied by the
+# owner (TYPO-4). The definition of done is the exception that keeps the rule before the packs: an item takes the
+# clauses of the packs of its typologies whether or not a brain took the pack (brain item clauses).
+v: 1
+packs:
+  software:
+    title: Software
+    description: a code product, whatever its form (the software parts of the core are extracted here)
+    typologies: [software]
+    layers: [code, docs_tests, features]
+    standards: {catalogs: [software], profiles: [software]}
+    stages:
+      build: ["the standards rows of the project's stage met (brain standards)"]
+      launch: ["a release tagged from a green CI"]
+    done:
+      - {id: pr, evidence: pr, text: "merged by a pull request, after local verification (tests, linters)"}
+      - {id: test, text: "a test of the new behaviour wherever one can be written"}
+      - {id: same-pr-docs, text: "the same PR updates the README, the docs, the runbook, the CHANGELOG and the script's help for
+          any change of its behaviour, its commands, its configuration, its setup or its data"}
+      - {id: scout, text: "the modules it touches left at the standard: brain audit --diff's NEW and LEFT lines fixed"}
+      - {id: worktree, text: "its worktree removed and its session archived once merged and verified"}
+    doors:
+      - {id: persisted-format, text: "a format persisted on disk or exchanged (a store, a registry, a contract)"}
+      - {id: public-interface, text: "a public API or command line"}
+      - {id: licence, text: "the licence of a published release"}
+    roles:
+      - {id: writer, text: "writes the change in its worktree and opens the pull request"}
+      - {id: reviewer, text: "reviews the pull request against its item, its spec and its decisions"}
+    guards: [branches]
+    registry: [repos, audit, code_index, production]
+  research:
+    title: Research
+    description: "a research project: hypotheses, pre-registered tests, verdicts and their reproduction"
+    typologies: [research]
+    layers: [research]
+    stages:
+      explore: ["each hypothesis written before its test"]
+      build: ["each test pre-registered (hypothesis, test, threshold) before its results are seen"]
+    done:
+      - {id: preregistered, text: "pre-registered before its results were seen (hypothesis, test, threshold)"}
+      - {id: verdict, text: "its verdict recorded, whatever it is"}
+      - {id: reproducible, text: "reproducible: the commit, the data's hash and the seed recorded"}
+    doors:
+      - {id: preregistration, text: "a pre-registration, once results are seen"}
+      - {id: published-claim, text: "a claim published outside the project"}
+    roles:
+      - {id: reviewer, text: "reads a result against its pre-registration before its verdict is recorded"}

@@ -46,6 +46,7 @@ test module. `brain impact` and the risk register read them.
 ```bash
 brain coverage --repo brain --run -n 8 --write    # run the repo's suites under pytest-cov, keep the summary
 brain coverage --repo brain --from coverage.data --cwd packages/brain --write    # the CI's data file
+brain coverage --repo brain --from-ci --cwd packages/brain --write   # the CI's data file of HEAD's green run
 brain coverage --repo brain --run --json          # the summary on stdout, nothing written
 ```
 
@@ -57,10 +58,15 @@ first on `PYTHONPATH`, so the code that runs is the checkout's, whatever the Pyt
 A test that fails still counts for what it ran; brain coverage says so.
 The repo's own `fail_under` is turned off for the run and the report: this measure never fails on the threshold.
 `--from` reads a coverage data file (`.coverage`, made with `--cov-context=test`), `--cwd` being the folder pytest
-ran in. A file from another machine (the CI) needs coverage's `relative_files = true` so that its paths are this
-checkout's. It is read against this checkout, whose HEAD is the commit recorded, so read it in a checkout at the
-commit it measured. A data file in which no context names a test is refused; branch data (`branch = true`) is read
-from its arcs.
+ran in; it is read against the checkout that holds `--cwd`, a worktree of the repo included (one nested in the main
+checkout too, under `.claude/worktrees/`), so the paths are that checkout's own, never dropped as outside the
+registered one nor prefixed with the worktree's folder. A relative `--cwd`, and the default, are read from the top of
+the current folder's checkout of the repo (else the registered root), for `--from` and `--from-ci` alike. A file from
+another machine (the CI) needs coverage's `relative_files = true` so that its paths are this checkout's. It is read
+against that checkout, whose HEAD is the commit recorded, so read it in a checkout at the commit it measured. A data
+file none of whose files is under that checkout (another clone, a wrong `--cwd`) is refused and says so; one in which
+no context names a test is refused; branch data (`branch = true`) is read from its arcs. `--run`, `--from` and
+`--from-ci` exclude one another.
 
 The statements of each file come from `coverage json`; which test ran which line comes from the data file's own
 SQLite tables, read by the brain without the coverage package (the JSON report with its contexts is gigabytes for
@@ -85,6 +91,16 @@ run's artifact `coverage-data` (14 days). To keep it in the store, from a checko
 gh run download <run id> -R RoJLD/brain -n coverage-data -D packages/brain
 brain coverage --repo brain --from packages/brain/coverage.data --cwd packages/brain --write
 ```
+
+**After each merge** the map is refreshed, so that `brain test --changed` reads evidence of today's main: in a
+checkout at the merged commit (a worktree at `origin/main`, clean), once the CI of the push to main is green,
+`brain coverage --repo brain --from-ci --cwd packages/brain --write` finds that commit's successful run (`gh run list
+--commit <HEAD> --workflow ci.yml --event push --branch <default branch>`, `-R` the `origin` remote's GitHub repo;
+only a push run of the default branch: a `pull_request` run measured `refs/pull/N/merge`, another tree than HEAD's),
+downloads its `coverage-data` artifact to a temporary folder and reads it there. One checkout does it all, the one
+that holds `--cwd`: its HEAD picks the run, it must be clean (no modified tracked file), and the data is read against
+it. It says when the run is still in progress, and when it failed (re-run it, or download its artifact by hand and
+use `--from`). The summary then enters the store by a PR, like any record.
 
 The CI only measures; it never fails on a threshold, and the summary enters the store by the owner's PR, like any
 record.
@@ -118,9 +134,12 @@ Each changed path selects:
 
 The answer also widens with no map, a map measured on a dirty tree, one whose commit this checkout lacks or that
 shares no history with HEAD (a map of a newer main is fine: the diff from its commit covers both sides), or package
-roots that cannot be read. When the change touches a Python file, two kinds of test modules are selected whatever
-the map says: those it never saw (new ones, and those that only start processes), and those that start a Python
-process (`sys.executable`, `-m brain`): a child's lines carry no test context. Static evidence (an import, a name in
+roots that cannot be read. When the change touches a Python file, three kinds of test modules are selected
+whatever the map says: those it never saw (new ones, and those that only start processes), those that start a Python
+process (`sys.executable`, `-m brain`): a child's lines carry no test context, and those that read the package's
+sources as text (a glob whose pattern ends in `.py`, `.sh` or `.ps1`, `os.walk`, `os.scandir`, `os.listdir`,
+`Path.walk()`, or a `# brain: scans-sources` line for one the pattern misses: the rule for a new scanner): a contract test that checks every module (a store declared, a variable read) runs none of them, and
+a new module is its very subject. Static evidence (an import, a name in
 a test's text) only ever adds a test; nothing is dropped on it alone.
 
 **Shadow mode** (the default, report-only): the selection runs; a widened answer is printed with its reasons and left

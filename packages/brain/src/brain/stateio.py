@@ -360,6 +360,19 @@ def backup(path: Path) -> Path | None:
     return bak
 
 
+def _replace(src: Path, dst: Path, tries: int = 20, pause: float = 0.05) -> None:
+    """``os.replace``, tried again for about a second while Windows refuses it for a sharing violation (a reader holds
+    ``dst`` open: PermissionError); the last refusal is raised."""
+    for i in range(tries):
+        try:
+            os.replace(src, dst)
+            return
+        except PermissionError:
+            if i == tries - 1:
+                raise
+            time.sleep(pause)
+
+
 def write_atomic(path: Path, text: str) -> None:
     """``text`` into ``path`` through a temporary file beside it, synced, then moved over it. A symbolic link is
     written through (the file it points to, a temporary file beside that one): the link stays a link. Under
@@ -384,7 +397,7 @@ def write_atomic(path: Path, text: str) -> None:
                 os.fsync(fh.fileno())
             if fault == "killed":   # whole and synced, never moved: what a kill leaves
                 faults.killed(path)
-            os.replace(tmp, path)
+            _replace(tmp, path)
     finally:
         if tmp.exists():
             try:

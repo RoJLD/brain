@@ -872,3 +872,26 @@ def test_log_files_gives_a_rotated_logs_files_in_order(tmp_path):
 def test_the_unclassified_logs_have_a_retention():
     assert {k: stateio.LOG_RETENTION[k] for k in ("starts", "quota", "notify")} == {"starts": 2, "quota": 12,
                                                                                  "notify": 6}
+
+
+def test_an_atomic_write_windows_refuses_for_a_moment_is_retried(tmp_path, monkeypatch):
+    """A reader holding the file open makes Windows refuse its replacement (a sharing violation): tried again, the
+    write lands; a refusal that lasts is raised, the file left as it was."""
+    f = tmp_path / "state.json"
+    f.write_text("{}\n", encoding="utf-8")
+    real = os.replace
+    refused = [3]
+
+    def replace(a, b):
+        if refused[0]:
+            refused[0] -= 1
+            raise PermissionError(32, "in use by another process")
+        return real(a, b)
+    monkeypatch.setattr(stateio.os, "replace", replace)
+    monkeypatch.setattr(stateio.time, "sleep", lambda s: None)
+    stateio.write_atomic(f, '{"a": 1}\n')
+    assert json.loads(f.read_text(encoding="utf-8")) == {"a": 1}
+    refused[0] = 10 ** 6
+    with pytest.raises(PermissionError):
+        stateio.write_atomic(f, '{"a": 2}\n')
+    assert json.loads(f.read_text(encoding="utf-8")) == {"a": 1} and not list(tmp_path.glob("*.tmp"))

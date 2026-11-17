@@ -113,6 +113,21 @@ those of the registry's entry, resolved beside the main checkout. Nothing is eve
 before the one that reads `overlays:` takes it for an unknown key (a note, an error under `BRAIN_STRICT`): pin the
 engine first.
 
+## On a worktree: codebase-memory-mcp
+
+When codebase-memory-mcp is installed ([`code-index.md`](code-index.md)), `brain impact` on a worktree asks it first,
+and it is GitNexus's fallback elsewhere (`--backend gitnexus|cbm` names one). It indexes the checkout in place under
+a temporary name, its `detect_changes` against the base gives the touched symbols and their callers, and the
+temporary index is deleted. Its second line:
+
+```
+symbols (codebase-memory-mcp, this checkout indexed in place): 1 touched in 1 file(s), 5 caller(s)
+```
+
+`--json`'s `mode` is then `cbm`, the symbols' and callers' ids CBM's qualified names. A commit range is not asked of
+it (it reads the working tree). When it fails, the next backend is tried, and the file level's line gives every
+reason, joined by `; `.
+
 ## Without GitNexus
 
 When the GitNexus stack does not answer, the repo is not indexed, its indexed commit is not in this checkout, or the

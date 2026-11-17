@@ -91,7 +91,7 @@ name its code writes there that the list does not hold, so a new store comes wit
 | `alerts` | `$BRAIN_HOME/alerts` | sealed | truth-local | the alerts already raised |
 | `machine.json` | `$BRAIN_HOME/machine.json` | sealed | truth-local | this machine's first sight: name, OS install anchor (a sha256), local id |
 | `facts.json` | `$BRAIN_HOME/facts.json` | sealed | derived | the machine's last facts with their source |
-| `locks` | `$BRAIN_HOME/locks` | sealed | derived | the single-instance locks (the cockpit, the alerts pass) and their holder's pid |
+| `locks` | `$BRAIN_HOME/locks` | sealed | derived | the single-instance locks (the cockpit, the alerts pass) and their holder's pid; the merge queue's lease locks, `ship.lock` and `ship-queue.lock` (brain.filelock: holder, TTL, stale break; never on a network share) |
 | `probes` | `$BRAIN_HOME/probes` | sealed | derived | the dependency probes' last run |
 | `notify` | `$BRAIN_HOME/notify` | sealed | truth-local | the notifications' state, the quiet hours |
 | `secrets` | `$BRAIN_HOME/secrets` | **secret** | truth-local | the stack bundles' secret files |
@@ -99,12 +99,13 @@ name its code writes there that the list does not hold, so a new store comes wit
 | `collector` | `$BRAIN_HOME/stacks/sovereign/data/otel-collector` | sealed | log | the telemetry collector's data |
 | `stacks` | `$BRAIN_HOME/stacks` | sealed | truth-local | the rendered stack bundles and their data |
 | `telemetry` | `$BRAIN_HOME/telemetry` | sealed | truth-local | the telemetry consent record and the report outbox |
-| `code-index` | `$BRAIN_HOME/code-index` | sealed | derived | the code index's bundles |
+| `code-index` | `$BRAIN_HOME/code-index` | sealed | derived | the code index's bundles; codebase-memory-mcp's binary, store and record (`cbm/`) |
 | `code-index-record` | `$BRAIN_HOME/code-index.json` | sealed | truth-local | the repos indexed |
 | `code-map` | `$BRAIN_HOME/code-map` | sealed | derived | the code maps |
 | `views` | `$BRAIN_HOME/views` | sealed | derived | the renderings as of a point, never in a repo (`brain reference --asof`: `reference/<project>/<point>/`) |
 | `public-check` | `$BRAIN_HOME/public-check` | sealed | derived | the public check's stamps |
 | `reviews` | `$BRAIN_HOME/reviews` | sealed | truth-local | the reviews' findings and stamps |
+| `ship` | `$BRAIN_HOME/ship` | sealed | truth-local | the local merge queue: the PRs queued per repo, their state and reason (`brain ship`, `queue.json`) |
 | `merge-ready` | `$BRAIN_HOME/merge-ready` | sealed | derived | the merge gate's stamps, per repo and head (`brain merge-ready`) |
 | `formats` | `$BRAIN_HOME/formats` | sealed | derived | the projects' format checks' last pass or fail, keyed by the hashes of their command and files (`brain formats check`) |
 | `backup` | `$BRAIN_HOME/backup` | sealed | truth-local | copies taken before a write-back: a work tree's settings files and a brain's `config.json` before `brain migrate --apply` (`<project>-<key>/<folder>`, the last 10 each) |
@@ -220,6 +221,26 @@ in clear is a false sense of safety.
    Register-ScheduledTask -TaskPath '\Brain\' -TaskName 'vault-canary-daily' -Description 'brain vault canary' -Action (New-ScheduledTaskAction -Execute (Get-Command brain).Source -Argument 'vault canary') -Trigger (New-ScheduledTaskTrigger -Daily -At 07:30) -Settings (New-ScheduledTaskSettingsSet -StartWhenAvailable -ExecutionTimeLimit (New-TimeSpan -Minutes 10))
    ```
    Check it with `Get-ScheduledTaskInfo -TaskPath '\Brain\' -TaskName 'vault-canary-daily'`.
+
+   **A machine that is off at the run's time.** `StartWhenAvailable` starts a missed run after the next boot, but not
+   always: a missed day is a gap in the vault's proof, and `brain health vault` fails 26 hours after the last seal. A
+   brain that declares its schedules (`brain schedule`, in its project's entry of `projects.yaml`) adds a logon
+   trigger, both triggers running a command that seals only when the day's canary is not done:
+
+   ```yaml
+   brain:
+     schedules:
+       vault-canary-daily: {command: vault canary --due 07:30, at: '07:30', at_logon: true}
+   ```
+
+   `brain vault canary --due 07:30` seals when a recipient has no canary sealed to its current key since the latest
+   07:30 (local time), its canary failed, it is within 2 hours of `canary_hours`, or this machine's key has not
+   opened its own since 07:30; it then says why (`canary due: ...`). Otherwise it prints `canary not due` and exits 0.
+   So the 07:30 run seals each day, a logon after a boot catches up the day's run the machine was off for, and a
+   second logon the same day seals nothing. Named `vault-canary-daily`, the declared schedule replaces a task
+   registered by hand under that name (`brain schedule install --apply` adopts it, then rewrites it). The alerts pass
+   watches the task (`alerts: scheduler: ['\Brain\']`); `tasks: {vault-canary-daily: {missed: 1}}` under the
+   project's `alerts:` makes one missed day a warning rather than a late note.
 
    macOS: a LaunchAgent, `~/Library/LaunchAgents/brain.vault-canary.plist`, with the absolute path `which brain`
    prints:

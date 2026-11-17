@@ -218,21 +218,23 @@ def test_check_reports_what_breaks_the_source(ada):
 
 
 def test_an_unknown_pack_key_is_kept_and_noted_never_refused_in_read_mode(ada, monkeypatch, capsys):
-    """spec-brain-typology-packs E1 ter: a newer brain's pack key (typologies, layers, stages...) is kept and noted by
-    an older engine, which renders the pack as before; strict mode (CI, the engine there is the pin) refuses it."""
+    """spec-brain-typology-packs E1 ter: a newer brain's pack key (a review lens, views...) is kept and noted by an
+    older engine, which renders the pack as before, as is a typology id of a later catalog; strict mode (CI, the engine
+    there is the pin) refuses both."""
     before = [(o.rel, o.text) for o in render.render_claude(neutral.load(ada)).outputs]
     write(ada / "source", {"packs.yaml": PACKS.replace("    projects: [demo]\n",
                                                        "    projects: [demo]\n    typologies: [software, film]\n"
-                                                       "    stages: build\n")})
+                                                       "    lens: deep\n")})
     src = neutral.load(ada)
     assert next(p for p in src.packs if p.spec.get("typologies")).spec["typologies"] == ["software", "film"]
     monkeypatch.setenv("BRAIN_STRICT", "0")
     assert neutral.check(src) == []
     err = capsys.readouterr().err
-    assert "unknown key 'typologies'" in err and "unknown key 'stages'" in err and "kept" in err
+    assert "unknown key 'lens'" in err and "typology 'film' is not in the typology catalog" in err and "kept" in err
     assert [(o.rel, o.text) for o in render.render_claude(src).outputs] == before
     monkeypatch.setenv("BRAIN_STRICT", "1")
-    assert any("unknown key 'typologies'" in e for e in neutral.check(src))
+    errors = neutral.check(src)
+    assert any("unknown key 'lens'" in e for e in errors) and any("'film'" in e for e in errors)
 
 
 def test_a_scope_file_may_hold_its_front_matter_only_and_renders_nothing(ada):

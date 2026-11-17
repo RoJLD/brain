@@ -20,11 +20,16 @@ store (``/data/gitnexus/repos/<name>``, where its URL clones go) is reset to it,
 clone (``POST /api/analyze``, force and embeddings, as the fork's reindex.ps1 does) and waits for the job. The
 indexed commit, the time it took, GitNexus's counts (per node label and edge type, by Cypher through its MCP tool,
 which also checks that MCP answers) and the size of the index are recorded in ``<BRAIN_HOME>/code-index.json``. ``--stale`` keeps only the repos that are not indexed at
-their branch head. ``brain index`` alone prints each repo's state and changes nothing.
+their branch head. ``brain index`` alone prints each repo's state and changes nothing (with codebase-memory-mcp,
+it sets its settings off first).
 
 ``brain health code-index`` (and ``brain health --all``) reports STALE when a repo's branch moved past its indexed
 commit, it was never indexed, or GitNexus no longer lists it; exit code 1 then. No hook and no schedule (the owner,
 2026-11-02): a repo is reindexed after a merge, or when brain health says so.
+
+This module is the ``gitnexus`` backend of the code index; brain.codebackends picks it or codebase-memory-mcp
+(brain.cbm): ``brain index`` and ``brain health code-index`` hand the declared repos to the latter when no stack
+declares ``index:`` and its binary is installed, or when ``--backend cbm`` names it (docs/code-index.md).
 """
 
 from __future__ import annotations
@@ -41,7 +46,7 @@ import urllib.request
 from dataclasses import dataclass
 from pathlib import Path
 
-from . import faults, net, paths, projects, stacks
+from . import cbm, faults, net, paths, projects, stacks
 
 CHECK = "code-index"
 NAME = re.compile(r"^[A-Za-z0-9._-]+$")  # GitNexus's REPO_NAME_PATTERN, for the clone's folder
@@ -266,8 +271,9 @@ def load(root: Path | None = None) -> tuple[Indexer | None, dict[str, Repo]]:
                 raise CodeIndexError(f"code_index: {path.name} is declared by {repos[path.name].project} and {p.name} "
                                      "(GitNexus names a repo after its folder)")
             repos[path.name] = Repo(path.name, p.name, path, branch)
-    if repos and ix is None:
-        raise CodeIndexError("code_index: is declared but no stack declares index: (the GitNexus stack)")
+    if repos and ix is None and not cbm.installed():
+        raise CodeIndexError("code_index: is declared but no stack declares index: (the GitNexus stack) and "
+                             "codebase-memory-mcp is not installed (docs/code-index.md)")
     return ix, repos
 
 
@@ -475,9 +481,11 @@ def of_project(repos: dict[str, Repo], project: str | None) -> dict[str, Repo]:
 
 
 def run(names: list[str], every: bool = False, stale: bool = False, root: Path | None = None, out=None,
-        project: str | None = None) -> int:
+        project: str | None = None, backend: str | None = None) -> int:
     """``brain index``: the state of each repo (no name, no flag), else index the named, every or stale ones; only
-    ``project``'s with ``--project``."""
+    ``project``'s with ``--project``. GitNexus when a stack declares ``index:``, else codebase-memory-mcp when it is
+    installed, or the ``backend`` named (brain.codebackends)."""
+    from . import codebackends
     out = out or sys.stdout
     ix, repos = load(root)
     repos = of_project(repos, project)
@@ -485,9 +493,13 @@ def run(names: list[str], every: bool = False, stale: bool = False, root: Path |
     if unknown:
         raise CodeIndexError(f"unknown repo(s) {', '.join(unknown)} (declared under code_index"
                              f"{' of ' + project if project else ''}: {', '.join(repos) or 'none'})")
+    if codebackends.choose("index", backend, root)[:1] == ["cbm"]:   # its settings set off even with no repo
+        return codebackends.cbm_index(repos, names, every, stale, out)
     if not repos:
         print(f"no repo declared under code_index: {'of ' + project if project else 'in projects.yaml'}", file=out)
         return 0
+    if ix is None:
+        raise CodeIndexError(f"{backend or 'gitnexus'}: {codebackends.why_not('gitnexus', root)}")
     rec = read_record()
     if not (names or every or stale):
         entries = registry(ix)
@@ -519,13 +531,27 @@ def health(root: Path | None = None, out=None, named: bool = True, project: str 
     """``brain health code-index``: one line; exit 1 when a repo is not indexed at its branch head. Silent when no
     repo is declared and the check was not ``named`` (``brain health --all``). Only ``project``'s repos with
     ``--project``."""
+    from . import codebackends
     out = out or sys.stdout
     ix, repos = load(root)
     repos = of_project(repos, project)
+    rc = 0
+    if cbm.installed():   # its settings matter even with no repo declared
+        rc, line = codebackends.cbm_health(repos, every=ix is None)
+        if named or rc:
+            print(line, file=out, flush=True)
+    if ix is None:
+        if named and not repos and not cbm.installed():
+            print(f"{CHECK} OK (no repo declared under code_index:)", file=out)
+        return rc
     if not repos:
         if named:
             print(f"{CHECK} OK (no repo declared under code_index:)", file=out)
-        return 0
+        return rc
+    return max(rc, _gitnexus_health(ix, repos, out))
+
+
+def _gitnexus_health(ix: Indexer, repos: dict[str, Repo], out) -> int:
     rec, entries = read_record(), registry(ix)
     states = [state(ix, r, rec.get(r.name), entries) for r in repos.values()]
     bad = [s for s in states if s.state != "OK"]
@@ -540,9 +566,9 @@ def health(root: Path | None = None, out=None, named: bool = True, project: str 
 
 
 def main(names: list[str], every: bool = False, stale: bool = False, root: Path | None = None,
-         project: str | None = None) -> int:
+         project: str | None = None, backend: str | None = None) -> int:
     try:
-        return run(names, every, stale, root, project=project)
+        return run(names, every, stale, root, project=project, backend=backend)
     except CodeIndexError as exc:
         print(f"brain index: {exc}", file=sys.stderr)
         return 2

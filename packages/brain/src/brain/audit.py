@@ -1164,6 +1164,8 @@ def render_text(data: dict, verbose: bool = False) -> list[str]:
                    f"{sum(1 for r in p['repos'] if not r.get('error'))} repo(s)"
                    + (f" (calibrated {CALIBRATED.split(' ', 1)[0]})" if CALIBRATED
                       else " (uncalibrated: wi-brain-scout-rule measures each check's error rate)"))
+        if p.get("not_software"):
+            out.append(f"  {p['not_software']}")
         if p.get("trend"):
             out.append(trend_line(p["trend"]) + (f" (left out: {', '.join(p['trend']['left'])})"
                                                  if p["trend"]["left"] else ""))
@@ -1211,7 +1213,9 @@ def render_view(p: dict) -> str:
                    f"{c['info']} | {len(r['waived'])} | {len(r['exempt'])} | {len(r['not_measured'])} |")
     c = p["counts"]
     out += ["", f"**{p['name']}: P0 {c['P0']}, P1 {c['P1']}, P2 {c['P2']}.**", ""]
-    if p.get("trend"):
+    if p.get("not_software"):
+        out += [p["not_software"][0].upper() + p["not_software"][1:] + ".", ""]
+    if p.get("trend") and not p.get("not_software"):
         out += ["## Trend", "", trend_line(p["trend"]).replace("trend (like-for-like debt): ", "Like-for-like debt "
                 "(P0 + P1 + P2) at the end of each completed ISO week, today's rules: "), ""]
     first = [(r["name"], f) for r in p["repos"] for f in r.get("findings", []) if f["severity"] == "P0"]
@@ -1396,12 +1400,12 @@ def run(args, root: Path | None, today: date | None = None) -> dict:
     trends = {}
     n = args.trend if args.trend else (5 if args.write else 0)
     if args.repo:
-        names = {c.name for p in projs for c in projects.repos_of(p)}
+        names = {c.name for p in projs for c in projects.repos_of(p, audit=True)}
         unknown = sorted(set(args.repo) - names)
         if unknown:
             raise AuditError(f"unknown repo(s) {', '.join(unknown)} (repos: {', '.join(sorted(names))})")
     for p in projs:
-        cfgs = projects.repos_of(p)
+        cfgs = projects.repos_of(p, audit=True)
         only = None
         if args.repo:   # every repo is still read: the closure and cross-repo references span them all
             only = set(args.repo)
@@ -1412,6 +1416,10 @@ def run(args, root: Path | None, today: date | None = None) -> dict:
         res["repos"] += [{"name": k, "path": str(next(c.path for c in cfgs if c.name == k)), "error": v}
                          for k, v in errors.items() if only is None or k in only]
         res["cfgs"], res["project"] = cfgs, p
+        if not cfgs and not p.shares_root_with and not projects.software(p):
+            kinds = ", ".join(map(str, p.lifecycle.get("typologies") or []))
+            res["not_software"] = (f"no code repo audited: its kinds ({kinds}) meet no software pack (repos: or "
+                                   "production: in its registry entry audits one anyway)")
         if n:
             res["trend"] = trend(p, cfgs, refs, n, today, only, res["layered"], res["linked"], res["featured"],
                                  res["coverage"])

@@ -764,3 +764,43 @@ def test_check_warns_on_an_old_stamp_whose_session_left_the_app_and_the_ledger(a
     assert "stamped over 7 days ago" in warned[0]
     recent = {**old, "at": _iso_ago(86400)}
     assert sessions.unknown_ids([(Path("e.yaml"), {"id": "ddr-e", "asked": recent})])[0]
+
+
+def test_sessions_self_prints_this_sessions_own_app_id(app, monkeypatch, capsys):
+    """wi-brain-brief-own-id: the id a report is signed with, read from the app's environment; exit 1 without it."""
+    me = "local_a0000000-0000-4000-8000-00000000000a"
+    for v in sessions.SESSION_ENV:
+        monkeypatch.delenv(v, raising=False)
+    monkeypatch.setenv("CLAUDE_CODE_HOST_SESSION_ID", me)
+    assert cli.main(["sessions", "self"]) == 0 and capsys.readouterr().out.strip() == me
+    for argv in (["sessions", "self", "--json"], ["sessions", "--json", "self"]):
+        assert cli.main(argv) == 0
+        assert json.loads(capsys.readouterr().out) == {"id": me, "source": "CLAUDE_CODE_HOST_SESSION_ID",
+                                                       "inherited": False}
+    monkeypatch.setenv("CLAUDE_CODE_HOST_SESSION_ID", "foo")  # malformed: every record schema refuses it
+    assert cli.main(["sessions", "self"]) == 1
+    out = capsys.readouterr()
+    assert out.out == "" and "not an app session id" in out.err
+    monkeypatch.delenv("CLAUDE_CODE_HOST_SESSION_ID")
+    assert cli.main(["sessions", "self"]) == 1
+    out = capsys.readouterr()
+    assert out.out == "" and "get_session tool with the id self" in out.err
+    assert cli.main(["sessions", "self", "--json"]) == 1 and json.loads(capsys.readouterr().out)["id"] == ""
+    # the subparser left out of the option loop: the list and tree still take their options before the subcommand
+    assert cli.build_parser().parse_args(["sessions", "--json", "tree"]).json is True
+
+
+def test_sessions_self_refuses_an_id_inherited_from_another_sessions_shell(app, monkeypatch, capsys):
+    """Review of wi-brain-brief-own-id, finding 1: a claude started from a desktop session's shell inherits its
+    CLAUDE_CODE_HOST_SESSION_ID (review of #34, finding 50); the app's file of that id names another transcript, so
+    ``brain sessions self`` never prints it as the nested session's own id."""
+    _family(app)
+    monkeypatch.setenv(sessions.HOST_ENV, CHILD)
+    monkeypatch.setenv("CLAUDE_CODE_SESSION_ID", NESTED)
+    assert cli.main(["sessions", "self"]) == 1
+    out = capsys.readouterr()
+    assert out.out == "" and "inherited from another session's shell" in out.err
+    assert cli.main(["sessions", "self", "--json"]) == 1
+    assert json.loads(capsys.readouterr().out) == {"id": "", "source": sessions.HOST_ENV, "inherited": True}
+    monkeypatch.setenv("CLAUDE_CODE_SESSION_ID", C_CLI)  # the session the app's file names: its own id
+    assert cli.main(["sessions", "self"]) == 0 and capsys.readouterr().out.strip() == CHILD
