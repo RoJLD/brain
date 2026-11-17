@@ -183,14 +183,14 @@ def test_verify_finds_what_is_not_held(tmp_path, monkeypatch):
     monkeypatch.setattr(floor, "owner", lambda p: "S-1-5-32-544")
 
     def full(p, sid):
-        return 0xFFFFF
+        return flooracl.mask_of(flooracl.TREE)
 
     def none(p):
         return []
     assert flooracl.verify(a, denied=full, writers=none) == [f"{h / 'gone.json'}: missing"]
 
     def partial(p, sid):
-        return flooracl.mask_of(flooracl.FILE) & ~0x40 if "hooks" in str(p) else 0xFFFFF
+        return flooracl.mask_of(flooracl.FILE) & ~0x40 if "hooks" in str(p) else flooracl.mask_of(flooracl.TREE)
     wrong = flooracl.verify({**a, "files": [str(h / "settings.json")]}, denied=partial, writers=none)
     assert wrong == [f"{h / 'hooks'}: {SID} not denied DC", f"{h / 'hooks' / 'x'}: {SID} not denied DC"]
 
@@ -452,8 +452,9 @@ def test_a_real_acl_step_on_a_scratch_profile(tmp_path, monkeypatch):
     a = {"account": sid, "home": str(home), "files": [str(home / "settings.json")], "trees": [str(home / "hooks")],
          "folders": [], "create": []}
     try:
-        for cmd in flooracl.commands(a):
-            assert subprocess.run(cmd, capture_output=True, timeout=300).returncode == 0, cmd
+        for cmd in flooracl.commands(a):   # the deny entries through deny_exact (icacls' /deny blocked reading)
+            assert flooracl.run_acl(cmd, subprocess.run) == "", cmd
+        assert flooracl.lock_trees(a, subprocess.run) == []
         assert flooracl.verify(a) == []
         assert flooracl.denied(home / "hooks" / "sub" / "h.sh", sid) & flooracl.mask_of(flooracl.FOLDER) == \
             flooracl.mask_of(flooracl.FOLDER)
@@ -554,3 +555,19 @@ def test_acl_wanted_is_windows_only_and_the_per_call_check_refuses_a_link(tmp_pa
     except (ImportError, OSError):
         pytest.skip("no junction")
     assert floor.acl_loose(tmp_path / "j", writable=lambda p: False) == "a link or a junction"
+
+
+def test_no_deny_holds_a_right_reading_needs(monkeypatch):
+    """CI's elevated runner (1165d26f): icacls' /deny made settings.json unreadable (a read asks SYNCHRONIZE and
+    READ_CONTROL): the deny entries are written with their exact mask (deny_exact), none holds a right reading needs,
+    and verify says so if one does."""
+    for rights in (flooracl.FILE, flooracl.TREE, flooracl.FOLDER, flooracl.HOME):
+        assert not flooracl.mask_of(rights) & flooracl.READ_RIGHTS, rights
+    assert "reading needs" in flooracl.deny_exact("x", SID, 0x100000)
+    assert all(c[0] == flooracl.DENY for c in flooracl.commands(_plan(), nt=True) if "/deny" in c)
+    ran = []
+    assert flooracl.run_acl([flooracl.DENY, "x", "/deny", f"*{SID}:{flooracl.FILE}"], lambda c, **k: (ran.append(c), _Done())[1]) == ""
+    assert ran   # a fake runner gets it: no real ACL is written in a test
+    monkeypatch.setattr(floor, "owner", lambda p: "S-1-5-32-544")
+    assert flooracl._wrong(__file__, SID, 0, False, lambda p, s: 0x100000, lambda p: []) == \
+        [f"{__file__}: {SID} denied a right reading needs (0x100000)"]

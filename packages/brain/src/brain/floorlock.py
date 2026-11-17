@@ -541,7 +541,7 @@ def apply(cfg, lower: bool = False, run=subprocess.run, is_elevated=None, instal
         if a:   # the account's own Claude Code files, before the managed hooks and the lock file that check them
             flooracl.create(a)
             acl_started = True
-            failed = _run_all(flooracl.commands(a), run)
+            failed = [w for w in (flooracl.run_acl(c, run) for c in flooracl.commands(a)) if w]
             failed = failed or flooracl.lock_trees(a, run)
             wrong = [] if failed else (acl_check or flooracl.verify)(a)
             if failed or wrong:

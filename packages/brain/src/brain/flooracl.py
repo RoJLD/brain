@@ -164,13 +164,13 @@ def commands(a: dict, nt: bool | None = None) -> list[list[str]]:
     owner keeps WRITE_DAC), then its deny entry; ~/.claude first, so nothing under it is renamed meanwhile. A tree's
     root ends it: :func:`lock_trees` then walks what it holds."""
     icacls, sid, q = _icacls(nt), f"*{a['account']}", ("/L", "/C", "/Q")
-    out = [[icacls, a["home"], "/setowner", ADMINS, *q], [icacls, a["home"], "/deny", f"{sid}:{HOME}", *q]]
+    out = [[icacls, a["home"], "/setowner", ADMINS, *q], [DENY, a["home"], "/deny", f"{sid}:{HOME}", *q]]
     for d in a["folders"]:   # a project's .claude before what it holds
-        out += [[icacls, d, "/setowner", ADMINS, *q], [icacls, d, "/deny", f"{sid}:{FOLDER}", *q]]
+        out += [[icacls, d, "/setowner", ADMINS, *q], [DENY, d, "/deny", f"{sid}:{FOLDER}", *q]]
     for f in a["files"]:
-        out += [[icacls, f, "/setowner", ADMINS, *q], [icacls, f, "/deny", f"{sid}:{FILE}", *q]]
+        out += [[icacls, f, "/setowner", ADMINS, *q], [DENY, f, "/deny", f"{sid}:{FILE}", *q]]
     for d in a["trees"]:
-        out += [[icacls, d, "/setowner", ADMINS, *q], [icacls, d, "/deny", f"{sid}:{TREE}", *q]]
+        out += [[icacls, d, "/setowner", ADMINS, *q], [DENY, d, "/deny", f"{sid}:{TREE}", *q]]
     return out
 
 
@@ -195,7 +195,7 @@ def lock_trees(a: dict, run, nt: bool | None = None) -> list[str]:
                 failed.append(f"{e.path}: a link or a junction")
                 continue
             failed += [w for w in (_run([icacls, e.path, "/setowner", ADMINS, *q], run),
-                                   _run([icacls, e.path, "/deny", f"{sid}:{TREE}", *q], run)) if w]
+                                   run_acl([DENY, e.path, "/deny", f"{sid}:{TREE}", *q], run)) if w]
             if e.is_dir(follow_symlinks=False):
                 stack.append(e.path)
     return failed
@@ -306,11 +306,70 @@ def _wrong(p: str, sid: str, mask: int, own_entries: bool, denied, writers) -> l
     who = floor.owner(p)
     if who not in floor.TRUSTED_OWNERS:
         out.append(f"{p}: owned by {who or 'an owner that cannot be read'}")
-    lack = mask & ~denied(p, sid)
+    got = denied(p, sid)
+    lack = mask & ~got
     if lack:
         out.append(f"{p}: {sid} not denied {', '.join(k for k, v in RIGHTS.items() if v & lack)}")
+    if got & READ_RIGHTS:   # Claude Code could no longer read it (CreateFile asks SYNCHRONIZE and READ_CONTROL too)
+        out.append(f"{p}: {sid} denied a right reading needs (0x{got & READ_RIGHTS:x})")
     out += [f"{p}: an entry of its own lets {w} write" for w in (writers(p) if own_entries else [])]
     return out
+
+
+# What opening a file or a folder to read asks (FILE_GENERIC_READ, FILE_TRAVERSE): never denied.
+READ_RIGHTS = 0x1 | 0x8 | 0x20 | 0x80 | 0x20000 | 0x100000
+DENY = "brain-deny"   # a command's first word: deny_exact, not icacls (which adds rights reading needs to a deny)
+
+
+def run_acl(cmd: list[str], run) -> str:
+    """Run one command of the step: a DENY one by :func:`deny_exact` when ``run`` is the real subprocess.run (a test's
+    fake runner gets it as it gets the others), any other through brain.floorlock._run; '' when it succeeded."""
+    import subprocess
+    from .floorlock import _run
+    if cmd[0] == DENY and run is subprocess.run:
+        sid, rights = cmd[3].lstrip("*").split(":", 1)
+        return deny_exact(cmd[1], sid, mask_of(rights), inherit="(OI)(CI)" in rights)
+    return _run(cmd, run)
+
+
+def deny_exact(path: str, sid: str, mask: int, inherit: bool = False) -> str:
+    """Add an access-denied entry for ``sid`` with exactly ``mask`` (and, ``inherit``, inherited by every child) to the
+    DACL of ``path``, in canonical order (SetEntriesInAcl, SetNamedSecurityInfo): icacls' /deny adds SYNCHRONIZE to
+    it, which a read of the file asks, so Claude Code could no longer read its settings. '' when done, else why."""
+    if mask & READ_RIGHTS:
+        return f"{path}: a deny mask holding a right reading needs (0x{mask:x})"
+    try:
+        import ctypes
+        from ctypes import wintypes
+
+        class TRUSTEE(ctypes.Structure):
+            _fields_ = [("pMultipleTrustee", ctypes.c_void_p), ("MultipleTrusteeOperation", ctypes.c_int),
+                        ("TrusteeForm", ctypes.c_int), ("TrusteeType", ctypes.c_int), ("ptstrName", ctypes.c_void_p)]
+
+        class EXPLICIT_ACCESS(ctypes.Structure):
+            _fields_ = [("grfAccessPermissions", wintypes.DWORD), ("grfAccessMode", ctypes.c_int),
+                        ("grfInheritance", wintypes.DWORD), ("Trustee", TRUSTEE)]
+        adv, k32 = ctypes.WinDLL("advapi32", use_last_error=True), ctypes.WinDLL("kernel32", use_last_error=True)
+        psid, pdacl, psd, pnew = ctypes.c_void_p(), ctypes.c_void_p(), ctypes.c_void_p(), ctypes.c_void_p()
+        if not adv.ConvertStringSidToSidW(ctypes.c_wchar_p(sid), ctypes.byref(psid)):
+            return f"{path}: {sid} is no SID"
+        try:
+            err = adv.GetNamedSecurityInfoW(ctypes.c_wchar_p(path), 1, 0x4, None, None, ctypes.byref(pdacl), None,
+                                            ctypes.byref(psd))   # SE_FILE_OBJECT, DACL_SECURITY_INFORMATION
+            if err:
+                return f"{path}: its DACL cannot be read (error {err})"
+            ea = EXPLICIT_ACCESS(mask, 3, 3 if inherit else 0, TRUSTEE(None, 0, 0, 1, psid))   # DENY_ACCESS; SID; USER
+            err = adv.SetEntriesInAclW(1, ctypes.byref(ea), pdacl, ctypes.byref(pnew))
+            if err:
+                return f"{path}: the deny entry cannot be made (error {err})"
+            err = adv.SetNamedSecurityInfoW(ctypes.c_wchar_p(path), 1, 0x4, None, None, pnew, None)
+            return f"{path}: the deny entry cannot be written (error {err})" if err else ""
+        finally:
+            for p in (pnew, psd, psid):
+                if p.value:
+                    k32.LocalFree(p)
+    except (OSError, AttributeError, ValueError) as exc:
+        return f"{path}: {exc}"
 
 
 def mask_of(rights: str) -> int:

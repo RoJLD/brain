@@ -198,8 +198,11 @@ as every change of them, whatever writes them:
 - `~/.claude` itself: none of the locked paths removed through it (`DC`, and its ACL and owner); Claude Code still adds
   and removes its own files there (sessions, todos).
 
-The rights are named one by one: icacls' `W` and `M` carry `SYNCHRONIZE` and `READ_CONTROL`, and Claude Code must still
-read the files. Each path's owner becomes Administrators before its deny lands (an owner keeps `WRITE_DAC` whatever
+The rights are named one by one, and the deny entries are written with that exact mask through the Win32 API
+(`brain.flooracl.deny_exact`: `SetEntriesInAcl`, `SetNamedSecurityInfo`), never by icacls' `/deny`, which adds
+`SYNCHRONIZE` to the entry (CI's elevated runner: the locked settings.json no longer read): a read asks `SYNCHRONIZE`
+and `READ_CONTROL`, and Claude Code must still read the files; the apply's check refuses a deny holding a right reading
+needs. Each path's owner becomes Administrators before its deny lands (an owner keeps `WRITE_DAC` whatever
 its ACL says; the account's normal token holds Administrators as deny-only), `~/.claude` first so that nothing under it
 is renamed meanwhile. The elevated step never follows a link: every command acts on one path with `/L`, never a
 wildcard nor `/T` (icacls follows a link in a path's middle components); the apply refuses, before anything runs, a
