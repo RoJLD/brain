@@ -9,6 +9,7 @@ from pathlib import Path
 
 ORDER = 504   # its place in brain --help's list of commands (brain.commands), after ship
 USAGE_ORDER = 163
+PHASE = "early"   # its handlers: early only, before any root is resolved (brain.commands)
 USAGE = """\
   brain gate [--base REF] [--repo-dir D] [--skip STEP]... [--strict] [--fail-fast] [--python PY] [-n N]
              [--logs DIR] [--store DIR] [--json]

@@ -11,6 +11,7 @@ from .. import config, denyrender
 from ._common import root_of
 
 ORDER = 448   # its place in brain --help's list of commands (brain.commands), after brain telemetry
+PHASE = "early"   # its handlers: early only, before any root is resolved (brain.commands)
 USAGE_ORDER = 408   # its usage lines' place in brain --help's epilog, after brain telemetry's
 USAGE = """\
   brain public deny render --format gitleaks [--out FILE] [--extend PATH] [--apply] [--json]

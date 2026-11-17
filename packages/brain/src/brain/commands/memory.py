@@ -5,6 +5,7 @@ from __future__ import annotations
 from .. import memory
 
 ORDER = 430   # its place in brain --help's list of commands (brain.commands)
+PHASE = "early"   # its handlers: early only, before any root is resolved (brain.commands)
 USAGE_ORDER = 400   # its usage lines' place in brain --help's epilog
 RUNS_VIA = {   # brain perf --usage: how a subcommand that may never run from the CLI is reached (brain.adoption)
     "memory status": "on demand: a dry-run plan against main (the memory hook shows only the last sync's alert)",

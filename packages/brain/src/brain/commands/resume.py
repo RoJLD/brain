@@ -11,6 +11,7 @@ from .. import resume
 from ._common import _scope
 
 ORDER = 300   # its place in brain --help's list of commands (brain.commands)
+PHASE = "both"   # its handlers: early first, then run with the root (brain.commands)
 USAGE_ORDER = 310   # its usage lines' place in brain --help's epilog
 USAGE = """\
   brain resume [--project P | --all | --scope REF] [--budget N] [--write] [--offline] [--health] [--notes DIR]...

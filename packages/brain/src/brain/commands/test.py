@@ -11,6 +11,7 @@ from ..inventory import AuditError
 from ._common import _print_json, root_of
 
 ORDER = 532   # its place in brain --help's list of commands (brain.commands), after coverage
+PHASE = "early"   # its handlers: early only, before any root is resolved (brain.commands)
 USAGE_ORDER = 191
 USAGE = """\
   brain test --changed [BASE] [--repo-dir D] [--map FILE] [--inert GLOB]... [--list] [--json] [--strict]

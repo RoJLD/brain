@@ -11,10 +11,17 @@ them. A command module exposes:
   above with a graph store);
 - ``early(args)``, optional: called first, before any root is resolved (a hook, a machine-wide command, a repo that
   may hold no graph store): its exit code, or None to go on to ``run``; a module without ``run`` returns early's;
+- ``PHASE``: ``"early"`` for a module with ``early`` and no ``run``, ``"both"`` for one with both; none for a
+  module with ``run`` only (the default, ``"run"``). It is a declaration, the handlers decide: the registry's
+  ``undeclared()`` lists a module whose PHASE is not the phase of its handlers, and the tests fail on it, so a
+  command that moves before or after the root is resolved says so in its own file, no shared list
+  (wi-brain-cli-registry-declared);
+- ``ALIASES``, optional: the other names its parser registers (``aliases=list(ALIASES)``); a module registers one
+  command, of its file name (``_`` read as ``-``), then its aliases;
 - ``USAGE`` and ``USAGE_ORDER``, optional: its lines of brain --help's epilog, printed in USAGE_ORDER ({owner}: the
   owner's display name);
 - ``NO_PROJECT``, optional: the names of its parsers that take no --project after their subcommand (a hook's, a
-  machine-wide command's).
+  machine-wide command's): parsers it registers, on a module with ``early``.
 
 A module whose name starts with ``_`` is not a command: it holds what the commands share (_common, _stores) or the
 registry itself (_registry). This package's own names start with ``_`` too: importing a command module sets an

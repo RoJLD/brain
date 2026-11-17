@@ -12,6 +12,7 @@ from .. import config, otel
 from ._common import root_of
 
 ORDER = 447   # its place in brain --help's list of commands (brain.commands), after brain ipc
+PHASE = "early"   # its handlers: early only, before any root is resolved (brain.commands)
 USAGE_ORDER = 407   # its usage lines' place in brain --help's epilog, after brain ipc's
 USAGE = """\
   brain telemetry summary [--days N] [--session ID] [--top N] [--dir PATH] [--json]

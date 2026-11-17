@@ -8,6 +8,7 @@ from .. import bundles
 from ._common import root_of
 
 ORDER = 350   # its place in brain --help's list of commands (brain.commands)
+PHASE = "early"   # its handlers: early only, before any root is resolved (brain.commands)
 USAGE_ORDER = 450   # its usage lines' place in brain --help's epilog
 USAGE = """\
   brain bundle plan [BUNDLE]... [--json]   a Compose bundle the engine ships (sovereign: OpenTelemetry collector,
