@@ -58,15 +58,7 @@ def plan(cfg, sid: str, nt: bool | None = None, kind=None, owner=None) -> dict:
     brain's own folder and its registry's that exist on this machine, with the repos they span. LockError for an
     account that is not a person's (``kind``: floor.sid_kind), a profile the registry does not name, a registry that
     does not load, a path another account owns (``owner``: floor.owner), or off Windows (``nt``)."""
-    if not (os.name == "nt" if nt is None else nt):
-        raise _error("floor.acl is a Windows deny entry for the session's account: turn it off on this machine")
-    if not ACCOUNT.fullmatch(sid or "") or (kind or floor.sid_kind)(sid) != SID_TYPE_USER:
-        raise _error(f"{sid or 'no account'} is not a person's account SID (S-1-5-21-..., S-1-12-1-..., a user's): "
-                     "print the plan in a normal terminal of the account the sessions run as")
-    prof = floor.profile(sid, fallback=False)
-    if prof is None:
-        raise _error(f"no profile folder for {sid} in HKLM's ProfileList: the account has not signed in here")
-    home = prof / ".claude"
+    home = _profile(sid, nt, kind) / ".claude"
     out: dict = {"account": sid, "home": str(home), "files": [], "trees": [], "folders": [], "create": []}
     if not home.is_dir():
         out["create"].append(str(home) + os.sep)
@@ -86,6 +78,19 @@ def plan(cfg, sid: str, nt: bool | None = None, kind=None, owner=None) -> dict:
         raise _error(f"the ACL step holds only the account's own paths (or a lock's): {'; '.join(foreign[:6])}; take "
                      "it out of the registry, or give it to the account, then plan again")
     return out
+
+
+def _profile(sid: str, nt: bool | None, kind) -> Path:
+    """The profile folder of ``sid``, a person's account on Windows (:func:`plan`'s LockErrors)."""
+    if not (os.name == "nt" if nt is None else nt):
+        raise _error("floor.acl is a Windows deny entry for the session's account: turn it off on this machine")
+    if not ACCOUNT.fullmatch(sid or "") or (kind or floor.sid_kind)(sid) != SID_TYPE_USER:
+        raise _error(f"{sid or 'no account'} is not a person's account SID (S-1-5-21-..., S-1-12-1-..., a user's): "
+                     "print the plan in a normal terminal of the account the sessions run as")
+    prof = floor.profile(sid, fallback=False)
+    if prof is None:
+        raise _error(f"no profile folder for {sid} in HKLM's ProfileList: the account has not signed in here")
+    return prof
 
 
 def owned_by_others(a: dict, owner) -> list[str]:
@@ -126,7 +131,7 @@ def project_roots(cfg) -> list[Path]:
         for p in projects.load(Path(cfg.file).parent).values():
             roots.append(p.root)
             roots += [Path(r.path) for r in projects.repos_of(p)]
-    except Exception as exc:   # noqa: BLE001 - any failure: the plan stops, said
+    except Exception as exc:   # any failure: the plan stops, said
         raise _error(f"the registry beside config.json does not load ({type(exc).__name__}: {exc}): fix it (brain "
                      "check), then plan again") from None
     out: list[Path] = []
@@ -476,7 +481,6 @@ def _rewrite(path: str, edit, owner: bytes | None, what: str) -> str:
     propagated (SetKernelObjectSecurity), its control bits kept. '' when done, else why."""
     import ctypes
     import struct
-    from ctypes import wintypes as w
     if os.name != "nt":
         return f"{path}: an ACL is a Windows one"
     try:
@@ -493,44 +497,59 @@ def _rewrite(path: str, edit, owner: bytes | None, what: str) -> str:
             why = _not_itself(path, h, k32)
             if why:
                 return why
-            need = w.DWORD(0)
-            adv.GetKernelObjectSecurity(h, 0x1 | 0x4, None, 0, ctypes.byref(need))   # OWNER, DACL
-            sd = ctypes.create_string_buffer(need.value or 1)
-            present, defaulted = w.BOOL(), w.BOOL()
-            pdacl, powner, control, rev = ctypes.c_void_p(), ctypes.c_void_p(), w.WORD(), w.DWORD()
-            if not (need.value and adv.GetKernelObjectSecurity(h, 0x1 | 0x4, sd, need, ctypes.byref(need))
-                    and adv.GetSecurityDescriptorDacl(sd, ctypes.byref(present), ctypes.byref(pdacl),
-                                                      ctypes.byref(defaulted))
-                    and adv.GetSecurityDescriptorOwner(sd, ctypes.byref(powner), ctypes.byref(defaulted))
-                    and adv.GetSecurityDescriptorControl(sd, ctypes.byref(control), ctypes.byref(rev))):
-                return f"{path}: its ACL cannot be read (error {ctypes.get_last_error()})"
-            if not present or not pdacl.value:
-                return f"{path}: no DACL (anyone may do anything): give it one first"
-            size = struct.unpack_from("<H", ctypes.string_at(pdacl.value, 4), 2)[0]
-            new_acl = edit(ctypes.string_at(pdacl.value, size))
-            same_owner = owner is None or (powner.value and
-                                           ctypes.string_at(powner.value, adv.GetLengthSid(powner)) == owner)
-            if new_acl is None and same_owner:
+            acl, now, control = _security_of(path, h, adv)
+            new_acl, new_owner = edit(acl), owner if owner and owner != now else None
+            if new_acl is None and new_owner is None:
                 return ""
-            dacl = ctypes.create_string_buffer(new_acl or ctypes.string_at(pdacl.value, size))
-            sid = ctypes.create_string_buffer(owner or b"\0")
-            new = ctypes.create_string_buffer(64)   # an absolute SECURITY_DESCRIPTOR (40 bytes on x64)
-            kept = control.value & 0x1400            # SE_DACL_AUTO_INHERITED, SE_DACL_PROTECTED
-            kept |= 0x100 if kept & 0x400 else 0     # SE_DACL_AUTO_INHERIT_REQ: else the kernel drops AUTO_INHERITED
-            if not (adv.InitializeSecurityDescriptor(new, 1)
-                    and adv.SetSecurityDescriptorDacl(new, True, dacl, False)
-                    and adv.SetSecurityDescriptorControl(new, 0x1500, kept)
-                    and (same_owner or adv.SetSecurityDescriptorOwner(new, sid, False))):
-                return f"{path}: {what} cannot be made (error {ctypes.get_last_error()})"
-            if not adv.SetKernelObjectSecurity(h, 0x4 | (0 if same_owner else 0x1), new):
-                return f"{path}: {what} cannot be written (error {ctypes.get_last_error()})"
-            return ""
+            err = _set_security(h, adv, new_acl or acl, new_owner, control)
+            return f"{path}: {what} cannot be written (error {err})" if err else ""
         finally:
             k32.CloseHandle(h)
     except (OSError, ValueError, struct.error) as exc:
         return f"{path}: {exc}"
     finally:
         restore()
+
+
+def _security_of(path: str, h, adv) -> tuple[bytes, bytes, int]:
+    """(the DACL, the owner SID, the control bits) of the open handle ``h``; OSError when they cannot be read or the
+    path has no DACL (anyone may do anything: a deny would make one of only itself)."""
+    import ctypes
+    import struct
+    from ctypes import wintypes as w
+    need = w.DWORD(0)
+    adv.GetKernelObjectSecurity(h, 0x1 | 0x4, None, 0, ctypes.byref(need))   # OWNER, DACL
+    sd = ctypes.create_string_buffer(need.value or 1)
+    present, defaulted = w.BOOL(), w.BOOL()
+    pdacl, powner, control, rev = ctypes.c_void_p(), ctypes.c_void_p(), w.WORD(), w.DWORD()
+    if not (need.value and adv.GetKernelObjectSecurity(h, 0x1 | 0x4, sd, need, ctypes.byref(need))
+            and adv.GetSecurityDescriptorDacl(sd, ctypes.byref(present), ctypes.byref(pdacl), ctypes.byref(defaulted))
+            and adv.GetSecurityDescriptorOwner(sd, ctypes.byref(powner), ctypes.byref(defaulted))
+            and adv.GetSecurityDescriptorControl(sd, ctypes.byref(control), ctypes.byref(rev))):
+        raise OSError(f"its ACL cannot be read (error {ctypes.get_last_error()})")
+    if not present or not pdacl.value:
+        raise OSError("no DACL (anyone may do anything): give it one first")
+    size = struct.unpack_from("<H", ctypes.string_at(pdacl.value, 4), 2)[0]
+    now = ctypes.string_at(powner.value, adv.GetLengthSid(powner)) if powner.value else b""
+    return ctypes.string_at(pdacl.value, size), now, control.value
+
+
+def _set_security(h, adv, acl: bytes, owner: bytes | None, control: int) -> int:
+    """Write ``acl`` (and ``owner``) on the open handle ``h`` as they are: SetKernelObjectSecurity computes and
+    propagates nothing; SE_DACL_PROTECTED and SE_DACL_AUTO_INHERITED kept (the latter asked back with
+    SE_DACL_AUTO_INHERIT_REQ, else the kernel drops it). 0 when done, else the Win32 error."""
+    import ctypes
+    dacl = ctypes.create_string_buffer(acl)
+    sid = ctypes.create_string_buffer(owner or b"\0")
+    new = ctypes.create_string_buffer(64)   # an absolute SECURITY_DESCRIPTOR (40 bytes on x64)
+    kept = control & 0x1400                 # SE_DACL_AUTO_INHERITED, SE_DACL_PROTECTED
+    kept |= 0x100 if kept & 0x400 else 0
+    if not (adv.InitializeSecurityDescriptor(new, 1) and adv.SetSecurityDescriptorDacl(new, True, dacl, False)
+            and adv.SetSecurityDescriptorControl(new, 0x1500, kept)
+            and (owner is None or adv.SetSecurityDescriptorOwner(new, sid, False))
+            and adv.SetKernelObjectSecurity(h, 0x4 | (0x1 if owner else 0), new)):
+        return ctypes.get_last_error() or -1
+    return 0
 
 
 def _api():
