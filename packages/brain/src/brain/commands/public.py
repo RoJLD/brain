@@ -41,26 +41,29 @@ def register(sub, ctx) -> None:
                                                        "(never the terms)")
 
 
+def _fail(exc: Exception, p: dict | None, as_json: bool) -> int:
+    """A render or a write that failed: its reason on stderr (and the plan as JSON with it), exit 2."""
+    if as_json and p is not None:
+        print(json.dumps({**{k: v for k, v in p.items() if k != "text"}, "applied": None, "error": str(exc)}))
+    print(f"brain public deny render: {exc}", file=sys.stderr)
+    return 2
+
+
+def _show(p: dict, done: str, as_json: bool) -> None:
+    if as_json:
+        print(json.dumps({**{k: v for k, v in p.items() if k != "text"}, "applied": done or None}))
+        return
+    print("\n".join(denyrender.render_plan(p) + ([f"  applied   {done}"] if done else [])))
+
+
 def early(args) -> int:
     out = Path(args.out).expanduser() if args.out else denyrender.default_out()
     extend = str(Path(args.extend).expanduser().resolve()) if args.extend else None   # gitleaks reads it from its cwd
+    p = None
     try:
         p = denyrender.plan(config.load(root_of(args)), out, extend, args.format)
-    except (denyrender.RenderError, OSError) as exc:
-        print(f"brain public deny render: {exc}", file=sys.stderr)
-        return 2
-    try:
         done = denyrender.apply(p) if args.apply and not p["refused"] else ""
     except (denyrender.RenderError, OSError) as exc:
-        if args.json:
-            print(json.dumps({**{k: v for k, v in p.items() if k != "text"}, "applied": None, "error": str(exc)}))
-        print(f"brain public deny render: {exc}", file=sys.stderr)
-        return 2
-    if args.json:
-        print(json.dumps({**{k: v for k, v in p.items() if k != "text"}, "applied": done or None}))
-    else:
-        lines = denyrender.render_plan(p)
-        if done:
-            lines.append(f"  applied   {done}")
-        print("\n".join(lines))
+        return _fail(exc, p, args.json)
+    _show(p, done, args.json)
     return 2 if p["refused"] else 0
