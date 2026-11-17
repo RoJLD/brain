@@ -77,11 +77,12 @@ class Spend:
             self.output(f"hook:{event}" if kind.startswith("hook_") else f"attachment:{kind}",
                         len(json.dumps(a, ensure_ascii=False)), pending)
 
-    def result(self, cls: str, content, text: str) -> None:
-        """A tool's result: its text and ``IMAGE_CHARS`` per image."""
+    def result(self, name: str, keys: list[str], content, text: str) -> None:
+        """A tool's result, classed by its tool, a shell command's by its first program and subcommand (``keys``):
+        its text and ``IMAGE_CHARS`` per image."""
         images = sum(1 for x in content if isinstance(x, dict) and x.get("type") == "image") \
             if isinstance(content, list) else 0
-        self.output(cls, len(text) + images * IMAGE_CHARS)
+        self.output(keys[0] if keys else name, len(text) + images * IMAGE_CHARS)
 
     def compaction(self) -> None:
         self.segment += 1
@@ -240,32 +241,39 @@ def _scanned(rows: list[dict]) -> tuple[list[dict], dict]:
     return have, {"sessions": len(rows), "scanned": len(have), "older": len(rows) - len(have)}
 
 
+def _split(spends: list[dict]) -> dict:
+    return {k: round(sum((sp.get("split") or {}).get(k, 0.0) for sp in spends), 4) for k in KINDS}
+
+
+def _reloads(have: list[dict]) -> dict:
+    cost_ = sum(((r.get("phases") or {}).get("reload") or {}).get("cost") or 0.0 for r in have)
+    return {"messages": sum((r.get("signals") or {}).get("reloads") or 0 for r in have), "cost": round(cost_, 4)}
+
+
+def _agents(agent_rows: list[dict], step: int) -> dict:
+    buckets: dict[int, list] = {}
+    for a in agent_rows:
+        _add_buckets(buckets, a.get("buckets"))
+    return {"messages": sum(a.get("messages") or 0 for a in agent_rows), "buckets": _bucket_rows(buckets, step),
+            "base": usage.quantiles([b for a in agent_rows for b in a.get("bases") or [] if b])}
+
+
 def context_view(rows: list[dict], handover_usd: float = HANDOVER_USD, ceiling_k: int = 400) -> dict:
     """The --by context report of the window's rows."""
     have, counts = _scanned(rows)
     step = max((int(r["spend"].get("step") or 0) for r in have), default=0) or CTX_STEP // 1000
     agent_rows = [r["spend"].get("agents") or {} for r in have]
-    split = {"main": {k: sum((r["spend"].get("split") or {}).get(k, 0.0) for r in have) for k in KINDS},
-             "agents": {k: sum((a.get("split") or {}).get(k, 0.0) for a in agent_rows) for k in KINDS}}
     groups: dict[str, dict] = {}
     for r in have:
         _add_row(groups.setdefault(role_of(r), _role_group()), r)
     every: dict[int, list] = {}
-    agent_buckets: dict[int, list] = {}
     for g in groups.values():
         _add_buckets(every, g["buckets"])
-    for a in agent_rows:
-        _add_buckets(agent_buckets, a.get("buckets"))
     return {**counts, "step_k": step, "handover_usd": handover_usd, "restart": SIM_RESTART,
-            "split": {w: {k: round(v, 4) for k, v in s.items()} for w, s in split.items()},
-            "reloads": {"messages": sum((r.get("signals") or {}).get("reloads") or 0 for r in have),
-                        "cost": round(sum(((r.get("phases") or {}).get("reload") or {}).get("cost") or 0.0
-                                          for r in have), 4)},
-            "all": {"buckets": _bucket_rows(every, step), "above": _above(every, ceiling_k)},
+            "split": {"main": _split([r["spend"] for r in have]), "agents": _split(agent_rows)},
+            "reloads": _reloads(have), "all": {"buckets": _bucket_rows(every, step), "above": _above(every, ceiling_k)},
             "roles": {name: _role_out(groups[name], step, ceiling_k, handover_usd) for name in ROLES if name in groups},
-            "agents": {"messages": sum(a.get("messages") or 0 for a in agent_rows),
-                       "buckets": _bucket_rows(agent_buckets, step),
-                       "base": usage.quantiles([b for a in agent_rows for b in a.get("bases") or [] if b])}}
+            "agents": _agents(agent_rows, step)}
 
 
 def _output_table(outs: dict) -> list[dict]:

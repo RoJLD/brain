@@ -55,19 +55,12 @@ from collections import Counter
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
-from . import faults, paths, secretscan, spend, stateio, toolids, transcript
-from .prices import (  # noqa: F401 - the price list's names, read as usage.X by the other modules
-    FAMILIES,
-    FAST,
-    LONG_PROMPT,
-    PRICES,
-    _price_table,
-    _table_for,
-    cost_parts,
-    message_cost,
-    token_rates,
-    tokens_cost,
-)
+from . import faults, paths, prices, secretscan, spend, stateio, toolids, transcript
+
+# the price list (brain.prices), read as usage.X by the other modules
+PRICES, LONG_PROMPT, FAMILIES, FAST = prices.PRICES, prices.LONG_PROMPT, prices.FAMILIES, prices.FAST
+_price_table, cost_parts, message_cost = prices._price_table, prices.cost_parts, prices.message_cost
+token_rates, tokens_cost = prices.token_rates, prices.tokens_cost
 
 SCAN_V = 5  # a row scanned by an older scanner is scanned again while its transcript exists (2: the hours; 3: the
 #            subagents and workflow runs apart, ``agents``; 4: the usage counters by tool id, ``tooling``, ``refused``;
@@ -574,7 +567,7 @@ class Scan:
         text = c if isinstance(c, str) else "\n".join(x.get("text", "") for x in c if isinstance(x, dict)) \
             if isinstance(c, list) else ""
         _add_to(self.tools, name, result_chars=len(text))
-        self.spend.result(keys[0] if name in SHELL_TOOLS and keys else name, c, text)
+        self.spend.result(name, keys, c, text)
         self._result_tooling(counted, text, b)
         if name in _WAIT_TOOLS and at:
             self.sig["ask_wait_s"] += int(max(0.0, _secs(at, ts)))
