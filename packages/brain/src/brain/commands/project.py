@@ -21,8 +21,14 @@ USAGE = """\
                  their reports, those the template's CI does not write, the standards rows it follows and those its
                  tools run, the template, brain init's plan) and --apply: its brain written by brain init from the
                  first kind's profile template, its registry entry recording lifecycle: {typologies, stage}, its
-                 repo's lang and tools, classes: {floor} and standards include; in a folder that holds its brain
-                 already, the plan shows what the answers change there (written by a PR of that brain, never here)
+                 repo's lang and tools, classes: {floor} and standards include; then its parts (the typology
+                 packs its kinds meet, with their procedures, MCP servers, guards and judgement: clauses of done,
+                 one-way doors, roles and gates, written into its CLAUDE.md; the core's hooks, the CI templates,
+                 AGENTS.md), each a brain command --apply runs after brain init's files and logs in
+                 <BRAIN_HOME>/ledger/setup-<month>.jsonl (typologies propose --apply, render --target claude
+                 --write, render --target agents --write; one that fails does not stop the next, exit 1); in a
+                 folder that holds its brain already, the plan shows what the answers change there and the parts'
+                 steps left (written by a PR of that brain, never here; --apply exits 2 while any is left)
   brain project add NAME (--read | --existing DIR [--store PATH] | --template T --dir DIR) [--parent NODE]
                  [--floor CLASS] [--title TEXT] [--profile P] [--kind K]... [--stage S] [--team] [--interactive]
                  [--no-notes] [--apply]   a project registered in this brain's projects.yaml

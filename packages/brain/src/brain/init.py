@@ -490,14 +490,15 @@ def _appended_yaml(tpl: Template, rel: str, text: str, name: str) -> None:
 
 def files_for(owner: str, kind: str, tenant: str | None, tier: str, name: str,
               tpl: Template | None = None, stage: str = DEFAULT_STAGE, lifecycle: dict | None = None,
-              registry_edit=None, spheres: tuple[str, ...] = ()) -> dict[str, str]:
+              registry_edit=None, spheres: tuple[str, ...] = (), edits: dict | None = None) -> dict[str, str]:
     """{path relative to the brain: text} for every file brain init writes but the store and the Claude files:
     config.json, then the template's files (with what it appends to them) with their variables rendered. A YAML
     file must read as YAML once rendered (an appended fragment that breaks it is the template's error).
     ``registry_edit`` (brain project new's answers: the languages and tools, the data) takes the rendered
     projects.yaml's text and gives it back with its lines; it raises InitError when they cannot land. With
     ``spheres`` (:func:`examples_for`), scopes.yaml with those default spheres (SCOPE-1), unless the template writes
-    one."""
+    one. ``edits`` ({path: a function of its rendered text}, brain project new's: CLAUDE.md with what its typology
+    packs add) changes the files the template writes; a path it does not write is left out."""
     tpl = tpl or load_template()
     values = {"owner": owner, "owner_q": json.dumps(owner, ensure_ascii=False), "name": name,
               "title_q": json.dumps(f"{owner}'s brain: rules, decisions, backlog and journal", ensure_ascii=False),
@@ -512,6 +513,9 @@ def files_for(owner: str, kind: str, tenant: str | None, tier: str, name: str,
         _lifecycle_landed(tpl, out["projects.yaml"], name, lifecycle)
     if registry_edit is not None and "projects.yaml" in out:
         out["projects.yaml"] = registry_edit(out["projects.yaml"])
+    for rel, edit in (edits or {}).items():
+        if rel in out:
+            out[rel] = edit(out[rel])
     if spheres:
         from . import scopes
         if scopes.FILE not in out:
@@ -658,13 +662,14 @@ def _file_step(path: Path, text: str, appended: str) -> Step:
 
 def plan(root: Path, owner: str, *, kind: str = "person", tenant: str | None = None, tier: str = "lite",
          name: str = "brain", template_spec: str = DEFAULT_TEMPLATE, stage: str = DEFAULT_STAGE,
-         lifecycle: dict | None = None, registry_edit=None, examples: bool = False) -> list[Step]:
+         lifecycle: dict | None = None, registry_edit=None, examples: bool = False,
+         edits: dict | None = None) -> list[Step]:
     """What brain init would do in ``root``, file by file, in order (the owner: ``owner``, else the one of the
     config.json already in ``root``); ``examples``: a person's default spheres in scopes.yaml (SCOPE-1)."""
     owner = " ".join((owner or owner_in(root) or "").split())
     _check_plan(owner, kind, tier, name, stage)
     return _plan_files(Path(root).resolve(), owner, kind, tenant, tier, name, template_spec, stage, lifecycle,
-                       examples, registry_edit)
+                       examples, registry_edit, edits)
 
 
 def _check_plan(owner: str, kind: str, tier: str, name: str, stage: str) -> None:
@@ -683,14 +688,15 @@ def _check_plan(owner: str, kind: str, tier: str, name: str, stage: str) -> None
 
 
 def _plan_files(root: Path, owner: str, kind: str, tenant: str | None, tier: str, name: str, template_spec: str,
-                stage: str, lifecycle: dict | None, examples: bool, registry_edit=None) -> list[Step]:
+                stage: str, lifecycle: dict | None, examples: bool, registry_edit=None,
+                edits: dict | None = None) -> list[Step]:
     """:func:`plan`'s steps once its options are checked: the files, the graph stores, the Claude files, the
     pointer."""
     tpl = load_template(template_spec)
     steps, created = [], set()
     spheres = examples_for(root, kind, name)[1] if examples else ()
     for rel, text in files_for(owner, kind, tenant, tier, name, tpl, stage, lifecycle, registry_edit,
-                               spheres).items():
+                               spheres, edits).items():
         steps.append(_file_step(root / rel, text, tpl.appended(rel)))
         if steps[-1].action == "create":
             created.add(rel)
@@ -933,7 +939,7 @@ def _planned(root: Path, args) -> tuple:
     steps = plan(root, args.owner or "", kind=args.kind, tenant=args.tenant, tier=tier, name=args.name,
                  stage=getattr(args, "stage", None) or DEFAULT_STAGE, template_spec=spec,
                  lifecycle=getattr(args, "lifecycle", None), registry_edit=getattr(args, "registry_edit", None),
-                 examples=bool(getattr(args, "examples", False)))
+                 examples=bool(getattr(args, "examples", False)), edits=getattr(args, "file_edits", None))
     owner = " ".join((args.owner or owner_in(root)).split())
     return steps, load_template(spec), owner, tier, mod
 

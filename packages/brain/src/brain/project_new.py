@@ -27,8 +27,12 @@ Slice 2 (wi-brain-project-wizard-tools, §8 questions 3 and 4):
 
 A later answer re-runs the same plan: in a folder that already holds the project's brain, the plan shows what the
 answers change in its entry (its lifecycle, its standards' stage and include, its language and tools, its class
-floor) and writes nothing: an existing registry changes by a branch and a PR, as the cockpit's wizards say. The packs,
-procedures, hooks and permissions the item names are a later slice (its item's split).
+floor) and writes nothing: an existing registry changes by a branch and a PR, as the cockpit's wizards say.
+
+Slice 3 (wi-brain-project-wizard-pack, brain.project_parts): the typology packs its kinds meet and their parts (the
+procedures, the hooks, the guards and their permissions, the CI templates, the rules that need judgement written into
+its CLAUDE.md), then its AGENTS.md: planned with the rest, and with ``--apply``, after brain init's files, each a brain
+command run and logged; in a folder that holds its brain already, planned against it and never run.
 """
 
 from __future__ import annotations
@@ -38,7 +42,7 @@ from pathlib import Path
 
 import yaml
 
-from . import classes, config, graph, init, langs, paths, standards, typologies
+from . import classes, config, graph, init, langs, paths, project_parts, standards, typologies
 
 OFFERED = ("software", "research")   # STD-5: the entries the wizard offers first
 # The standards a project that handles personal data follows from its first stage (§8 question 4): privacy by design,
@@ -561,32 +565,73 @@ def _shown(value) -> str:
     return "(none)" if value is None else str(list(value) if isinstance(value, list) else value)
 
 
+def answers(cat: typologies.Catalog, args) -> Answers:
+    """The command's answers checked: the kinds, the stage and the template, the languages and tools, the data."""
+    a = resolve(cat, list(dict.fromkeys(args.kinds or [])), args.stage, args.template)
+    answer_tools(a, getattr(args, "lang", None), getattr(args, "tools", None))
+    return answer_data(a, getattr(args, "floor", None), getattr(args, "residency", False),
+                       getattr(args, "personal_data", False))
+
+
 def main(args) -> int:
     root = Path(args.dir).resolve()
     try:
         cat = typologies.load(config.load(root))
-        a = resolve(cat, list(dict.fromkeys(args.kinds or [])), args.stage, args.template)
-        answer_tools(a, getattr(args, "lang", None), getattr(args, "tools", None))
-        answer_data(a, getattr(args, "floor", None), getattr(args, "residency", False),
-                    getattr(args, "personal_data", False))
+        a = answers(cat, args)
         entry = existing(root, args.name)
         floor_refused(a, root, entry, args.name)
         rows, refused = _rows(a, args.name) if entry is None and _asked(a) else (None, "")
         if refused and args.apply:
             raise WizardError(refused)
+        parts, section = _parts(cat, a, root, args.name, entry)
     except (WizardError, typologies.CatalogError, standards.StandardsError, init.InitError) as exc:
         print(f"brain project new: {exc}")
         return 2
     print("\n".join(summary(cat, a, rows)))
     if refused:
         print(f"  --apply refuses: {refused}")
+    print("\n".join(project_parts.plan_lines(parts, args.name, entry is None)))
     if entry is not None:
-        diff = changes(entry, a)
-        print(f"{root} already holds the brain of {args.name}: " + ("the answers change its entry in projects.yaml:"
-                                                                   if diff else "the answers change nothing"))
-        print("\n".join(diff) + ("\n(written by a branch and a PR of that brain, never here)" if diff else ""))
-        return 2 if args.apply and diff else 0
-    return init.main(_init_args(args, a, refused))
+        return _there(root, args, a, entry, parts)
+    from . import project_add
+    with project_add.this_brain(root / "projects.yaml"):   # brain init reads the new brain, never another's
+        code = init.main(_init_args(args, a, refused, section))
+    if not args.apply:
+        return code
+    owner = owner_of(args)
+    project_parts.log_init(root, [*_words(args, a), "--apply"], code, owner)   # brain init's files, the first row
+    return code or project_parts.run(parts, root, owner)
+
+
+def _there(root: Path, args, a: Answers, entry: dict, parts) -> int:
+    """A folder that holds the project's brain already: what the answers change in its entry, never written; 2 when
+    --apply asks to write a change or a part's step left (a branch and a PR of that brain), else 0."""
+    diff = changes(entry, a)
+    pending = [s for s in parts.steps if not s.skip]
+    print(f"{root} already holds the brain of {args.name}: " + ("the answers change its entry in projects.yaml:"
+                                                               if diff else "the answers change nothing there"))
+    print("\n".join(diff) + ("\n(written by a branch and a PR of that brain, never here)" if diff else ""))
+    if args.apply and (diff or pending):
+        left = [f"{len(diff)} change(s) of its entry" if diff else "", f"{len(pending)} part step(s)" if pending else ""]
+        print(f"--apply refuses: {' and '.join(x for x in left if x)} left, written by a branch and a PR of that brain")
+        return 2
+    return 0
+
+
+def _parts(cat: typologies.Catalog, a: Answers, root: Path, name: str, entry: dict | None):
+    """(the parts the answers propose, CLAUDE.md's section or ""): against the folder's brain when it holds one,
+    else against what brain init would write (its files without the answers' registry lines: the profiles and the
+    files they do not change)."""
+    if entry is not None:
+        return project_parts.plan_existing(cat, a.kinds, root, name, entry), ""
+    tpl = init.load_template(a.template)
+    files = init.files_for("owner", "person", None, "lite", name, tpl, a.stage, a.lifecycle())
+    data = graph.load_yaml(files.get("projects.yaml") or "") or {}
+    std = _dict(_dict(data.get(name) if isinstance(data, dict) else None).get("standards"))
+    parts = project_parts.plan_new(cat, a.kinds, std.get("profiles"), files, root, name)
+    section = (project_parts.claude_section(cat, a.kinds, a.stage, a.lifecycle_stage, parts.props)
+               if parts.claude and parts.props else "")
+    return parts, section
 
 
 def _asked(a: Answers) -> bool:
@@ -615,21 +660,27 @@ def owner_of(args) -> str:
     return init.owner_in(there) if there is not None else ""
 
 
-def _init_args(args, a: Answers, refused: str = ""):
+def _words(args, a: Answers) -> list[str]:
+    """The answers as the command the owner types (the plan's apply line, the ledger's)."""
+    return ["brain", "project", "new", str(args.dir), *[w for k in a.kinds for w in ("--kind", k)], "--stage",
+            a.stage, *(["--template", args.template] if args.template else []),
+            *(["--name", args.name] if args.name != "brain" else []), *_answer_words(a)]
+
+
+def _init_args(args, a: Answers, refused: str = "", section: str = ""):
     """brain init's arguments for the answers: the template, the stage, the name, the owner, the lifecycle and the
     registry's other answers (the language and tools, the data); ``refused``: the plan shows the template's registry
-    without them, --apply having been refused before."""
+    without them, --apply having been refused before; ``section``: CLAUDE.md's « What it produces » (slice 3)."""
     import argparse
-    words = ["brain", "project", "new", str(args.dir), *[w for k in a.kinds for w in ("--kind", k)], "--stage",
-             a.stage, *(["--template", args.template] if args.template else []),
-             *(["--name", args.name] if args.name != "brain" else []), *_answer_words(a)]
+    words = _words(args, a)
     edit = registry_edit(a, args.name) if _asked(a) and not refused else None
     hint = (f"(plan only: {' '.join(words)} --apply refuses it, as said above: its projects.yaml is shown without "
             "the answers' lines)" if refused else f"(plan only: {' '.join(words)} --apply writes it)")
     return argparse.Namespace(dir=args.dir, owner=owner_of(args), template=a.template, kind="person", tenant=None,
                               tier=None, name=args.name, stage=a.stage, preset=None, with_=None, without=None,
                               catalogue=None, interactive=False, apply=args.apply, lifecycle=a.lifecycle(),
-                              registry_edit=edit, plan_hint=hint)
+                              registry_edit=edit, plan_hint=hint, file_edits={
+                                  project_parts.CLAUDE: project_parts.claude_edit(section)} if section else None)
 
 
 def _answer_words(a: Answers) -> list[str]:
