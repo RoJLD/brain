@@ -11,8 +11,9 @@
    store is already frozen, or with ``--no-freeze``);
 3. **changelog**: ``installer/changelog.py compile X.Y.Z --theme T --write``, the fragments into the dated sections;
 4. **features** and **reference**: ``FEATURES.md`` and ``docs/reference/`` rendered from the planning brain (the
-   public render: ``brain features render --repo R --out <checkout> --write`` and ``brain reference --public``), when
-   one is found (``--planning``, else the personal brain);
+   public render: ``brain features render --repo R --out <checkout>/FEATURES.md --write`` and ``brain reference --public``), when
+   one is found (``--planning``, else the personal brain), both with ``--force``: they run with the release's engine,
+   ahead of the planning brain's ``engine.pin`` until its pin PR, which ``views.strict`` would otherwise refuse;
 5. **check**: ``installer/release_check.py`` (with ``--store`` when the planning brain's store is given), then its
    ``--preview``.
 
@@ -185,10 +186,10 @@ def plan(repo: Path, version: str, theme: str, *, planning: Path | None = None, 
     else:
         steps.append(Step("features", f"run      features: FEATURES.md rendered from {planning} (the public render)",
                           argv=[*brain, "--root", str(planning), "features", "render", "--repo", repo_name, "--out",
-                                str(repo), "--write"]))
+                                str(repo / "FEATURES.md"), "--write", "--force"]))
         steps.append(Step("reference", f"run      reference: docs/reference/ rendered from {planning}",
                           argv=[*brain, "--root", str(planning), "reference", "--public", "--repo", repo_name,
-                                "--out", str(repo / "docs" / "reference"), "--write"]))
+                                "--out", str(repo / "docs" / "reference"), "--write", "--force"]))
     check = [python, f"{INSTALLER}/release_check.py", "--repo", str(repo)] + (["--store", store] if store else [])
     steps.append(Step("check", "run      check: release_check.py" + (f" --store {store}" if store else "")
                       + ", then its --preview", argv=check))
