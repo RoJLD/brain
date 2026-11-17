@@ -190,6 +190,16 @@ def _stamp() -> str:
     return _now().strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
+def _unanchored(nm: str, first: dict, mine: dict) -> str:
+    """The state of an identity whose install id cannot be read: no-anchor until hosts.<name>.local_id names this
+    home's local_id, while neither this home nor this name has a known anchor; then renamed or ok."""
+    confirmed = (not first.get("anchor") and not mine.get("anchor") and bool(first.get("local_id"))
+                 and mine.get("local_id") == first.get("local_id"))
+    if not confirmed:
+        return "no-anchor"
+    return "renamed" if first.get("name") and first.get("name") != nm else "ok"
+
+
 def _state(nm: str, anc: str | None, first: dict, declared: dict) -> tuple[str, str | None]:
     """(the identity's state, the other name that holds this anchor in hosts) from what is read and recorded.
 
@@ -198,11 +208,7 @@ def _state(nm: str, anc: str | None, first: dict, declared: dict) -> tuple[str, 
     to this home: wi-brain-machine-no-anchor-doubt), and stays one when this home or this name has a known anchor."""
     mine = declared.get(nm) if isinstance(declared.get(nm), dict) else {}
     if anc is None:
-        confirmed = (not first.get("anchor") and not mine.get("anchor") and bool(first.get("local_id"))
-                     and mine.get("local_id") == first.get("local_id"))
-        if not confirmed:
-            return "no-anchor", None
-        return ("renamed" if first.get("name") and first.get("name") != nm else "ok"), None
+        return _unanchored(nm, first, mine), None
     other = next((k for k, v in declared.items() if k != nm and isinstance(v, dict)
                   and v.get("anchor") == anc), None)
     checks = (("reused", bool(mine.get("anchor")) and mine.get("anchor") != anc),
