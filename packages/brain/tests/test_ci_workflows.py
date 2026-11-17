@@ -97,3 +97,42 @@ def test_compat_prev_without_its_guard_is_refused():
     runs = [s["run"] for spec in yaml.safe_load(unguarded)["jobs"].values() for s in spec.get("steps", [])
             if "GITHUB_OUTPUT" in str(s.get("run", ""))]
     assert runs and any(unchecked_outputs(r) for r in runs)
+
+
+SUITE = re.compile(r"\bpytest\s+(?:packages/brain|tests)\s")
+
+
+def suite_jobs_without_textual(data: dict) -> list[str]:
+    """The jobs with a step that runs the brain command's suite (``pytest packages/brain``, or ``pytest tests`` in
+    packages/brain; the docker-only run aside) and no step that installs Textual: there the cockpit's tests
+    (test_tui*.py, ``pytest.importorskip("textual")``) are skipped, unseen, and the coverage counts none of them."""
+    missing = []
+    for job, spec in (data.get("jobs") or {}).items():
+        steps = [s for s in (spec or {}).get("steps") or [] if isinstance(s, dict) and isinstance(s.get("run"), str)]
+        suite = any(SUITE.search(s["run"] + " ") and "-m docker" not in s["run"]
+                    and ("packages/brain" in s["run"] or s.get("working-directory") == "packages/brain")
+                    for s in steps)
+        if suite and not any(re.search(r"\bpip install\b.*\btextual\b", s["run"]) for s in steps):
+            missing.append(job)
+    return missing
+
+
+def test_the_jobs_that_run_the_brain_suite_install_textual():
+    """The cockpit's tests ran nowhere while the CI lacked Textual: three of them broke unseen (a sort and three
+    columns added to the frontier) and brain audit measured tui*.py at 0 % (wi-brain-engine-debt, batch 2)."""
+    data = yaml.safe_load((WORKFLOWS / "ci.yml").read_text(encoding="utf-8"))
+    assert suite_jobs_without_textual(data) == []
+    assert {"brain", "brain-linux"} <= {j for j, s in data["jobs"].items()
+                                        if any(SUITE.search(str(x.get("run", "")) + " ") for x in s.get("steps", []))}
+
+
+def test_a_suite_job_without_textual_is_named():
+    job = {"steps": [{"run": "pip install pyyaml pytest"},
+                     {"run": "pytest tests -n auto", "working-directory": "packages/brain"},
+                     {"run": "pytest packages/brain -m docker"}]}
+    assert suite_jobs_without_textual({"jobs": {"a": job}}) == ["a"]
+    job["steps"][0]["run"] += "\npip install \"textual>=8,<9\""
+    assert suite_jobs_without_textual({"jobs": {"a": job}}) == []
+    docker_only = {"steps": [{"run": "pytest packages/brain -m docker"}]}
+    one_file = {"steps": [{"run": "pytest tests/test_x.py", "working-directory": "packages/brain"}]}
+    assert suite_jobs_without_textual({"jobs": {"d": docker_only, "f": one_file}}) == []
