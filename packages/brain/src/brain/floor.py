@@ -229,7 +229,8 @@ _START = r"(?:^|(?<=[\s;&|(]))"
 _HP = r"(?i:home|path)"
 NT_EXPORTED = (rf"{_START}{_HP}(?:\[[^\]\n]*\])?\+?=[^\s;&|]*[ \t]+[^\s;&|#)]|"
                rf"(?<![$\w{{:-])(?:export|env)\s[^;&|\n]*?(?<![\w${{:/\\.-]){_HP}\b|"
-               rf"\b(?:declare|typeset|local)\s+(?:-\w+\s+)*-\w*x\w*\s+(?:[^;&|\n]*?\s)?{_HP}\b")
+               rf"\b(?:declare|typeset|local)\s+(?:-\w+\s+)*-\w*x\w*\s+(?:[^;&|\n]*?\s)?{_HP}\b|"
+               rf"(?<![\w-])set\s+{_HP}\s*=")                         # cmd's set exports every name it sets
 
 
 @functools.lru_cache(maxsize=8)
@@ -255,7 +256,15 @@ def env_assign(scratch: bool = False, nocase: bool = os.name == "nt") -> re.Patt
         rf"(?i:\benv:[^;\n]*\|\s*(?:rename-item|rni|ren|copy-item|cpi|copy|move-item|mi|move|set-item|si|new-item|ni)\b)|"
         rf"(?i:\b(?:new-item|ni|set-item|si|rename-item|rni|ren)\b[^;|\n]*-(?:new)?name\s+(?:{w})\b)|"
         rf"(?i:\.Environment(?:Variables)?\s*(?:\[|\.(?:Add|Item|set_Item)\s*\()\s*(?:{w})\b)|"
-        rf"(?i:SetEnvironmentVariable\s*\(\s*(?:{w})\s*,)")
+        rf"(?i:SetEnvironmentVariable\s*\(\s*(?:{w})\s*,)|"
+        # PowerShell's env: drive as the location (Set-Item NAME then needs no env: path), a process started with an
+        # environment of its own, and inline code's environment writes (Python, Node, Perl, Ruby)
+        rf"(?i:(?<![\w-])(?:set-location|push-location|sl|chdir|pushd|cd)\s+env:)|"
+        rf"(?i:-env\w*\s*@\{{[^}}]*\b(?:{w})\b\s*=)|"
+        rf"(?i:\bos\.(?:environ\s*\[\s*(?:{w})\s*\]\s*=(?!=)|putenv\s*\(\s*(?:{w})\b|"
+        rf"environ\.(?:setdefault|update)\s*\([^)]*\b(?:{w})\b))|"
+        rf"(?i:\bprocess\.env\s*(?:\.\s*(?:{w})\b|\[\s*(?:{w})\s*\])\s*=(?!=))|"
+        rf"(?i:\$ENV\{{\s*(?:{w})\s*\}}\s*=(?!=)|\bENV\s*\[\s*(?:{w})\s*\]\s*=(?!=))")
 
 
 ENV_ASSIGN = env_assign()

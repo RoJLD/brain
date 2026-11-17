@@ -301,8 +301,11 @@ Round 7 (the same classes, new spellings; on any machine with the floor on):
 - **The environment**: a variable of `brain.floor.watched` (git's that change its configuration, repository or
   programs, `HOME`, `XDG_CONFIG_HOME`, `BASH_ENV`, `SHELLOPTS`, `BASHOPTS`, `PATH`, the Brain's own `BRAIN_*`, and
   Claude Code's that choose its settings or plugin) assigned in any form (`NAME=`, `NAME[0]=`, `export`, `declare`,
-  `printf -v`, `read`, `env`, `${NAME:=}`, `(( NAME = ))`, `set -a`, `$env:`, `${env:}`, the `env:` provider,
-  `SetEnvironmentVariable`), and any assignment whose name the guard cannot read, are refused; only an `echo`'s or
+  `printf -v`, `read`, `env`, `${NAME:=}`, `(( NAME = ))`, `set -a`, `$env:`, `${env:}`, the `env:` provider and the
+  `env:` drive as the location (`Set-Location Env:`), `SetEnvironmentVariable`, `Start-Process -Environment @{...}`,
+  and inline code's `os.environ[NAME] =`, `os.putenv`, `process.env.NAME =`, `$ENV{NAME} =`), its name read as bash
+  reads it too (`BRAIN_\HOME`, `$'\x42RAIN_HOME'`, `$"BRAIN_HOME"`: `brain.floorenv.unescaped`), and any assignment
+  whose name the guard cannot read, are refused; only an `echo`'s or
   `printf`'s quoted words and the value of `-m`, `--message`, `--body` or `--title` are prose, never an `export` or
   `env` argument. On Windows, where a native program reads a variable's name in any case, the names are read in any
   case (`brain_home=` is `BRAIN_HOME`), `HOME` and `PATH` where the shell exports them (see Limits).
@@ -345,13 +348,15 @@ Round 7 (the same classes, new spellings; on any machine with the floor on):
   `updateRef`, `createRef`, `deleteRef`, `createCommitOnBranch` or `mergeBranch`) are refused.
 - **The checkout that holds config.json**: only reads run there (`brain.floor.CHECKOUT_SAFE`: reads, `fetch`,
   `push` judged on its own, `worktree`, `branch`, `tag`; `git config` and `git remote` that only read), and a pull of
-  its upstream (`brain.floorenv.pull`): `git pull`, `git pull --ff-only`, `git pull --ff-only origin main`, with
+  its upstream (`brain.floorenv.pull`): `git pull`, `git pull --ff-only`, `git pull origin refs/heads/main`, with
   the options of `brain.floorenv.PULL_OPTS` only (`--ff-only`, `--ff`, `--no-ff`, `--rebase`, `--no-rebase`,
   `--autostash`, `-q`, `-v`, `--stat`...; no strategy, interactive rebase, submodules or unrelated histories). The
   pull is judged by what it brings, read from git's configuration when it is judged, whoever set it (`git branch
   -u`, `git push -u` from a worktree that shares the configuration): a branch checked out whose upstream is `main` or
   `master` of a remote whose URL is no local path (`file:`, a folder, a drive), and a remote and branch named by the
-  command, if any, that are that upstream. So a pull there brings only what was merged into main by a pull request.
+  command, if any, that are that upstream, the branch by its full name (`refs/heads/main`: git reads a bare `main`
+  as the remote's tag `main` first, which a session may push). So a pull there brings only what was merged into main
+  by a pull request.
   In any worktree of that repository (the same git common folder), a `git remote` that writes (`add`, `set-url`,
   `rename`, `remove`...) is refused: the worktrees share the remotes the checkout pulls from. A commit there stays
   refused. A removal or a move of it, or of a folder that holds it or the guard's

@@ -7,7 +7,7 @@ section: Changes
   literal absolute path inside a worktree of the repository that holds config.json (`git worktree list`), in bash,
   `export`, `env` and PowerShell's `$env:` forms. `BRAIN_CONFIG` never lowers the floor the guard holds: the
   config.json found without it holds its floor too (`brain.config.anchored`), in Python and in `guard.sh`. The
-  checkout that holds config.json pulls its upstream (`git pull`, `git pull --ff-only origin main`), judged by what
+  checkout that holds config.json pulls its upstream (`git pull`, `git pull origin refs/heads/main`), judged by what
   the pull brings: main or master of a remote that is no local path, read when the pull is judged; a `git remote`
   that writes is refused in every worktree of that repository. On Windows the watched names are read in any case
   (`brain_home=`), `HOME` and `PATH` where the shell exports them, and `NAME[0]=` is an assignment; `guard.sh`'s

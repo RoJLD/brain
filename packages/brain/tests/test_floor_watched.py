@@ -93,7 +93,8 @@ def test_a_name_in_any_case_where_names_have_none():
         assert not nt.search(text), text
     assert nt.search("PATH=/x claude") and nt.search("$env:path = 'x'")
     # their exported forms do reach a native program (review: export path=x; claude, home=x claude)
-    for text in ("export path=C:/evil claude -p x", "declare -x path=C:/evil claude", "export home=C:/evil",
+    for text in ("cmd /c set path=C:/evil&& claude", "set home=C:/evil& claude", "export path=C:/evil claude -p x",
+                 "declare -x path=C:/evil claude", "export home=C:/evil",
                  "typeset -x home=/evil", "home=C:/evil claude -p x", "path=C:/evil:$PATH claude -p x",
                  "env path=C:/evil claude", "env home=/e claude", "local -x Path=x", "x; Home=/e git push"):
         assert nt.search(text) and not posix.search(text), text
@@ -225,7 +226,7 @@ def test_the_core_plugin_of_either_config_is_kept(repo, tmp_path, monkeypatch):
 
 # --- the checkout that holds config.json pulls its upstream only ---------------------------------------------------
 
-@pytest.mark.parametrize("command", ["git pull", "git pull --ff-only", "git pull --ff-only origin main",
+@pytest.mark.parametrize("command", ["git pull", "git pull --ff-only", "git pull --ff-only origin refs/heads/main",
                                      "git pull --rebase", "git pull -q --no-rebase origin", "git pull origin refs/heads/main"])
 def test_the_checkout_pulls_its_upstream(tree, command):
     assert not refused(tree[0], command), command
@@ -233,6 +234,7 @@ def test_the_checkout_pulls_its_upstream(tree, command):
 
 @pytest.mark.parametrize("command", [
     "git pull origin feat/x", "git pull upstream main", "git pull origin main:main", "git pull origin +main",
+    "git pull --ff-only origin main", "git pull -r origin main main",   # a bare main is a tag first (round 2)
     "git pull -s ours", "git pull --allow-unrelated-histories", "git pull --rebase=interactive", "git pull -X theirs",
     "git pull --recurse-submodules", "git pull --ff-o", "git pull https://code.example/evil.git main",
     "git commit -m x", "git switch feat/x",
@@ -281,7 +283,18 @@ PREFILTER = [
     "for BRAIN_HOME in x; do claude; done", "read BRAIN_HOME", "printf -v BRAIN_HOME x", "mapfile BRAIN_HOME",
     "getopts ab BRAIN_HOME", "Set-Item env:BRAIN_HOME x", "New-Item -Path Env:\\BRAIN_HOME -Value x",
     "export $n=x", "[Environment]::SetEnvironmentVariable('BRAIN_HOME','x')", "select GIT_DIR in a; do :; done",
+    # round 2: after a newline or a tab, a name spelled with bash escapes, the env: drive as the location, an
+    # environment given to a process, inline code's
+    "echo hi\nBRAIN_HOME=C:/evil claude -p hi", "\tBRAIN_HOME=C:/evil claude", "printf\t-v PATH %s x",
+    "((\tBRAIN_X = 1))", "env BRAIN_\\HOME=C:/evil claude", "env $'BRAIN_HOME'=x claude",
+    "env $'\\x42RAIN_HOME'=C:/evil claude", "Set-Location Env:; Set-Item BRAIN_HOME C:/evil",
+    "Start-Process claude -Environment @{BRAIN_HOME='C:/evil'}",
+    "python -c \"import os;os.environ['BRAIN_HOME']='x';os.system('claude')\"",
+    "node -e \"process.env.BRAIN_HOME='x'\"", "perl -e '$ENV{BRAIN_HOME}=1; system q(claude)'",
 ]
+PS_SHAPES = {"$env:BRAIN_HOME='C:/e'; claude -p hi", "Set-Item env:BRAIN_HOME x", "New-Item -Path Env:\\BRAIN_HOME -Value x",
+             "[Environment]::SetEnvironmentVariable('BRAIN_HOME','x')", "Set-Location Env:; Set-Item BRAIN_HOME C:/evil",
+             "Start-Process claude -Environment @{BRAIN_HOME='C:/evil'}"}
 
 
 def test_guard_sh_starts_python_for_every_watched_assignment():
@@ -296,10 +309,8 @@ def test_guard_sh_starts_python_for_every_watched_assignment():
 def test_every_prefilter_shape_is_one_the_floor_refuses(tree, monkeypatch):
     """The pre-filter's list is the floor's: each shape above is refused once Python judges it."""
     monkeypatch.setattr(faults, "scratch", lambda: False)
-    ps = {"$env:BRAIN_HOME='C:/e'; claude -p hi", "Set-Item env:BRAIN_HOME x", "New-Item -Path Env:\\BRAIN_HOME -Value x",
-          "[Environment]::SetEnvironmentVariable('BRAIN_HOME','x')"}
     for command in PREFILTER:
-        assert refused(tree[0], command, ps=command in ps), command
+        assert refused(tree[0], command, ps=command in PS_SHAPES), command
 
 
 def test_guard_sh_holds_the_anchors_floor_when_it_cannot_judge(tmp_path):

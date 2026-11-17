@@ -82,7 +82,9 @@ needs_python() {
   # exports a name a substitution gives, allexport, set -a, PowerShell's env: provider and .NET's Environment. Read on
   # the text and on it with quotes, escaping backslashes, backticks and cmd's carets dropped (BRAIN_HO''ME=).
   local wvar='(brain_[a-z0-9_]+|git_[a-z0-9_]+|home|userprofile|xdg_config_home|bash_env|shellopts|bashopts|path|claude_config_dir|claude_plugin_root|claude_brain_dir|claude_project_dir)'
-  local envset='(^|[^A-Za-z0-9_])'"$wvar"'(\[[^]]*\])?\+?=|\$\{'"$wvar"'|\(\([[:space:]]*'"$wvar"'|(^|[^A-Za-z0-9_-])(export|declare|typeset)([[:space:]]|\\[nrt])[^|;&]*('"$wvar"'|[$(`])|(^|[^A-Za-z0-9_-])(readonly|read|for|select|getopts|mapfile|readarray)([[:space:]]|\\[nrt])[^|;&]*'"$wvar"'|printf[[:space:]]+-v|allexport|(^|[^A-Za-z0-9_-])set[[:space:]][^|;&]*-[A-Za-z]*a|env:|environment'
+  local edge='(^|[^A-Za-z0-9_-]|\\[nrt])' gap='([[:space:]]|\\[nrt])'
+  local envset='(^|[^A-Za-z0-9_]|\\[nrt])'"$wvar"'(\[[^]]*\])?\+?=|\$\{'"$wvar"'|\(\('"$gap"'*'"$wvar"'|'"$edge"'(export|declare|typeset)'"$gap"'[^|;&]*('"$wvar"'|[$(`])|'"$edge"'(readonly|read|for|select|getopts|mapfile|readarray)'"$gap"'[^|;&]*'"$wvar"'|printf'"$gap"'+-v|allexport|'"$edge"'set'"$gap"'[^|;&]*-[A-Za-z]*a|env:|environment|\$'"'"
+  # (and any ANSI-C string, $'...', whose escapes may spell a name: brain/floorenv.py's unescaped reads it)
   local eplain=${text//'\"'/}
   eplain=${eplain//\\\\/}; eplain=${eplain//"'"/}; eplain=${eplain//'`'/}; eplain=${eplain//^/}
   shopt -s nocasematch

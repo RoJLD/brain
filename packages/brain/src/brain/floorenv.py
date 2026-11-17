@@ -54,9 +54,26 @@ def env(code: str, sub: str, configs: list[str]) -> str | None:
     ``code`` (a call's text, its prose out: brain.floorguard._code; unspelled here), once the assignments of
     brain.floor.WORKTREE_VARS that pass are taken out (:func:`read_paths`; ``configs``: the config.json files the guard
     reads, brain.floorguard.Kept.configs)."""
-    plain = floor.unspelled(read_paths(code, sub, configs))
-    m = floor.assignments().search(plain) or floor.ENV_DYNAMIC.search(plain)
-    return f"{m.group(0).strip()[:60]!r} refused: a variable the floor watches (or one it cannot read) set" if m else None
+    kept = read_paths(code, sub, configs)
+    watched = floor.assignments()
+    for plain in (floor.unspelled(kept), floor.unspelled(unescaped(kept))):
+        m = watched.search(plain) or floor.ENV_DYNAMIC.search(plain)
+        if m:
+            return f"{m.group(0).strip()[:60]!r} refused: a variable the floor watches (or one it cannot read) set"
+    return None
+
+
+def unescaped(text: str) -> str:
+    """``text`` as bash reads a name it spells with escapes (``env BRAIN_\\HOME=x``, ``$'\\x42RAIN_HOME'=x``,
+    ``$"BRAIN_HOME"=x``): an ANSI-C string's escapes decoded, the ``$`` before a quote dropped, every backslash dropped
+    (a value's backslashes too: this text is only searched for names)."""
+    def ansi(m: re.Match) -> str:
+        body = re.sub(r"\\x([0-9A-Fa-f]{1,2})", lambda x: chr(int(x.group(1), 16)), m.group(1))
+        body = re.sub(r"\\u([0-9A-Fa-f]{1,4})", lambda x: chr(int(x.group(1), 16)), body)
+        body = re.sub(r"\\([0-7]{1,3})", lambda x: chr(int(x.group(1), 8) % 256), body)
+        return "'" + body + "'"
+    text = re.sub(r"\$'((?:[^'\\]|\\.)*)'", ansi, text)
+    return re.sub(r"\$(?=\")", "", text).replace("\\", "")
 
 
 def read_paths(code: str, sub: str, configs: list[str]) -> str:
@@ -118,20 +135,26 @@ def checkout(gits, folders: list[str]) -> str | None:
     roots = {r for r in (repo_of(f) for f in folders) if r}
     if not roots:
         return None
-    shared: set[str] | None = None
+    shared: list[set[str]] = []   # the roots' git common folders, read once, when a git remote writes
     for _, folder, sub, args in gits:
-        if sub == "!":
-            continue
-        if sub == "remote" and not reads(sub, args):
-            shared = shared if shared is not None else {common_dir(r) for r in roots} - {""}
-            if common_dir(folder) in shared:
-                pos = [a for a in args if not a.startswith("-")]
-                return (f"git remote {(pos or ['?'])[0]} in {folder} refused: its repository holds config.json, whose "
-                        "checkout pulls from these remotes")
-        why = _in_checkout(folder, sub, args) if repo_of(folder) in roots else ""
+        why = "" if sub == "!" else _remote_write(folder, sub, args, roots, shared) or \
+            (_in_checkout(folder, sub, args) if repo_of(folder) in roots else "")
         if why:
             return why
     return None
+
+
+def _remote_write(folder: str, sub: str, args: list[str], roots: set[str], shared: list[set[str]]) -> str:
+    """Why a git remote that writes in ``folder`` is refused (its repository is a root's: it shares its remotes)."""
+    if sub != "remote" or reads(sub, args):
+        return ""
+    if not shared:
+        shared.append({common_dir(r) for r in roots} - {""})
+    if common_dir(folder) not in shared[0]:
+        return ""
+    pos = [a for a in args if not a.startswith("-")]
+    return (f"git remote {(pos or ['?'])[0]} in {folder} refused: its repository holds config.json, whose checkout "
+            "pulls from these remotes")
 
 
 def _in_checkout(folder: str, sub: str, args: list[str]) -> str:
@@ -164,8 +187,9 @@ def pull(folder: str, args: list[str]) -> str:
         return found
     current, remote, branch = found
     pos = [a for a in args if not a.startswith("-")]
-    if pos and (pos[0] != remote or any(floor.HEADS.sub("", p) != branch for p in pos[1:])):
-        return f"it names {' '.join(pos)}, not {current}'s upstream {remote} {branch}"
+    if pos and (pos[0] != remote or any(p != f"refs/heads/{branch}" for p in pos[1:])):
+        return (f"it names {' '.join(pos)}, not {current}'s upstream {remote} refs/heads/{branch} (a bare {branch} is "
+                f"read as a tag first: git pull alone brings the upstream)")
     return ""
 
 
