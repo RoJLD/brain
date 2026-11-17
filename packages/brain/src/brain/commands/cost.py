@@ -23,8 +23,10 @@ USAGE = """\
   brain cost audit [--since WHEN] [--until WHEN] [--top N] [--write] [--json]   the window's estimates off by more
                  than x1.5 and why, the calibration per class, the sizes against the actuals (misses per size and
                  class, thresholds proposed, the size key kept or not), the costliest sessions, the script candidates;
-                 --write: <BRAIN_HOME>/usage/<project>/audit-<since>_<until>.md, and the week's forecast snapshot
-                 <BRAIN_HOME>/forecast/<project>/<day>.json (the Monday task's command)
+                 --write: <BRAIN_HOME>/usage/<project>/audit-<since>_<until>.md, its record appended to
+                 <BRAIN_HOME>/usage/<project>/audits.jsonl (the estimates' error and the context counts, week by
+                 week), and the week's forecast snapshot <BRAIN_HOME>/forecast/<project>/<day>.json (the Monday
+                 task's command)
   brain cost estimate|review|audit ... --scope REF   the items and sessions of the projects of a node's subtree in
                  the scope tree (brain scopes: an id, a path of ids, global = --all, . or ..)
 """
@@ -69,19 +71,24 @@ def cmd_cost(args, root: Path) -> int:
         return 0
     au = cost.audit(led, since, until, args.top)
     name = projs[0].name if len(projs) == 1 else (getattr(args, "scope_node", "") or "all")
-    text = cost.render_audit(au, name, usage.now_utc().strftime("%Y-%m-%d %H:%M UTC"))
+    now = usage.now_utc()
+    text = cost.render_audit(au, name, now.strftime("%Y-%m-%d %H:%M UTC"))
     out = cost.audit_path(name, since, until)
-    snaps = []
+    written = []
     if args.write:
         out.parent.mkdir(parents=True, exist_ok=True)
         out.write_text(text, encoding="utf-8")
+        written.append(f"written to {out}")
+        # the week's line of the series a KPI reads: the estimates' error and the context counts
+        rec = cost.append_record(name, cost.audit_record(au, name, now.strftime("%Y-%m-%dT%H:%M:%SZ"), out))
+        written.append(f"record appended to {rec}")
         for p in projs:  # the week's forecast snapshot, what the calibration judges (spec-brain-psychohistory 6)
             try:
-                snaps.append(str(forecast.save(forecast.forecast(p, led, usage.now_utc()), snapshot=True)))
+                written.append("forecast snapshot: "
+                               + str(forecast.save(forecast.forecast(p, led, usage.now_utc()), snapshot=True)))
             except (forecast.ForecastError, OSError, ValueError) as exc:
-                snaps.append(f"{p.name}: no forecast snapshot ({exc})")
-    print(cost.as_json(au) if args.json else text + (f"\nwritten to {out}" if args.write else "")
-          + "".join(f"\nforecast snapshot: {s}" for s in snaps))
+                written.append(f"forecast snapshot: {p.name}: no forecast snapshot ({exc})")
+    print(cost.as_json(au) if args.json else "\n".join([text, *written]) if written else text)
     return 0
 
 
