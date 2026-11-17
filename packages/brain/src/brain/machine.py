@@ -5,9 +5,11 @@ step S4 of the one-brain design).
 lowercase, ``[a-z0-9-]``, 40 characters at most (the memory sync's rule, now the one rule: brain.memory, brain.probe
 and brain.schedule read it; brain.permissions' ``machines:`` stay host names, as they were). :func:`anchor` ties the name to the OS install: ``sha256(id || os
 family)`` of ``MachineGuid`` (Windows), ``/etc/machine-id`` (Linux) or ``IOPlatformUUID`` (macOS), each readable without
-admin rights and one per OS install; the raw id is never written or printed. :func:`identity` keeps the first sight in
-``<BRAIN_HOME>/machine.json`` (``v``, the name, the anchor, a local id, its date) and compares it, and the owner's
-declared machines (``config.json`` ``hosts``: ``{name: {anchor, roles, aliases, ...}}``), with what it reads now:
+admin rights and one per OS install (an MSYS or Cygwin Python reads ``MachineGuid`` through ``/proc/registry`` and
+hashes it with the windows family, so it gives the native Python's anchor); the raw id is never written or printed.
+:func:`identity` keeps the first sight in ``<BRAIN_HOME>/machine.json`` (``v``, the name, the anchor, a local id, its
+date) and compares it, and the owner's declared machines (``config.json`` ``hosts``: ``{name: {anchor, local_id,
+roles, aliases, ...}}``), with what it reads now:
 
   ok           the same name on the same OS install
   new          first sight on this BRAIN_HOME (machine.json written); declare it with the ``hosts`` line the plan prints
@@ -15,9 +17,11 @@ declared machines (``config.json`` ``hosts``: ``{name: {anchor, roles, aliases, 
   moved        another OS install with this BRAIN_HOME (a copied home, a cloned image)
   reused       ``hosts`` gives this name another OS install's anchor (a name taken again: name the new machine)
   duplicate    ``hosts`` gives this anchor to another name too (a cloned image)
-  no-anchor    the OS install id could not be read (no machine-id file, an MSYS Python), and ``hosts`` does not
-               declare this name without an anchor: that entry (``"hosts": {"<name>": {}}``) is the owner's
-               confirmation and clears it; one with an anchor keeps it (that install is not the one read here)
+  no-anchor    the OS install id could not be read (no machine-id file), and the owner has not confirmed this home:
+               ``hosts.<name>.local_id`` naming machine.json's ``local_id`` (random, one per BRAIN_HOME) confirms it,
+               for this home only, so a config.json shared by every machine vouches for no other machine that
+               takes the name; with no anchor nothing is compared (never moved, reused nor duplicate), and a home
+               first seen with an anchor, or a name declared with one, stays a doubt (run the Python that reads it)
 
 Every state but ok and new is a doubt (``doubt`` holds the question, asked once: ``asked`` in machine.json dates it):
 the memory sync's export (the machine's branch, a machine-level write) is held while it lasts (:func:`in_doubt`,
@@ -63,11 +67,21 @@ DOUBTS = {
     "reused": "hosts.{name}.anchor is another OS install's: {name} was reused; give this machine a new name "
               "(BRAIN_MACHINE)",
     "duplicate": "hosts gives this OS install to {other} as well: a cloned image? one name per install",
-    "no-anchor": "the OS install id cannot be read here ({why}): if {name} is this machine's own name, confirm it "
-                 "by declaring it without an anchor in config.json (\"hosts\": {{\"{name}\": {{}}}}, its facts "
-                 "beside), which clears this doubt",
+    "no-anchor": "the OS install id cannot be read here ({why}): if this BRAIN_HOME is {name}'s own, confirm it by "
+                 "adding \"{name}\": {{\"local_id\": \"{local_id}\"}} under hosts in config.json (its declared "
+                 "facts, if any, may sit in it): it vouches for this home only, not for another machine named {name}",
 }
+# no-anchor's other questions: an anchor known for this home or this name, or a confirmation of another home
+NO_ANCHOR_SEEN = ("this home was first seen, or hosts.{name} declares it, with an OS install id that cannot be read "
+                  "here ({why}): run the brain with the Python that reads it (a copied home cannot be told apart "
+                  "without it)")
+NO_ANCHOR_OTHER = ("hosts.{name}.local_id confirms another BRAIN_HOME, and the OS install id cannot be read here "
+                   "({why}) to tell the machines apart: a second machine named {name}? give it its own name "
+                   "(BRAIN_MACHINE)")
 INSTALL_ID_SOURCES = {"windows": "MachineGuid", "linux": "/etc/machine-id", "darwin": "IOPlatformUUID"}
+POSIX_ON_WINDOWS = ("msys", "cygwin")   # platform.system() of an MSYS2 or Cygwin Python: msys_nt-10.0-26100, ...
+PROC_REGISTRY = ("/proc/registry64/HKEY_LOCAL_MACHINE/SOFTWARE/Microsoft/Cryptography/MachineGuid",
+                 "/proc/registry/HKEY_LOCAL_MACHINE/SOFTWARE/Microsoft/Cryptography/MachineGuid")
 
 
 # Side effects, replaced by fakes in the tests.
@@ -84,6 +98,13 @@ def _os() -> str:
 
 def _install_id_raw(system: str) -> str:
     """The OS install's id, raw ('' when it cannot be read)."""
+    if system.startswith(POSIX_ON_WINDOWS):   # no winreg there: the registry as files, readable without admin rights
+        for f in PROC_REGISTRY:
+            try:
+                return Path(f).read_bytes().decode("utf-8", "replace").strip("\0\r\n\t ")
+            except OSError:
+                continue
+        return ""
     if system == "windows":
         import winreg
         with winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE, r"SOFTWARE\Microsoft\Cryptography", 0,
@@ -128,17 +149,24 @@ def name() -> str:
     return normalize(os.environ.get("BRAIN_MACHINE") or _hostname() or "machine") or "machine"
 
 
+def family(system: str) -> str:
+    """The OS family an anchor is hashed with: an MSYS or Cygwin Python runs on Windows (the same install, the same
+    anchor as the native Python's)."""
+    return "windows" if system.startswith(POSIX_ON_WINDOWS) else system
+
+
 def anchor() -> tuple[str | None, str]:
     """(sha256 of the OS install's id and the OS family, its source); (None, why) when the id cannot be read."""
     system = _os()
+    fam = family(system)
+    src = INSTALL_ID_SOURCES.get(fam, system) + (" (/proc/registry)" if fam != system else "")
     try:
         raw = _install_id_raw(system)
     except (OSError, ValueError, ImportError, subprocess.SubprocessError) as exc:   # unreadable: a state, no error
-        return None, f"{INSTALL_ID_SOURCES.get(system, system)}: {type(exc).__name__}"
+        return None, f"{src}: {type(exc).__name__}"
     if not raw:
-        return None, f"{INSTALL_ID_SOURCES.get(system, system)} not found"
-    return hashlib.sha256(f"{raw.strip().lower()}\0{system}".encode("utf-8")).hexdigest(), \
-        INSTALL_ID_SOURCES.get(system, system)
+        return None, f"{src} not found"
+    return hashlib.sha256(f"{raw.strip().lower()}\0{fam}".encode("utf-8")).hexdigest(), src
 
 
 def machine_file() -> Path:
@@ -163,14 +191,21 @@ def _stamp() -> str:
 
 
 def _state(nm: str, anc: str | None, first: dict, declared: dict) -> tuple[str, str | None]:
-    """(the identity's state, the other name that holds this anchor in hosts) from what is read and recorded. An
-    unreadable anchor is a doubt until ``hosts`` declares this name without one (the owner's confirmation:
-    wi-brain-machine-no-anchor-doubt); a declared anchor that cannot be read here stays one."""
+    """(the identity's state, the other name that holds this anchor in hosts) from what is read and recorded.
+
+    An unreadable anchor compares nothing (never moved, reused nor duplicate: review of the item, finding 1); it is a
+    doubt until ``hosts.<name>.local_id`` names this home's machine.json ``local_id`` (the owner's confirmation, bound
+    to this home: wi-brain-machine-no-anchor-doubt), and stays one when this home or this name has a known anchor."""
     mine = declared.get(nm) if isinstance(declared.get(nm), dict) else {}
-    other = next((k for k, v in declared.items() if k != nm and isinstance(v, dict) and anc
+    if anc is None:
+        confirmed = (not first.get("anchor") and not mine.get("anchor") and bool(first.get("local_id"))
+                     and mine.get("local_id") == first.get("local_id"))
+        if not confirmed:
+            return "no-anchor", None
+        return ("renamed" if first.get("name") and first.get("name") != nm else "ok"), None
+    other = next((k for k, v in declared.items() if k != nm and isinstance(v, dict)
                   and v.get("anchor") == anc), None)
-    confirmed = isinstance(declared.get(nm), dict) and not mine.get("anchor")
-    checks = (("no-anchor", anc is None and not confirmed), ("reused", bool(mine.get("anchor")) and mine.get("anchor") != anc),
+    checks = (("reused", bool(mine.get("anchor")) and mine.get("anchor") != anc),
               ("duplicate", bool(other)), ("new", not first),
               ("moved", bool(first.get("anchor")) and first.get("anchor") != anc),
               ("renamed", bool(first.get("name")) and first.get("name") != nm))
@@ -187,16 +222,32 @@ def _write(f: Path, rec: dict) -> bool:
     return True
 
 
-def _remember(f: Path, first: dict, out: dict) -> None:
-    """machine.json: written at first sight; a doubt's first showing stamped in ``asked`` (``first`` updated)."""
-    state = out["state"]
-    if not first and state in ("new", "no-anchor"):
+def _first_sight(f: Path, first: dict, out: dict) -> None:
+    """machine.json written at first sight (before the doubt is said: no-anchor's names this home's ``local_id``)."""
+    if not first and out["state"] in ("new", "no-anchor"):
         rec = {"v": V, "name": out["name"], "anchor": out["anchor"], "local_id": uuid.uuid4().hex, "since": _stamp()}
         if _write(f, rec):
             out.update(local_id=rec["local_id"], since=rec["since"])
-    elif out["doubt"] and first and state not in (first.get("asked") or {}):
-        first.setdefault("asked", {})[state] = _stamp()
+
+
+def _remember(f: Path, first: dict, out: dict) -> None:
+    """A doubt's first showing stamped in machine.json's ``asked`` (``first`` updated)."""
+    if out["doubt"] and first and out["state"] not in (first.get("asked") or {}):
+        first.setdefault("asked", {})[out["state"]] = _stamp()
         _write(f, first)
+
+
+def _doubt(state: str, nm: str, first: dict, mine: dict, other: str | None, why: str, local_id: str | None) -> str:
+    """The doubt's question, '' for ok and new."""
+    if state not in DOUBTS:
+        return ""
+    text = DOUBTS[state]
+    if state == "no-anchor" and (first.get("anchor") or mine.get("anchor")):
+        text = NO_ANCHOR_SEEN
+    elif state == "no-anchor" and mine.get("local_id") and first.get("local_id") != mine.get("local_id"):
+        text = NO_ANCHOR_OTHER
+    return text.format(name=nm, first=first.get("name") or "?", other=other, why=why,
+                       local_id=local_id or "<the local_id of BRAIN_HOME/machine.json>")
 
 
 def identity(cfg_data: dict | None = None, write: bool = True) -> dict:
@@ -205,14 +256,15 @@ def identity(cfg_data: dict | None = None, write: bool = True) -> dict:
     nm, (anc, src), f = name(), anchor(), machine_file()
     first, declared = _load(f), hosts(cfg_data)
     state, other = _state(nm, anc, first, declared)
+    mine = declared.get(nm) if isinstance(declared.get(nm), dict) else {}
     out = {"v": V, "name": nm, "anchor": anc, "anchor_source": src, "local_id": first.get("local_id"),
-           "since": first.get("since"), "file": f.as_posix(), "state": state, "declared": nm in declared,
-           "doubt": DOUBTS[state].format(name=nm, first=first.get("name") or "?", other=other, why=src)
-           if state in DOUBTS else ""}
+           "since": first.get("since"), "file": f.as_posix(), "state": state, "declared": nm in declared}
+    if write:
+        _first_sight(f, first, out)
+    out["doubt"] = _doubt(state, nm, first, mine, other, src, out["local_id"])
     if write:
         _remember(f, first, out)
     out["asked"] = (first.get("asked") or {}).get(state)
-    mine = declared.get(nm) if isinstance(declared.get(nm), dict) else {}
     if anc and not mine.get("anchor") and state in ("ok", "new"):
         out["declare"] = f'"hosts": {{"{nm}": {{"anchor": "{anc}"}}}}'   # the line the owner's config.json lacks
     return out
