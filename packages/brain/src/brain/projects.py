@@ -330,7 +330,7 @@ def is_read_only(entry) -> bool:
 
 def is_tombstone(entry) -> bool:
     """The entry of a project that ended (a ``status`` other than active, brain.projectids): never loaded."""
-    return not is_mount(entry) and projectids.is_tombstone(entry)
+    return not is_mount(entry) and not is_knowledge(entry) and projectids.is_tombstone(entry)
 
 
 def tombstones(root: Path | None = None) -> dict[str, str]:
@@ -1155,10 +1155,7 @@ def describe(p: Project) -> dict:
 
 def _names(name: str, registry_dir: Path | None = None) -> dict:
     """An entry's aliases and label as declared (brain.projectids), for brain projects."""
-    try:
-        entry = raw(registry_dir).get(name) if registry_dir is not None else raw().get(name)
-    except Exception:  # noqa: BLE001 - a registry that cannot be read: check() says why
-        entry = None
+    entry = raw(registry_dir).get(name)
     return {"aliases": projectids.aliases(entry), "label": projectids.label(entry)}
 
 

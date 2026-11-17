@@ -121,6 +121,11 @@ class Tree:
             node = self.nodes.get(node.parent)
         return out
 
+    def canonical(self, ref: str) -> str:
+        """The node id ``ref`` names: itself, or the id its alias resolves to (brain.projectids); silent, for a
+        reference a file holds (a store's project:), never a typed one."""
+        return ref if ref in self.nodes else self.aliases.get(ref, ref)
+
     def depth(self, nid: str) -> int:
         return 0 if nid == GLOBAL else len(self.chain(nid)) + 1
 
@@ -222,8 +227,7 @@ def load(root: Path | None = None, cfg: config.Config | None = None) -> Tree:
         nid = str(nid)
         if nid not in tree.nodes and nid != GLOBAL:   # an id used twice: check() reports it, the project keeps it
             tree.nodes[nid] = _container(nid, spec if isinstance(spec, dict) else {})
-    tree.aliases = projectids.alias_map({n: x.data for n, x in tree.nodes.items() if x.kind != "container"},
-                                        {n: x.data for n, x in tree.nodes.items() if x.kind == "container"})
+    tree.aliases = projectids.alias_map(*_by_kind(tree))
     tree.aliases.pop(GLOBAL, None)
     return tree
 
@@ -283,20 +287,15 @@ def check(root: Path | None = None, cfg: config.Config | None = None) -> tuple[l
         warnings += _place_warnings(tree, n)
     errors += _floor_errors(tree)
     errors += _typology_errors(tree, cfg)
-    ids_errors, ids_warnings = _ids_check(root if root is not None else cfg.root, data if f is not None else {})
+    ids_errors, ids_warnings = projectids.check(*_by_kind(tree))
     return errors + ids_errors, warnings + ids_warnings
 
 
-def _ids_check(root: Path, data: dict) -> tuple[list[str], list[str]]:
-    """The names (brain.projectids): every alias unique across the registry's ids, the containers' ids and every
-    other alias; an id not kebab-case warned."""
-    try:
-        reg = projects.raw(root)
-    except Exception:  # noqa: BLE001 - as in _registry_nodes: projects.check reports a registry it cannot read
-        reg = {}
-    declared = data.get("scopes") if isinstance(data, dict) else None
-    containers = {str(k): v for k, v in declared.items() if str(k) not in reg} if isinstance(declared, dict) else {}
-    return projectids.check(reg, containers)
+def _by_kind(tree: Tree) -> tuple[dict, dict]:
+    """({registry entry: its mapping}, {container: its mapping}) of the tree's nodes, for brain.projectids: every
+    alias unique across the ids and the other aliases, an id not kebab-case warned."""
+    return ({n: x.data for n, x in tree.nodes.items() if x.kind != "container"},
+            {n: x.data for n, x in tree.nodes.items() if x.kind == "container"})
 
 
 def _typology_errors(tree: Tree, cfg: config.Config) -> list[str]:
@@ -712,19 +711,19 @@ def private_nodes(tree: Tree) -> list[str]:
 def private_terms(cfg: config.Config) -> list[str]:
     """The terms config.json public.deny.repos gains when ``public.deny_from_tree`` is on: the name of every private
     project (:func:`private_nodes`; a tombstone's too), its aliases and label (brain.projectids: as private as its
-    key), and the name of each of its repos (brain audit's names and their folders), sorted, once
+    key), and the name of each of its repos (those of an entry the walk skips too, a tombstone or an access typo that
+    still names them: a typo never shrinks the list) (brain audit's names and their folders), sorted, once
     each whatever its case; a term that names a repo of public.repos is left out (that repo is public), as is one
     shorter than two characters. A project whose repos cannot be resolved keeps its own name (brain check --all says
     why)."""
     tree = load(cfg.root, cfg)
-    loaded = projects.load(cfg.root)
+    every = {p.name: p for p in projects.guarded(cfg.root)}   # a skipped entry that still names a repo keeps it
     pub = cfg.data.get("public") if isinstance(cfg.data.get("public"), dict) else {}
     public = {str(r).rsplit("/", 1)[-1].lower() for r in pub.get("repos") or [] if isinstance(r, str)}
     terms: dict[str, str] = {}
     for name in private_nodes(tree):
-        node = tree.nodes[name].data
-        found = [name, *projectids.aliases(node), *([projectids.label(node)] if projectids.label(node) else [])]
-        p = loaded.get(name)
+        found = [name, *projectids.other_names(tree.nodes[name].data)]
+        p = every.get(name)
         try:
             found += [t for r in (projects.repos_of(p) if p is not None else []) for t in (r.name, r.folder) if t]
         except (ValueError, OSError):   # RepoError, a path on another drive: the name is still denied

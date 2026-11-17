@@ -52,6 +52,11 @@ def aliases(entry) -> list[str]:
     return [a for a in value if isinstance(a, str) and a] if isinstance(value, list) else []
 
 
+def other_names(entry) -> list[str]:
+    """An entry's aliases, then its label: the names as private as its id (the deny feeds)."""
+    return aliases(entry) + [t for t in [label(entry)] if t]
+
+
 def label(entry) -> str:
     value = entry.get("label") if isinstance(entry, dict) else None
     return value if isinstance(value, str) else ""
@@ -115,19 +120,18 @@ def notice(alias: str, nid: str, what: str = "--project") -> str:
 
 def canonical(name: str | None, root: Path | None = None) -> str | None:
     """The registry key ``name`` names: itself when it is a key (or names nothing: the caller says so), else the id
-    its alias resolves to, with a notice on stderr. A registry that cannot be read leaves ``name`` as given (the
-    command's own read reports it)."""
+    its alias resolves to, with a notice on stderr."""
     if not name:
         return name
-    from . import projects
-    try:
-        reg = projects.raw(root)
-    except Exception:  # noqa: BLE001 - a registry that cannot be read is projects.check's to report, never raised here
-        return name
+    from . import config, projects, scopes
+    reg = projects.raw(root)   # a registry that cannot be read raises here as in the command's own read
     if name in reg:
         return name
-    nid = alias_map(reg).get(name)
-    if nid is None:
+    containers = scopes.nodes_of(config.load(root))
+    if name in containers:   # a container's id is never a project's alias
+        return name
+    nid = alias_map(reg, containers).get(name)
+    if nid not in reg:   # no alias, or a container's (an alias two nodes declare resolves to none)
         return name
     print(notice(name, nid), file=sys.stderr)
     return nid

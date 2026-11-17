@@ -147,7 +147,8 @@ def registry(raw: dict) -> dict[str, dict]:
     entry left out)."""
     out: dict[str, dict] = {}
     for name, entry in raw.items():
-        if not isinstance(entry, dict) or "tenant" in entry or projects.is_knowledge(entry):
+        ended = projects.is_tombstone(entry)   # a project that ended (brain.projectids): no repo, no access
+        if not isinstance(entry, dict) or "tenant" in entry or projects.is_knowledge(entry) or ended:
             continue
         read = projects.is_read_only(entry)
         out[str(name)] = {"access": "read" if read else "write", "repos": [] if read else _repo_names(str(name), entry),
