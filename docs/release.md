@@ -138,11 +138,16 @@ holds the standard steps for the whole release, and a PR's fragment adds only it
   its line names the engine that read the store. CI holds no owner's store and does not run it, so the maintainer
   runs it by hand before opening the version PR. A version that names two waves (a later wave pinned to the current
   wave's jump) is refused as ambiguous. A store with no wave of this version passes when no pending wave is below
-  it and the last reached wave before it records what it shipped as (`props.shipped_as`): a wave reached by hand
-  without it is refused, since whether it shipped as this version cannot be told (`brain item set <wave>
-  props.shipped_as=X.Y.Z` records it). The line names the wave it checked, and how when it ships under another
-  number (`wave-s3 (1.0.2, closed as 1.1.0, a jump)`). `brain next` then shows the next wave, the carried items
-  first.
+  it. A wave reached without `props.shipped_as` (by hand, or by an engine up to 0.5.0, which wrote none) is read
+  through the last tag, which `release_check.py` knows (`brain wave check X.Y.Z --tag vP` from the brain): the wave
+  labelled the tag's release shipped as itself, and the one reached after it ships as this version, so it is that
+  wave the rule checks. When the tag does not tell and that wave, the one before the version's (none) or before the
+  current wave it would jump, could have shipped as this version (the next minor or major after what it counts
+  from), the version PR is refused instead of reading the wrong wave or none (wave 0.3.3 closed by hand and shipped
+  as 0.4.0: 0.4.0 named no wave, or jumped onto the next one); `brain item set <wave> props.shipped_as=X.Y.Z`
+  records it. The line names the wave it checked, and how when it ships under another number (`wave-s3 (1.0.2,
+  closed as 1.1.0, a jump)`, `its props.shipped_as`, `reached after the last tag vP`). `brain next` then shows the
+  next wave, the carried items first.
 - `compat-prev` is green on main's latest PR: the upgrade test goes from the last tag to HEAD and back
   ([`packages/brain/docs/formats.md`](../packages/brain/docs/formats.md), « The upgrade test »).
 - **Read what changed**: `git log vP..origin/main` and `git diff --stat vP origin/main`. Look for what a brain that

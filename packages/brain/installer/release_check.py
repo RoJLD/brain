@@ -23,9 +23,12 @@ changelog fragments are checked (below). On a version PR, it fails when:
   wave this version names (a milestone of kind wave, ``props.release``) still holds an open item that is neither
   carried to a later wave (``props.carried_to``) nor dropped, or is not reached yet (``brain wave close``,
   brain.waves). That one check imports brain and research_graph from this checkout (``packages/brain/src``, ``src``)
-  and needs PyYAML; a store with no wave of this version passes it, unless the last wave reached before it records
-  no ``props.shipped_as`` (closed by hand: whether it shipped as this version cannot be told). Its line names the
-  wave it checked, and how when that wave ships under another number (the jump, or its ``props.shipped_as``);
+  and needs PyYAML. The last tag tells which wave this version ships when a wave was reached without
+  ``props.shipped_as`` (by hand, or by an engine up to 0.5.0): the one labelled the tag's release shipped as itself,
+  one reached after it ships as this version (brain.waves.as_tagged). A store with no wave of this version passes it,
+  unless the wave before it, reached without ``props.shipped_as``, could have shipped as this version and the tag
+  does not tell (refused: record it). Its line names the wave it checked, and how when that wave ships under another
+  number (the jump, its ``props.shipped_as``, or the tag);
 - the brain the last tag's engine wrote is not frozen under ``packages/brain/tests/fixtures/stores/<tag>/``
   (``installer/freeze_store.py <tag>``; :func:`old_store`): the release's tests run every store-reading command on it.
 
@@ -483,15 +486,18 @@ def old_store(repo: Path, tag: str) -> list[str]:
             f"(python {BRAIN}/installer/freeze_store.py {tag}; docs/release.md, « The fixture freeze »)"]
 
 
-def wave_closure(repo: Path, store: Path, version: str) -> list[str]:
+def wave_closure(repo: Path, store: Path, version: str, tag: str = "") -> list[str]:
     """The closure rule (docs/release.md, « 1. Before the version PR »): what the wave named by ``version`` in
-    ``store`` still holds open, by brain.waves of this checkout. :class:`CannotTell` when it cannot be read."""
-    return closure(repo, store, version)[1]
+    ``store`` still holds open, by brain.waves of this checkout, read with the last tag ``tag``.
+    :class:`CannotTell` when it cannot be read."""
+    return closure(repo, store, version, tag)[1]
 
 
-def closure(repo: Path, store: Path, version: str) -> tuple[str, list[str]]:
+def closure(repo: Path, store: Path, version: str, tag: str = "") -> tuple[str | None, list[str]]:
     """(the wave a version PR of ``version`` closes, as said: its id, its label and how when the release jumped or it
-    shipped under another number, '' when none; what :func:`wave_closure` refuses)."""
+    shipped under another number, '' when none, None when the engine that read it names none; what
+    :func:`wave_closure` refuses). The last tag ``tag`` tells what a wave reached without props.shipped_as shipped as
+    (brain.waves.as_tagged), when the engine has it."""
     readable_store(store)
     try:
         import yaml   # before brain.graph, which exits on its own without it
@@ -502,8 +508,20 @@ def closure(repo: Path, store: Path, version: str) -> tuple[str, list[str]]:
         plan = waves.load(store)
     except (OSError, UnicodeDecodeError, yaml.YAMLError) as exc:   # research_graph.yamlio.load's errors
         raise CannotTell(f"--store {store}: cannot be read: {type(exc).__name__}: {exc}") from exc
-    closing = getattr(waves, "closing", None)   # an installed engine older than this checkout has none
-    return (closing(plan, version) if closing else ""), waves.closure_problems(plan, version)
+    tagged = getattr(waves, "as_tagged", None)   # an installed engine older than this checkout has none
+    plan = tagged(plan, version, tag) if tagged and tag else plan
+    closing = getattr(waves, "closing", None)
+    return (closing(plan, version) if closing else None), waves.closure_problems(plan, version)
+
+
+def closure_state(wave: str | None, found: list[str]) -> str:
+    """What the line of the closure rule says of :func:`closure`'s result: the wave checked and whether it is closed,
+    or that no wave has that release; an engine that names no wave (``wave`` None) is said so."""
+    if wave is None:
+        return ("open items left" if found else "closed or none") + " (this engine names no wave)"
+    if not wave:
+        return "no wave of that release, " + ("refused" if found else "none to close")
+    return f"{wave}, " + ("refused" if found else "closed")
 
 
 def _waves(repo: Path):
@@ -591,10 +609,8 @@ def check(repo: Path, tag: str, store: Path | None = None) -> tuple[list[str], l
         said.append(f"a patch of {tag}: it may hold no schema that moves and no Upgrade step beyond the standard ones")
     problems += policy(tag, version, changed, upgrade)
     if store is not None:
-        wave, found = closure(repo, store, version)
-        said.append(f"the wave {version} in {store}{_read_by(repo)}: "
-                    + (f"{wave}, " if wave else "no wave of that release, ")
-                    + ("open items left" if found else ("closed" if wave else "none to close")))
+        wave, found = closure(repo, store, version, tag)
+        said.append(f"the wave {version} in {store}{_read_by(repo)}: " + closure_state(wave, found))
         problems += found
     return said, problems
 
