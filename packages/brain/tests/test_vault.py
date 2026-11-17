@@ -79,7 +79,8 @@ with open(job["result"], "w", encoding="utf-8") as f:
 """
 
 
-def keygen(n: int, ad: vault.Adapter, deadline: float = GPG_KEYGEN_S, tmp: Path | None = None) -> list[tuple[str, str]]:
+def keygen(n: int, ad: vault.Adapter, deadline: float = GPG_KEYGEN_S, tmp: Path | None = None,
+           started: Path | None = None) -> list[tuple[str, str]]:
     """``n`` key pairs of ``ad``. A real gpg's all within ``deadline`` seconds (one end time for the ``n`` keys), each
     in a child process whose temporary folder is ``tmp`` (a folder of pytest's basetemp), else the test is skipped
     with its reason: gpg --quick-gen-key can wait forever on its agent or on entropy, and a gpg-agent the key generation
@@ -87,10 +88,12 @@ def keygen(n: int, ad: vault.Adapter, deadline: float = GPG_KEYGEN_S, tmp: Path 
     if not isinstance(ad, vault.Gpg):
         return [ad.keygen(f"test {i}") for i in range(n)]
     end = time.monotonic() + deadline
-    return [gpg_call(ad, "keygen", f"test {i}", end=end, deadline=deadline, tmp=tmp) for i in range(n)]
+    return [gpg_call(ad, "keygen", f"test {i}", end=end, deadline=deadline, tmp=tmp, started=started)
+            for i in range(n)]
 
 
-def gpg_call(ad: vault.Gpg, call: str, *args, end: float, deadline: float, tmp: Path | None, **kwargs):
+def gpg_call(ad: vault.Gpg, call: str, *args, end: float, deadline: float, tmp: Path | None,
+             started: Path | None = None, **kwargs):
     """``ad.<call>(*args, **kwargs)`` in a child Python process (its result and log in ``tmp``, a folder of pytest's
     basetemp), waited on until ``end`` (time.monotonic). The child keeps the system's temporary folder: gpg's agent
     did not start under a pytest folder on the CI's Windows (its socket path too long). Past ``end``, the child is
@@ -100,28 +103,48 @@ def gpg_call(ad: vault.Gpg, call: str, *args, end: float, deadline: float, tmp: 
     assert tmp is not None, "a real gpg call needs a folder of pytest's basetemp"
     temp, run = Path(tmp), os.urandom(4).hex()
     result, child_log = temp / f"result-{run}.json", temp / f"child-{run}.log"
-    system_temp = Path(tempfile.gettempdir())
-    before = set(system_temp.glob("bv-*"))
-    env = {**os.environ,
+    # its own short temporary folder, in the system's (under a pytest folder gpg's agent did not start on the CI's
+    # Windows): no other worker's gpg home is in it, so the cleanup takes only this call's
+    private = Path(tempfile.mkdtemp(prefix="g"))
+    gpg_call.private = private
+    env = {**os.environ, "TEMP": str(private), "TMP": str(private), "TMPDIR": str(private),
            "PYTHONPATH": os.pathsep.join([str(Path(vault.__file__).resolve().parents[1]),
                                           *filter(None, [os.environ.get("PYTHONPATH")])])}
     job = {"cmd": ad.cmd, "call": call, "args": [_plain(a) for a in args],
            "kwargs": {k: _plain(v) for k, v in kwargs.items()}, "result": str(result)}
+    try:
+        return _run_child(ad, call, deadline, end, started, env, job, result, child_log, private)
+    finally:
+        shutil.rmtree(private, ignore_errors=True)
+
+
+def _run_child(ad, call, deadline, end, started, env, job, result, child_log, private):
     with open(child_log, "wb") as log:
         child = subprocess.Popen([sys.executable, "-c", _GPG_CHILD, json.dumps(job)], stdin=subprocess.DEVNULL,
                                  stdout=log, stderr=subprocess.STDOUT, env=env,
                                  **({} if os.name == "nt" else {"start_new_session": True}))
+        if started is not None:   # a test's fake gpg: the deadline runs once it is up, never while it is being made
+            end = _once_started(child, started, end)
         try:
             child.wait(timeout=max(end - time.monotonic(), 0))
         except subprocess.TimeoutExpired:
             _kill_tree(child)
-            _remove_homes(ad, [h for h in system_temp.glob("bv-*") if h not in before])
+            _remove_homes(ad, sorted(private.glob("bv-*")))
             pytest.skip(f"gpg {call} did not end within {deadline:g} s (its agent or entropy): its process tree "
                         "killed, skipped, not waited on")
     if not result.is_file():
         tail = child_log.read_text(encoding="utf-8", errors="replace")[-2000:]
         raise RuntimeError(f"gpg {call}: its child process exited {child.returncode} without a result: {tail}")
     return gpg_outcome(call, json.loads(result.read_text(encoding="utf-8")))
+
+
+def _once_started(child: subprocess.Popen, started: Path, end: float, bound: float = 60.0) -> float:
+    """``end`` moved past the moment the file ``started`` appears (bounded): a kill of the tree while its last process
+    is being created can miss that process (taskkill /T reads the tree once), which a slow runner made happen."""
+    t0 = time.monotonic()
+    while not started.exists() and child.poll() is None and time.monotonic() - t0 < bound:
+        time.sleep(0.05)
+    return end + (time.monotonic() - t0)
 
 
 def _plain(v):
@@ -183,14 +206,14 @@ def _sleeping_gpg(pidfile: Path) -> vault.Gpg:
     """A gpg that never answers (an agent that never does): its command a Python that writes its pid, then sleeps."""
     ad = vault.Gpg([sys.executable, "-c", f"import os, time; open({str(pidfile)!r}, 'w').write(str(os.getpid())); "
                                           "time.sleep(60)"])
-    ad._msys = False   # the test's own process never asks it its version: it would sleep too
+    ad._msys = False   # never asked its version here (it would sleep too); the child's own call writes the pid file
     return ad
 
 
 def _alive(pid: int) -> bool:
     if os.name == "nt":
         out = subprocess.run(["tasklist", "/FI", f"PID eq {pid}", "/NH", "/FO", "CSV"], capture_output=True,
-                             text=True, check=False).stdout
+                             text=True, check=False, timeout=30).stdout
         return f'"{pid}"' in out
     try:
         os.kill(pid, 0)
@@ -204,17 +227,16 @@ def _alive(pid: int) -> bool:
 def test_a_gpg_call_that_hangs_is_killed_as_a_tree_and_skipped_with_its_reason(tmp_path):
     """On the deadline the child, and the 'gpg' it started, are killed; no gpg home is left; the skip says why."""
     pidfile = tmp_path / "gpg.pid"
-    before = set(Path(tempfile.gettempdir()).glob("bv-*"))
     start = time.monotonic()
     with pytest.raises(pytest.skip.Exception, match=r"did not end within 4 s \(its agent or entropy\): its process"):
-        keygen(1, _sleeping_gpg(pidfile), deadline=4, tmp=tmp_path)
-    assert time.monotonic() - start < 30
+        keygen(1, _sleeping_gpg(pidfile), deadline=4, tmp=tmp_path, started=pidfile)
+    assert time.monotonic() - start < 90   # the deadline (4 s) runs once the fake is up, its start bounded at 60 s
     pid = int(pidfile.read_text(encoding="utf-8"))   # the sleeping 'gpg' had started: the kill reached it
     gone = time.monotonic() + 10
     while _alive(pid) and time.monotonic() < gone:
         time.sleep(0.2)
     assert not _alive(pid)
-    assert set(Path(tempfile.gettempdir()).glob("bv-*")) <= before   # no temporary gpg home left behind
+    assert not gpg_call.private.exists()   # no temporary gpg home left behind (the call's own folder, removed)
 
 
 def test_a_gpg_childs_outcome_is_its_value_a_skip_or_its_own_error(tmp_path):
