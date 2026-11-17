@@ -212,34 +212,26 @@ def watched(scratch: bool = False, nocase: bool = False) -> str:
     plugin, and every BRAIN_* name but those of READ_PATH_VARS and, off a scratch home (``scratch`` false),
     SCRATCH_VARS. WORKTREE_VARS stay in it: brain.floorguard takes out the assignments of theirs that pass first.
     ``nocase`` (Windows, where a native program reads an environment variable's name in any case: ``brain_home=x``
-    is its BRAIN_HOME): every name in any case but HOME and PATH, whose lowercase shell variables (``path=$(pwd)``,
-    ``read -r home``) stay in the shell; their exported forms are :data:`NT_EXPORTED`'s."""
+    is its BRAIN_HOME, ``path=x`` its PATH): every name in any case, HOME and PATH included (a lowercase shell variable
+    of those letters, ``path=$(pwd)``, ``read -r home``, is refused too: the shell exports one in more ways than a
+    reading of its forms keeps up with; name it otherwise)."""
     free = sorted({*READ_PATH_VARS, *(() if scratch else SCRATCH_VARS)})
     brain = r"BRAIN_(?!(?:" + "|".join(n[len("BRAIN_"):] for n in free) + r")\b)\w+"
     names = (GIT_VARS + r"|USERPROFILE|XDG_CONFIG_HOME|BASH_ENV|SHELLOPTS|BASHOPTS|" + brain +
              r"|CLAUDE_CONFIG_DIR|CLAUDE_PLUGIN_ROOT|CLAUDE_BRAIN_DIR|CLAUDE_PROJECT_DIR")
-    return (f"(?i:{names})" if nocase else names) + r"|HOME|PATH"
+    return f"(?i:{names}|HOME|PATH)" if nocase else names + r"|HOME|PATH"
 
 
 WATCHED_VARS = watched()
 _START = r"(?:^|(?<=[\s;&|(]))"
-# Windows: HOME and PATH in another case where the shell exports them to a native program, which reads the name in any
-# case (``home=x claude``, ``export path=x``, ``declare -x``, ``env path=x``): a command's prefix (a word follows the
-# value on its line), export and env's arguments, declare, typeset or local with -x.
-_HP = r"(?i:home|path)"
-NT_EXPORTED = (rf"{_START}{_HP}(?:\[[^\]\n]*\])?\+?=[^\s;&|]*[ \t]+[^\s;&|#)]|"
-               rf"(?<![$\w{{:-])(?:export|env)\s[^;&|\n]*?(?<![\w${{:/\\.-]){_HP}\b|"
-               rf"\b(?:declare|typeset|local)\s+(?:-\w+\s+)*-\w*x\w*\s+(?:[^;&|\n]*?\s)?{_HP}\b|"
-               rf"(?<![\w-])set\s+{_HP}\s*=")                         # cmd's set exports every name it sets
 
 
 @functools.lru_cache(maxsize=8)
 def env_assign(scratch: bool = False, nocase: bool = os.name == "nt") -> re.Pattern:
-    """An assignment of a variable of :func:`watched` in any form (``nocase``: the names in any case but HOME and
-    PATH, as on Windows, with :data:`NT_EXPORTED` for theirs)."""
+    """An assignment of a variable of :func:`watched` in any form (``nocase``: the names in any case, as on
+    Windows)."""
     w = watched(scratch, nocase)
     return re.compile(
-        (NT_EXPORTED + "|" if nocase else "") +
         rf"{_START}(?:{w})(?:\[[^\]\n]*\])?\+?=|"                    # NAME=, NAME+=, NAME[0]= (bash, cmd's set)
         rf"\b(?:export|declare|typeset|readonly|read)\b[^;&|\n]*?(?<![\w${{])(?:{w})\b|"
         rf"\bprintf\s+-v\s*(?:{w})\b|"

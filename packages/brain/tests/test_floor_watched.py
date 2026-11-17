@@ -81,23 +81,31 @@ def test_every_other_brain_variable_stays_watched(tree, monkeypatch, command):
 
 
 def test_a_name_in_any_case_where_names_have_none():
-    """Windows reads an environment variable's name in any case (brain_home=x is a native program's BRAIN_HOME): the
-    names but HOME and PATH, which bash keeps beside a lowercase shell variable, are read in any case there."""
+    """Windows reads an environment variable's name in any case (brain_home=x is a native program's BRAIN_HOME,
+    path=x its PATH): every watched name, HOME and PATH included, is read in any case there (the skeptics' rounds 2
+    and 3 found a way past each reading of the shell's exported forms: a value holding ;, ex\\port, a nameref, eval)."""
     nt, posix = floor.env_assign(False, True), floor.env_assign(False, False)
     for text in ("brain_home=C:/evil claude", "Brain_Guard_Allow=floor claude", "git_dir=x git status",
-                 "export brain_python=x", "claude_config_dir=x claude"):
+                 "export brain_python=x", "claude_config_dir=x claude", "cmd /c set path=C:/evil&& claude",
+                 "set home=C:/evil& claude", "export path=C:/evil claude -p x", "declare -x path=C:/evil claude",
+                 "typeset -x home=/evil", "home=C:/evil claude -p x", "path=C:/evil:$PATH claude -p x",
+                 "env path=C:/evil claude", "env home=/e claude", "local -x Path=x", "x; Home=/e git push",
+                 'path="C:/evil;C:/Windows" claude -p x', "e=export; $e path=C:/evil; claude -p x",
+                 "declare -n r=path; export r=C:/evil; claude", "export \\\npath=C:/evil\nclaude -p x",
+                 "path=$(pwd)", "while read -r path; do :; done", "for path in a b; do :; done"):
         assert nt.search(text) and not posix.search(text), text
-    for text in ("brain_strict=1 brain x", "path=$(pwd)", "while read -r path; do echo $path; done", "home=~",
-                 "path=x; echo $path", "Write-Output $env:Path", "export X=$path",
-                 "export X=/a/path", "for path in a b; do :; done"):
+    for text in ("brain_strict=1 brain x", "Write-Output $env:Path", "export X=$path", "echo $home"):
         assert not nt.search(text), text
     assert nt.search("PATH=/x claude") and nt.search("$env:path = 'x'")
-    # their exported forms do reach a native program (review: export path=x; claude, home=x claude)
-    for text in ("cmd /c set path=C:/evil&& claude", "set home=C:/evil& claude", "export path=C:/evil claude -p x",
-                 "declare -x path=C:/evil claude", "export home=C:/evil",
-                 "typeset -x home=/evil", "home=C:/evil claude -p x", "path=C:/evil:$PATH claude -p x",
-                 "env path=C:/evil claude", "env home=/e claude", "local -x Path=x", "x; Home=/e git push"):
-        assert nt.search(text) and not posix.search(text), text
+
+
+def test_spellings_bash_reads_as_a_watched_name(tree, monkeypatch):
+    """Round 3: a name spelled with escapes, eval, xargs env."""
+    monkeypatch.setattr(faults, "scratch", lambda: False)
+    for command in ("ex\\port BRAIN_HOME=C:/evil; claude -p x", "eval export\\ BRAIN_HOME=C:/evil; claude",
+                    "env $'\\x42RAIN_HOME=C:/e' claude", "echo 'BRAIN_GUARD_ALLOW=floor claude -p x' | xargs env",
+                    "echo 'PATH=C:/evil claude' | xargs env", "echo 'claude -p x' | xargs bash -c"):
+        assert refused(tree[0], command), command
 
 
 # --- BRAIN_CONFIG and BRAIN_PROJECTS: a worktree of the same repository ------------------------------------------

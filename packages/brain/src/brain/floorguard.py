@@ -38,7 +38,9 @@ MOVERS = {"mv", "move", "mi", "move-item", "rename-item", "ren", "rni", "rename"
 COPIERS = {"cp", "copy", "copy-item", "cpi", "xcopy", "rsync", "robocopy", "install"}
 EXTRACTORS = floorpwsh.EXTRACTORS
 OPAQUE_XARGS = {"git", "claude", "reg", "setx", *REMOVERS, *MOVERS, *COPIERS, *EXTRACTORS, *floorpwsh.LINK_PROGS,
-                "new-item", "ni", "fsutil", "cpio", "pax"}
+                "new-item", "ni", "fsutil", "cpio", "pax",
+                "env", "bash", "sh", "zsh", "dash", "ksh", "pwsh", "powershell", "cmd"}   # an environment or a shell
+                # from its input: `echo 'BRAIN_GUARD_ALLOW=floor claude' | xargs env` (round 3)
 SHELLS = {"bash", "sh", "zsh", "dash", "ksh", "pwsh", "powershell", "cmd"}
 PLAIN = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
 ROBOCOPY_OPT = re.compile(r"/[A-Za-z]+(?::\S*)?")

@@ -308,7 +308,7 @@ Round 7 (the same classes, new spellings; on any machine with the floor on):
   whose name the guard cannot read, are refused; only an `echo`'s or
   `printf`'s quoted words and the value of `-m`, `--message`, `--body` or `--title` are prose, never an `export` or
   `env` argument. On Windows, where a native program reads a variable's name in any case, the names are read in any
-  case (`brain_home=` is `BRAIN_HOME`), `HOME` and `PATH` where the shell exports them (see Limits).
+  case (`brain_home=` is `BRAIN_HOME`), `HOME` and `PATH` included (see Limits).
   `GIT_EDITOR=true`, `GIT_TRACE`, `ENV=` and `CLAUDE_CODE_*` pass. A command's assignment reaches that command and its children only, but a child may be a
   nested Claude Code whose hooks inherit it, so the `BRAIN_*` names are watched as a class and a name passes only
   where `brain.floor` says why it lifts and redirects nothing (wi-brain-floor-watched-vars):
@@ -481,10 +481,10 @@ Round 7 (the same classes, new spellings; on any machine with the floor on):
   from its parent (the hook then fails, a non-blocking error). A repo's `.git/hooks` are code the guard does not read
   either: a write into them is refused (class 2 above), but one made through code the guard does not read runs at the
   next `git commit`; the operating system's lock on these files (a later wave) is the answer to that class.
-- **The environment's limits**: on Windows `HOME` and `PATH` in another case are refused only where the shell
-  exports them (`home=x cmd`, `export path=x`, `declare -x`, `env path=x`: `brain.floor.NT_EXPORTED`); a shell
-  variable of those letters that stays in the shell passes (`path=$(pwd)`, `read -r home`, `for path in`), and so
-  does one exported later by a form those rules do not read. A `BRAIN_CONFIG` or `BRAIN_PROJECTS` that passes may name any file inside a worktree of
+- **The environment's limits**: on Windows `HOME` and `PATH` are read in any case like every watched name, so a shell
+  variable of those letters is refused even where it would stay in the shell (`path=$(pwd)`, `read -r home`, `for
+  path in`): name it otherwise (the shell exports one in more ways than a reading of its forms kept up with: a value
+  holding `;`, `ex\port`, a nameref, `eval`). A `BRAIN_CONFIG` or `BRAIN_PROJECTS` that passes may name any file inside a worktree of
   the repository, one the session wrote included: the guard holds the floor of the config.json found without
   `BRAIN_CONFIG` (above), and the registry is no part of the floor; the other guards a nested session runs read
   that worktree's settings, as a session opened in that worktree would. The upstream a pull of the checkout reads
