@@ -593,12 +593,14 @@ def main(args) -> int:
     print("\n".join(project_parts.plan_lines(parts, args.name, entry is None)))
     if entry is not None:
         return _there(root, args, a, entry, parts)
-    code = init.main(_init_args(args, a, refused, section))
-    if code or not args.apply:
+    from . import project_add
+    with project_add.this_brain(root / "projects.yaml"):   # brain init reads the new brain, never another's
+        code = init.main(_init_args(args, a, refused, section))
+    if not args.apply:
         return code
     owner = owner_of(args)
-    project_parts.log_init(root, [*_words(args, a), "--apply"], code, owner)
-    return project_parts.run(parts, root, owner)
+    project_parts.log_init(root, [*_words(args, a), "--apply"], code, owner)   # brain init's files, the first row
+    return code or project_parts.run(parts, root, owner)
 
 
 def _there(root: Path, args, a: Answers, entry: dict, parts) -> int:
@@ -609,7 +611,11 @@ def _there(root: Path, args, a: Answers, entry: dict, parts) -> int:
     print(f"{root} already holds the brain of {args.name}: " + ("the answers change its entry in projects.yaml:"
                                                                if diff else "the answers change nothing there"))
     print("\n".join(diff) + ("\n(written by a branch and a PR of that brain, never here)" if diff else ""))
-    return 2 if args.apply and (diff or pending) else 0
+    if args.apply and (diff or pending):
+        left = [f"{len(diff)} change(s) of its entry" if diff else "", f"{len(pending)} part step(s)" if pending else ""]
+        print(f"--apply refuses: {' and '.join(x for x in left if x)} left, written by a branch and a PR of that brain")
+        return 2
+    return 0
 
 
 def _parts(cat: typologies.Catalog, a: Answers, root: Path, name: str, entry: dict | None):

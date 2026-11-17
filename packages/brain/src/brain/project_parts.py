@@ -29,7 +29,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from . import firstrun, neutral, typologies, typology_packs
+from . import firstrun, impact, neutral, render, typologies, typology_packs
 
 VIA = "project-new"
 CLAUDE = "CLAUDE.md"
@@ -52,12 +52,15 @@ class Parts:
     steps: list[Step] = field(default_factory=list)
     claude: bool = False                             # the template writes a CLAUDE.md (it gains the section)
     workflows: list[str] = field(default_factory=list)
+    root: Path = Path(".")                           # the brain's folder (the commands' --root)
+    kept: list[str] = field(default_factory=list)    # the agent files the folder holds already (brain init keeps them)
 
 
 def md(text) -> str:
-    """A pack's text on one Markdown line: its whitespace (a newline) folded to one space, ``&`` and ``<`` as
-    entities (an HTML comment or tag would hide what follows), the rest as written."""
-    return " ".join(str(text).split()).replace("&", "&amp;").replace("<", "&lt;")
+    """A pack's text as one line of literal Markdown (brain.impact.md): the line breaks folded, what Markdown reads as
+    markup, math, an entity or a tag escaped, ``@`` and ``#`` kept from a mention or an import (Claude Code reads
+    ``@path`` in a CLAUDE.md as one), a list marker at its start escaped."""
+    return impact.md(str(text))
 
 
 def plan_new(cat: typologies.Catalog, kinds: list[str], profiles, files: dict, root: Path, name: str) -> Parts:
@@ -65,8 +68,13 @@ def plan_new(cat: typologies.Catalog, kinds: list[str], profiles, files: dict, r
     against its standards profiles (``profiles``, the template's ``standards.profiles``); ``files``: brain init's
     files (its CLAUDE.md, its workflows). The layers are slice 1's (the summary names those the graph lacks)."""
     props = typology_packs.proposals(typology_packs.engine_candidates(), kinds, cat, None, profiles)
-    p = Parts(props, claude=CLAUDE in files, workflows=sorted(f for f in files if f.startswith(WORKFLOWS)))
+    kept = [f for f in (CLAUDE, AGENTS) if (root / f).is_file()]   # brain init keeps a file the folder holds
+    p = Parts(props, claude=CLAUDE in files and CLAUDE not in kept,
+              workflows=sorted(f for f in files if f.startswith(WORKFLOWS)), root=root, kept=kept)
     p.steps = steps(root, name, props, packs_pending=bool(props), claude_stale=bool(props), agents_stale=True)
+    if AGENTS in kept and render.MARK not in (root / AGENTS).read_text(encoding="utf-8", errors="replace"):
+        p.steps[-1].skip = (f"the folder's {AGENTS} is not brain render's: kept (brain render --target agents "
+                            "--force replaces it)")
     return p
 
 
@@ -79,7 +87,7 @@ def plan_existing(cat: typologies.Catalog, kinds: list[str], root: Path, name: s
         std = entry.get("standards") if isinstance(entry.get("standards"), dict) else {}
         props = typology_packs.proposals(cands, kinds, cat, None, std.get("profiles"))
         pending = any(pr.step in ("add", "extend") for pr in props)
-        p = Parts(props, claude=(root / CLAUDE).is_file())
+        p = Parts(props, claude=(root / CLAUDE).is_file(), root=root)
         p.steps = steps(root, name, props, packs_pending=pending, claude_stale=pending or _stale(root, "claude"),
                         agents_stale=pending or _stale(root, "agents", name))
     return p
@@ -125,7 +133,7 @@ def plan_lines(p: Parts, name: str, new: bool) -> list[str]:
     if not p.props:
         out.append("    no typology pack meets its kinds (brain typologies packs lists the packs and their typologies)")
     for pr in p.props:
-        out += _pack_lines(pr, name, new and p.claude)
+        out += _pack_lines(pr, name, new and p.claude, p.root)
     return out + _file_lines(p, new) + _step_lines(p, new)
 
 
@@ -136,7 +144,10 @@ def _file_lines(p: Parts, new: bool) -> list[str]:
     if new:
         out.append(f"    CI templates: {', '.join(p.workflows)} (the template's, brain init writes them)" if p.workflows
                    else "    CI templates: none (the template writes no workflow: the project's CI is its own)")
-    if not p.claude:
+    if new and CLAUDE in p.kept:
+        claude = ("the folder's own, kept by brain init: « What it produces » is not written (brain typologies "
+                  "packs shows the packs' judgement)")
+    elif not p.claude:
         claude = "none (the template writes none; brain typologies packs shows the packs' judgement)"
     elif not new:
         claude = "its own (a PR of that brain edits it)"
@@ -157,10 +168,11 @@ def _step_lines(p: Parts, new: bool) -> list[str]:
         out.append("  --apply runs, after brain init's files, each logged in <BRAIN_HOME>/ledger/setup-<month>.jsonl:"
                    if new else "  its parts' steps, by a branch and a PR of that brain (never here):")
         out += [f"    {i}. {firstrun.shown(s.words)}   ({s.what})" for i, s in enumerate(run, 1)]
-    return out + [f"    skipped: {firstrun.shown(s.words)} ({s.skip})" for s in p.steps if s.skip and s.part == "packs"]
+    return out + [f"    skipped: {firstrun.shown(s.words)} ({s.skip})" for s in p.steps
+                  if s.skip and (s.part == "packs" or new)]
 
 
-def _pack_lines(pr, name: str, written: bool) -> list[str]:
+def _pack_lines(pr, name: str, written: bool, root: Path) -> list[str]:
     """One pack's lines: its state, its judgement (``written``: into the new CLAUDE.md), its guards, its tools, the
     profiles its project does not meet."""
     spec = _spec(pr)
@@ -179,16 +191,26 @@ def _pack_lines(pr, name: str, written: bool) -> list[str]:
         out.append(f"      its judgement{where}: {', '.join(judged)}")
     guards = typology_packs._list(spec.get("guards"))
     if guards:
-        out.append(f"      guards it turns on: {', '.join(guards)} (the core's guard hook runs them; brain permissions "
-                   f"--project {name}: the effective allow / ask / deny list)")
+        out.append(f"      guards it turns on: {', '.join(guards)} (the core's guard hook runs them; "
+                   f"{firstrun.shown(permissions_words(root, name))}: the effective allow / ask / deny list)")
     tools = [f"{w}: {', '.join(typology_packs._list(spec.get(k)))}" for k, w in (("procedures", "procedures"),
                                                                               ("mcp", "MCP servers"))
              if typology_packs._list(spec.get(k))]
     out.append(f"      {'; '.join(tools) if tools else 'procedures and MCP servers: none'}")
     if pr.standards:
         out.append(f"      standards profiles it does not meet: {', '.join(pr.standards)} (projects.yaml {name}: "
-                   "standards.profiles, by a PR of the registry; brain standards)")
+                   f"standards.profiles, by a PR of the registry; {firstrun.shown(standards_words(root, name))})")
     return out
+
+
+def permissions_words(root: Path, name: str) -> list[str]:
+    """The command that lists the project's effective permissions, in the new brain."""
+    return ["brain", "--root", str(root), "--project", name, "permissions"]
+
+
+def standards_words(root: Path, name: str) -> list[str]:
+    """The command that lists the standards rows the project follows, in the new brain."""
+    return ["brain", "--root", str(root), "--project", name, "standards", "list", "--applicable"]
 
 
 def _spec(pr) -> dict:

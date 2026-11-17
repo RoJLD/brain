@@ -61,7 +61,7 @@ def test_the_plan_names_each_pack_its_parts_and_the_steps_and_writes_nothing(tmp
     assert "pack software (the engine's, for software): packs.yaml takes it (from: engine, projects: [lab])" in out
     assert "pack research (the engine's, for research): packs.yaml takes it" in out
     assert "5 clause(s) of done, 3 one-way door(s), 2 role(s), gates at build, launch" in out
-    assert "guards it turns on: branches" in out and "brain permissions --project lab" in out
+    assert "guards it turns on: branches" in out and f"brain --root {d} --project lab permissions" in out
     assert "CI templates: .github/workflows/ci.yml" in out and "CLAUDE.md: the template's, with « What it" in out
     assert "standards profiles it does not meet" not in out   # cli meets software's profile
     steps = [ln.strip() for ln in out.splitlines() if ln.strip()[:3] in ("1. ", "2. ", "3. ")]
@@ -78,6 +78,16 @@ def test_each_step_is_a_command_the_real_parser_takes(tmp_path, cat):
         assert s.words[0] == "brain"
         cli.build_parser().parse_args(s.words[1:])   # SystemExit on a word it does not take
     assert '"' in firstrun.shown(p.steps[0].words)   # a folder with a space is quoted as the owner types it
+    for words in (project_parts.permissions_words(tmp_path, "lab"), project_parts.standards_words(tmp_path, "lab")):
+        cli.build_parser().parse_args(words[1:])   # the plan's other command lines, in the new brain
+
+
+def test_the_plans_other_command_lines_name_the_new_brain(tmp_path, cat):
+    soft = [c for c in typology_packs.engine_candidates() if c[0] == "software"]
+    p = project_parts.Parts(typology_packs.proposals(soft, ["cli"], cat, None, None), root=tmp_path)
+    text = "\n".join(project_parts.plan_lines(p, "lab", True))
+    assert f"brain --root {tmp_path} --project lab permissions: the effective" in text
+    assert f"brain --root {tmp_path} --project lab standards list --applicable)" in text
 
 
 def test_apply_writes_the_packs_claude_md_agents_md_and_the_marketplace_each_step_logged(tmp_path, capsys,
@@ -147,6 +157,8 @@ def test_an_existing_brain_gets_the_plan_only(tmp_path, capsys):
     assert f"1. brain --root {d} --project lab render --target agents --write" in out
     assert f"skipped: brain --root {d} typologies propose lab --apply (its packs are taken already)" in out
     assert cli.main(words(d, "--apply")) == 2   # pending parts: refused, never run here
+    assert "--apply refuses: 1 part step(s) left, written by a branch and a PR of that brain" in \
+        capsys.readouterr().out
     assert files_of(d) == before and len(ledger()) == n
 
 
@@ -160,10 +172,15 @@ def test_an_existing_brain_without_the_pack_is_shown_the_step_that_takes_it(tmp_
     assert f"1. brain --root {d} typologies propose lab --apply" in out
 
 
+J = "\u2060"   # the word joiner brain.impact.md puts after @ and #
+
+
 def test_md_keeps_a_pack_text_on_one_line_and_hides_nothing():
     assert project_parts.md("a\nb  c") == "a b c"
     assert project_parts.md('say "x" & 100% of $HOME <!-- y --> &amp;') == \
-        'say "x" &amp; 100% of $HOME &lt;!-- y --> &amp;amp;'
+        'say "x" \\& 100% of \\$HOME \\<!-- y --\\> \\&amp;'
+    assert project_parts.md("@docs/x.md and #12") == f"@{J}docs/x.md and #{J}12"   # no import, no link
+    assert project_parts.md("- an item\n1. another") == "\\- an item 1. another"   # no nested list
 
 
 def test_the_section_writes_a_brains_own_pack_text_escaped(cat):
@@ -171,9 +188,43 @@ def test_the_section_writes_a_brains_own_pack_text_escaped(cat):
         "title": "Ours\n# not a heading", "done": [{"id": "x", "text": "first line\n- not an item <b>"}],
         "roles": [{"id": "lead", "text": "decides"}], "stages": {"build": ["one", "two"]}})
     text = project_parts.claude_section(cat, ["cli"], "mvp", "build", [pr])
-    assert "### Ours # not a heading (pack ours)" in text
-    assert "- first line - not an item &lt;b>" in text and "- lead: decides" in text and "- build: one; two" in text
+    assert f"### Ours #{J} not a heading (pack ours)" in text
+    assert "- first line - not an item \\<b\\>" in text and "- lead: decides" in text and "- build: one; two" in text
     assert "One-way doors" not in text   # a part the pack does not give: no heading of it
+
+
+def test_a_folders_own_claude_md_and_agents_md_are_kept_and_said(tmp_path, capsys):
+    d = tmp_path / "lab"
+    d.mkdir()
+    (d / "CLAUDE.md").write_text("# Our rules\n", encoding="utf-8")
+    (d / "AGENTS.md").write_text("# Our agents\n", encoding="utf-8")
+    assert cli.main(words(d)) == 0
+    out = capsys.readouterr().out
+    assert "CLAUDE.md: the folder's own, kept by brain init: « What it produces » is not written" in out
+    assert "in CLAUDE.md « What it produces »" not in out
+    assert f"skipped: brain --root {d} --project lab render --target agents --write (the folder's AGENTS.md is not " \
+        "brain render's: kept" in out
+    assert cli.main(words(d, "--apply")) == 0
+    capsys.readouterr()
+    assert (d / "CLAUDE.md").read_text(encoding="utf-8") == "# Our rules\n"
+    assert (d / "AGENTS.md").read_text(encoding="utf-8") == "# Our agents\n"
+    assert [r["exit"] for r in ledger()] == [0, 0, 0]   # brain init, the packs, the marketplace
+
+
+def test_the_steps_read_the_new_brain_never_another_brains_registry(tmp_path, capsys, monkeypatch):
+    other = tmp_path / "other"
+    assert cli.main(["project", "new", str(other), "--kind", "cli", "--name", "other", "--owner", "Ada", "--apply"]) == 0
+    before = files_of(other)
+    monkeypatch.setenv("BRAIN_PROJECTS", str(other / "projects.yaml"))
+    monkeypatch.setenv("CLAUDE_BRAIN_DIR", str(other))
+    d = tmp_path / "lab"
+    assert cli.main(words(d, "--apply")) == 0
+    assert "step(s) failed" not in capsys.readouterr().out
+    assert yaml.safe_load((d / "source" / "packs.yaml").read_text(encoding="utf-8"))["packs"]["research"]["projects"] \
+        == ["lab"]
+    assert cli.main(words(d)) == 0   # the existing brain's plan reads it, not the other
+    assert "the answers change nothing there" in capsys.readouterr().out
+    assert files_of(other) == before
 
 
 def test_a_template_without_claude_md_writes_no_section(tmp_path, cat, capsys):
