@@ -1309,6 +1309,17 @@ state, why, when it ran, the last OK and since when. `brain status` shows a prob
 OK, 2 for a bad declaration); `--last` shows the last run, `--list` every declared probe and its machines, `--kinds`
 the kinds and their keys.
 
+The alerts pass, `brain status` (both without `--quick`) and the cockpit's probe also read each registered repo's
+main checkout (a worktree's repo: its main checkout) with `git --no-optional-locks status --porcelain`, 10 s at most
+(no `.git/index.lock` taken, so a pull running there at the same moment does not fail): modified or untracked files
+there are `checkout:<repo>` at warn (a project's `levels: {checkout: ...}` changes it), naming the first files and the
+last session whose working folder it was (the ledger's SessionStart events), since sessions write in worktrees and a
+file left in a main checkout trips the next pull or merge there. Ignored files and `.claude/worktrees/` (the worktrees
+Claude Code makes inside a main checkout) do not count. A checkout git cannot read is the same key at info, or keeps
+its last known alert when it was dirty, so a slow pass neither resolves it nor raises it again. One checkout spanned
+by several projects is read once and alerts once, in the project whose root it is, else the first project that lists
+it. Zero token: git only.
+
 ### External calls: retries and breakers
 
 The engine's calls to services it does not run (GitNexus's API and MCP endpoint, docker in `brain index`, the ntfy
