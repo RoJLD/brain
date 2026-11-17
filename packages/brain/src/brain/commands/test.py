@@ -54,14 +54,7 @@ def _selection(args):
 def early(args) -> int:
     """brain test --changed (brain.targeted): the selection printed, then run (shadow mode, or --strict)."""
     from .. import targeted
-    if args.changed is None:
-        raise SystemExit("brain test: --changed (the only selection there is)")
-    if args.deadline is not None and not args.verdict:
-        raise SystemExit("brain test: --deadline goes with --verdict")
-    if args.log and not args.verdict:
-        raise SystemExit("brain test: --log goes with --verdict")
-    if args.verdict and args.list:
-        raise SystemExit("brain test: --verdict runs the tests; --list runs nothing")
+    _flags(args)
     sel, top = _selection(args)
     if args.verdict:
         return _verdict(args, sel, top)
@@ -78,11 +71,21 @@ def early(args) -> int:
     return rc
 
 
+def _flags(args) -> None:
+    """The flags that go together, or a SystemExit that says which."""
+    if args.changed is None:
+        raise SystemExit("brain test: --changed (the only selection there is)")
+    if args.deadline is not None and not args.verdict:
+        raise SystemExit("brain test: --deadline goes with --verdict")
+    if args.log and not args.verdict:
+        raise SystemExit("brain test: --log goes with --verdict")
+    if args.verdict and args.list:
+        raise SystemExit("brain test: --verdict runs the tests; --list runs nothing")
+
+
 def _verdict(args, sel, top: Path) -> int:
     """--verdict: the selection and pytest's whole output in a log file, the run blocking until the deadline, three
     lines out (brain.verdict.test_lines)."""
-    import posixpath
-
     from .. import targeted, verdict
     tests = sel.suite if args.strict and not sel.complete else sorted(sel.tests)
     extra = [a for a in (args.pytest_args or []) if a != "--"]
@@ -99,11 +102,7 @@ def _verdict(args, sel, top: Path) -> int:
         f.write(f"\nrecorded in {led}" + ("; shadow mode: the selection widened, the CI runs the whole suite"
                                           if widened else "") + "\n")
     summary = verdict.pytest_summary(log.read_text(encoding="utf-8", errors="replace"))
-    runs = targeted.commands(top, tests, args.python, args.workers) if tests else []
-    where = f" (in {posixpath.relpath(runs[0][0].as_posix(), top.as_posix())})" if len(runs) == 1 else ""
-    again = f"brain test --changed {args.changed} --verdict".replace("--changed  ", "--changed ")
-    rerun = (f"python -m pytest {' '.join(summary.failed[:3])}{where}, fix, then {again}" if summary.failed
-             else f"read the log, fix, then {again}")
+    again, rerun = _next(args, top, tests, summary)
     lines = verdict.test_lines(rc, stopped, deadline, summary, log, len(tests),
                                again if stopped else rerun, "brain gate (or git push)",
                                "widened: the CI runs the whole suite" if widened else "")
@@ -113,6 +112,19 @@ def _verdict(args, sel, top: Path) -> int:
     else:
         print("\n".join(lines))
     return rc
+
+
+def _next(args, top: Path, tests: list[str], summary) -> tuple[str, str]:
+    """(the command that runs the selection again, the one that runs the failed tests again)."""
+    import posixpath
+
+    from .. import targeted
+    runs = targeted.commands(top, tests, args.python, args.workers) if tests else []
+    where = f" (in {posixpath.relpath(runs[0][0].as_posix(), top.as_posix())})" if len(runs) == 1 else ""
+    again = " ".join(x for x in ("brain test --changed", args.changed, "--verdict") if x)
+    if not summary.failed:
+        return again, f"read the log, fix, then {again}"
+    return again, f"python -m pytest {' '.join(summary.failed[:3])}{where}, fix, then {again}"
 
 
 def _report(args, sel, tests: list[str], rc: int) -> None:
