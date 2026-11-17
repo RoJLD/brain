@@ -321,6 +321,7 @@ class Proposal:
     #                                  shadowed (a brain pack of the engine pack's id hides it: nothing --apply writes)
     layers: list[str] = field(default_factory=list)      # its layers the project's store lacks
     standards: list[str] = field(default_factory=list)   # its standards profiles the project does not opt in to
+    spec: dict = field(default_factory=dict, repr=False)  # its parts as it applies (brain project new reads them)
 
     def as_dict(self) -> dict:
         return {"pack": self.pack, "origin": self.origin, "meets": self.meets, "active": self.active,
@@ -344,11 +345,26 @@ def propose(root: Path, project: str) -> tuple[list[str], list[Proposal], Path |
         return [], [], (p.stores[0] if p.stores else None)
     cat = typologies.load(config.load(root))
     store = p.stores[0] if p.stores else None
-    have_layers = _store_layers(store)
     std = p.standards if isinstance(p.standards, dict) else {}
-    have_profiles = {str(x) for x in std.get("profiles") or []}
-    out = [_proposal(c, kinds, cat, have_layers, have_profiles) for c in _candidates(neutral.load(root), project)]
-    return kinds, [pr for pr in out if pr.meets], store
+    return kinds, proposals(_candidates(neutral.load(root), project), kinds, cat, _store_layers(store),
+                            std.get("profiles")), store
+
+
+def proposals(candidates, kinds: list[str], cat, have_layers: set[str] | None, profiles) -> list[Proposal]:
+    """The candidates (:func:`_candidates`, :func:`engine_candidates`) a kind of ``kinds`` meets, each with what the
+    project lacks: the layers its store does not hold (``have_layers``, None: unknown) and the standards profiles its
+    selection (``profiles``, its ``standards.profiles``) does not meet, a sub-profile meeting its entry's (cli meets
+    software, brain.standards.kinds)."""
+    from . import standards
+    have_profiles = {k for x in (profiles if isinstance(profiles, list) else []) for k in standards.kinds(str(x))}
+    out = [_proposal(c, kinds, cat, have_layers, have_profiles) for c in candidates]
+    return [pr for pr in out if pr.meets]
+
+
+def engine_candidates() -> list[tuple[str, str, dict, bool, str]]:
+    """The candidates of a brain whose packs.yaml holds the core only (one brain init writes): each engine pack, its
+    step ``add``."""
+    return [(pid, ENGINE, spec, False, "add") for pid, spec in engine().items()]
 
 
 def _proposal(candidate, kinds: list[str], cat, have_layers: set[str] | None, have_profiles: set[str]) -> Proposal:
@@ -358,7 +374,7 @@ def _proposal(candidate, kinds: list[str], cat, have_layers: set[str] | None, ha
     packstd = spec.get("standards") if isinstance(spec.get("standards"), dict) else {}
     layers = [la for la in _list(spec.get("layers")) if have_layers is not None and la not in have_layers]
     return Proposal(pid, origin, meets, active, "" if active else step, layers,
-                    [x for x in _list(packstd.get("profiles")) if x not in have_profiles])
+                    [x for x in _list(packstd.get("profiles")) if x not in have_profiles], spec)
 
 
 def _candidates(src, project: str) -> list[tuple[str, str, dict, bool, str]]:
@@ -376,7 +392,7 @@ def _candidates(src, project: str) -> list[tuple[str, str, dict, bool, str]]:
                     not shadow and (pk.projects is None or project in pk.projects),
                     "shadowed" if shadow else "extend"))
     own = {pk.id for pk in src.packs}
-    return out + [(pid, ENGINE, spec, False, "add") for pid, spec in shipped.items() if pid not in own]
+    return out + [c for c in engine_candidates() if c[0] not in own]
 
 
 def _store_layers(store: Path | None) -> set[str] | None:
