@@ -188,12 +188,13 @@
       "properties": {
         "classes": {
           "type": "object",
-          "description": "{class: {model, effort, budget}}: the model and effort the coordinator starts a session of that class with (an empty string: the coordinator's own), and its default budget (400k, 600k, 800k or 1M); default the engine's (brain.brief.CLASSES: trivial a small model at low effort, strategic the strongest at high effort).",
+          "description": "{class: {model, effort, budget}}: the model and effort the coordinator starts a session of that class with (an empty string: the coordinator's own), and its default budget (400k, 600k, 800k or 1M); default the engine's (brain.brief.CLASSES: trivial a small model at low effort, strategic the strongest at high effort, each at 400k).",
           "additionalProperties": {
             "type": "object", "additionalProperties": false,
             "properties": {"model": {"type": "string"}, "effort": {"type": "string"}, "budget": {"type": "string"}}
           }
         },
+        "ceiling": {"enum": ["400k", "600k", "800k", "1M"], "description": "The context budget a brief starts a session under (default 400k, brain.brief.CEILING): a larger budget, a class's or --budget, is warned about as the expansion step of an unfinished task."},
         "done": {"type": "string", "minLength": 1, "description": "The heading of the rules' section copied as the definition of done (default 'Definition of done')."},
         "never": {"type": "string", "minLength": 1, "description": "The heading of the rules' section copied as the never-list (default 'Never'); without one, the rules' sentences that start with Never and their '<owner> decides' lines."},
         "after_merge": {"type": "array", "items": {"type": "string"}, "description": "The lines of the brief's 'After the merge' section (default the engine's, brain.brief.AFTER_MERGE: the session that merges its own PR archives itself after its after-merge steps, the coordinator archives a child reported merged and verified without asking again, never another running session or one with uncommitted or unmerged work, and the owner's auto_archive_inactive_days net); [] drops the section."}

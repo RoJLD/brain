@@ -315,7 +315,9 @@ writes the brief a coordinator hands to a sub-session, so that it edits only wha
 
 - the item, its status and priority, every prop as recorded, its open questions;
 - the task class with its model and effort, and the context budget: config.json `brief.classes` (default: trivial on
-  `haiku` at `low` effort, 400k; standard on the coordinator's own model, 400k; strategic on `opus` at `high`, 800k);
+  `haiku` at `low` effort, 400k; standard on the coordinator's own model, 400k; strategic on `opus` at `high`, 400k);
+  a budget above `brief.ceiling` (default 400k: a message costs two to three times more above it) is warned about, as
+  the expansion step of an unfinished task rather than a start;
 - the cost estimate of `brain cost estimate`;
 - the coordinator's app session id (`--coordinator`, else `$CLAUDE_CODE_HOST_SESSION_ID`, the session that runs the
   command), which also tells the sub-session to sign its reports with its own id, read by `brain sessions self`, and
