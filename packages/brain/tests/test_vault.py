@@ -3,7 +3,6 @@ import io
 import json
 import os
 import shutil
-import signal
 import subprocess
 import sys
 import tarfile
@@ -13,8 +12,8 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import pytest
-
 from brain import cli, config, keystore, rotation, stateio, vault
+from proc_tree import Tree, all_gone, holder
 
 FAKE = Path(__file__).parent / "fixtures" / "fake_age.py"
 NOW = datetime(2026, 11, 2, 12, 0, tzinfo=timezone.utc)
@@ -118,16 +117,16 @@ def gpg_call(ad: vault.Gpg, call: str, *args, end: float, deadline: float, tmp: 
 
 
 def _run_child(ad, call, deadline, end, started, env, job, result, child_log, private):
-    with open(child_log, "wb") as log:
-        child = subprocess.Popen([sys.executable, "-c", _GPG_CHILD, json.dumps(job)], stdin=subprocess.DEVNULL,
-                                 stdout=log, stderr=subprocess.STDOUT, env=env,
-                                 **({} if os.name == "nt" else {"start_new_session": True}))
+    with open(child_log, "wb") as log, Tree([sys.executable, "-c", _GPG_CHILD, json.dumps(job)],
+                                            stdin=subprocess.DEVNULL, stdout=log, stderr=subprocess.STDOUT,
+                                            env=env) as tree:
+        child = tree.child
         if started is not None:   # a test's fake gpg: the deadline runs once it is up, never while it is being made
             end = _once_started(child, started, end)
         try:
             child.wait(timeout=max(end - time.monotonic(), 0))
         except subprocess.TimeoutExpired:
-            _kill_tree(child)
+            tree.kill()   # its job (Windows) or its session (POSIX): all at once, none started meanwhile survives
             _remove_homes(ad, sorted(private.glob("bv-*")))
             pytest.skip(f"gpg {call} did not end within {deadline:g} s (its agent or entropy): its process tree "
                         "killed, skipped, not waited on")
@@ -138,8 +137,8 @@ def _run_child(ad, call, deadline, end, started, env, job, result, child_log, pr
 
 
 def _once_started(child: subprocess.Popen, started: Path, end: float, bound: float = 60.0) -> float:
-    """``end`` moved past the moment the file ``started`` appears (bounded): a kill of the tree while its last process
-    is being created can miss that process (taskkill /T reads the tree once), which a slow runner made happen."""
+    """``end`` moved past the moment the file ``started`` appears (bounded): on a slow runner the deadline fell before
+    the fake gpg was up, and the test then proved nothing of its kill."""
     t0 = time.monotonic()
     while not started.exists() and child.poll() is None and time.monotonic() - t0 < bound:
         time.sleep(0.05)
@@ -167,22 +166,6 @@ def gpg_outcome(call: str, out: dict):
     raise RuntimeError(f"gpg {call}: {module}.{name}: {args}\n{tb}")
 
 
-def _kill_tree(child: subprocess.Popen) -> None:
-    """The child and every process it started: taskkill /T on Windows, its process group (its own session) on
-    POSIX."""
-    if os.name == "nt":
-        subprocess.run(["taskkill", "/PID", str(child.pid), "/T", "/F"], capture_output=True, timeout=30, check=False)
-    else:
-        try:
-            os.killpg(child.pid, signal.SIGKILL)
-        except ProcessLookupError:
-            pass
-    try:
-        child.wait(timeout=10)
-    except subprocess.TimeoutExpired:
-        pass
-
-
 def _remove_homes(ad: vault.Gpg, homes: list[Path]) -> None:
     """The gpg homes a killed child left: their agent stopped (one that left the process tree: a daemon in its own
     session), then removed."""
@@ -202,25 +185,11 @@ def tree(d: Path) -> dict:
 
 
 def _sleeping_gpg(pidfile: Path) -> vault.Gpg:
-    """A gpg that never answers (an agent that never does): its command a Python that writes its pid, then sleeps."""
-    ad = vault.Gpg([sys.executable, "-c", f"import os, time; open({str(pidfile)!r}, 'w').write(str(os.getpid())); "
-                                          "time.sleep(60)"])
+    """A gpg that never answers (an agent that never does): each of its runs a :func:`proc_tree.holder` of
+    ``pidfile`` (its pid appended, the file kept open, then a sleep)."""
+    ad = vault.Gpg([sys.executable, "-c", holder(pidfile)])
     ad._msys = False   # never asked its version here (it would sleep too); the child's own call writes the pid file
     return ad
-
-
-def _alive(pid: int) -> bool:
-    if os.name == "nt":
-        out = subprocess.run(["tasklist", "/FI", f"PID eq {pid}", "/NH", "/FO", "CSV"], capture_output=True,
-                             text=True, check=False, timeout=30).stdout
-        return f'"{pid}"' in out
-    try:
-        os.kill(pid, 0)
-    except ProcessLookupError:
-        return False
-    except PermissionError:
-        return True
-    return True
 
 
 def test_a_gpg_call_that_hangs_is_killed_as_a_tree_and_skipped_with_its_reason(tmp_path):
@@ -230,11 +199,12 @@ def test_a_gpg_call_that_hangs_is_killed_as_a_tree_and_skipped_with_its_reason(t
     with pytest.raises(pytest.skip.Exception, match=r"did not end within 4 s \(its agent or entropy\): its process"):
         keygen(1, _sleeping_gpg(pidfile), deadline=4, tmp=tmp_path, started=pidfile)
     assert time.monotonic() - start < 90   # the deadline (4 s) runs once the fake is up, its start bounded at 60 s
-    pid = int(pidfile.read_text(encoding="utf-8"))   # the sleeping 'gpg' had started: the kill reached it
+    pids = [int(p) for p in pidfile.read_text(encoding="utf-8").split()]
+    assert pids   # the sleeping 'gpg' had started: the kill reached it, and any it was replaced by
     gone = time.monotonic() + 10
-    while _alive(pid) and time.monotonic() < gone:
+    while not all_gone(pidfile) and time.monotonic() < gone:
         time.sleep(0.2)
-    assert not _alive(pid)
+    assert all_gone(pidfile)
     assert not gpg_call.private.exists()   # no temporary gpg home left behind (the call's own folder, removed)
 
 
