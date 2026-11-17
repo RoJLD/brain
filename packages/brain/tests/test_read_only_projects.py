@@ -36,7 +36,7 @@ def test_a_read_only_project_is_never_loaded_and_cannot_be_named(tmp_path, monke
         with pytest.raises(SystemExit, match="is read only"):
             cli.main(argv)
     assert projects.check() == []
-    assert "access" in projects.KEYS and projects.READ_ONLY_KEYS == {"title", "access", "parent", "classes"}
+    assert "access" in projects.KEYS and projects.READ_ONLY_KEYS == {"title", "access", "parent", "classes", "aliases", "label"}
 
 
 def test_check_refuses_a_read_only_entry_that_would_hold_a_way_in_and_an_unknown_access(tmp_path, monkeypatch, store):
@@ -147,7 +147,8 @@ def test_brain_projects_and_its_json_say_each_access(tmp_path, monkeypatch, stor
     assert cli.main(["projects", "--json"]) == 0
     data = {d["name"]: d for d in json.loads(capsys.readouterr().out)["projects"]}
     assert data["demo"]["access"] == "write" and data["demo"]["shares_root_with"] == ""
-    assert data["upstream"] == {"name": "upstream", "title": "a project the brain follows", "access": "read"}
+    assert data["upstream"] == {"name": "upstream", "title": "a project the brain follows", "access": "read",
+                                "status": "active", "aliases": [], "label": ""}
     assert cli.main(["projects", "--keys"]) == 0
     assert "  access " in capsys.readouterr().out
 

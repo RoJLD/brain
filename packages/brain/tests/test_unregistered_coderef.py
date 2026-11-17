@@ -7,7 +7,7 @@ from __future__ import annotations
 
 from research_graph.cli import main as research_graph
 
-from brain import audit, projects
+from brain import audit_measure, projects
 from brain.commands._stores import check_registry
 
 CODE = ('- {id: "code:home:x.py", type: CodeRef, status: active, title: its own repo}\n'
@@ -59,7 +59,7 @@ def test_the_audit_reads_the_registry_the_project_came_from_found_by_its_root(tm
     (brain / "projects.yaml").write_text(f"home:\n  root: {(tmp_path / 'home').as_posix()}\n"
                                          f"lab:\n  root: {(tmp_path / 'lab').as_posix()}\n", encoding="utf-8")
     home = projects.load(brain)["home"]
-    assert home.registry_dir == brain and {"home", "lab"} <= audit._repo_tokens(home, [])
+    assert home.registry_dir == brain and {"home", "lab"} <= audit_measure._repo_tokens(home, [])
 
 
 def test_a_project_whose_repos_do_not_read_and_a_read_only_one_still_count(tmp_path):
@@ -76,4 +76,4 @@ def test_a_project_whose_repos_do_not_read_and_a_read_only_one_still_count(tmp_p
 def test_an_unknown_registry_never_makes_a_p0():
     """A project with no registry (an audit of a bare repo): its CodeRefs of other repos stay not measured."""
     p = projects.Project("demo", tmp := projects.Path("/m/lab"), [tmp / "notes" / "graph"])
-    assert p.registry_dir is None and audit._repo_tokens(p, []) is None
+    assert p.registry_dir is None and audit_measure._repo_tokens(p, []) is None

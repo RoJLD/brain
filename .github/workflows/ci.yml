@@ -41,7 +41,10 @@ jobs:
           pip install -e .
           pip install --no-deps -e packages/brain
           pip install pyyaml pytest "pytest-xdist>=3.5" pytest-cov "tomli>=2; python_version < '3.11'"
+          pip install "textual>=8,<9" "psutil>=5.9"
       - name: Tests
+        # the tui extra's packages installed (packages/brain/pyproject.toml, tui): the cockpit's tests (test_tui*.py)
+        # run, not skipped, and the coverage counts them; Textual pinned to the major its tests are written against.
         # in parallel, one worker per core (pytest-xdist; tests/conftest.py makes it worksteal: an idle worker takes
         # tests still queued on a busy one); the real docker client apart, on one process. On 3.12 the same run measures the coverage with test contexts (wi-brain-test-coverage): its data file is the artifact
         # coverage-data, which `brain coverage --repo brain --from coverage.data --cwd packages/brain` reads in a
@@ -76,6 +79,7 @@ jobs:
           pip install -e .
           pip install --no-deps -e packages/brain
           pip install pyyaml pytest "pytest-xdist>=3.5"
+          pip install "textual>=8,<9" "psutil>=5.9"
       - name: Tests
         run: pytest packages/brain -p no:randomly -n auto -m "not docker"
       - name: Tests (docker)

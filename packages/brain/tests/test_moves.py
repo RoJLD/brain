@@ -119,14 +119,14 @@ def test_history_is_the_new_prefix_outside_the_old_one():
 
 def test_the_audit_reads_the_moves_of_the_brain_the_project_came_from(tmp_path, monkeypatch):
     """Review of the PR, finding 5: the registry's brain, not whatever config.json sits at the project's root."""
-    from brain import audit
+    from brain import audit_measure
     monkeypatch.delenv("BRAIN_CONFIG", raising=False)
     brain = tmp_path / "brain"
     brain.mkdir()
     (brain / "config.json").write_text(json.dumps({"moved": TABLE}), encoding="utf-8")
     p = projects.Project("demo", tmp_path / "lab", [])
     p.registry_dir = brain
-    assert {m.old for m in audit._moved(p)} == set(TABLE)
+    assert {m.old for m in audit_measure._moved(p)} == set(TABLE)
 
 
 def test_brain_check_outside_git_says_it_did_not_check(tmp_path, monkeypatch):

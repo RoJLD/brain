@@ -27,6 +27,7 @@ Standard library only: the guard hook reads it.
 
 from __future__ import annotations
 
+import functools
 import os
 import re
 from pathlib import Path
@@ -179,27 +180,105 @@ def frontmatter_hooks(tool: str, target, before: str, after: str) -> str | None:
 GIT_VARS = (r"GIT_CONFIG\w*|GIT_DIR|GIT_WORK_TREE|GIT_INDEX_FILE|GIT_COMMON_DIR|GIT_NAMESPACE|GIT_\w*_DIRECTORY|"
             r"GIT_\w*_DIRECTORIES|GIT_EXEC_PATH|GIT_SSH\w*|GIT_ASKPASS|GIT_EXTERNAL_DIFF|GIT_TEMPLATE_DIR|"
             r"GIT_PROXY_COMMAND|GIT_ALLOW_PROTOCOL|GIT_(?:SEQUENCE_)?EDITOR(?!=(?:true|:|cat)\b)|GIT_PAGER(?!=(?:true|:|cat|less)\b)")
-WATCHED_VARS = (GIT_VARS + r"|HOME|USERPROFILE|XDG_CONFIG_HOME|BASH_ENV|SHELLOPTS|BASHOPTS|PATH|BRAIN_\w+|"
-                r"CLAUDE_CONFIG_DIR|CLAUDE_PLUGIN_ROOT|CLAUDE_BRAIN_DIR|CLAUDE_PROJECT_DIR")
+# The Brain's own variables (BRAIN_*) are watched as a class: a name is let through only when this module says why
+# setting it for a command neither lifts nor redirects any guard (wi-brain-floor-watched-vars; docs/guards.md, « The
+# environment »). A command's assignment reaches that command and its children only, but a child may be a nested
+# Claude Code whose hooks inherit it, so a name the guard, its hook scripts or an owner's gesture reads stays watched
+# (BRAIN_GUARD_ALLOW, BRAIN_PYTHON, BRAIN_HOME, BRAIN_PERSONAL, BRAIN_AGENT_SESSION, BRAIN_IPC_TOKEN_FILE...).
+READ_PATH_VARS = {
+    "BRAIN_STRICT": "how strictly a check reads the files it validates (brain.schema.mode); no guard reads it",
+    "BRAIN_READ_HINT": "turns the read hint off (a hint, never a refusal)",
+    "BRAIN_WAIT_HINT": "turns the wait hint off (a hint, never a refusal)",
+    "BRAIN_BUDGET_WATCH": "turns the budget reminder off (a reminder, never a refusal)",
+}
+# Let through only while the guard's own home is the default one: the engine honours them on a scratch home alone
+# (brain.faults.scratch), and BRAIN_HOME stays watched, so a command cannot make its children's home a scratch one.
+SCRATCH_VARS = {
+    "BRAIN_NOW": "the engine's clock, honoured on a scratch home only (brain.faults)",
+    "BRAIN_FAULT": "injected faults, honoured on a scratch home only (brain.faults)",
+}
+# Let through only as one literal absolute path inside a worktree of the repository that holds the config.json the
+# guard reads (git worktree list): a check that reads a pull request's own files. The guard never lowers its floor
+# for BRAIN_CONFIG (brain.config.anchored: the config found without it holds the floor too).
+WORKTREE_VARS = {
+    "BRAIN_CONFIG": "the config.json a command reads, a worktree's of the same repository",
+    "BRAIN_PROJECTS": "the registry a command reads, a worktree's of the same repository",
+}
+
+
+def watched(scratch: bool = False, nocase: bool = False) -> str:
+    """The alternation of the variables no command sets while the floor is on (in any form): GIT_VARS, what chooses
+    git's global configuration, what bash reads before a script, PATH, Claude Code's that choose its settings or
+    plugin, and every BRAIN_* name but those of READ_PATH_VARS and, off a scratch home (``scratch`` false),
+    SCRATCH_VARS. WORKTREE_VARS stay in it: brain.floorguard takes out the assignments of theirs that pass first.
+    ``nocase`` (Windows, where a native program reads an environment variable's name in any case: ``brain_home=x``
+    is its BRAIN_HOME, ``path=x`` its PATH): every name in any case, HOME and PATH included (a lowercase shell variable
+    of those letters, ``path=$(pwd)``, ``read -r home``, is refused too: the shell exports one in more ways than a
+    reading of its forms keeps up with; name it otherwise)."""
+    free = sorted({*READ_PATH_VARS, *(() if scratch else SCRATCH_VARS)})
+    brain = r"BRAIN_(?!(?:" + "|".join(n[len("BRAIN_"):] for n in free) + r")\b)\w+"
+    names = (GIT_VARS + r"|USERPROFILE|XDG_CONFIG_HOME|BASH_ENV|SHELLOPTS|BASHOPTS|" + brain +
+             r"|CLAUDE_CONFIG_DIR|CLAUDE_PLUGIN_ROOT|CLAUDE_BRAIN_DIR|CLAUDE_PROJECT_DIR")
+    return f"(?i:{names}|HOME|PATH)" if nocase else names + r"|HOME|PATH"
+
+
+WATCHED_VARS = watched()
 _START = r"(?:^|(?<=[\s;&|(]))"
-ENV_ASSIGN = re.compile(
-    rf"{_START}(?:{WATCHED_VARS})\+?=|"                                                   # NAME=, NAME+= (bash, cmd's set)
-    rf"\b(?:export|declare|typeset|readonly|read)\b[^;&|\n]*?(?<![\w${{])(?:{WATCHED_VARS})\b|"
-    rf"\bprintf\s+-v\s*(?:{WATCHED_VARS})\b|"
-    rf"\$\{{(?:{WATCHED_VARS}):?=|\(\(\s*(?:{WATCHED_VARS})\s*[-+*/]?=|"                 # ${NAME:=x}, (( NAME = 1 ))
-    rf"(?<![\w-])set\s(?:[^;&|\n]*\s)?(?:-[A-Za-z]*a[A-Za-z]*|allexport)(?![\w-])|"     # set -a, set -e -o allexport
-    rf"\bshopt\b[^;&|\n]*\ballexport\b|"                                                  # shopt -so allexport
-    rf"\b(?:for|select)\s+(?:{WATCHED_VARS})\b(?=\s*(?:in\b|;|\n|do\b|$))|"                # for NAME in, select NAME in
-    rf"\bgetopts\s+\S+\s+(?:{WATCHED_VARS})\b|"
-    rf"\b(?:mapfile|readarray)\b[^;&|\n]*?(?<![\w$-])(?:{WATCHED_VARS})\b|"
-    rf"(?i:\$\{{?env:(?:{WATCHED_VARS})\}}?\s*(?:[+-]?=|,))|"                            # $env:X = , ${env:X} =, $env:X, $y =
-    rf"(?i:(?<![$\{{\w])env:[\\/]?(?:{WATCHED_VARS})\b)|"                                # the env: provider: Env:\X, Env:/X, 'env:X'
-    rf"(?i:\b(?:rename-item|copy-item|move-item|rni|ren|cpi|copy|mi|move)\b[^;|\n]*\benv:)|"
-    rf"(?i:\benv:[\\/]?[^;|\n]*-name\s+(?:{WATCHED_VARS})\b)|"
-    rf"(?i:\benv:[^;\n]*\|\s*(?:rename-item|rni|ren|copy-item|cpi|copy|move-item|mi|move|set-item|si|new-item|ni)\b)|"
-    rf"(?i:\b(?:new-item|ni|set-item|si|rename-item|rni|ren)\b[^;|\n]*-(?:new)?name\s+(?:{WATCHED_VARS})\b)|"
-    rf"(?i:\.Environment(?:Variables)?\s*(?:\[|\.(?:Add|Item|set_Item)\s*\()\s*(?:{WATCHED_VARS})\b)|"
-    rf"(?i:SetEnvironmentVariable\s*\(\s*(?:{WATCHED_VARS})\s*,)")
+
+
+@functools.lru_cache(maxsize=8)
+def env_assign(scratch: bool = False, nocase: bool = os.name == "nt") -> re.Pattern:
+    """An assignment of a variable of :func:`watched` in any form (``nocase``: the names in any case, as on
+    Windows)."""
+    w = watched(scratch, nocase)
+    return re.compile(
+        rf"{_START}(?:{w})(?:\[[^\]\n]*\])?\+?=|"                    # NAME=, NAME+=, NAME[0]= (bash, cmd's set)
+        rf"\b(?:export|declare|typeset|readonly|read)\b[^;&|\n]*?(?<![\w${{])(?:{w})\b|"
+        rf"\bprintf\s+-v\s*(?:{w})\b|"
+        rf"\$\{{(?:{w}):?=|\(\(\s*(?:{w})\s*[-+*/]?=|"                             # ${NAME:=x}, (( NAME = 1 ))
+        rf"(?<![\w-])set\s(?:[^;&|\n]*\s)?(?:-[A-Za-z]*a[A-Za-z]*|allexport)(?![\w-])|"     # set -a, set -e -o allexport
+        rf"\bshopt\b[^;&|\n]*\ballexport\b|"                                        # shopt -so allexport
+        rf"\b(?:for|select)\s+(?:{w})\b(?=\s*(?:in\b|;|\n|do\b|$))|"                # for NAME in, select NAME in
+        rf"\bgetopts\s+\S+\s+(?:{w})\b|"
+        rf"\b(?:mapfile|readarray)\b[^;&|\n]*?(?<![\w$-])(?:{w})\b|"
+        rf"(?i:\$\{{?env:(?:{w})\}}?\s*(?:[+-]?=|,))|"                             # $env:X = , ${env:X} =, $env:X, $y =
+        rf"(?i:(?<![$\{{\w])env:[\\/]?(?:{w})\b)|"                                 # the env: provider: Env:\X, 'env:X'
+        rf"(?i:\b(?:rename-item|copy-item|move-item|rni|ren|cpi|copy|mi|move)\b[^;|\n]*\benv:)|"
+        rf"(?i:\benv:[\\/]?[^;|\n]*-name\s+(?:{w})\b)|"
+        rf"(?i:\benv:[^;\n]*\|\s*(?:rename-item|rni|ren|copy-item|cpi|copy|move-item|mi|move|set-item|si|new-item|ni)\b)|"
+        rf"(?i:\b(?:new-item|ni|set-item|si|rename-item|rni|ren)\b[^;|\n]*-(?:new)?name\s+(?:{w})\b)|"
+        rf"(?i:\.Environment(?:Variables)?\s*(?:\[|\.(?:Add|Item|set_Item)\s*\()\s*(?:{w})\b)|"
+        rf"(?i:SetEnvironmentVariable\s*\(\s*(?:{w})\s*,)|"
+        # PowerShell's env: drive as the location (Set-Item NAME then needs no env: path), a process started with an
+        # environment of its own, and inline code's environment writes (Python, Node, Perl, Ruby)
+        rf"(?i:(?<![\w-])(?:set-location|push-location|sl|chdir|pushd|cd)\s+env:)|"
+        rf"(?i:-env\w*\s*@\{{[^}}]*\b(?:{w})\b\s*=)|"
+        rf"(?i:\bos\.(?:environ\s*\[\s*(?:{w})\s*\]\s*=(?!=)|putenv\s*\(\s*(?:{w})\b|"
+        rf"environ\.(?:setdefault|update)\s*\([^)]*\b(?:{w})\b))|"
+        rf"(?i:\bprocess\.env\s*(?:\.\s*(?:{w})\b|\[\s*(?:{w})\s*\])\s*=(?!=))|"
+        rf"(?i:\$ENV\{{\s*(?:{w})\s*\}}\s*=(?!=)|\bENV\s*\[\s*(?:{w})\s*\]\s*=(?!=))")
+
+
+ENV_ASSIGN = env_assign()
+
+
+def assignments(scratch: bool | None = None) -> re.Pattern:
+    """:func:`env_assign` for this process: SCRATCH_VARS watched when the guard's own home is a scratch one."""
+    if scratch is None:
+        from .faults import scratch as on_scratch
+        scratch = on_scratch()
+    return env_assign(scratch)
+
+
+# One assignment of a WORKTREE_VARS name to one literal value, which brain.floorguard reads as a path: NAME=VALUE
+# (a command's prefix, a statement, export's or env's argument, cmd's set) or PowerShell's $env:NAME = 'VALUE'. The
+# value is single-quoted, double-quoted with nothing a shell expands in it ($, a backtick, a backslash that escapes),
+# or bare path characters (no backslash: bash drops it), and ends the word. Any other form stays watched.
+_VALUE = r"""(?P<value>'[^'\n]*'|"(?:[^"\n$`\\]|\\(?![$`"\\\n]))*"|[A-Za-z0-9_.:/+,@-]+)(?=[\s;&|)]|$)"""
+WORKTREE_ASSIGN = re.compile(
+    rf"{_START}(?P<name>{'|'.join(WORKTREE_VARS)})={_VALUE}|"
+    rf"(?i:(?<![\w$])\$env:(?P<psname>{'|'.join(WORKTREE_VARS)})\s*=\s*)(?P<psvalue>'[^'\n]*'|\"[^\"\n$`]*\")"
+    rf"(?=[\s;|)]|$)")
 # An assignment whose name the guard cannot read (a variable, a call): refused while the floor is on.
 ENV_DYNAMIC = re.compile(r"\b(?:export|declare|typeset|printf\s+-v)\s+(?:-\w+\s+)*[^\s;=]*[$(`]|"
                          r"(?i:\benv:[^\s;=]*[$(]|\$\{env:[^}]*[$(]|\b(?:set-item|new-item|si|ni)\s+\$)")
@@ -243,7 +322,7 @@ GIT_RUNNERS = {"bisect": "run", "submodule": "foreach", "filter-branch": "", "fi
                "update-ref": ""}
 # What git may run in the checkout that holds config.json while the floor is on: reads, fetch, push (judged on its
 # own), worktree, branch and tag (they leave its files alone); git config and git remote only to read, git pull only
-# as `git pull --ff-only` with no remote nor refspec (brain.floorguard._checkout).
+# of its upstream, main or master of a remote (brain.floorenv.checkout, pull).
 CHECKOUT_SAFE = {"status", "log", "diff", "show", "fetch", "rev-parse", "ls-files", "ls-tree", "ls-remote",
                  "cat-file", "blame", "grep", "describe", "for-each-ref", "show-ref", "rev-list", "merge-base",
                  "shortlog", "name-rev", "check-ignore", "count-objects", "var", "help", "version", "push",
@@ -522,11 +601,14 @@ def read_lock() -> dict | None:
     return data
 
 
-def effective(cfg, lock: dict | None = None) -> dict:
+def effective(cfg, lock: dict | None = None, anchor=None) -> dict:
     """The floor as the guard holds it: the lock file's copy wherever a lock exists (an unreadable one says ONLY;
     config.json's, when it says more, makes unlocked() refuse every call), else config.json's (a file that exists but
-    cannot be read or parsed says ON)."""
+    cannot be read or parsed says ON). ``anchor`` (brain.config.anchored: the config.json found without
+    $BRAIN_CONFIG, when it names another): its floor holds too, so BRAIN_CONFIG never lowers the floor."""
     local = settings(cfg.data) if not cfg.error else dict(ON)
+    if anchor is not None:
+        local = _union(local, settings(anchor.data) if not anchor.error else dict(ON))
     if lock is None:
         return local
     return _union(local, dict(ONLY) if lock.get("error") else settings({"floor": lock.get("floor")}))
