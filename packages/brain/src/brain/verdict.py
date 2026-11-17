@@ -121,10 +121,11 @@ def test_lines(rc: int, stopped: bool, deadline: float, summary: PytestSummary, 
 
 
 def three_lines(kind: str, passed: list[str], failed: list[tuple[str, str]], skipped: list[tuple[str, str]],
-                logs: Path | None, next_cmd: str) -> list[str]:
-    """The verdict: what passed (and the logs' folder), what failed and why, the next command."""
+                logs: Path | None, next_cmd: str, state: str = "") -> list[str]:
+    """The verdict: what passed (and the logs' folder), what failed and why, the next command; ``state`` overrides
+    PASSED or FAILED (INCOMPLETE: a check skipped on purpose)."""
     total = len(passed) + len(failed)
-    state = "PASSED" if not failed else "FAILED"
+    state = state or ("PASSED" if not failed else "FAILED")
     head = f"{kind}: {state} {len(passed)}/{total}" + (f" ({', '.join(passed)})" if passed else "")
     if skipped:
         head += f"; skipped: {', '.join(f'{n} ({why})' for n, why in skipped)}"

@@ -6,8 +6,10 @@ section: Added
   regenerated and the store checked: `brain refresh --offline`; a view it rewrote is a change to commit), audit
   (`brain audit --diff`: 0 NEW, 0 LEFT), public (a public repo's HEAD stamped by `brain check --public --history`, a
   valid stamp kept) and tests (`brain test --changed`, `--strict` for the whole suite when the selection widens).
-  Every step runs (`--fail-fast` stops at the first failure, `--skip STEP` skips one, said in the verdict); each
-  step's command and output go to a log file under `<temp>/brain-gate/<run>/` (or `--logs`, the newest 20 runs
-  kept), the report to `verdict.json`, and three lines say what passed, what failed and why, and the next command.
-  Exit 0 only when every step that applies passes, 1 otherwise, 2 when it cannot start; `--json` for the report
+  Every step runs (`--fail-fast` stops at the first failure; `--skip STEP` skips one, and the verdict then says
+  INCOMPLETE with exit 1: a skipped check is no pass); the brain steps run with the engine running the gate,
+  `--python` names the tests' interpreter; each step's command and output go to a log file under
+  `<temp>/brain-gate/<run>/` (or `--logs`, the newest 20 runs kept), the report to `verdict.json`, and three lines say what passed, what failed and why, and the next command.
+  Exit 0 only when every step that applies passes, 1 otherwise, 2 when it cannot start (not a git checkout, a
+  `--base` that is no commit here); `--json` for the report
   (brain.gate, brain.verdict).

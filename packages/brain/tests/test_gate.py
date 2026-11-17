@@ -55,10 +55,12 @@ class Fake:
     def __init__(self, rules=None):
         self.rules = dict(rules or {})
         self.calls: list[str] = []
+        self.exes: set[str] = set()   # the interpreters that ran the brain steps
 
     def __call__(self, cmd, cwd=None, timeout=0, env=None):
         line = " ".join(str(c) for c in cmd[1:])
         self.calls.append(line)
+        self.exes.add(str(cmd[0]))
         for pattern, answer in self.rules.items():
             if re.search(pattern, line):
                 return answer(cmd, cwd) if callable(answer) else answer
@@ -228,12 +230,48 @@ def test_skip_and_fail_fast(repo):
         make(repo, skip=("nope",))
 
 
+def test_a_check_skipped_on_purpose_is_no_pass(repo):
+    """--skip never turns the gate green: nothing failed, yet INCOMPLETE and not ok (exit 1)."""
+    stamp(repo)
+    r = make(repo, skip=("tests",)).run()
+    lines = r.lines()
+    assert not r.ok and r.skipped_on_purpose == ["tests"] and not [s for s in r.steps if s.ok is False]
+    assert lines[0].startswith("gate: INCOMPLETE 4/4") and lines[1] == "failed: none"
+    assert lines[2] == "next: brain gate without --skip (tests) before the push"
+    assert make(repo).run().ok   # the steps that do not apply (views, public) are no skip on purpose
+
+
+def test_the_brain_steps_run_with_this_engine_and_the_tests_with_python(repo):
+    import sys
+    stamp(repo)
+    fake = Fake()
+    make(repo, fake, python="other-python").run()
+    assert fake.exes == {sys.executable}
+    assert [c for c in fake.calls if " test --changed" in c][0].endswith("--python other-python")
+
+
+def test_a_base_that_is_no_commit_cannot_start(repo, capsys):
+    with pytest.raises(gate.GateError, match="--base origin/nope: not a commit of this checkout"):
+        make(repo, base="origin/nope")
+    assert cli.main(["gate", "--repo-dir", str(repo), "--base", "origin/nope"]) == 2
+    assert "not a commit" in capsys.readouterr().err
+
+
+def test_a_widened_selection_that_ran_nothing_says_so(repo):
+    stamp(repo)
+    nothing = ship.Result(0, "", "brain test: no test module to run\nbrain test: shadow mode: the whole suite is the "
+                                 "answer; the CI runs it before the merge\n")
+    t = by_name(make(repo, Fake({" test --changed": nothing})).run())["tests"]
+    assert t.ok and t.detail == "no test module selected; widened: the CI runs the whole suite"
+
+
 def test_a_step_that_raises_fails_alone(repo, monkeypatch):
     stamp(repo)
     monkeypatch.setattr(gate.Gate, "audit", lambda self: (_ for _ in ()).throw(OSError("disk gone")))
     r = make(repo).run()
     a = by_name(r)["audit"]
     assert not r.ok and a.ok is False and a.detail == "could not run: disk gone" and by_name(r)["tests"].ok
+    assert "--skip" not in a.next and a.next.startswith("run the audit step's command by hand")
 
 
 def test_the_command_exit_codes_and_outputs(repo, monkeypatch, capsys):
