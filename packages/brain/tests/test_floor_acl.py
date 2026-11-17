@@ -238,12 +238,16 @@ def test_the_apply_denies_the_account_its_files_before_the_hooks_and_the_lock(tm
     assert not (set(a["files"]) | set(a["trees"]) | set(a["folders"])) & set(lock["checks"])   # _acl_held reads them
     home = Path(a["home"])
     assert json.loads((home / "settings.local.json").read_text(encoding="utf-8")) == {} and (home / "agents").is_dir()
+    _the_acl_commands_ran_in_order(ran, a, home)
+    assert any("paths denied to" in line for line in out)
+
+
+def _the_acl_commands_ran_in_order(ran, a, home):
     resets = [cmd for cmd, *_ in ran if "/reset" in cmd and cmd[1].startswith(str(home))]   # one entry at a time
     assert str(home / "hooks" / "h.sh") in [c[1] for c in resets] and not [c for c in resets if "/T" in c]
     denies = [(cmd, managed, locked) for cmd, managed, locked in ran if "/deny" in cmd and SID in cmd[3]]
     assert len(denies) == len(a["files"]) + len(a["trees"]) + len(a["folders"]) + 1
     assert not any(managed or locked for _, managed, locked in denies)   # before the managed hooks and the lock file
-    assert any("paths denied to" in line for line in out)
 
 
 @nt
