@@ -306,17 +306,22 @@ WRITE_RIGHTS = 0x2 | 0x4 | 0x10 | 0x40 | 0x10000 | 0x40000 | 0x80000
 TRUSTED_OWNERS = {"S-1-5-32-544", "S-1-5-18", "S-1-5-80-956008885-3418522649-1831038044-1853292631-2271478464"}
 
 
-def acl_wanted(data) -> bool:
-    """Whether config.json's data asks the lock's ACL step (brain.flooracl): ``floor.acl: true`` under floor.only."""
+def acl_wanted(data, nt: bool | None = None) -> bool:
+    """Whether config.json's data asks the lock's ACL step (brain.flooracl): ``floor.acl: true`` under floor.only, on
+    Windows (``nt``): a POSIX machine sharing that config.json locks without it."""
     section = data.get("floor") if isinstance(data, dict) else None
-    return isinstance(section, dict) and section.get("acl") is True and settings(data)["only"]
+    return (os.name == "nt" if nt is None else nt) and isinstance(section, dict) and section.get("acl") is True \
+        and settings(data)["only"]
 
 
 def acl_loose(path, writable=None) -> str:
-    """Why a path of the lock's ACL step is not held ('' when it is): gone, within this session's reach, or owned by
-    another than the administrators (a folder a session made again in its place, its DACL read-only for itself)."""
+    """Why a path of the lock's ACL step is not held ('' when it is): gone, a link or a junction (or under one),
+    within this session's reach, or owned by another than the administrators (a folder a session made again in its
+    place, its DACL read-only for itself)."""
     if not os.path.lexists(path):
         return "missing"
+    if _real(path) != os.path.normcase(os.path.abspath(path)):
+        return "a link or a junction"
     if (writable or globals()["writable"])(path):
         return "writable"
     if os.name == "nt" and owner(path) not in TRUSTED_OWNERS:
@@ -324,17 +329,33 @@ def acl_loose(path, writable=None) -> str:
     return ""
 
 
+def _home_moved(home: str) -> str:
+    """Which of USERPROFILE and HOME (Git Bash's /c/x read as C:/x) names another folder than the profile that holds
+    ``home`` (~/.claude, the ACL step's): Claude Code would read its settings from there."""
+    want = os.path.normcase(os.path.abspath(os.path.dirname(home)))
+    for name in ("USERPROFILE", "HOME"):
+        value = os.environ.get(name, "")
+        value = re.sub(r"^/([A-Za-z])(?=/|$)", lambda m: m.group(1) + ":", value)
+        if value and os.path.normcase(os.path.abspath(value)) != want:
+            return name
+    return ""
+
+
 def _acl_held(lock: dict, writable) -> str:
-    """'' when the lock's ACL step (its ``acl``) still holds for this session: its account is this process's, Claude
-    Code reads the folder it locked (no CLAUDE_CONFIG_DIR), and each of its paths is held (:func:`acl_loose`)."""
+    """'' when the lock's ACL step (its ``acl``) still holds for this session: its account is this process's (one that
+    cannot be read is not), Claude Code reads the folder it locked (no CLAUDE_CONFIG_DIR, USERPROFILE and HOME the
+    profile), and each of its paths is held (:func:`acl_loose`)."""
     a = lock.get("acl")
     if not isinstance(a, dict):
         return ""
     me = account()
-    if me and me != a.get("account"):
-        return f"the lock's ACL step denies {a.get('account')}, not this session's account {me}"
+    if me != a.get("account"):
+        return f"the lock's ACL step denies {a.get('account')}, not this session's account {me or '(unread)'}"
     if os.environ.get("CLAUDE_CONFIG_DIR"):
         return "CLAUDE_CONFIG_DIR moves Claude Code's settings out of the folder the lock's ACL step holds"
+    moved = _home_moved(str(a.get("home") or ""))
+    if moved:
+        return f"{moved} moves Claude Code's settings out of the profile the lock's ACL step holds"
     for p in [*a.get("files", []), *a.get("trees", []), *a.get("folders", [])]:
         why = acl_loose(p, writable)
         if why:

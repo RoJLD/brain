@@ -38,6 +38,7 @@ def _acl_brain(tmp_path, monkeypatch, acl=True, only=True, project=True):
     home = floor.profile(SID) / ".claude"
     for d in ("hooks", "plugins"):
         (home / d).mkdir(parents=True, exist_ok=True)
+    (home / "hooks" / "h.sh").write_text("exit 0", encoding="utf-8")
     (home / "settings.json").write_text("{}", encoding="utf-8")
     if project:
         lab = tmp_path / "lab"
@@ -119,9 +120,9 @@ def test_the_commands_act_on_the_path_itself_and_deny_the_account():
                     ["H/settings.json", "/deny", f"{sid}:(WD,AD,WEA,WA,DC,D,WDAC,WO)", *q],
                     ["P/.claude", "/setowner", "*S-1-5-32-544", *q],
                     ["P/.claude", "/deny", f"{sid}:(WD,AD,WEA,WA,D,DC,WDAC,WO)", *q],
-                    ["H/hooks", "/deny", f"{sid}:(OI)(CI)(WD,AD,WEA,WA,D,DC,WDAC,WO)", *q],
-                    [os.path.join("H/hooks", "*"), "/reset", "/T", *q],
-                    ["H/hooks", "/setowner", "*S-1-5-32-544", "/T", *q]]
+                    ["H/hooks", "/setowner", "*S-1-5-32-544", *q],
+                    ["H/hooks", "/deny", f"{sid}:(OI)(CI)(WD,AD,WEA,WA,D,DC,WDAC,WO)", *q]]
+    assert not [c for c in cmds if "/T" in c or any("*" in w and not w.startswith("*S-") for w in c)]   # round 2
     for c in cmds:   # never icacls' W, M or F: they carry SYNCHRONIZE and READ_CONTROL, and the files must still read
         assert not any(":" in w and ("(W)" in w or "(M)" in w or "F)" in w) for w in c), c
 
@@ -133,9 +134,12 @@ def test_undo_gives_back_only_what_is_still_the_lock_s(tmp_path):
     a = _plan(str(h), [str(h / "settings.json"), str(h / "gone.json")], [str(h / "hooks")], [])
     cmds, left = flooracl.undo(a, nt=True, owner=lambda p: "S-1-5-32-544")
     sid, q = f"*{SID}", ["/L", "/C", "/Q"]
-    assert [c[1:] for c in cmds][:2] == [[str(h), "/remove:d", sid, *q], [str(h), "/setowner", sid, *q]]
-    assert [c[1:] for c in cmds][-2:] == [[str(h / "hooks"), "/remove:d", sid, "/T", *q],
-                                          [str(h / "hooks"), "/setowner", sid, "/T", *q]]
+    assert [c[1:] for c in cmds][:2] == [[str(h / "hooks"), "/remove:d", sid, "/T", *q],
+                                         [str(h / "hooks"), "/setowner", sid, "/T", *q]]   # trees first
+    assert [c[1:] for c in cmds][-2:] == [[str(h), "/remove:d", sid, *q], [str(h), "/setowner", sid, *q]]   # home last
+    cmds, _ = flooracl.undo(a, nt=True, owner=lambda p: "S-1-5-32-544", keep_owner={str(h / "hooks")})
+    assert [c[1:] for c in cmds][:2] == [[str(h / "hooks"), "/remove:d", sid, "/T", *q],
+                                         [str(h / "settings.json"), "/remove:d", sid, *q]]   # its owner kept
     assert left == [f"{h / 'gone.json'}: gone"]                     # a recorded path gone: skipped (review #6)
     cmds, left = flooracl.undo(a, nt=True, owner=lambda p: SID)     # a folder a session made again: never handed over
     assert cmds == [] and all("not owned by Administrators" in x or "gone" in x for x in left)
@@ -231,10 +235,11 @@ def test_the_apply_denies_the_account_its_files_before_the_hooks_and_the_lock(tm
     lock = floor.read_lock()
     a = lock["acl"]
     assert a["account"] == SID and lock["floor"] == {"refuse": False, "only": True}
-    assert set(a["files"]) | set(a["trees"]) | set(a["folders"]) <= set(lock["checks"])   # checked on each call
-    assert a["home"] not in lock["checks"]                    # ~/.claude itself takes Claude Code's own new files
+    assert not (set(a["files"]) | set(a["trees"]) | set(a["folders"])) & set(lock["checks"])   # _acl_held reads them
     home = Path(a["home"])
     assert json.loads((home / "settings.local.json").read_text(encoding="utf-8")) == {} and (home / "agents").is_dir()
+    resets = [cmd for cmd, *_ in ran if "/reset" in cmd and cmd[1].startswith(str(home))]   # one entry at a time
+    assert str(home / "hooks" / "h.sh") in [c[1] for c in resets] and not [c for c in resets if "/T" in c]
     denies = [(cmd, managed, locked) for cmd, managed, locked in ran if "/deny" in cmd and SID in cmd[3]]
     assert len(denies) == len(a["files"]) + len(a["trees"]) + len(a["folders"]) + 1
     assert not any(managed or locked for _, managed, locked in denies)   # before the managed hooks and the lock file
@@ -343,9 +348,11 @@ def _acl_lock(tmp_path, monkeypatch, paths, account=SID):
     cfg = _setup(tmp_path, monkeypatch, only=True, acl=True)
     lock = _lock(cfg, {"refuse": False, "only": True}, checks=paths)
     data = json.loads(lock.read_text(encoding="utf-8"))
-    data["acl"] = {"account": account, "home": str(tmp_path), "files": [str(p) for p in paths], "trees": [],
+    data["acl"] = {"account": account, "home": str(tmp_path / "profile" / ".claude"), "files": [str(p) for p in paths], "trees": [],
                    "folders": []}
     lock.write_text(json.dumps(data), encoding="utf-8")
+    monkeypatch.setenv("USERPROFILE", str(tmp_path / "profile"))
+    monkeypatch.setenv("HOME", str(tmp_path / "profile"))
     c = guards.config.load()
     return c, floor.effective(c, floor.read_lock())
 
@@ -371,7 +378,13 @@ def test_the_guard_refuses_every_call_while_an_acl_path_is_not_held(tmp_path, mo
         monkeypatch.setattr(floor, "owner", lambda p: "S-1-5-32-544")
     monkeypatch.setattr(floor, "account", lambda: "S-1-5-21-9-9-9-1002")
     assert "not this session's account" in floor.unlocked(c, fl, floor.read_lock(), writable=held)
+    monkeypatch.setattr(floor, "account", lambda: "")                       # unread: refused (round 2)
+    assert "not this session's account" in floor.unlocked(c, fl, floor.read_lock(), writable=held)
     monkeypatch.setattr(floor, "account", lambda: SID)
+    for name in ("USERPROFILE", "HOME"):                                    # Claude Code's home moved (round 2)
+        monkeypatch.setenv(name, str(tmp_path / "elsewhere"))
+        assert f"{name} moves" in floor.unlocked(c, fl, floor.read_lock(), writable=held)
+        monkeypatch.setenv(name, str(tmp_path / "profile"))
     monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(tmp_path / "elsewhere"))
     assert "CLAUDE_CONFIG_DIR" in floor.unlocked(c, fl, floor.read_lock(), writable=held)
     monkeypatch.delenv("CLAUDE_CONFIG_DIR")
@@ -438,3 +451,77 @@ def test_a_real_acl_step_on_a_scratch_profile(tmp_path):
         for cmd in flooracl.undo(a)[0]:
             subprocess.run(cmd, capture_output=True, timeout=300)
     assert flooracl.denied(home / "settings.json", sid) == 0 and floor.owner(home / "settings.json") == sid
+
+
+def _ran(ran):
+    def run(c, **k):
+        ran.append(c[1:])
+        return _Done()
+    return run
+
+
+def test_lock_trees_walks_top_down_one_entry_at_a_time_and_refuses_a_link(tmp_path):
+    """Round 2 (both skeptics): no wildcard nor /T, whose middle components icacls follows; each entry owned by the
+    administrators then reset, before its own entries are listed; a junction met is refused, never followed."""
+    h = tmp_path / "h"
+    (h / "hooks" / "sub").mkdir(parents=True)
+    (h / "hooks" / "sub" / "x.sh").write_text("x", encoding="utf-8")
+    (h / "hooks" / "a.sh").write_text("x", encoding="utf-8")
+    ran = []
+    failed = flooracl.lock_trees(_plan(str(h), [], [str(h / "hooks")], []), _ran(ran), nt=True)
+    q = ["/L", "/C", "/Q"]
+    assert failed == [] and ran == [[str(h / "hooks" / "a.sh"), "/setowner", "*S-1-5-32-544", *q],
+                                    [str(h / "hooks" / "a.sh"), "/reset", *q],
+                                    [str(h / "hooks" / "sub"), "/setowner", "*S-1-5-32-544", *q],
+                                    [str(h / "hooks" / "sub"), "/reset", *q],
+                                    [str(h / "hooks" / "sub" / "x.sh"), "/setowner", "*S-1-5-32-544", *q],
+                                    [str(h / "hooks" / "sub" / "x.sh"), "/reset", *q]]
+    try:
+        import _winapi
+        _winapi.CreateJunction(str(tmp_path), str(h / "hooks" / "sub" / "j"))
+    except (ImportError, OSError):
+        return
+    ran.clear()
+    failed = flooracl.lock_trees(_plan(str(h), [], [str(h / "hooks")], []), _ran(ran), nt=True)
+    assert failed == [f"{h / 'hooks' / 'sub' / 'j'}: a link or a junction"]
+    assert not [c for c in ran if Path(c[0]).name == "j"]
+
+
+def test_a_relock_for_another_account_keeps_the_shared_paths_owned_by_the_administrators(monkeypatch):
+    """Round 2: the previous account's deny entries go, the ownership the new lock needs stays."""
+    monkeypatch.setattr(flooracl, "_unsafe", lambda p, tree, owner: "")
+    old = {**_plan(), "account": "S-1-5-21-9-9-9-1002"}
+    cmds, _ = flooracl.undo_beside(old, _plan())
+    shared = flooracl.paths_of(_plan())
+    assert cmds and not [c for c in cmds if "/setowner" in c and c[1] in shared]
+    assert flooracl.undo_beside(_plan(), _plan())[0] == []                      # the same account, the same paths
+
+
+def test_the_plan_names_a_command_a_held_setting_runs_from_an_unheld_path(tmp_path, monkeypatch):
+    _acl_brain(tmp_path, monkeypatch, project=False)
+    home = floor.profile(SID) / ".claude"
+    loose = tmp_path / "tools" / "status.sh"
+    loose.parent.mkdir()
+    loose.write_text("echo", encoding="utf-8")
+    (home / "statusline.sh").write_text("echo", encoding="utf-8")
+    settings = {"statusLine": {"type": "command", "command": f"bash {loose.as_posix()}"},
+                "apiKeyHelper": "bash ~/.claude/statusline.sh"}
+    (home / "settings.json").write_text(json.dumps(settings), encoding="utf-8")
+    a = flooracl.plan(guards.config.load(), SID, nt=True)
+    assert str(home / "statusline.sh") in a["files"]                          # a script in ~/.claude: held
+    text = " | ".join(flooracl.render(a))
+    assert f"NOT held, a command a held setting runs: {loose.as_posix()} (statusLine" in text
+    assert "statusline.sh (apiKeyHelper" not in text and "sign out" in text
+
+
+def test_acl_wanted_is_windows_only_and_the_per_call_check_refuses_a_link(tmp_path):
+    data = {"floor": {"only": True, "acl": True}}
+    assert floor.acl_wanted(data, nt=True) and not floor.acl_wanted(data, nt=False)
+    target = tmp_path / "t"
+    target.mkdir()
+    try:
+        import _winapi
+        _winapi.CreateJunction(str(target), str(tmp_path / "j"))
+    except (ImportError, OSError):
+        pytest.skip("no junction")
+    assert floor.acl_loose(tmp_path / "j", writable=lambda p: False) == "a link or a junction"

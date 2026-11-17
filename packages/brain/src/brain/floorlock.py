@@ -542,6 +542,7 @@ def apply(cfg, lower: bool = False, run=subprocess.run, is_elevated=None, instal
             flooracl.create(a)
             acl_started = True
             failed = _run_all(flooracl.commands(a), run)
+            failed = failed or flooracl.lock_trees(a, run)
             wrong = [] if failed else (acl_check or flooracl.verify)(a)
             if failed or wrong:
                 raise LockError("the ACL step: " + "; ".join([*failed, *wrong][:12]))
@@ -582,7 +583,7 @@ def apply(cfg, lower: bool = False, run=subprocess.run, is_elevated=None, instal
 def _undo_added(a: dict, prev: dict | None, run) -> list[str]:
     """After a failed apply: give back what its ACL step added (not what the previous lock, restored, still holds);
     what failed or was left alone."""
-    cmds, left = flooracl.undo(flooracl.minus(a, prev))
+    cmds, left = flooracl.undo_beside(a, prev)
     return [*_run_all(cmds, run), *left]
 
 
@@ -609,12 +610,11 @@ def _empty(folder: Path) -> None:
 def lock_data(p: dict, interp: Path, gdir: Path, tools: dict | None = None) -> dict:
     """The lock file's content."""
     tools, a = tools or {}, p.get("acl")
-    acl = [*a["files"], *a["trees"], *a["folders"]] if a else []   # checked on each call: missing or writable refuses
     return {"format": floor.LOCK_FORMAT, "floor": p["floor"], "config": p["config"], "brain_home": p["brain_home"],
             "guard": str(gdir), "interpreter": str(interp), "managed": str(p["managed"]),
             "manifest": floor.file_hash(gdir / floor.MANIFEST), **tools,
             "checks": [str(x) for x in (p["guard"], gdir, gdir / floor.MANIFEST, gdir / "hook.py", gdir / "floor.py",
-                                        interp, p["managed"], *tools.values(), *acl)],
+                                        interp, p["managed"], *tools.values())],
             **({"acl": {k: a[k] for k in ("account", "home", "files", "trees", "folders", "create")}} if a else {}),
             "locked_at": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"), "lock_dir": str(p["lock"])}
 
@@ -627,24 +627,9 @@ def unlock(is_elevated=None, run=subprocess.run, cfg=None, account: str | None =
     step: ``account`` (--account) then rebuilds its paths from ``cfg`` (config.json), else the unlock stops."""
     _need_elevation("brain floor unlock --apply", is_elevated)
     lock = floor.read_lock()
-    managed = floor.managed_file()
-    a = None
-    if lock and not lock.get("error"):
-        managed = Path(lock.get("managed") or managed)
-        a = lock.get("acl") if isinstance(lock.get("acl"), dict) and lock["acl"].get("account") else None
-    elif account and cfg is not None:
-        a = flooracl.plan(cfg, account)
-    elif lock and lock.get("error"):
-        raise LockError(f"the lock file cannot be read ({lock['error']}), so its ACL step's paths are unknown: run "
-                        "brain floor unlock --apply --account SID (the account the sessions run as; any SID when the "
-                        "lock had no floor.acl)")
-    left: list[str] = []
-    if a:
-        cmds, left = flooracl.undo(a)
-        failed = _run_all(cmds, run)
-        if failed:
-            raise LockError("unlock stopped, the lock is whole: the ACL step was not undone: "
-                            + "; ".join(failed[:6]))
+    readable = bool(lock) and not lock.get("error")
+    managed = Path(lock.get("managed") or floor.managed_file()) if readable else floor.managed_file()
+    left = _give_back(_unlock_acl(lock, cfg, account), run)
     lock_file = floor.lock_dir() / floor.LOCK_FILE
     saved = _saved(lock_file, managed)
     try:
@@ -664,6 +649,32 @@ def unlock(is_elevated=None, run=subprocess.run, cfg=None, account: str | None =
             "again)", *([f"still there (this window runs from it): {', '.join(stays)}; remove it once the window is "
                          "closed, or the next lock does"] if stays else []),
             *([f"the ACL step left alone (not the lock's now): {'; '.join(left[:6])}"] if left else [])]
+
+
+def _unlock_acl(lock: dict | None, cfg, account: str | None) -> dict | None:
+    """The ACL step an unlock gives back: the lock file's; with one that cannot be read, the paths ``account``
+    (--account) gets from config.json (LockError without it: they are unknown)."""
+    if lock and not lock.get("error"):
+        a = lock.get("acl")
+        return a if isinstance(a, dict) and a.get("account") else None
+    if account and cfg is not None:
+        return flooracl.plan(cfg, account)
+    if lock:
+        raise LockError(f"the lock file cannot be read ({lock['error']}), so its ACL step's paths are unknown: run "
+                        "brain floor unlock --apply --account SID (the account the sessions run as; any SID when the "
+                        "lock had no floor.acl)")
+    return None
+
+
+def _give_back(a: dict | None, run) -> list[str]:
+    """Run the step's undo (LockError when a command fails: the lock stays, whole); what was left alone."""
+    if not a:
+        return []
+    cmds, left = flooracl.undo(a)
+    failed = _run_all(cmds, run)
+    if failed:
+        raise LockError("unlock stopped, the lock is whole: the ACL step was not undone: " + "; ".join(failed[:6]))
+    return left
 
 
 def status(cfg) -> list[str]:
