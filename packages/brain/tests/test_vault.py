@@ -245,14 +245,14 @@ def test_gpg_seal_then_open_with_each_of_two_recipients(brain, brain_home, tmp_p
     sealed = brain_home / "vault" / "sealed" / "ledger" / man["file"]
     assert sealed.is_file() and b'"e": 1' not in sealed.read_bytes()
     assert json.loads(sealed.with_name(sealed.name + ".json").read_text())["files"] == 2
-    end = time.monotonic() + GPG_KEYGEN_S   # each open imports a secret key into a fresh home: an agent, bounded too
+    # the opens run in this process, as before: in a child Python, Linux's gpg refused the imported key (CI)
     for i, ident in enumerate((a, b)):
         out = tmp_path / f"opened{i}"
-        gpg_call(ad, "open", sealed, tmp_path / f"plain{i}", ident=ident, end=end, deadline=GPG_KEYGEN_S, tmp=g)
+        ad.open(sealed, tmp_path / f"plain{i}", ident=ident)
         vault._safe_extract(tmp_path / f"plain{i}", out)
         assert tree(out / "ledger") == tree(brain_home / "ledger")
     with pytest.raises(vault.VaultError):
-        gpg_call(ad, "open", sealed, tmp_path / "nope", ident=c, end=end, deadline=GPG_KEYGEN_S, tmp=g)
+        ad.open(sealed, tmp_path / "nope", ident=c)
 
 
 def test_age_wiring_seal_then_open_with_each_of_two_recipients(brain, brain_home, tmp_path):
