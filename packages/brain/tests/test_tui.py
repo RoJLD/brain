@@ -34,9 +34,9 @@ PANELS = {
         {"id": "ddr-b", "kind": "decision", "unblocks": 4, "age_days": 2, "title": "Pick a theme", "since": ""}]}]},
     "milestones": {"projects": [{"project": "demo", "reached": 1,
                                  "pending": [{"id": "ms-x", "title": "X", "items": 4, "done": 1}]}]},
-    "frontier": {"projects": [{"project": "demo", "items": [_item("wi-one", "P0", 0, "First", score=1),
+    "frontier": {"projects": [{"project": "demo", "items": [_item("wi-one", "P0", 0, "First", score=3),
                                                             _item("wi-two", "P2", 5, "Second, the TUI", score=9),
-                                                            _item("wi-three", "P1", 1, "Third", score=3)]}]},
+                                                            _item("wi-three", "P1", 1, "Third", score=1)]}]},
     "audit": {"projects": [{"project": "demo", "counts": {"P0": 1}, "repos": 1, "unreadable": [], "top": []}]},
 }
 
@@ -139,12 +139,12 @@ def test_sort_filter_and_search_change_the_tables_and_are_remembered():
         assert _ids(app, "frontier") == ["wi-one", "wi-three", "wi-two"]  # by priority
         table = app.query_one("#frontier", DataTable)
         table.move_cursor(row=2)  # on wi-two
-        await pilot.press("s")  # the next sort: score (brain.ranking's value over effort)
-        assert _ids(app, "frontier") == ["wi-two", "wi-three", "wi-one"]
+        await pilot.press("s")  # the next sort: score (brain.ranking's value over effort), neither priority nor unblocks
+        assert _ids(app, "frontier") == ["wi-two", "wi-one", "wi-three"]
         assert table.cursor_row == 0  # the cursor follows its record
         assert table.border_subtitle == "sort score"
         await pilot.press("o")
-        assert _ids(app, "frontier") == ["wi-one", "wi-three", "wi-two"] and app.views["frontier"]["reverse"]
+        assert _ids(app, "frontier") == ["wi-three", "wi-one", "wi-two"] and app.views["frontier"]["reverse"]
         state = cockpit.load_state()
         assert state["scope"] == "demo" and state["panels"]["frontier"]["sort"] == "score"
         assert state["panels"]["frontier"]["reverse"] is True
@@ -155,7 +155,7 @@ def test_sort_filter_and_search_change_the_tables_and_are_remembered():
         dialog.query_one("#f-priority", Select).value = "P0-P1"
         await pilot.click("#apply")
         await pilot.pause(0.1)
-        assert app.screen is not dialog and _ids(app, "frontier") == ["wi-one", "wi-three"]  # score, reversed
+        assert app.screen is not dialog and _ids(app, "frontier") == ["wi-three", "wi-one"]  # score, reversed
         assert app.views["frontier"]["priority"] == "P0-P1"
         await pilot.press("f")
         await pilot.pause(0.1)

@@ -99,21 +99,51 @@ def test_compat_prev_without_its_guard_is_refused():
     assert runs and any(unchecked_outputs(r) for r in runs)
 
 
-SUITE = re.compile(r"\bpytest\s+(?:packages/brain|tests)\s")
+def _commands(script: str) -> list[list[str]]:
+    """A step's commands as words, its comments left out (a line's own ``#`` and what follows a `` #``)."""
+    out = []
+    for line in script.splitlines():
+        words = []
+        for w in line.split():
+            if w.startswith("#"):
+                break
+            words.append(w)
+        if words:
+            out.append(words)
+    return out
+
+
+def _runs_suite(words: list[str], cwd: str) -> bool:
+    """``pytest`` over the brain command's whole suite: packages/brain from the root, or tests (or .) in
+    packages/brain, whatever options come first; one file, or the docker-only run (``-m docker``), is not it."""
+    if "pytest" not in words:   # pytest ..., or python -m pytest ...
+        return False
+    args = words[words.index("pytest") + 1:]
+    if any(a == "-m" and b.strip("'\"") == "docker" for a, b in zip(args, args[1:], strict=False)):
+        return False
+    paths = {a.rstrip("/") for a in args if not a.startswith("-")}
+    return "packages/brain" in paths or (cwd.rstrip("/") == "packages/brain" and bool(paths & {"tests", "."}))
 
 
 def suite_jobs_without_textual(data: dict) -> list[str]:
-    """The jobs with a step that runs the brain command's suite (``pytest packages/brain``, or ``pytest tests`` in
-    packages/brain; the docker-only run aside) and no step that installs Textual: there the cockpit's tests
-    (test_tui*.py, ``pytest.importorskip("textual")``) are skipped, unseen, and the coverage counts none of them."""
+    """The jobs with a step that runs the brain command's suite and no step before it that installs Textual: there
+    the cockpit's tests (test_tui*.py, ``pytest.importorskip("textual")``) are skipped, unseen, and the coverage
+    counts none of them. A commented-out install is none; the working directory is the step's, else the job's
+    ``defaults.run``."""
     missing = []
     for job, spec in (data.get("jobs") or {}).items():
-        steps = [s for s in (spec or {}).get("steps") or [] if isinstance(s, dict) and isinstance(s.get("run"), str)]
-        suite = any(SUITE.search(s["run"] + " ") and "-m docker" not in s["run"]
-                    and ("packages/brain" in s["run"] or s.get("working-directory") == "packages/brain")
-                    for s in steps)
-        if suite and not any(re.search(r"\bpip install\b.*\btextual\b", s["run"]) for s in steps):
-            missing.append(job)
+        spec = spec or {}
+        home = ((spec.get("defaults") or {}).get("run") or {}).get("working-directory") or ""
+        installed = False
+        for s in spec.get("steps") or []:
+            if not (isinstance(s, dict) and isinstance(s.get("run"), str)):
+                continue
+            cmds = _commands(s["run"])
+            if any(_runs_suite(c, s.get("working-directory") or home) for c in cmds) and not installed:
+                missing.append(job)
+                break
+            installed = installed or any("install" in c and any(w.strip("'\"").startswith("textual") for w in c)
+                                         for c in cmds)
     return missing
 
 
@@ -122,17 +152,26 @@ def test_the_jobs_that_run_the_brain_suite_install_textual():
     columns added to the frontier) and brain audit measured tui*.py at 0 % (wi-brain-engine-debt, batch 2)."""
     data = yaml.safe_load((WORKFLOWS / "ci.yml").read_text(encoding="utf-8"))
     assert suite_jobs_without_textual(data) == []
-    assert {"brain", "brain-linux"} <= {j for j, s in data["jobs"].items()
-                                        if any(SUITE.search(str(x.get("run", "")) + " ") for x in s.get("steps", []))}
+    assert {"brain", "brain-linux"} <= {j for j, s in data["jobs"].items()   # the guard sees their suite
+                                        if any(_runs_suite(c, x.get("working-directory") or "")
+                                               for x in s.get("steps", []) for c in _commands(x.get("run") or ""))}
 
 
 def test_a_suite_job_without_textual_is_named():
-    job = {"steps": [{"run": "pip install pyyaml pytest"},
-                     {"run": "pytest tests -n auto", "working-directory": "packages/brain"},
-                     {"run": "pytest packages/brain -m docker"}]}
-    assert suite_jobs_without_textual({"jobs": {"a": job}}) == ["a"]
-    job["steps"][0]["run"] += "\npip install \"textual>=8,<9\""
-    assert suite_jobs_without_textual({"jobs": {"a": job}}) == []
-    docker_only = {"steps": [{"run": "pytest packages/brain -m docker"}]}
-    one_file = {"steps": [{"run": "pytest tests/test_x.py", "working-directory": "packages/brain"}]}
-    assert suite_jobs_without_textual({"jobs": {"d": docker_only, "f": one_file}}) == []
+    def job(*steps, **spec):
+        return {"jobs": {"a": {"steps": [s if isinstance(s, dict) else {"run": s} for s in steps], **spec}}}
+
+    install = 'pip install pyyaml pytest\npip install "textual>=8,<9" psutil'
+    suite = {"run": "pytest tests -n auto", "working-directory": "packages/brain"}
+    assert suite_jobs_without_textual(job("pip install pyyaml pytest", suite)) == ["a"]
+    assert suite_jobs_without_textual(job(install, suite)) == []
+    assert suite_jobs_without_textual(job("pip install pytest  # pip install textual", suite)) == ["a"]  # a comment
+    assert suite_jobs_without_textual(job("# pip install textual", suite)) == ["a"]
+    assert suite_jobs_without_textual(job(suite, install)) == ["a"]   # installed after the suite ran
+    assert suite_jobs_without_textual(job("pip install pytest", "pytest tests -n auto",
+                                          defaults={"run": {"working-directory": "packages/brain"}})) == ["a"]
+    for run in ("pytest -n auto packages/brain", "pytest packages/brain/ -q", "python -m pytest packages/brain"):
+        assert suite_jobs_without_textual(job("pip install pytest", run)) == ["a"], run
+    for run in ("pytest packages/brain -m docker", "pytest packages/brain -m 'docker'",
+                "pytest packages/brain/tests/test_x.py", "pytest"):   # docker only, one file, the root's suite
+        assert suite_jobs_without_textual(job("pip install pytest", run)) == [], run
