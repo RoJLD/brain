@@ -30,7 +30,8 @@ def test_every_command_module_keeps_the_contract():
     usage_orders = [m.USAGE_ORDER for m in MODULES if getattr(m, "USAGE", "")]
     assert len(set(orders)) == len(orders) and len(set(usage_orders)) == len(usage_orders)   # one place each
     assert owners["doctor"] is owners["profile"] and owners["lessons"] is owners["lesson"]   # an alias, its module
-    assert {"capture", "announce", "memory", "sessions", "quiet", "probes", "release"} <= _registry.no_project()
+    assert {"capture", "announce", "memory", "sessions", "quiet", "probes", "mcp", "ipc", "release", "telemetry",
+            "notes", "migrate"} <= _registry.no_project()   # pinned: none of them gains --project; a new one adds none
 
 
 def test_the_help_of_every_parser_formats_and_a_second_build_is_the_same(monkeypatch):
