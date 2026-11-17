@@ -6,7 +6,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from .. import cost, forecast, usage
+from .. import auditrecord, cost, forecast, usage
 from ._common import _scope, _text, _when, _whole
 
 ORDER = 170   # its place in brain --help's list of commands (brain.commands)
@@ -80,7 +80,7 @@ def cmd_cost(args, root: Path) -> int:
         out.write_text(text, encoding="utf-8")
         written.append(f"written to {out}")
         # the week's line of the series a KPI reads: the estimates' error and the context counts
-        rec = cost.append_record(name, cost.audit_record(au, name, now.strftime("%Y-%m-%dT%H:%M:%SZ"), out))
+        rec = auditrecord.append_record(name, auditrecord.audit_record(au, name, now.strftime("%Y-%m-%dT%H:%M:%SZ"), out))
         written.append(f"record appended to {rec}")
         for p in projs:  # the week's forecast snapshot, what the calibration judges (spec-brain-psychohistory 6)
             try:

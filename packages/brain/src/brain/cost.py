@@ -37,10 +37,10 @@ milestone the graph's, its kind the words of its title (spec, review, fix, build
                  and the script candidates, the sessions against their context (those past 80 % and 100 % of their
                  brief's budget, those that peaked above the :data:`CEILING`); ``--write`` keeps it in
                  <BRAIN_HOME>/usage/<project>/audit-<since>_<until>.md and appends its record, one JSON line, to
-                 <BRAIN_HOME>/usage/<project>/audits.jsonl (:func:`audit_record`: the estimates' typical error and
+                 <BRAIN_HOME>/usage/<project>/audits.jsonl (brain.auditrecord: the estimates' typical error and
                  share within x1.5, the context counts, the cost): the week-by-week series a KPI reads, the last line
                  of a window winning when the audit of one window is written twice. ``brain digest`` names the
-                 latest audit (:func:`latest_audit`).
+                 latest audit (brain.auditrecord.latest_audit).
 """
 
 from __future__ import annotations
@@ -54,7 +54,7 @@ from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from pathlib import Path
 
-from . import config, graph, paths, projects, provenance, queue, resume, sizing, usage
+from . import auditrecord, config, graph, paths, projects, provenance, queue, resume, sizing, usage
 
 MIN_SIMILAR = 3
 OFF = 1.5  # an actual above OFF x its estimate, or below estimate / OFF, is off
@@ -66,8 +66,6 @@ TRIVIAL_STEPS = {"grep", "head", "tail", "sed", "cat", "cut", "ls", "wc", "sort"
                  "python", "python3", "py", "select-string", "get-content", "get-childitem", "select-object", "tee",
                  "Read", "Edit", "Write", "Grep", "Glob", "MultiEdit", "diff", "jq", "test", "[", "nl", "file"}
 TOP = 10
-CEILING = 400_000  # the context a brief starts a session under (brain.brief.CEILING): the audit counts who passed it
-AUDITS = "audits.jsonl"
 CLASSES = ("trivial", "standard", "strategic")
 SOURCE_DIMS = ("provider", "harness", "account")   # where a session ran (brain.provenance)
 SESSION_DIMS = ("project", "class", "kind", "model", "pr", *SOURCE_DIMS)
@@ -886,27 +884,7 @@ def audit(led: Ledger, since: str, until: str, top: int = TOP) -> dict:
             "costliest": table_of(led, rows, "session", since, until)[:top],
             "phases": table_of(led, rows, "phase", since, until),
             "sequences": sequences(rows)[:top], "cost": round(sum(r.get("cost") or 0 for r in rows), 4),
-            "sessions": len(rows), "context": context_of(rows)}
-
-
-def _dict(v) -> dict:
-    return v if isinstance(v, dict) else {}
-
-
-def _num(v) -> float:
-    return v if isinstance(v, (int, float)) and not isinstance(v, bool) else 0
-
-
-def context_of(rows: list[dict], ceiling: int = CEILING) -> dict:
-    """The sessions against their context: those whose brief gave a budget (``brief.budget``), how many peaked past
-    80 % and past 100 % of it, and those that peaked above ``ceiling`` with their cost at API prices; a row without a
-    peak or a budget counts nowhere."""
-    peaks = [(_num(_dict(r.get("context")).get("peak")), _num(_dict(r.get("brief")).get("budget")), r) for r in rows]
-    use = [p / b for p, b, _ in peaks if b > 0]
-    over = [r for p, _, r in peaks if p > ceiling]
-    return {"ceiling": ceiling, "briefed": len(use), "past_80": sum(1 for u in use if u >= 0.8),
-            "past_100": sum(1 for u in use if u >= 1), "over_ceiling": len(over),
-            "over_ceiling_cost": round(sum(_num(r.get("cost")) for r in over), 2)}
+            "sessions": len(rows), "context": auditrecord.context_of(rows)}
 
 
 def render_audit(au: dict, project: str, generated: str) -> str:
@@ -932,7 +910,8 @@ def render_audit(au: dict, project: str, generated: str) -> str:
     if not au["calibration"]:
         lines.append(f"- not enough finished items yet ({MIN_SIMILAR} per class)")
     lines += sizing.render_sizes(au.get("sizes"), au.get("size_key"))
-    lines += ["", "## Context against the budgets", "", context_line(au.get("context") or context_of([]))]
+    ctx = au.get("context") or auditrecord.context_of([])
+    lines += ["", "## Context against the budgets", "", auditrecord.context_line(ctx)]
     lines += ["", "## Where the cost went", ""]
     lines += [f"- {r['key']}: {usage.usd(r['total'])} ({_pct(r['share'])})" for r in au["phases"]]
     lines += ["", "## Costliest sessions", ""]
@@ -944,85 +923,8 @@ def render_audit(au: dict, project: str, generated: str) -> str:
     return "\n".join(lines) + "\n"
 
 
-def context_line(c: dict) -> str:
-    return (f"- {c['briefed']} session(s) with a brief's context budget: {c['past_80']} passed 80 % of it, "
-            f"{c['past_100']} passed 100 %; {c['over_ceiling']} session(s) peaked above {usage.ktok(c['ceiling'])} "
-            f"({usage.usd(c['over_ceiling_cost'])} at API prices)")
-
-
 def audit_path(project: str, since: str, until: str) -> Path:
     return paths.brain_home() / "usage" / project / f"audit-{since or 'start'}_{until or 'now'}.md"
-
-
-def audit_record(au: dict, project: str, at: str, path: Path | str = "") -> dict:
-    """The audit's line in ``audits.jsonl``: when (``at``, UTC ISO) and over which window it ran, its sessions and
-    cost, the estimates' error (the backtests, how many within x``OFF``, their share, the typical factor; the
-    window's finished items and how many were off) and its context counts (:func:`context_of`)."""
-    bt = au["backtests"]
-    return {"v": 1, "at": at, "project": project, "since": au["since"], "until": au["until"], "path": str(path),
-            "sessions": au["sessions"], "cost": round(au["cost"], 2),
-            "estimates": {"backtests": bt["n"], "within": bt["within"],
-                          "share_within": round(bt["within"] / bt["n"], 3) if bt["n"] else None,
-                          "typical_factor": bt["median_factor"], "items": len(au["reviews"]), "off": len(au["off"])},
-            "context": au.get("context") or context_of([])}
-
-
-def audits_path(project: str) -> Path:
-    return paths.brain_home() / "usage" / project / AUDITS
-
-
-def append_record(project: str, rec: dict) -> Path:
-    """Append ``rec`` to the project's ``audits.jsonl`` (one line, never rewritten: a log of the usage store, kept,
-    appended under the folder's lock by brain.timing.append_text like every ledger); its path."""
-    from . import timing
-    out = audits_path(project)
-    timing.append_text(out, json.dumps(rec, sort_keys=True) + "\n")
-    return out
-
-
-def audit_records(project: str) -> list[dict]:
-    """The project's audit records, oldest first; a line that is not a JSON object is skipped."""
-    try:
-        text = audits_path(project).read_text(encoding="utf-8")
-    except OSError:
-        return []
-    out = []
-    for line in text.splitlines():
-        try:
-            rec = json.loads(line)
-        except ValueError:
-            continue
-        if isinstance(rec, dict):
-            out.append(rec)
-    return out
-
-
-def latest_audit(project: str) -> dict | None:
-    """The latest audit of ``project``: its last record in ``audits.jsonl``, else the newest ``audit-*.md`` (by
-    mtime) as ``{"path": ...}`` alone; None when none was written."""
-    recs = audit_records(project)
-    if recs:
-        return recs[-1]
-    try:
-        mds = sorted(audits_path(project).parent.glob("audit-*.md"), key=lambda q: q.stat().st_mtime)
-    except OSError:
-        return None
-    return {"path": str(mds[-1])} if mds else None
-
-
-def latest_audit_line(rec: dict | None) -> str:
-    """One line naming the latest audit, for brain digest; empty without one."""
-    if not rec:
-        return ""
-    if rec.get("v") != 1 or not isinstance(rec.get("estimates"), dict):   # a newer record: its file alone
-        return f"Latest cost audit: {rec.get('path')}."
-    e, c = _dict(rec.get("estimates")), _dict(rec.get("context"))
-    err = (f"typical estimate error x{e.get('typical_factor')}, {e['share_within']:.0%} within x{OFF}"
-           if e.get("share_within") is not None else "no backtest yet")
-    ctx = (f"; {c.get('past_100', 0)} of {c.get('briefed', 0)} briefed session(s) past their budget, "
-           f"{c.get('over_ceiling', 0)} above {usage.ktok(_num(c.get('ceiling')) or CEILING)}" if c else "")
-    return (f"Latest cost audit ({rec.get('since') or 'the start'} to {rec.get('until') or 'now'}, written "
-            f"{str(rec.get('at') or '')[:10]}): {err}{ctx}" + (f" ({rec['path']})." if rec.get("path") else "."))
 
 
 # --- brain status and brain digest ---

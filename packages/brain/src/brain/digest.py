@@ -46,7 +46,7 @@ from dataclasses import dataclass, field
 from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 
-from . import actions, cost, decisions, diffs, graph, notes, paths, projects, resume
+from . import actions, auditrecord, cost, decisions, diffs, graph, notes, paths, projects, resume
 
 BUDGET = 4000  # tokens; 0: no limit
 WIDTH = resume.WIDTH
@@ -332,7 +332,7 @@ def tokens(project: projects.Project, w: Window) -> dict:
         return {"error": str(exc), "sessions": 0}
     until = str(date.fromisoformat(w.until) + timedelta(days=1)) if w.until else ""
     return {**cost.summary_of(led, project.name, w.since, until),
-            "audit": cost.latest_audit_line(cost.latest_audit(project.name))}
+            "audit": auditrecord.latest_audit_line(auditrecord.latest_audit(project.name))}
 
 
 # --- the text, by levels ---
