@@ -162,7 +162,9 @@ The selection is only as fresh as the map: refresh it from the CI's `coverage-da
 - `waive.stale` (P2, never in the scout; ruleset 13): a glob of a repo's `waive` that matches no file of its tree (the
   file renamed or removed since). It waives nothing, keeps a reason no unit carries, and would hide the next file that
   takes its name: remove it from `projects.yaml`, or fix the glob to the files it means. The finding's unit is the
-  glob; a glob that matches a file is never stale, whether or not that file has a finding to waive.
+  glob; a glob that matches a file is never stale, whether or not that file has a finding to waive. The trend leaves
+  it out of its past weeks: today's globs against a past week's tree would count a file added since as stale then,
+  and its fix as a fall of the debt.
 - `feature.tests` (P2, never in the scout): a `have` or `partial` feature with code in the repo (a module or a
   script its CodeRefs name, whichever repo owns the feature; a data file is no code a test imports) that no test
   module of the repo is `tested_by`, by the links derived now.
