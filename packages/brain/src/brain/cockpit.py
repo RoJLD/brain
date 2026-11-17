@@ -18,7 +18,8 @@ Eight panels, each read through the function its command already uses:
               --explain; ``--sort queue:score``: the score alone, across the bands), with the recommended option and
               how to answer; titled with the owner's display name;
   alerts      each project's open alerts by level (brain.status.alerts_of, as brain status and brain alerts: the
-              scheduler, the exec ledger, the stacks, the code index, the audit, the alert events and files);
+              scheduler, the exec ledger, the stacks, the code index, the audit, the alert events and files, the main
+              checkouts);
   milestones  each pending milestone's items done out of its live items, and how many are reached (brain.status);
   frontier    the startable todo items by priority, a proposed priority marked ``?`` (brain.status.frontier), with
               the milestone each is part of (or proposed for, marked ``?``), the open items and pending milestones
@@ -653,10 +654,11 @@ class Cockpit:
         from . import depprobes
         self.dep_probes = depprobes.run()   # first: the brain's alerts below read this run
         stack_reg, index = status._probes(self.root, False)
-        measured = {}
+        measured, scope = {}, alerts.checkouts(self.root)   # the main checkouts: each read once, one project's
         for i, p in enumerate(found, 1):
             self.progress = {"what": p.name, "n": i, "total": len(found)}
-            measured[p.name] = m = {"audit": status.audit_of(p, detail=AUDIT_TOP), **status.probed(p, stack_reg, index)}
+            measured[p.name] = m = {"audit": status.audit_of(p, detail=AUDIT_TOP),
+                                    **status.probed(p, stack_reg, index, scope)}
             self._last_ok(p.name, m, at)
         self.progress = {"what": "the branch's impact", "n": 0, "total": 1}
         self.impact = branch_impact(self.here, self.root)
@@ -1090,9 +1092,9 @@ HELP = {
               "detail": "brain queue; brain decision pending; brain decision answer <id> <option>"},
     "alerts": {"what": "Each project's open alerts by level: missed or failed scheduled tasks, stacks down, a stale "
                        "code index, audit debt above its written view, alert events and alert files, a dependency "
-                       "probe not OK.",
+                       "probe not OK, a dirty main checkout.",
                "from": "brain.status.alerts_of, as brain status and brain alerts (the scheduler, the exec ledger, the "
-                       "stacks, the code index, the audit, the alert events and files)",
+                       "stacks, the code index, the audit, the alert events and files, the main checkouts)",
                "read": "at each probe (--probe, 5 min, and r)",
                "detail": "brain alerts --project <p>"},
     "milestones": {"what": "Each pending milestone: its items done out of its live items, and how many are reached.",
@@ -1577,8 +1579,9 @@ def branch_impact(here: Path, root: Path | None = None) -> dict:
     import argparse
 
     from . import impact
+    # GitNexus only: the probe runs every few seconds, and codebase-memory-mcp would index the checkout each time
     args = argparse.Namespace(diff="", repo_dir=str(here), depth=None, json=False, markdown=False, project=None,
-                              root=None)
+                              root=None, backend="gitnexus")
     notes: list[str] = []
     try:
         rep = impact.run(args, root, warn=notes.append)

@@ -46,7 +46,7 @@ What it does, every command reading files and git, never a model:
 Python 3.10 or later. The command depends on PyYAML and on `research-graph` at the same tag.
 
 ```bash
-pip install "brain @ git+https://github.com/RoJLD/brain.git@v0.5.0#subdirectory=packages/brain"
+pip install "brain @ git+https://github.com/RoJLD/brain.git@v0.5.1#subdirectory=packages/brain"
 ```
 
 On Windows, `installer/install.ps1` does it in a venv of its own (`~/.brain/venv`, `BRAIN_HOME`), puts the `brain`
@@ -472,12 +472,14 @@ language. A repo without `tools:` is read as before. See [docs/standards.md](doc
 ### The impact of a change
 
 `brain impact [--diff BASE|A..B]` says, before merge, what a change's code carries in the graph
-([`docs/impact.md`](docs/impact.md)): the symbols it touches in the GitNexus code index (`brain index`) and their
-callers, the CodeRefs that name them, the nodes relying on those, then a checklist: the features whose status may
-change, the docs to update, the ADRs and specs to re-read, the tests to run (one `pytest` line) and the CI jobs that
-run them, the open items that deliver those features and the decisions pending on them. Without GitNexus it works at
-the file level, a Python symbol looked up by the AST, and says so on its second line. `brain code-map` resolves
-each active CodeRef to its GitNexus node and reports the coverage: symbols and files with a CodeRef.
+([`docs/impact.md`](docs/impact.md)): the symbols it touches in the code index (`brain index`: GitNexus, or
+codebase-memory-mcp first on a worktree, [`docs/code-index.md`](docs/code-index.md)) and their callers, the CodeRefs
+that name them, the nodes relying on those, then a checklist: the features whose status may change, the docs to
+update, the ADRs and specs to re-read, the tests to run (one `pytest` line) and the CI jobs that run them, the open
+items that deliver those features and the decisions pending on them. Without a code index it works at the file level,
+a Python symbol looked up by the AST, and says so on its second line. `--backend gitnexus|cbm` names the code index.
+`brain code-map` resolves each active CodeRef to its GitNexus node and reports the coverage: symbols and files with a
+CodeRef.
 `brain impact --markdown` prints the checklist as a PR body's section (tasks ticked by hand, every text escaped);
 the cockpit's Health tab shows the impact of the branch it runs from (its Impact view); a project's `overlays:` (another
 repo's store read with its own, read-only) are walked too.
@@ -485,9 +487,11 @@ repo's store read with its own, read-only) are walked too.
 A decision can be pinned to the code it governs ([`docs/pins.md`](docs/pins.md)): `brain adr pin ID --touches
 PATH|CODEREF --holds LINE` writes `pins.yaml` beside the decision log (an ADR, an SDR or an answered DDR; the `holds`
 line never edited, an override being a new ADR). `brain impact --diff` lists the pinned decisions a change touches,
-and `brain review check HEAD --pr N` and `brain merge-ready` refuse until the PR body says, for each, `Keeps ID` (a
-decision in force) or `Overrides ID: why` (one a later ADR supersedes, written first: `brain adr new --reverses ID`,
-an answered DDR's id included).
+and `brain review check HEAD --pr N` and `brain merge-ready` refuse until the PR body says, for each, `Keeps <ID or
+alias>` (a decision in force) or `Overrides <ID or alias>: why` (one a later ADR supersedes, written first: `brain adr
+new --reverses ID`, an answered DDR's id included). In a public repo's PR, which may not name a private decision, it
+says the pin's alias: `brain adr pin ID --alias NAME` (refused when the public check would refuse it: the shape of a
+graph id, an ADR's title), else `pin-<8 hex>`; the gate's lines give it.
 
 ### Tests linked and coverage
 
@@ -586,7 +590,11 @@ A later pending wave labelled as the current wave's jump makes the release ambig
 naming both. An item carried again keeps the
 waves it went through (`props.carried_via`). `brain wave check X.Y.Z` is the rule alone, and `release_check.py --store
 DIR` applies it to a version PR, which also wants the wave reached and no pending wave left below the version (its
-« the wave X.Y.Z in DIR » line names the engine that read the store). `brain wave add [X.Y.Z] --parent MS [--week W]`
+« the wave X.Y.Z in DIR » line names the wave checked and the engine that read the store). A wave reached without
+`props.shipped_as` (by hand, or by an engine up to 0.5.0) is read through the last tag (`release_check.py` knows it;
+`brain wave check X.Y.Z --tag vP`): the wave labelled so shipped as itself, the one reached after it ships as X.Y.Z;
+when the tag does not tell and it could have shipped as X.Y.Z, both refuse until `props.shipped_as` records it.
+`brain wave add [X.Y.Z] --parent MS [--week W]`
 adds a wave at once, `wave-sN` with its computed release (no DDR, unlike `brain milestone add`; X.Y.Z, when given,
 must be that release, and a store's first wave names it); `brain wave rename WAVE [NEW] [--write]` renames a legacy
 `wave-X.Y.Z` once (default `wave-sN`): the YAML values that name it (its id, the edges' `from` and `to`, `carried_to`,
@@ -670,6 +678,7 @@ When a session reads one of those files by hand anyway, a PreToolUse hint names 
 ```bash
 brain init ~/my-brain --owner "Your name"            # the plan
 brain init ~/my-brain --owner "Your name" --apply    # writes it; a second apply changes nothing
+brain init ~/my-brain --owner "Your name" --examples --apply   # the same, with the default spheres in scopes.yaml
 cd ~/my-brain && git init && git add -A && git commit -m "my brain"
 brain check                                          # graph-check OK, and the boundary's public scan green
 brain profile                                        # this machine's profile: Lite unless you choose another
@@ -688,6 +697,15 @@ what the machine does not hold is refused). It ends on the same choice as one co
 `brain mod disable|enable ID`, each `--apply`): the plan shows them, `--apply` runs them in order and logs each one
 in `<BRAIN_HOME>/ledger/setup-<month>.jsonl`. What must be downloaded (a pip extra) is named, never fetched. The
 catalogue is `brain catalogue emit`'s ([docs/catalogue.md](docs/catalogue.md)).
+
+**The default spheres** (`--examples`, SCOPE-1 of the scope tree): for a person, `brain init` also writes
+`scopes.yaml` with three spheres, `pro` (Professional), `personal` (Personal) and `academic` (Academic), the scope
+tree's first level, and its view `notes/scopes_graph.md`; `brain project add NAME --parent pro` places a project under
+one. A team gets none (a team has no personal sphere); in a folder whose `config.json` is already there, its
+`identity.kind` decides (a re-run keeps that file, whatever `--kind` says). A sphere whose id a project of the registry
+holds (the brain's own `--name pro`, an entry of a `projects.yaml` already there) is left out, and the plan names it:
+a scope id is unique. The ids stay; a title is renamed by an edit of `scopes.yaml`. A `scopes.yaml` already there is
+kept. The view is read from the new brain's own files, never from what `$BRAIN_PROJECTS` or `$BRAIN_SCOPES` name.
 
 `brain init` writes, from a template (`--template`, default `generic`: `src/brain/templates/generic/`) and
 `research_graph init`, never over an existing file. `--owner` may be left out in a folder that already has a
@@ -781,11 +799,34 @@ profile template (`trading` takes `research`'s; `--template` names another), its
 `lifecycle: {typologies, stage}` (the lifecycle's stage: `mvp` reads as `build`), which `brain item clauses` reads.
 Run again in a folder that holds that brain, the plan shows what the answers change in its entry (typologies, stage,
 the standards' stage, the template) and writes nothing: an existing registry changes by a branch and a PR. The cockpit's Setup page
-offers it as « A new project » (without `--owner`, the owner of this machine's personal brain). The languages and tools, the data classes and the pack, procedures and permissions it
-will propose are its later slices.
+offers it as « A new project » (without `--owner`, the owner of this machine's personal brain).
+
+Its second slice (`wi-brain-project-wizard-tools`) asks the languages and tools and the data:
+`[--lang py|ts [--tool SLOT=TOOL]...] [--floor CLASS | --residency] [--personal-data]`. `--lang` is the language of the
+brain's own repo (`repos[].lang`); each check's slot (`lint`, `typecheck`, `test`, `coverage`, `format`) takes the
+language's usual tool (py: ruff, pytest, pytest-cov, `ruff format`; ts: eslint, vitest, c8, prettier) unless `--tool
+SLOT=TOOL` names another the wizard knows (`brain.langs.TOOLS`: mypy, jest, tsc...) or `none`. A tool that writes a
+report is written to the repo's `tools:` (its report under `reports/` and its format, which `brain audit` and `brain
+standards check` read); one with an exit code only (`ruff format --check`, `prettier --check .`, `tsc --noEmit`) is
+named in the plan and not declared. The Python defaults for the tests and the coverage write the reports the code
+templates' CI writes (`reports/junit.xml`, `reports/coverage.xml`); the plan names the declared reports that CI does
+not write (ruff's, mypy's: `brain audit` reads them as missing until a CI step runs their command), a template that
+writes no CI, and a language the CI does not run (it runs Python: with `--lang ts` none of the reports is written until
+its steps are replaced). `--floor CLASS` writes `classes: {floor: CLASS}` (`brain classes`; `secret` is refused) and
+`--residency` the floor `resident`; the floor is checked against the brain's own stores, since `brain check` refuses a
+store under its project's floor: a floor above one of them (with the engine's templates, the repo is `private`, memory
+and the decisions `confidential`, the machine's stores `sealed`, so `confidential` and up, `--residency` included) is
+refused by the plan, naming the stores and the floors they hold: declare them at that class first (`config.json`
+`classes.stores`), then raise the floor by a PR. `--personal-data` adds the privacy rows (`sw-privacy-by-design`,
+`sw-retention`, `sw-erasure`, `sw-crash-reports`) to its standards selection's `include` (merged into an include the
+template writes; a registry shape it cannot merge into is named by the plan and refused by `--apply`), required from
+its first stage. The plan shows the tools with their reports and commands, the standards rows the selection makes
+required at its stage, those its tools run and those whose check does not cover its language; a re-run in the folder
+that holds the brain shows what the answers change (language, each slot's tool, report and format, floor, include)
+and writes nothing. The pack, procedures and permissions it will propose are its later slice.
 
 `brain project add NAME (--read | --existing DIR [--store PATH] | --template T --dir DIR) [--parent NODE] [--floor
-CLASS] [--title TEXT] [--no-notes] [--apply]` registers a project in a brain's `projects.yaml` (`wi-brain-project-add`),
+CLASS] [--title TEXT] [--profile P] [--kind K]... [--stage S] [--team] [--interactive] [--no-notes] [--apply]` registers a project in a brain's `projects.yaml` (`wi-brain-project-add`),
 a plan then `--apply`, instead of a hand edit of the file:
 - `--read`: a project the brain reads and never writes (its entry: `title`, `access: read`, `parent`, `classes`);
 - `--existing DIR`: an instance that has its own brain, registered without a copy: its `root` and `stores` when
@@ -819,6 +860,29 @@ temporary name, never over a file (`wi-brain-project-add-notes`). The project ge
 home's folders say the lifecycle and the class, never the subject, and a note joins the project by its `scope`. The
 step is optional: without a notes home, or with `--no-notes`, the plan says why there is no map; a map that cannot be
 written leaves the entry registered and says so. The owner commits the map in the notes repo.
+
+**The qualification** (`wi-brain-project-add-spheres`, spec-brain-product-lifecycle 3.10): the plan asks five
+questions, each a setting of the Brain, and names each one left unanswered with its option; `--interactive` (`-i`)
+asks those the options leave, in the terminal (an empty answer leaves one unanswered), never through a model, once
+the options are checked (nothing is asked to be refused then); without a terminal, or when its input ends, it writes
+nothing and says so:
+
+| Question | Option | Written to |
+|---|---|---|
+| 1. its purpose and audience | `--profile maker\|client\|startup\|internal\|open-source\|research` | `lifecycle.profile` |
+| 2. what it produces | `--kind K` (repeatable, ids of `brain typologies`) | `lifecycle.typologies` (its items' clauses of done) |
+| 3. its stage, the entry point | `--stage S`: a lifecycle stage, or a standards stage read as one (`mvp`: `build`) | `lifecycle.stage`, with `since` the local day it is written |
+| 4. its criticity | `--floor CLASS` | `classes.floor` |
+| 5. who works on it | `--team`, with `--template` (`brain init --kind team`) | the new brain's `identity.kind`; an instance's own `config.json` is shown, never written |
+
+A read-only project takes only its criticity, `--floor` (its entry holds `title`, `access`, `parent` and `classes`
+only; its own sessions answer the rest): another answer with `--read` is refused, as is an unknown kind or stage. With
+`--template`, `brain init --stage` takes the standards stage the entry's stage reads back as (`build`: `mvp`,
+`launch`: `v1`, `grow`: `scale`, `explore`: `prototype`; another stage keeps its default, and the plan says so), so the
+standards and `lifecycle.stage` agree. `brain check` reads the entry's `lifecycle.stage` against the catalog's stages
+(a standards stage written there, `mvp`, is named with the stage it reads as), `shape` against `living` and `finite`,
+`profile` against the six profiles: an unknown value is a note, an error in strict mode (CI), as an unknown typology
+is.
 
 It also writes `<BRAIN_HOME>/personal.json` when the machine has none, so that the hooks and commands run from any
 folder find this brain. The brain is the owner's private repo: push it to their own account, never to a public one.
@@ -879,15 +943,25 @@ The session that asks the owner records the answers, in one PR per batch (wi-bra
    one commit, one PR (`gh`), then merged; when the merge is refused because main moved, it merges main, takes main's
    side of the generated files, refreshes again, pushes and retries (`--retries`, default 3; `--no-merge` stops at
    the PR). A record that conflicts stops it. A decision answered meanwhile is left (`--again` replaces it). A
-   capture names its DDR by its full id: one the default branch does not hold yet (asked on a branch not merged)
-   is left captured and said, the others recorded; a DDR whose id merely contains it is never answered instead.
+   capture names its DDR by its full id: one neither the default branch nor the asking checkout holds yet (asked on
+   a branch not merged, recorded from elsewhere) is left captured and said, the others recorded; a DDR whose id
+   merely contains it is never answered instead.
    A capture with no answer (an older engine's placeholder rows) or an `unmapped` label is refused, listed and
    retired (`ledger/answer-recorded-<month>.jsonl`, `retired`); so is a stale one, older than the answer the DDR
    already holds (answered by hand or by `--batch` meanwhile), `--again` included. An older capture of a DDR whose
    later capture was recorded never comes back. An answer captured before a low-stakes deadline replaces the
    default another branch's refresh took meanwhile. The command prints the retired captures (« retired, never
-   recorded », each with its reason; `--dry-run` marks the refused ones) apart from the decisions left because they
-   are no longer pending (« not pending, left », which `--again` replaces).
+   recorded », each with its reason; `--dry-run` marks the refused ones and says where each answer would go) apart
+   from the decisions left because they are no longer pending (« not pending, left », which `--again` replaces).
+   When the command runs in the asking session's own checkout (a checkout of the project's repo, a worktree or the
+   main one, on a branch other than the default one), each answer goes where its DDR lives, in one run: one whose
+   DDR only that checkout holds (asked on its branch, not on the default branch yet) is written there, refreshed,
+   committed on that branch and pushed (to its upstream when it tracks one other than the default branch), with no
+   PR of its own (that branch's PR carries it); one whose DDR the default branch holds takes the flow above, judged
+   on the default branch's copy (answered meanwhile, stale, a default taken). A checkout with uncommitted changes is
+   refused, so the commit holds the answers alone; a failure before that commit puts the checkout back exactly as it
+   was (nothing recorded there, the captures left for a rerun); a failed push keeps the commit, prints git's message
+   and exits non-zero.
 
 `--batch` is strict: a value is an option's exact label (any case, `(Recommandé)` ignored) or its number; a shortened
 label is refused with the label it shortens, and the owner's own text is marked as such, `{"other": "..."}`. Its file
@@ -949,6 +1023,21 @@ Zero-token commands for many sessions on one brain ([`docs/merge-driver.md`](doc
   then all merged on the base by `git merge-tree` with the repo's merge driver, the merge order and the PR GitHub
   will see conflicting said, the tests `brain impact` chooses for the set (run by `--test` in a scratch worktree),
   and a stamp per head naming the set.
+- **`brain ship PR`** (brain.ship): the local merge queue. The session queues its PR (`<BRAIN_HOME>/ship/queue.json`,
+  once per repo and number, its place said) and stops; `brain ship --run`, the merger, takes the lock
+  `<BRAIN_HOME>/locks/ship.lock` (one merger per machine: exit 1 and the holder when another runs; a lock whose pid is
+  gone is broken) and ships the queued PRs in order: the merge gate (`brain merge-ready`'s own checks, `fresh`
+  answered by the catch-up; a fork PR, or a branch that is the base, refused), main merged into the PR's head in a
+  scratch worktree with the merge driver, the views regenerated once and `brain check`, `brain merge-check`, the
+  targeted tests (`--strict`). A caught-up head is a new head, gated like any other: the public check's stamp before
+  its push for a public repo, its CI awaited, the merge gate again with nothing waived (its review carried only when
+  it is git's own merge of main into the reviewed head). Then `gh pr merge --match-head-commit` and the PR read back.
+  A PR that fails is marked with its reason and the next goes on; every `--batch N` PRs merged per repo and base (5),
+  the full suite runs once, a confirmed bisection names the culprit when it fails, and the base's PRs wait until
+  `brain ship --run --force`. `brain ship --list [--json]` shows the queue, `brain ship --run --dry-run` the plan.
+  The merger is a command:
+  starting it as a service is the owner's decision ([`docs/merge-driver.md`](docs/merge-driver.md), « The merge
+  queue »).
 - **`brain lot check [SESSION] [--branch B]... [--keep B]... [--repo-dir D]... [--scratch GLOB]... [--lot NAME]
   [--offline] [--json]`** (brain.lotcheck): whether a finished lot (a session a coordinator started; default: this
   one) can be archived, read only. From the desktop app's file of the session (its worktree and branch, the branches
@@ -997,7 +1086,7 @@ and its recap.
 - **`brain sessions [--hours H] [--all] [--json]`**: the sessions active in the last 24 h with both ids, role
   (`master`, `sub`, `relay`, `solo`), parent, children live/started, state and context against its budget (the
   brief's; a master's without one: config.json `usage.master_budget`, else the model's window, 1M). The options may
-  come before or after `tree` and `show`.
+  come before or after `tree` and `show` (only `--json` applies to `self`, before or after it).
 - **`brain sessions tree [ID]`**: the families with a member active in the last `--hours` (the app's last activity,
   else its SessionStart), or ID's, each child with its report: a master learns what its children did without paging
   their transcripts (archived branches counted, `--all` draws them). A session detached to the top level
@@ -1007,6 +1096,11 @@ and its recap.
 - **`brain sessions show ID [--report]`**: one session by either id (a prefix of 8 or more) or its short name, its
   family, and what a message would meet: live and working (it waits in the queue), idle (it starts a turn), archived
   (lost). `--report` prints its last final message in full, read from its transcript, never stored.
+- **`brain sessions self [--json]`**: this session's own app id (`local_...`, from `$CLAUDE_CODE_HOST_SESSION_ID`,
+  read as the stamps read it: only when the app's file of that id names this transcript), the one a report to its
+  coordinator is signed with, never the coordinator's nor the shared notes folder's (`brain brief` says so). Exit 1
+  outside an app session, on a malformed id, or on an id inherited from another session's shell (a `claude` started
+  there; `--json` gives `"inherited": true`): the app's get_session tool with the id `self` tells it then.
 
 `brain decision ask`, `answer`, `ack` and `archive` (and the question-tool capture) stamp the session's transcript id
 and its app id with the machine (`host_id`, `machine`), the app id only when the app's own file of it names this
@@ -1269,6 +1363,17 @@ state, why, when it ran, the last OK and since when. `brain status` shows a prob
 OK, 2 for a bad declaration); `--last` shows the last run, `--list` every declared probe and its machines, `--kinds`
 the kinds and their keys.
 
+The alerts pass, `brain status` (both without `--quick`) and the cockpit's probe also read each registered repo's
+main checkout (a worktree's repo: its main checkout) with `git --no-optional-locks status --porcelain`, 10 s at most
+(no `.git/index.lock` taken, so a pull running there at the same moment does not fail): modified or untracked files
+there are `checkout:<repo>` at warn (a project's `levels: {checkout: ...}` changes it), naming the first files and the
+last session whose working folder it was (the ledger's SessionStart events), since sessions write in worktrees and a
+file left in a main checkout trips the next pull or merge there. Ignored files and `.claude/worktrees/` (the worktrees
+Claude Code makes inside a main checkout) do not count. A checkout git cannot read is the same key at info, or keeps
+its last known alert when it was dirty, so a slow pass neither resolves it nor raises it again. One checkout spanned
+by several projects is read once and alerts once, in the project whose root it is, else the first project that lists
+it. Zero token: git only.
+
 ### External calls: retries and breakers
 
 The engine's calls to services it does not run (GitNexus's API and MCP endpoint, docker in `brain index`, the ntfy
@@ -1338,11 +1443,19 @@ a cwd in another repo (a code repo of P, say) or a plain folder keeps the regist
 One name for the machine everywhere (`brain.machine`): `$BRAIN_MACHINE`, else the host name, lowercase and
 `[a-z0-9-]` (the memory sync, the profile and the schedules read it; the permissions' `machines:` stay host names). It is tied to the OS install
 by an anchor, `sha256(install id || OS family)` of `MachineGuid`, `/etc/machine-id` or `IOPlatformUUID` (never the raw
-id), kept at first sight in `<BRAIN_HOME>/machine.json`. `brain doctor` prints the identity's state and, while the
+id; an MSYS or Cygwin Python reads `MachineGuid` through `/proc/registry`: the native Python's anchor), kept at first
+sight in `<BRAIN_HOME>/machine.json`. `brain doctor` prints the identity's state and, while the
 owner's `config.json` lacks it, the `hosts` line to add (`"hosts": {"<name>": {"anchor": "..."}}`): a name on another
 install (reused), two names on one install (a cloned image), a renamed machine, a copied `BRAIN_HOME` or an unreadable
 id is a doubt, said with its question; while it lasts the memory sync exports nothing (the machine's branch), and
-imports as before.
+imports as before. An id that cannot be read (no machine-id file) compares nothing (never moved, reused nor
+duplicate) and is cleared by the owner's confirmation of this home: `"<name>": {"local_id": "..."}` under `hosts`,
+the `local_id` of this machine's `machine.json`, which the doubt prints (the declared facts, if any, sit beside it).
+config.json is the same on every machine, so the confirmation is bound to that one home: another machine that takes
+the name with a fresh `BRAIN_HOME` stays a doubt (only a copied home, which nothing can tell apart without an anchor,
+passes). A home first seen with an anchor, or a name declared with one, that cannot be read here stays a doubt: run
+the brain with the Python that reads it. `brain doctor` then says `identity  ok, no anchor (...): confirmed by
+hosts.<name>.local_id`.
 
 Each fact is true, false or unknown: an unknown fact satisfies neither `FACT` nor `not FACT` in a `recommend_when`,
 and a requirement unknown counts as missing. `brain doctor` probes ECC memory (WMI on Windows, EDAC on Linux) and a
@@ -1527,6 +1640,11 @@ standards' stages mapped to them; `brain typologies show ID [--stage S]` shows o
 that kind is proposed at a stage. `config.json` `typologies` renames labels (`{"software": {"fr": "Produit
 logiciel"}}`) and adds a brain's own ids (`{"podcast": {"en": "Podcast", "parent": "creation"}}`); an id the catalog
 does not know is a note in read mode, an error in strict mode (CI) ([docs/typologies.md](docs/typologies.md)).
+The typology packs bundle what a kind adds to the core (its layers, standards, gates by stage, clauses of done, one-way
+doors, roles, guards, registry keys): the engine ships `software` and `research`, a brain takes one in
+`source/packs.yaml` with `from: engine`; `brain typologies packs` lists them and `brain typologies propose PROJECT
+[--apply]` plans what a project's typologies propose, never turned on silently
+([docs/typologies.md](docs/typologies.md#typology-packs)).
 
 **The deny list from the tree.** With `config.json` `public.deny_from_tree: true`, `public.deny.repos` gains, after the
 hand list, the name of every project whose class floor along its chain is `private` or stricter (a container's
@@ -1711,7 +1829,8 @@ command or flag only the owner runs (`brain usage allow`, `brain schedule instal
 `device init`, `reseal --apply`, `brain update`, `brain uninstall --apply`, `brain queue apply`, `brain handover root`,
 `brain ipc otel-headers`, `install.ps1 -Apply`) is declared once; the owner guard and the command line read that list,
 and a test checks that each one is refused to an agent's session. config.json `guards.owner_strict: true` adds the
-refusals 0.5.1 brings (off by default).
+refusals 0.5.1 brings (off by default). `guards.gestures_wide: true` (off by default) matches them through words the guard
+cannot resolve (`brain schedule install $FLAG`) and Python's inline code that drives brain's modules.
 
 **The machine's token** (`brain.tokenguard`, [docs/guards.md](docs/guards.md#the-machines-token)): under config.json
 `guards.refuse_token_read: true` (off by default), the owner guard (check `token`) refuses a session's `Read`, `Grep`,
@@ -1794,7 +1913,8 @@ Two of the PreToolUse hooks keep the owner's say over how sessions run (the runb
   from `warn` % of a quota window, refuses from `critical` %, refuses a new session past the parallel sessions cap
   (the smaller of `sessions` and what the week's room pays for), a new brainstorm past `brainstorms` (every project
   counted; a project's `usage: {brainstorms: N}` in `projects.yaml` lowers it for itself, never raises it), a new
-  session or workflow from `memory` % of committed memory or under `memory_available_gb` GB of available RAM (an opt-in floor, 0 by default; both
+  session or workflow from `memory` % of committed memory (or, with `memory_free_gb` set, under that many GB of commit
+  left, the percent not read) or under `memory_available_gb` GB of available RAM (an opt-in floor, 0 by default; both
   shown by `brain usage guard` and `brain status`, the refusal naming the one), or while the newest quota reading is older than
   `fresh_minutes`. With `usage.guard.wave_quota` (off by default; `{"ask_over_pct": 90, "max_streams": 3}`), a
   session started now is refused when its master already has `max_streams` live streams (its running or starting
@@ -1825,17 +1945,25 @@ the cost of a session-hour, the agents' included, as information: the governor's
 with `usage.guard.session_hour_measured` true (default false), and then when it is above `usage.guard.session_hour_usd`;
 `brain usage guard` shows the measured value and whether it is applied.
 
-**Where a session ran** (`brain.provenance`, wi-brain-session-provenance): `brain usage` and `brain status` say the
-model's `provider` (anthropic, bedrock, vertex, foundry...), the `harness` that ran each session (claude-code,
-cursor...; the session record's `tool`) and the `account` it ran on with its `plan`, computed when the report is built:
-the session record is unchanged (the SR fields come with wi-brain-sr-provenance-fields). The provider is the account's
-`provider`, else what the model's id says (`us.anthropic.claude-...` or an ARN: bedrock; `claude-...@<date>`: vertex;
-`claude-...`: anthropic). The account is an **alias the owner chooses**, set in config.json `usage.accounts` (the one in
-force from each `since` day, an entry that names the session's `harness` first); its plan is the entry's `plan`, else
-`usage.plans`. `since` is a UTC day (YYYY-MM-DD), compared with the UTC day the session started: an account switched
-within a day takes that whole day, the sessions before the switch included. An alias is never an e-mail address nor an
-account id: config.json's schema refuses one, and a ledger row that would carry one (a later scanner's, another
-harness's adapter) shows as `(masked)`. Nothing reads Claude Code's account files or its telemetry.
+**Where a session ran** (`brain.provenance`, wi-brain-session-provenance, wi-brain-sr-provenance-fields): the
+session record also holds the model's `provider` (anthropic, bedrock, vertex, foundry...), the `harness` that ran it
+(claude-code, cursor...; it takes over `tool`, still written for older engines and read when `harness` is absent) and
+the `account` it ran on with its `plan`; `brain usage` and `brain status` read them, and compute them for a session
+whose record does not hold them. The Stop hook takes the provider from the session's own environment (Claude Code's
+`CLAUDE_CODE_USE_BEDROCK`, `CLAUDE_CODE_USE_VERTEX`, `CLAUDE_CODE_USE_FOUNDRY`), else from the account's `provider`,
+else from the model's id (`us.anthropic.claude-...` or an ARN: bedrock; `claude-...@<date>`: vertex; `claude-...`:
+anthropic). The account is an **alias the owner chooses**, set in config.json `usage.accounts` (the one in force from
+each `since` day, an entry that names the session's `harness` first), or named by `BRAIN_ACCOUNT` in the session's
+environment (an owner running two accounts on one machine, or switching within a day); its plan is the entry's
+`plan`, else `usage.plans`. `since` is a UTC day (YYYY-MM-DD), compared with the UTC day the session started: without
+`BRAIN_ACCOUNT`, an account switched within a day takes that whole day, the sessions before the switch included. An
+alias is never an e-mail address nor an account id: such a value is never written (the hook ignores it, takes
+config.json's account and says so in `errors.log`, without the value), an SR or a config.json that holds one is
+refused by its schema, and a ledger row that would carry one (a later scanner's, another harness's adapter) shows as
+`(masked)`. Nothing reads Claude Code's account files or its telemetry. `brain record sr` and `brain record backfill`
+take what the session's snapshot captured (the Stop hook's, from the session's environment), and a record backfill
+rebuilds keeps the values it had. A report reads a ledger row's own fields first, then the snapshot's, then
+config.json and the model.
 
 ```json
 "usage": {"accounts": [{"alias": "personal", "plan": "Pro"},
@@ -1845,10 +1973,10 @@ harness's adapter) shows as `(masked)`. Nothing reads Claude Code's account file
 
 `brain usage` adds a « where » line (each provider's, harness's and account's cost and share; `--json`: `sources`),
 and `--by provider`, `--by harness` and `--by account`; `brain status` shows the same breakdown in its tokens row
-(`--json`: `tokens.sources`). A token-ledger row is read at report time (its own fields, what its session's snapshot
-holds, then its model, its day and `usage.accounts`), so the sessions scanned before keep working and an alias set
-later applies to them; an unknown value shows as `(none)`. The reader of another harness's sessions comes with that
-harness's adapter.
+(`--json`: `tokens.sources`). A token-ledger row is read at report time (what its session's Stop hook captured, then
+its model, its day and `usage.accounts`), so the
+sessions scanned before keep working and an alias set later applies to them; an account that is not an alias shows as
+`(masked)`, an unknown one as `(none)`. The reader of another harness's sessions comes with that harness's adapter.
 
 The session record (`brain capture`, the Stop hook) holds the brief's `task_class` (trivial, standard, strategic,
 brainstorm) and `ultracode` (whether it was on at any time), so the ledgers tell ultracode spend apart. The capture
@@ -1940,8 +2068,9 @@ machine is sealed client-side to public keys (`brain vault`: age, gpg as the fal
 kept in the OS keystore, and an offline recovery key: two recipients at least, proven daily by a canary per recipient
 (`brain health vault`). When the recipients change (a lost machine, a revoked heir, a rotated key), `brain vault
 reseal` seals the kept copies again to the current set. Opening, drilling, and creating or rotating a key are the
-owner's acts, refused in an agent session. The owner's steps, the canary's scheduled task per system, the rotation
-and what to do with a lost key are in the runbook, [`docs/vault.md`](docs/vault.md). Until a data remote exists,
+owner's acts, refused in an agent session. The owner's steps, the canary's scheduled task per system (with `--due`,
+its catch-up at logon after a boot), the rotation and what to do with a lost key are in the runbook,
+[`docs/vault.md`](docs/vault.md). Until a data remote exists,
 what leaves waits in a sealed local spool: `brain spool push`, run by hand, seals the changed stores of its set (the
 ledger, the usage, the session records by default) after a secret scan, sends them to `spool.remote` when one is set,
 each copy checked by sha256, and `brain health spool` gives the last push's age. The session archive (opt-in,
@@ -1951,7 +2080,7 @@ and indexed by session record (`brain session-archive run [--dry-run]`).
 
 ```
 brain classes [--check] [--suggest] [--matrix] [PATH...]
-brain vault status | seal STORE | canary | recipient add NAME [--replace] | recipient remove NAME | reseal [--apply]
+brain vault status | seal STORE | canary [--due HH:MM] | recipient add NAME [--replace] | recipient remove NAME | reseal [--apply]
 brain vault device init [--rotate] | device forget-previous | open FILE | drill RECIPIENT
 brain health vault
 brain spool push [STORE...] [--dry-run] | status | verify

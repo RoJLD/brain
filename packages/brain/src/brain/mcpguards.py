@@ -91,7 +91,7 @@ def owner_gesture(argv: list[str]) -> str:
     for gesture in OWNER_GESTURES:
         if tuple(ws[:len(gesture)]) == gesture:
             return "brain " + " ".join(gesture)
-    g = gestures.match(["brain", *ws])   # the engine's one list (wi-brain-owner-only-registry), strict or not
+    g = gestures.match(["brain", *ws], wide=True)   # the engine's one list (wi-brain-owner-only-registry), strict, wide
     return g.name if g else ""
 
 

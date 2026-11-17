@@ -199,15 +199,72 @@ def test_the_machine_memory_reads_two_measures(ada, brain_home, monkeypatch):
 
 def test_the_memory_measures_are_read_from_the_machine():
     m = governor.memory_info()
-    assert set(m) == {"committed", "available_gb"}
+    assert set(m) == {"committed", "available_gb", "commit_free_gb"}
     if m["committed"] is not None:
         assert 0 <= m["committed"] <= 100 and m["available_gb"] is not None and m["available_gb"] >= 0
+        assert m["commit_free_gb"] is not None and m["commit_free_gb"] >= 0
 
 
 def test_meminfo_gives_the_percent_in_use_and_the_gb_available():
     text = "MemTotal:       16777216 kB\nMemFree:         1048576 kB\nMemAvailable:    4194304 kB\n"
-    assert governor.meminfo(text) == {"committed": 75.0, "available_gb": 4.0}
-    assert governor.meminfo("MemTotal:       16777216 kB\n") == {"committed": None, "available_gb": None}
+    assert governor.meminfo(text) == {"committed": 75.0, "available_gb": 4.0, "commit_free_gb": 4.0}
+    assert governor.meminfo(text + "SwapFree:        2097152 kB\n")["commit_free_gb"] == 6.0
+    assert governor.meminfo("MemTotal:       16777216 kB\n") == {"committed": None, "available_gb": None,
+                                                                 "commit_free_gb": None}
+
+
+# GetPerformanceInfo on the machine of the incident (2026-11-03, wi-brain-governor-memory-headroom): a page file fixed
+# at 2+9 GB, 69 GB promised of a 75 GB commit limit, 25 GB of RAM free; the numbers as performance_info returns them
+INCIDENT = {"commit_total": 69 * 2 ** 30, "commit_limit": 75 * 2 ** 30, "physical_total": 64 * 2 ** 30,
+            "physical_available": 25 * 2 ** 30, "kernel_nonpaged": 2 ** 30, "processes": 400}
+
+
+def test_the_commit_left_in_gb():
+    m = governor.performance_memory(INCIDENT)
+    assert m == {"committed": 92.0, "available_gb": 25.0, "commit_free_gb": 6.0}
+    assert governor.performance_memory(None) == {"committed": None, "available_gb": None, "commit_free_gb": None}
+    # what an odd reading gives: nothing that refuses
+    for odd in ({}, {"commit_total": 1, "commit_limit": 0, "physical_available": 1},
+                {"commit_total": "x", "commit_limit": None, "physical_available": None}):
+        assert governor.performance_memory(odd)["commit_free_gb"] is None
+    assert governor.performance_memory(dict(INCIDENT, commit_total=80 * 2 ** 30))["commit_free_gb"] == 0.0
+
+
+def mem3(monkeypatch, committed, available_gb, free_gb):
+    monkeypatch.setattr(governor, "memory_info", lambda: {"committed": committed, "available_gb": available_gb,
+                                                          "commit_free_gb": free_gb})
+
+
+def test_the_memory_cap_in_gb_of_commit_left(ada, brain_home, monkeypatch):
+    """With memory_free_gb set, the percent is not read: 92 % committed with 6.5 GB left passes, 5 GB left is refused
+    whatever the percent; without it (the default) the percent decides as before."""
+    mem3(monkeypatch, 98.0, 25.0, 6.5)
+    assert hook(START, ada.lab, title="x")[0] == "deny"    # the default: 98 % >= 97 %
+    ada({"memory_free_gb": 6})
+    assert hook(START, ada.lab, title="x") is None   # 6.5 GB left: through, whatever the percent
+    mem3(monkeypatch, 80.0, 25.0, 5.0)
+    decision, reason = hook(START, ada.lab, title="x")
+    assert decision == "deny" and "refused by the committed memory" in reason
+    assert "5.00 GB of commit left (refused under 6 GB)" in reason
+    assert hook("Workflow", ada.lab)[0] == "deny" and hook("Agent", ada.lab) is None   # as the percent
+    mem3(monkeypatch, 80.0, 25.0, None)   # not readable: no refusal on it
+    assert hook(START, ada.lab, title="x") is None
+    ada({"memory_free_gb": 6, "memory_available_gb": 30})
+    mem3(monkeypatch, 80.0, 25.0, 5.0)
+    assert "refused by both memory measures" in hook(START, ada.lab, title="x")[1]
+
+
+def test_the_guard_and_status_show_the_commit_left(ada, brain_home, monkeypatch, capsys):
+    from brain import status
+    mem3(monkeypatch, 92.0, 25.0, 6.0)
+    ada({"memory_free_gb": 6})
+    monkeypatch.chdir(ada.lab)
+    assert cli.main(["usage", "guard"]) == 0
+    out = capsys.readouterr().out
+    assert "memory under 6 GB of commit left" in out
+    assert "  memory    92.0 % committed, 6.00 GB of commit left (refused under 6 GB), 25.0 GB of RAM available" in out
+    m = status.memory_of(ada.lab)
+    assert m["commit_free_gb"] == 6.0 and m["refused"] == ""
 
 
 def test_a_cache_of_other_defaults_is_not_read(ada, brain_home, monkeypatch):
@@ -687,3 +744,25 @@ def test_brain_usage_allow_check(ada, brain_home, capsys):
         cli.main(["usage", "allow", "--check", "stale"])
     assert cli.main(["usage", "guard"]) == 0
     assert "override  critical, warn until" in capsys.readouterr().out
+
+
+def test_the_commit_left_is_read_to_the_hundredth(ada, brain_home, monkeypatch):
+    """The review (2026-11-17): 5.95 GB left is under a 6 GB cap (a tenth's rounding let it through)."""
+    m = governor.performance_memory(dict(INCIDENT, commit_total=INCIDENT["commit_limit"] - int(5.95 * 2 ** 30)))
+    assert m["commit_free_gb"] == 5.95
+    assert governor.memory_refusal(80.0, 25.0, dict(governor.DEFAULTS, memory_free_gb=6), m["commit_free_gb"]) == \
+        "committed"
+
+
+def test_brain_lots_shows_the_commit_left(ada, brain_home, monkeypatch):
+    from brain import lots
+    mem3(monkeypatch, 92.0, 25.0, 5.0)
+    ada({"memory_free_gb": 6})
+    c = lots.caps_in_force(ada.lab, "")
+    assert c["memory_refuses"] and "5.00 GB of commit left (refused under 6 GB)" in c["memory"]
+
+
+def test_the_message_reads_as_the_check(ada, brain_home, monkeypatch):
+    """The review's round 2: 5.96 GB left is refused and says 5.96, never 6.0, under a 6 GB cap."""
+    assert "5.96 GB of commit left (refused under 6 GB)" in governor.memory_text(
+        80.0, 25.0, dict(governor.DEFAULTS, memory_free_gb=6), 5.96)

@@ -158,6 +158,9 @@ def test_brief_holds_the_graph_and_the_rules(project):
     assert "- Never tag.\n- Never add an attribution line." in text
     assert "Never in other sections" not in text
     assert "## To decide (the coordinator)" in text
+    # wi-brain-brief-own-id: a report is signed with the session's own id, and the brief says how to read it
+    assert ("signed with your own `local_` id (`brain sessions self` prints it; or the app's get_session with the id "
+            "self), never the coordinator's nor the notes folder's") in text
 
 
 def test_brief_never_list_without_a_never_section(project, tmp_path, monkeypatch):

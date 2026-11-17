@@ -278,9 +278,11 @@ def lines(r: dict) -> list[str]:
 
 
 def _refused(env=None) -> str:
+    from . import gestures
     env = os.environ if env is None else env
+    var = gestures.agent_session(env) or ("CLAUDECODE" if "CLAUDECODE" in env else "")   # set, even empty
     return ("the chain root is the owner's mark, in their own terminal: not from a Claude Code session's shell "
-            "(CLAUDECODE is set)" if "CLAUDECODE" in env else "")
+            f"({var} is set)" if var else "")
 
 
 def _load_roots() -> dict:

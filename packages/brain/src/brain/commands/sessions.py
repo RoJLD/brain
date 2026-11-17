@@ -18,14 +18,50 @@ USAGE = """\
                         (its PRs, head, items, DDRs, what it waits on, what comes next); show: one session, by either
                         id (a prefix of 8 or more) or its short name, and what a message would meet (live, idle,
                         archived); --report: its last final message in full, read from its transcript; the options
-                        go before or after tree/show
+                        go before or after tree/show (only --json applies to self, before or after it)
+  brain sessions self [--json]   this session's own app id (local_..., from $CLAUDE_CODE_HOST_SESSION_ID when the app's
+                        file of that id names this transcript), the one a report to a coordinator is signed with;
+                        exit 1 outside an app session, on a malformed id, or on an id inherited from another
+                        session's shell (a claude started there): the app's get_session self tells it then
 """
 NO_PROJECT = {"sessions"}   # its parsers that take no --project after them
 
 
-def cmd_sessions(args) -> int:
-    """brain sessions [tree [ID] | show ID] (brain.sessions): machine-wide, no graph store."""
+def cmd_self(as_json: bool) -> int:
+    """brain sessions self: this session's app id, the one its reports are signed with (wi-brain-brief-own-id): never
+    the coordinator's, nor the shared notes folder's, which names the first coordinator."""
+    import json
+    import os
+    import sys
+
     from .. import sessions
+    raw = os.environ.get(sessions.HOST_ENV, "").strip()
+    why, inherited = "", False
+    if not raw:
+        why = "no app session id here ($CLAUDE_CODE_HOST_SESSION_ID is not set)"
+    elif not sessions.HOST_RE.match(raw):
+        why = "$CLAUDE_CODE_HOST_SESSION_ID is not an app session id (local_ and a uuid)"
+    elif not sessions.host_for(env={**os.environ, sessions.HOST_ENV: raw}):
+        # a claude started from another session's shell inherits that session's id (review of #34, finding 50)
+        why, inherited = ("$CLAUDE_CODE_HOST_SESSION_ID is inherited from another session's shell (its app file "
+                          "names another transcript)"), True
+    sid = "" if why else raw
+    if as_json:
+        print(json.dumps({"id": sid, "source": sessions.HOST_ENV if raw else "", "inherited": inherited}))
+    elif sid:
+        print(sid)
+    if why:
+        print(f"brain sessions self: {why}: in the desktop app, its get_session tool with the id self tells it",
+              file=sys.stderr)
+        return 1
+    return 0
+
+
+def cmd_sessions(args) -> int:
+    """brain sessions [tree [ID] | show ID | self] (brain.sessions): machine-wide, no graph store."""
+    from .. import sessions
+    if args.sessions_cmd == "self":
+        return cmd_self(args.json)
     try:
         print(sessions.main(args.sessions_cmd or "list", getattr(args, "ref", "") or "", hours=args.hours,
                             every=args.all, briefs=not args.no_briefs, as_json=args.json,
@@ -47,7 +83,9 @@ def register(sub, ctx) -> None:
         if name == "show":
             sp_.add_argument("--report", action="store_true", help="its last final message in full, from its "
                                                                    "transcript (never stored)")
-    for sp_ in (ses, *ses_sub.choices.values()):
+    me = ses_sub.add_parser("self", help="this session's own app id (local_...), the one its reports are signed with")
+    me.add_argument("--json", action="store_true", default=argparse.SUPPRESS)
+    for sp_ in (ses, *(p for n, p in ses_sub.choices.items() if n != "self")):
         # the subcommands' own copies default to SUPPRESS: given before tree/show, an option is not reset by the
         # subparser's default (review of #34, finding 56)
         keep = {} if sp_ is ses else {"default": argparse.SUPPRESS}

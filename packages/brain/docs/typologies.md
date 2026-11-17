@@ -49,8 +49,89 @@ prints its clauses. `brain item close ID` takes `--pr "repo #N"` or `--evidence 
 document's version, a DDR); `--pr` is required for a done item that takes a clause whose evidence is a PR, and for an
 item that declares no typology, or one the catalog does not know (a misspelling never drops a clause), as before the
 catalog (DONE-1). Only the store's own project's `lifecycle` counts (`--store` of another project's: the item's
-`props.typology` alone). A blank `--evidence` proves nothing. The clauses live in the catalog until the
-typology packs carry them (`wi-brain-typology-packs`).
+`props.typology` alone). A blank `--evidence` proves nothing. The clauses are the typology packs' (below, a pack's
+`done`); an item takes them by its kinds whether or not its brain took the pack, so no clause is dropped by a pack not
+yet applied.
+
+## Typology packs
+
+A typology pack bundles what a kind of project adds to the generic core (`brain.typology_packs`,
+`wi-brain-typology-packs`, spec-brain-typology-packs E3, TYPO-1, TYPO-4). It is a pack of the neutral source
+(`source/packs.yaml`), with that file's keys (`title`, `description`, `projects`, `rules`, `procedures`, `mcp`,
+`hooks`) and its parts:
+
+| Part | Holds | Read by |
+|---|---|---|
+| `typologies` | ids of this catalog (an entry covers its sub-profiles) | `brain typologies propose` |
+| `layers` | the graph layers it brings (`research_graph layers`) | the plan: the layers a project's store lacks |
+| `standards` | `{catalogs, profiles}`: the engine's catalogs it reads, the profiles it opts a project in to | the plan: the profiles a project does not opt in to |
+| `stages` | `{stage: [a gate, in words]}`: its gates by lifecycle stage (the catalog's, or a layer's own) | listed (`brain typologies packs`) |
+| `done` | its clauses of the definition of done (`{id, text, evidence}`) | `brain item clauses`, `brain item close`: the engine's packs' (a brain's own `done` is a note, not read yet) |
+| `doors` | its one-way doors, `{id, text}` | listed |
+| `roles` | its roles, `{id, text}` | listed |
+| `guards` | the guards it turns on (`brain.guards`) | listed |
+| `registry` | the keys of a project's entry it reads (`brain projects --keys`) | listed |
+
+A part's shape is checked by `brain check` (an error); an id this engine does not know (a typology, a layer, a
+profile, a catalog, a stage, a guard, a registry key) is a note in read mode and an error in strict mode (CI), so a
+pack written for a later engine is read by this one. A typology pack is never the core pack.
+
+**The engine's packs.** The engine ships `software` and `research` (`src/brain/typology_packs.yaml`), the two real
+typologies of TYPO-1; the other kinds are named by the catalog and get their pack with a real project (STD-5). A brain
+takes one in its `packs.yaml` by its id with `from: engine`: the engine's parts, the brain's own keys laid over them
+key by key (the nearest wins: a list the brain gives replaces the engine's):
+
+```yaml
+packs:
+  software:
+    from: engine
+    projects: [shop]       # the projects it is for
+    layers: [code, docs_tests]   # the brain's own list replaces the engine's
+```
+
+**Nothing turns on by itself** (TYPO-4). `brain typologies propose PROJECT` reads the project's `lifecycle.typologies`
+and lists every pack whose typologies it meets, the brain's and the engine's: those it takes, and for each other the
+step that gives it (a pack `from: engine` with `projects: [PROJECT]` appended under `packs:`, or `PROJECT` added to a
+brain pack's `projects`), the layers its store lacks and the standards profiles it does not opt in to. `--apply`
+writes the packs.yaml steps, comments kept, and refuses the write when `brain check` would find a new error in the
+source; the layers (`research_graph --store S layers add L --write`) and the standards opt-in (`projects.yaml`, by a PR
+of the registry) stay the owner's next steps, printed by the plan. A pack that comes from a typology is given to the
+projects named, never to every project (TYPO-6: node-local). `brain typologies packs [--json]` lists the engine's
+packs and the brain's, their parts and the projects that take them.
+
+```bash
+brain typologies packs [--json]                     # the typology packs, the engine's and this brain's
+brain typologies propose shop [--apply] [--json]    # what shop's typologies propose; --apply writes packs.yaml
+```
+
+### The software pack
+
+The software parts of the core are the `software` pack's (`wi-brain-software-pack`, TYPO-1, spec-brain-typology-packs
+§1.2 and door 3); git as the Brain's own substrate (its stores, answer batches by PR, the merge driver) stays in the
+core whatever the kind.
+
+- **Its registry keys, grouped.** `repos`, `audit`, `code_index` and `production` (its `registry` part) go under a
+  project's `software:`; at the top level, their place before the packs, they stay accepted as aliases for era 1. A
+  key given in both places is an error (`brain check`), an unknown key under `software:` a note in read mode:
+
+  ```yaml
+  shop:
+    root: ../shop
+    lifecycle: {typologies: [service]}
+    software:
+      repos: [., {path: ../shop-data, name: shop-data}]
+      production: [../shop-live]
+      code_index: [.]
+  ```
+
+- **Its code duties, by kind.** `brain audit` audits a project's root as a code repo by default, and `brain audit
+  --diff` (the scout) runs, only when the software pack applies to it: no typology declared, or one the catalog does
+  not know (the rule before the catalog, as for the clauses of done), or a kind that meets the pack's typologies (a
+  sub-profile its entry's). A project of another kind (`strategy`, `creation`...) is audited for no code repo, said
+  in the report (`not_software` in `--json`), and the scout passes saying why; a project that declares `repos` opts in
+  whatever its kind. `brain index` reads `code_index`, which a project declares only when it has code.
+- **Its clauses of done, standards catalog, layers** (`code`, `docs_tests`, `features`), gates, doors, roles and
+  guards (`branches`) are its parts in `typology_packs.yaml` (`brain typologies packs`).
 
 ## Stages
 

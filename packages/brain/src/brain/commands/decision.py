@@ -27,8 +27,10 @@ USAGE = """\
                  {"other": "..."}; a BOM is fine; every key is checked before any DDR is written
   brain decision answer --captured [--session ID] [--no-merge] [--retries 3] [--dry-run]   the answers this
                  session's question tool captured (each tied to the DDR brain decision batch printed), recorded in a
-                 worktree, one PR, merged with its retries; in an agent's session an answer relayed by a message is
-                 never recorded (apply it, then ack)
+                 worktree, one PR, merged with its retries; an answer whose DDR only the asking session's branch
+                 holds (asked there, not merged yet) is committed and pushed on that branch, whose PR carries it,
+                 both in one run (--dry-run says where each goes); in an agent's session an answer relayed by a
+                 message is never recorded (apply it, then ack)
   brain decision defaulted [--all] [--apply] [--seen [ID...]] [--on-main] [--json]   the review list: the decisions
                  taken by default, the provisional ones, the reversed ones (reverse one: answer ID <option> --again);
                  --apply and --seen never write a main checkout on main unless --on-main
@@ -158,9 +160,28 @@ def _left_lines(out: dict) -> list[str]:
     if out["skipped"]:
         lines.append(f"not pending, left: {', '.join(out['skipped'])} (--again replaces an answer)")
     if out["missing"]:
-        lines.append(f"not on the default branch yet, left captured: {', '.join(out['missing'])} (record them once "
-                     "the branch that asked them is merged)")
+        lines.append(f"not on the default branch yet, left captured: {', '.join(out['missing'])} (record them from "
+                     "the checkout of the branch that asked them, or once it is merged)")
     return lines + [f"  {line}" for line in out["log"]]
+
+
+def _recorded_lines(out: dict, project) -> list[str]:
+    """Where --captured recorded the batch: the PR from the default branch, the asking branch, or both."""
+    lines, here = [], out["in_branch"]
+    if out["in_pr"]:
+        lines.append(f"recorded {len(out['in_pr'])} answer(s) on {out['branch']}: {out['pr']}")
+    if here:
+        lines.append(f"recorded {len(here['recorded'])} answer(s) on {here['branch']}, the branch that asked them "
+                     f"(its own PR carries them): {', '.join(here['recorded'])}")
+    lines += _left_lines(out)
+    if here and here["pushed"]:   # its DDRs are on that branch only: they reach main with it
+        lines.append(f"once {here['branch']} is merged and {project.root} pulled, the hooks announce its answers")
+    if out["in_pr"] and not out["merged"]:
+        lines.append(f"not merged yet: {out['pr']} (worktree {out['worktree']})")
+    elif out["in_pr"]:   # the hooks read the main checkout's queue: the other sessions see the answers once pulled
+        lines.append(f"merged: once {project.root} is pulled, the hooks announce the answers to every session of the "
+                     "project")
+    return lines
 
 
 def cmd_answer_captured(args, root: Path) -> int:
@@ -181,7 +202,8 @@ def cmd_answer_captured(args, root: Path) -> int:
     for c in caps:
         print(_capture_line(c))
     if args.dry_run:
-        print(f"dry run: {len(caps)} answer(s) to record in one PR")
+        print("\n".join([f"dry run: {len(caps)} answer(s), nothing written; each would go:"]
+                        + [f"  {c['ddr']}: {where}" for c, where in answers.plan(project, caps)]))
         return 0
     try:
         out = answers.record_captured(project, caps, owner=args.by, session=session, merge=not args.no_merge,
@@ -189,15 +211,17 @@ def cmd_answer_captured(args, root: Path) -> int:
     except answers.AnswersError as exc:
         print(f"brain: {exc}", file=sys.stderr)
         return 1
-    print(f"recorded {len(out['recorded'])} answer(s) on {out['branch']}: {out['pr']}")
-    for line in _left_lines(out):
-        print(line)
-    if not out["merged"]:
-        print(f"not merged yet: {out['pr']} (worktree {out['worktree']})")
-    else:   # the hooks read the main checkout's queue: the other sessions see the answers once it is pulled
-        print(f"merged: once {project.root} is pulled, the hooks announce the answers to every session of the project")
-    print("the sessions that own each decision apply it, then brain decision ack ID --applied <where>")
-    return 0
+    return _report_captured(out, project)
+
+
+def _report_captured(out: dict, project) -> int:
+    """What --captured recorded and left, then what failed once something was recorded (the asking branch's part,
+    its push): printed, exit 1."""
+    print("\n".join(_recorded_lines(out, project)
+                    + ["the sessions that own each decision apply it, then brain decision ack ID --applied <where>"]))
+    for err in out["errors"]:
+        print(f"brain: {err}", file=sys.stderr)
+    return 1 if out["errors"] else 0
 
 
 def _own_records(projs: list) -> list:

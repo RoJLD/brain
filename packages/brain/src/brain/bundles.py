@@ -20,7 +20,9 @@ rendering; then it says which files it would write (new, changed, unchanged), th
 to pull, and what the apply would do with each component, from its state; a component whose secret file is missing
 waits for the owner. ``brain bundle apply [BUNDLE]...`` does it: the files and folders, the dependencies outside the
 bundle (Docker) started, the missing images pulled, then ``brain up`` of the components that do not wait. A second
-apply writes nothing and recreates nothing. Exit code 1 when a check fails (nothing is applied) or a component does not
+apply writes nothing and recreates nothing. Each service is labelled with the hash of the bundle files it mounts
+(:data:`CONFIG_LABEL`): ``docker compose up -d`` recreates a container only when its service changed, so a changed
+mounted file (the collector's ``otelcol.yaml``) changes the label and the apply recreates that container on it. Exit code 1 when a check fails (nothing is applied) or a component does not
 get healthy, 2 for a registry error.
 """
 
@@ -137,7 +139,7 @@ def render(bundle: str, comps: list[stacks.Stack]) -> tuple[dict, dict[str, byte
     if tokened:
         from . import ipcauth
         doc.setdefault("secrets", {})[TOKEN_SECRET] = {"file": ipcauth.token_file().as_posix()}
-    files = {stacks.BUNDLE_FILE: (HEADER.format(bundle=bundle) + _dump(doc)).encode("utf-8")}
+    files: dict[str, bytes] = {}
     src = ROOT / bundle
     for f in sorted(src.rglob("*")):
         rel = f.relative_to(src).as_posix()
@@ -147,7 +149,68 @@ def render(bundle: str, comps: list[stacks.Stack]) -> tuple[dict, dict[str, byte
         rel = TOKEN_CONFIGS[name]
         if rel in files:
             files[rel] = collector_auth(files[rel])
-    return doc, files
+    for name, svc in doc["services"].items():   # a mounted file changed: the service changes, compose recreates it
+        digest = config_hash(svc or {}, files)
+        if digest:
+            labels = svc.get("labels")
+            if isinstance(labels, list):
+                svc["labels"] = [x for x in labels if not str(x).startswith(CONFIG_LABEL + "=")] + \
+                    [f"{CONFIG_LABEL}={digest}"]
+            else:
+                svc["labels"] = {**(labels or {}), CONFIG_LABEL: digest}
+    return doc, {stacks.BUNDLE_FILE: (HEADER.format(bundle=bundle) + _dump(doc)).encode("utf-8"), **files}
+
+
+# A service's mounted configuration (wi-brain-bundle-config-restart): docker compose up -d recreates a container only
+# when its service's definition changed, not when a file it mounts did, so a new otelcol.yaml (the collector's
+# private-attribute processors) took effect only after a down and up. The rendering labels each service with a hash of
+# the bundle files it mounts: a changed file changes the label, and the next up recreates the container on it.
+CONFIG_LABEL = "brain.config-hash"
+
+
+def _label(svc) -> str:
+    """A service's :data:`CONFIG_LABEL` ('' without one), its labels a mapping or a list."""
+    labels = (svc or {}).get("labels") if isinstance(svc, dict) else None
+    if isinstance(labels, dict):
+        return str(labels.get(CONFIG_LABEL) or "")
+    return next((str(x).split("=", 1)[1] for x in labels or [] if str(x).startswith(CONFIG_LABEL + "=")), "")
+
+
+def _applied_services(where: Path) -> dict:
+    """The services of the compose file an earlier apply rendered there ({} when none or unreadable)."""
+    import yaml
+    try:
+        doc = graph.load_yaml_file(where / stacks.BUNDLE_FILE)   # the engine's one YAML reader
+    except (OSError, UnicodeDecodeError, yaml.YAMLError):   # none rendered yet, or a file it cannot read: none
+        return {}
+    return doc.get("services") or {} if isinstance(doc, dict) else {}
+
+
+def mounted(svc: dict, files: dict[str, bytes]) -> list[str]:
+    """The bundle files ``svc`` bind-mounts (``./otelcol.yaml:/etc/...``, a long form's ``source: ./x``), relative to
+    the bundle, in its order; a folder or a source that is not ``./`` of a bundle file is not hashed (the template has
+    none)."""
+    out = []
+    for v in svc.get("volumes") or []:
+        src = v.split(":", 1)[0] if isinstance(v, str) else str((v or {}).get("source") or "") \
+            if isinstance(v, dict) else ""
+        rel = src[2:] if src.startswith("./") else ""
+        if rel in files and rel not in out:
+            out.append(rel)
+    return out
+
+
+def config_hash(svc: dict, files: dict[str, bytes]) -> str:
+    """The first 16 hex characters of the sha256 of the files ``svc`` mounts (each one's path and bytes); '' when it
+    mounts none."""
+    import hashlib
+    rels = mounted(svc, files)
+    if not rels:
+        return ""
+    h = hashlib.sha256()
+    for rel in rels:
+        h.update(rel.encode("utf-8") + b"\0" + files[rel] + b"\0")
+    return h.hexdigest()[:16]
 
 
 # The machine's token for a component that requires it (wi-brain-local-ipc-auth): opt-in, config.json
@@ -314,6 +377,7 @@ def plan(reg: dict[str, stacks.Stack], bundle: str, root: Path | None = None) ->
         elif waits:
             p.waiting[s.name] = f"{', '.join(waits)}"
     off = stacks.profile_off(reg, root)
+    applied_services = _applied_services(p.target)
     outside = []
     for s in stacks.plan(reg, [c.name for c in comps]):
         st, why = stacks.state(s, off.get(s.name, ""))
@@ -327,6 +391,12 @@ def plan(reg: dict[str, stacks.Stack], bundle: str, root: Path | None = None) ->
             outside.append(s.name)
         if s.name in p.waiting:
             action = f"waits for {p.waiting[s.name]}"
+        elif st == "OK" and (changed := [r for r in mounted(services.get(s.name) or {}, rendered)
+                                         if p.files.get(r) == "changed"]):
+            action = f"recreated: its mounted configuration changed ({', '.join(changed)})"
+        elif st == "OK" and _label(services.get(s.name)) and _label(services.get(s.name)) != _label(
+                applied_services.get(s.name)):
+            action = f"recreated: its {CONFIG_LABEL} label is new (once, after the engine adds it)"
         elif st == "OK":
             action = "up; docker compose up -d recreates it only if its configuration changed"
         elif st == "STALE":

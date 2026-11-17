@@ -160,7 +160,7 @@ def audit_of(p: projects.Project, detail: int = 0) -> dict:
     """The findings by severity, measured as brain audit --json measures them (every repo of the project); with
     ``detail``, each repo's counts and the first ``detail`` findings, P0 first (the cockpit's audit panel)."""
     try:
-        cfgs = projects.repos_of(p)
+        cfgs = projects.repos_of(p, audit=True)   # as brain audit measures them: by kind
         trees, _, errors = audit.trees_now(cfgs)
         res = audit.measure(p, cfgs, trees)
     except (audit.AuditError, projects.RepoError) as exc:
@@ -244,7 +244,8 @@ def alerts_of(p: projects.Project, out: dict, stack_reg, sched: dict | None, las
     try:
         found = alerts.of_project(p, stacks_rows=rows("stacks"), index_rows=rows("code_index"),
                                   audit=out.get("audit") if "counts" in (out.get("audit") or {}) else None,
-                                  sched=sched, watched=watched)
+                                  sched=sched, watched=watched, checkout_rows=rows("checkouts"),
+                                  last_open=(last.get(p.name) or {}).get("open"))
     except alerts.AlertsError as exc:
         return {"error": str(exc)}
     d = alerts.summary(found, (last.get(p.name) or {}).get("last_pass"))
@@ -259,10 +260,11 @@ def alerts_of(p: projects.Project, out: dict, stack_reg, sched: dict | None, las
 
 
 def collect(p: projects.Project, *, quick: bool = False, stack_reg: dict | None = None, index: tuple | None = None,
-            queue: dict | None = None, sched: dict | None = None) -> dict:
+            queue: dict | None = None, sched: dict | None = None, checkouts: alerts.Checkouts | None = None) -> dict:
     """The status of one project (the TUI's and the HTML views' data). ``stack_reg`` (brain.stacks.load),
     ``index`` ((indexer, repos, record, GitNexus's entries), from brain.codeindex) and ``sched`` (the scheduler's
-    tasks, brain.alerts.read_scheduler) are read once for every project; an Exception stands for a registry error."""
+    tasks, brain.alerts.read_scheduler) are read once for every project; an Exception stands for a registry error;
+    ``checkouts`` (brain.alerts.checkouts) is the run's main checkouts, each read once (None: a scope of its own)."""
     out = {"project": p.name, "title": p.title, "root": str(p.root), "found": p.root.is_dir()}
     if not out["found"]:
         return out
@@ -272,7 +274,7 @@ def collect(p: projects.Project, *, quick: bool = False, stack_reg: dict | None 
         out.update(audit={"skipped": QUICK}, stacks={"skipped": QUICK}, code_index={"skipped": QUICK})
     else:
         out["audit"] = audit_of(p)
-        out.update(probed(p, stack_reg, index))
+        out.update(probed(p, stack_reg, index, checkouts))
     out["alerts"] = alerts_of(p, out, stack_reg, sched, alerts.state_load())
     out.update(records_of(p))
     out["tokens"] = cost.status_of(p, None, datetime.now(timezone.utc), quick=quick)
@@ -280,13 +282,16 @@ def collect(p: projects.Project, *, quick: bool = False, stack_reg: dict | None 
     return out
 
 
-def probed(p: projects.Project, stack_reg, index) -> dict:
-    """{stacks, code_index}: each state of ``p``'s stacks and code index repos (an Exception stands for a registry
-    error); ``stack_reg`` and ``index`` as ``_probes`` reads them."""
+def probed(p: projects.Project, stack_reg, index, checkouts: alerts.Checkouts | None = None) -> dict:
+    """{stacks, code_index, checkouts}: each state of ``p``'s stacks and code index repos (an Exception stands for a
+    registry error) and its main checkouts (brain.alerts.checkout_rows, in the run's ``checkouts`` scope: each read
+    once, carried by one project); ``stack_reg`` and ``index`` as ``_probes`` reads them. brain status, brain alerts
+    and the cockpit's probe all read them here."""
     return {"stacks": ({"error": str(stack_reg)} if isinstance(stack_reg, Exception)
                        else stacks_of(p, stack_reg or {})),
             "code_index": ({"error": str(index)} if isinstance(index, Exception)
-                           else code_index_of(p, *index) if index and index[0] else [])}
+                           else code_index_of(p, *index) if index and index[0] else []),
+            "checkouts": alerts.checkout_rows(p, checkouts)}   # a dirty main checkout (wi-brain-main-checkout-clean)
 
 
 def _probes(root: Path | None, quick: bool) -> tuple:
@@ -349,8 +354,10 @@ def run(projs: list[projects.Project], *, every: bool = False, quick: bool = Fal
     stack_reg, index = _probes(root, quick)
     sched = {} if quick else alerts.read_scheduler(_alert_configs(projs))
     qs = queues(projs, quick, every, root)
+    scope = None if quick else alerts.checkouts(root)   # each main checkout read once, carried by one project
     data = {"status": 1, "projects": [collect(p, quick=quick, stack_reg=stack_reg, index=index,
-                                              queue=qs.get(p.name) if qs else None, sched=sched) for p in projs]}
+                                              queue=qs.get(p.name) if qs else None, sched=sched, checkouts=scope)
+                                      for p in projs]}
     if every:
         data["total"] = total(data["projects"])
         data["ids"] = projects.collisions([p for p in projs if p.root.is_dir()])
@@ -368,7 +375,7 @@ def run(projs: list[projects.Project], *, every: bool = False, quick: bool = Fal
 
 def memory_of(root: Path | None) -> dict:
     """The machine's two memory measures and the usage guard's thresholds (brain.governor): {committed,
-    available_gb, refused, line}; refused names the measure that would refuse a new session ('' none, 'both')."""
+    available_gb, commit_free_gb, refused, line}; refused names the measure that would refuse a new session ('' none, 'both')."""
     from . import governor
 
     try:
@@ -376,10 +383,10 @@ def memory_of(root: Path | None) -> dict:
     except Exception:   # a config that does not load: the defaults
         lim = dict(governor.DEFAULTS)
     mem = governor.memory_info()
-    c, a = mem.get("committed"), mem.get("available_gb")
-    refused = governor.memory_refusal(c, a, lim)
-    line = governor.memory_text(c, a, lim) + (f": a new session or workflow is refused ({refused})" if refused else "")
-    return {"committed": c, "available_gb": a, "refused": refused, "line": line}
+    c, a, f = mem.get("committed"), mem.get("available_gb"), mem.get("commit_free_gb")
+    refused = governor.memory_refusal(c, a, lim, f)
+    line = governor.memory_text(c, a, lim, f) + (f": a new session or workflow is refused ({refused})" if refused else "")
+    return {"committed": c, "available_gb": a, "commit_free_gb": f, "refused": refused, "line": line}
 
 
 # --- text ---

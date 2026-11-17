@@ -514,7 +514,7 @@ def test_the_probe_says_its_progress_and_a_stack_its_last_ok_measure(tmp_path, m
     monkeypatch.setattr(alerts, "read_scheduler", lambda cfgs: {})
     monkeypatch.setattr(status, "alerts_of", lambda p, m, reg, sched, last: {"open": 0, "counts": {}, "alerts": []})
     states = iter(["OK", "DOWN", "DOWN"])
-    monkeypatch.setattr(status, "probed", lambda p, reg, ix: {
+    monkeypatch.setattr(status, "probed", lambda p, reg, ix, scope=None: {
         "stacks": [{"name": "gitnexus", "state": next(states), "why": "no container"}], "code_index": []})
     t0 = datetime(2026, 11, 6, 10, 0, tzinfo=timezone.utc)
     cp.probe(now=t0)

@@ -21,9 +21,15 @@ The chain:
 The checklist: the features whose status may change, the docs to update, the ADRs and specs to re-read, the tests to
 run (one pytest line), the open items and the pending decisions. ``--json`` prints all of it.
 
-Without GitNexus (the stack down, the repo not indexed, its indexed commit not in this checkout) the impact is at the
-file level, and its second line says so and why: every CodeRef of a changed file is touched, a Python symbol's
-narrowed by the AST of both sides (research_graph code-check's lookup), and no caller is followed.
+On a worktree, or when GitNexus cannot say, codebase-memory-mcp answers step 2 when it is installed
+(brain.codebackends): it indexes this checkout in place under a temporary name, its ``detect_changes`` against the base
+gives the touched symbols and their callers (CALLS, --depth levels up), and the index is deleted after; a CodeRef is
+placed by its qualified name (the file's path and the symbol, dotted). ``--backend gitnexus|cbm`` asks for one.
+
+Without a code index (no backend, GitNexus down, the repo not indexed, its indexed commit not in this checkout, CBM
+failing) the impact is at the file level, and its second line says so and why: every CodeRef of a changed file is
+touched, a Python symbol's narrowed by the AST of both sides (research_graph code-check's lookup), and no caller is
+followed.
 """
 
 from __future__ import annotations
@@ -35,7 +41,7 @@ import sys
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 
-from . import codeindex, codemap, diffs, inventory, paths, pins, projects, scout
+from . import codebackends, codeindex, codemap, diffs, inventory, paths, pins, projects, scout
 from .inventory import AuditError, git
 
 DEPTH = 2
@@ -72,7 +78,7 @@ class Report:
     base: str
     base_ref: str
     new: str
-    mode: str = "gitnexus"     # gitnexus, else files
+    mode: str = "gitnexus"     # gitnexus, cbm, else files
     why_files: str = ""        # why the file level
     index: str = ""            # the indexed commit
     note: str = ""
@@ -538,21 +544,68 @@ def _bare_refs(p: projects.Project, folder: str) -> list[codemap.Ref]:
     return [codemap.Ref(cid, folder) for cid, _ in codemap.active_refs(p) if _repo_of(cid).lower() == folder.lower()]
 
 
-def _coderefs(rep: Report, root: Path | None, p: projects.Project, registered: bool, folder: str, top: Path,
-              changes: list[Change], depth: int) -> list[Touched]:
-    """Steps 2 and 3: the touched symbols and their callers when GitNexus can say, else the file level; then the
-    CodeRefs the change touches."""
+def _by_gitnexus(rep: Report, root: Path | None, p: projects.Project, folder: str, top: Path,
+                 changes: list[Change], depth: int) -> tuple[list[codemap.Ref], str]:
     ix, entries, rep.index, why = index_state(top, folder, root)
-    why = why if registered else "the repo is in no registered project: no CodeRef, no graph"
+    return ([], why) if why else _by_index(rep, p, folder, top, changes, depth, ix, entries)
+
+
+def _by_cbm(rep: Report, p: projects.Project, folder: str, top: Path, changes: list[Change],
+            depth: int) -> tuple[list[codemap.Ref], str]:
+    """The touched symbols and their callers from codebase-memory-mcp's detect_changes on this checkout, and the
+    changed repo's CodeRefs placed by their qualified names; '' when it answered, else why not."""
+    if rep.new != "worktree":
+        return [], "codebase-memory-mcp reads a checkout's working tree, not a commit range"
+    name, answer, why = codebackends.cbm_changes(top, folder, rep.base, depth)
+    if why:
+        return [], why
+    rep.symbols, rep.callers = codebackends.symbols_of(answer)
+    ids = {s["id"] for s in rep.symbols} | {c["id"] for c in rep.callers}
+    present = {x for ch in changes for x in (ch.old, ch.new) if x} | {s["path"] for s in rep.symbols + rep.callers}
+    refs = _bare_refs(p, folder)
+    for r in refs:
+        _, path, symbol = inventory.parse_code_ref(r.id)
+        f = ref_file(path, present)
+        qn = codebackends.qualified(name, f, symbol) if symbol else ""
+        if qn in ids:
+            r.node, r.path = qn, f
+    if codebackends.truncated(answer):
+        rep.note = "codebase-memory-mcp left part of its answer out (truncated): the lists may be short"
+    return refs, ""
+
+
+def _coderefs(rep: Report, root: Path | None, p: projects.Project, registered: bool, folder: str, top: Path,
+              changes: list[Change], depth: int, backend: str | None = None) -> list[Touched]:
+    """Steps 2 and 3: the touched symbols and their callers from the first code index that can say (GitNexus, or
+    codebase-memory-mcp first on a worktree), else the file level; then the CodeRefs the change touches."""
     rep.malformed = sorted(cid for cid, _ in codemap.active_refs(p) if not _repo_of(cid)) if registered else []
     refs: list[codemap.Ref] = []
-    if not why:
-        refs, why = _by_index(rep, p, folder, top, changes, depth, ix, entries)
-    if why:
-        rep.mode, rep.why_files, rep.index = "files", why, ""
+    whys: list[str] = []
+    rep.mode = "files"
+    if not registered:
+        whys.append("the repo is in no registered project: no CodeRef, no graph")
+    else:
+        worktree = (paths.main_checkout(top) or top).resolve() != top.resolve()
+        try:
+            order = codebackends.choose("impact", backend, root, worktree)
+        except codeindex.CodeIndexError as exc:
+            order, whys = [], [str(exc)]
+        for b in order:
+            refs, why = (_by_gitnexus(rep, root, p, folder, top, changes, depth) if b == "gitnexus"
+                         else _by_cbm(rep, p, folder, top, changes, depth))
+            if not why:
+                rep.mode = b
+                if whys:   # an earlier backend failed: said, so its fix is known
+                    rep.note = "; ".join([*whys, rep.note] if rep.note else whys)
+                break
+            rep.symbols, rep.callers, rep.note, rep.index, refs = [], [], "", "", []
+            whys.append(why)
+        whys = whys or [codebackends.why_not("gitnexus", root)]
+    if rep.mode == "files":
+        rep.why_files, rep.index = "; ".join(whys), ""
         refs = _bare_refs(p, folder) if registered else []
     new = "" if rep.new == "worktree" else rep.new
-    hit = touched_refs(refs, changes, rep.symbols, rep.callers, top, rep.base, new, rep.mode == "gitnexus")
+    hit = touched_refs(refs, changes, rep.symbols, rep.callers, top, rep.base, new, rep.mode != "files")
     rep.coderefs = [asdict(t) for t in hit]
     rep.unmapped = _unmapped(refs, rep.symbols)
     return hit
@@ -601,7 +654,8 @@ def run(args, root: Path | None, warn=None) -> Report:
     rep.files = [{"status": ch.status, "old": ch.old, "new": ch.new} for ch in changes]
     if not changes:
         return rep
-    hit = _coderefs(rep, root, p, registered, folder, top, changes, DEPTH if args.depth is None else args.depth)
+    hit = _coderefs(rep, root, p, registered, folder, top, changes, DEPTH if args.depth is None else args.depth,
+                    getattr(args, "backend", None))
     own = main == (paths.main_checkout(p.root) or p.root).resolve()
 
     def repo_match(repo) -> bool:
@@ -615,9 +669,9 @@ def run(args, root: Path | None, warn=None) -> Report:
 
 
 def _pinned(rep: Report, p: projects.Project, changes: list[Change], hit: list[Touched], repos: set[str]) -> list:
-    """The pinned decisions the change touches (brain.pins); a pinned symbol counts only once GitNexus says it."""
+    """The pinned decisions the change touches (brain.pins); a pinned symbol counts only once a code index says it."""
     changed = {ch.new for ch in changes if ch.new} | {ch.old for ch in changes if ch.old}
-    refs = {t.ref for t in hit} if rep.mode == "gitnexus" else None
+    refs = {t.ref for t in hit} if rep.mode != "files" else None
     known = {cid for cid, _ in codemap.active_refs(p)} if refs is not None else set()
     return pins.touched(p, changed, repos, refs, known)
 
@@ -632,6 +686,9 @@ def _head_lines(rep: Report) -> list[str]:
         return out + ["no file changed"]
     if rep.mode == "files":
         out.append(f"FILE LEVEL (no symbol, no caller): {rep.why_files}")
+    elif rep.mode == "cbm":
+        out.append(f"symbols (codebase-memory-mcp, this checkout indexed in place): {len(rep.symbols)} touched in "
+                   f"{len({s['path'] for s in rep.symbols})} file(s), {len(rep.callers)} caller(s)")
     else:
         out.append(f"symbols (GitNexus, index at {rep.index[:7]}): {len(rep.symbols)} touched in "
                    f"{len({s['path'] for s in rep.symbols})} file(s), {len(rep.callers)} caller(s)")
@@ -670,8 +727,9 @@ def _pin_lines(rep: Report) -> list[str]:
     if not rep.pins:
         return []
     return [f"[ ] pinned decisions this change touches ({len(rep.pins)}): the PR body says Keeps <id> or "
-            "Overrides <id>: why (an override is a new ADR)"] + [
-        f"    {x['id']} ({x['day'] or '?'}): holds {x['holds']} ({', '.join(x['hits'][:3])})" for x in rep.pins]
+            "Overrides <id>: why (an override is a new ADR); a public repo's PR says the alias in place of the id"] + [
+        f"    {x['id']} ({x['day'] or '?'}): holds {x['holds']} ({', '.join(x['hits'][:3])})"
+        + (f"; alias {x['alias']}" if x.get("alias") else "") for x in rep.pins]
 
 
 def render(rep: Report) -> list[str]:

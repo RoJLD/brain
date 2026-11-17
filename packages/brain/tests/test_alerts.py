@@ -399,7 +399,7 @@ def test_cli_view_fail_on_raise_resolve_and_notify(tmp_path, monkeypatch, capsys
     assert cli.main(["alerts", "--project", "demo", "--quick"]) == 0
     out = capsys.readouterr().out
     assert out.splitlines() == ["demo: 1 open (1 error); last notify pass never (--quick: scheduler, stacks, code "
-                                "index and audit not read)",
+                                "index, audit and main checkouts not read)",
                                 "  ERROR    freshness:prices  MISSING (age 3 d) [freshness]"]
     assert cli.main(["alerts", "--project", "demo", "--quick", "--fail-on", "error"]) == 1
     assert cli.main(["alerts", "--project", "demo", "--quick", "--fail-on", "critical"]) == 0
@@ -418,3 +418,203 @@ def test_cli_view_fail_on_raise_resolve_and_notify(tmp_path, monkeypatch, capsys
     with pytest.raises(SystemExit):
         cli.main(["alerts", "--project", "demo", "--dry-run"])
     assert p.name == "demo"
+
+
+
+
+# --- the main checkouts (wi-brain-main-checkout-clean) ---
+
+def _git(cwd, *args):
+    import subprocess
+    subprocess.run(["git", "-C", str(cwd), "-c", "user.name=Ada", "-c", "user.email=ada@example.invalid", *args],
+                   check=True, capture_output=True, stdin=subprocess.DEVNULL, timeout=60)
+
+
+def _repo(path):
+    path.mkdir(parents=True, exist_ok=True)
+    _git(path, "init", "-q")
+    (path / ".gitignore").write_text("*.log\n", encoding="utf-8")
+    (path / "kept.txt").write_text("k", encoding="utf-8")
+    _git(path, "add", ".")
+    _git(path, "commit", "-q", "-m", "init")
+    return path
+
+
+def _two(tmp_path, monkeypatch, demo_root, lab_root, lab_repos):
+    """demo and lab registered, lab spanning ``lab_repos``."""
+    reg = tmp_path / "projects.yaml"
+    reg.write_text(f"demo:\n  root: {demo_root.as_posix()}\nlab:\n  root: {lab_root.as_posix()}\n  repos: ["
+                   + ", ".join(f'"{r}"' for r in lab_repos) + "]\n", encoding="utf-8")
+    monkeypatch.setenv("BRAIN_PROJECTS", str(reg))
+    reg = projects.load()
+    return reg["demo"], reg["lab"]
+
+
+def test_a_dirty_main_checkout_is_a_warn_with_the_last_session_there(tmp_path, monkeypatch):
+    root = _repo(tmp_path / "demo")
+    p = _project(tmp_path, monkeypatch, root=root)
+    main = root.resolve().as_posix()
+    rows = alerts.checkout_rows(p)
+    assert rows == [{"repo": "demo", "path": main, "files": []}]
+    assert alerts.checkout_alerts(alerts.config(p), rows) == []   # clean: nothing
+    (root / "run.log").write_text("ignored", encoding="utf-8")   # an ignored file does not count
+    _git(root, "worktree", "add", "-q", ".claude/worktrees/x", "-b", "x")   # nor a worktree Claude Code made there
+    assert alerts.checkout_rows(p)[0]["files"] == []
+    (root / ".merge_file_a1").write_text("x", encoding="utf-8")
+    (root / "café.txt").write_text("y", encoding="utf-8")
+    _git(root, "mv", "kept.txt", "moved.txt")
+    rows = alerts.checkout_rows(p)
+    assert sorted(rows[0]["files"]) == ["?? .merge_file_a1", "?? café.txt", "R  moved.txt"]   # -z: one per file
+    starts = {"s1": {"session": "s1", "started": "2026-11-02T10:00:00Z", "cwd": str(root), "name": "replay"},
+              "s0": {"session": "s0", "started": "2026-11-01T10:00:00Z", "cwd": str(root), "name": "older"},
+              "s2": {"session": "s2", "started": "2026-11-02T11:00:00Z", "cwd": str(tmp_path / "wt"), "name": "wt"}}
+    found = alerts.checkout_alerts(alerts.config(p), rows, starts)
+    assert _keys(found) == {"checkout:demo": "warn"}
+    msg = found[0].message
+    assert msg.startswith(f"main checkout {main} holds 3 modified or untracked file(s): ")
+    assert '".merge_file_a1"' in msg and '"café.txt"' in msg and "work belongs in a worktree" in msg   # quoted once
+    assert msg.endswith("; the last session there: replay (started 2026-11-02T10:00:00Z)")
+    assert alerts.checkout_alerts(alerts.config(p), rows, {})[0].message.endswith(
+        "; no session of the ledger worked there")
+    assert alerts.checkout_alerts(alerts.config(p), rows)[0].message.endswith(   # the ledger read, empty here
+        "; no session of the ledger worked there")
+    many = [{"repo": "demo", "path": "/x", "files": [f"?? f{i}" for i in range(5)]}]
+    assert '"f0", "f1", "f2" and 2 more' in alerts.checkout_alerts(alerts.config(p), many, {})[0].message
+    # through of_project, at the project's own level; not probed (None): nothing
+    p = _project(tmp_path, monkeypatch, "levels: {checkout: error}", root=root)
+    assert _keys(alerts.of_project(p, checkout_rows=rows)) == {"checkout:demo": "error"}
+    assert "checkout:demo" not in _keys(alerts.of_project(p))
+
+
+def test_the_status_read_takes_no_index_lock_and_leaves_the_claude_worktrees_out(tmp_path, monkeypatch):
+    import subprocess
+    seen = []
+
+    def run(cmd, **k):
+        seen.append(cmd)
+        return subprocess.CompletedProcess(cmd, 0, "?? a.txt\0R  new.txt\0old.txt\0 M b.txt\0", "")
+    monkeypatch.setattr(alerts.subprocess, "run", run)
+    assert alerts._porcelain(tmp_path) == (["?? a.txt", "R  new.txt", " M b.txt"], "")
+    cmd = seen[0]
+    assert cmd[:2] == ["git", "--no-optional-locks"] and "-z" in cmd   # a pull there at the same moment never fails
+    assert cmd[-3:] == ["--", ".", ":(exclude).claude/worktrees"]
+
+
+def test_a_main_checkout_git_cannot_read_is_said_never_raised(tmp_path, monkeypatch):
+    import subprocess
+    p = _project(tmp_path, monkeypatch, "levels: {checkout: error}")
+
+    def fake(result):
+        def run(*a, **k):
+            if isinstance(result, BaseException):
+                raise result
+            return result
+        return run
+
+    for result, why in ((subprocess.TimeoutExpired(["git"], 10), "git status took over 10 s"),
+                        (FileNotFoundError("git"), "git status: FileNotFoundError"),
+                        (subprocess.CompletedProcess(["git"], 128, "", "fatal: not a git repository\n"),
+                         "git status: fatal: not a git repository")):
+        monkeypatch.setattr(alerts.subprocess, "run", fake(result))
+        lines, said = alerts._porcelain(tmp_path)
+        assert lines is None and why in said, said
+    rows = [{"repo": "demo", "path": "/x", "error": "git status took over 10 s"}]
+    found = alerts.checkout_alerts(alerts.config(p), rows, {})
+    assert _keys(found) == {"checkout:demo": "info"}   # at info: the project's level is a dirty checkout's
+    assert "cannot tell whether it is clean (git status took over 10 s)" in found[0].message
+    # dirty at the last pass: its alert is kept, neither resolved nor raised again
+    was = {"checkout:demo": {"level": "error", "message": "main checkout /x holds 1 modified or untracked file(s)",
+                             "since": "2026-11-02T11:00:00Z", "source": "checkout"}}
+    kept = alerts.checkout_alerts(alerts.config(p), rows, {}, last_open=was)
+    assert [(a.key, a.level, a.message, a.since) for a in kept] == [
+        ("checkout:demo", "error", "main checkout /x holds 1 modified or untracked file(s)", "2026-11-02T11:00:00Z")]
+    unread = {"checkout:demo": {"level": "info", "message": "main checkout /x: cannot tell whether it is clean (old)"}}
+    assert "(git status took over 10 s)" in alerts.checkout_alerts(alerts.config(p), rows, {}, last_open=unread)[
+        0].message   # an unread one is said again with this pass's reason
+    garbage = subprocess.CompletedProcess(["git"], 0, "\0  \0?? a.txt\0", "")
+    monkeypatch.setattr(alerts.subprocess, "run", fake(garbage))
+    assert alerts._porcelain(tmp_path) == (["?? a.txt"], "")
+
+
+def test_a_worktree_maps_to_its_main_checkout_and_one_checkout_is_one_row(tmp_path, monkeypatch):
+    main = _repo(tmp_path / "demo")
+    wt = tmp_path / "demo-wt"
+    _git(main, "worktree", "add", "-q", str(wt), "-b", "wt")
+    (main / "stray.txt").write_text("x", encoding="utf-8")
+    (wt / "work.txt").write_text("in the worktree: not the main checkout's", encoding="utf-8")
+    other = tmp_path / "lab"
+    other.mkdir()
+    reg = tmp_path / "projects.yaml"
+    for repos, name in ((f'["{wt.as_posix()}"]', "demo"),   # by its worktree; the worktree and its main checkout
+                        (f'[{{path: "{wt.as_posix()}", name: wt}}, "{main.as_posix()}"]', "wt")):
+        reg.write_text(f"lab:\n  root: {other.as_posix()}\n  repos: {repos}\n", encoding="utf-8")
+        monkeypatch.setenv("BRAIN_PROJECTS", str(reg))
+        rows = alerts.checkout_rows(projects.load()["lab"])
+        assert rows == [{"repo": name, "path": main.resolve().as_posix(), "files": ["?? stray.txt"]}], repos
+
+
+def test_one_checkout_spanned_by_two_projects_is_read_once_and_alerts_once(tmp_path, monkeypatch):
+    shared = _repo(tmp_path / "demo")
+    (shared / "stray.txt").write_text("x", encoding="utf-8")
+    lab_root = tmp_path / "lab"
+    lab_root.mkdir()
+    reads = []
+    real = alerts._porcelain
+    monkeypatch.setattr(alerts, "_porcelain", lambda path: reads.append(path) or real(path))
+    # demo's root is the checkout: demo carries it, whichever project comes first
+    demo, lab = _two(tmp_path, monkeypatch, shared, lab_root, [shared.as_posix()])
+    scope = alerts.checkouts()
+    assert alerts.checkout_rows(lab, scope) == []
+    assert [r["repo"] for r in alerts.checkout_rows(demo, scope)] == ["demo"]
+    assert len(reads) == 1
+    assert alerts.checkout_rows(lab) == []   # its own scope: still demo's
+    # no project's root there: the first of the run that lists it
+    other = tmp_path / "other"
+    other.mkdir()
+    (tmp_path / "projects.yaml").write_text(
+        f"demo:\n  root: {other.as_posix()}\n  repos: [{shared.as_posix()}]\n"
+        f"lab:\n  root: {lab_root.as_posix()}\n  repos: [{shared.as_posix()}]\n", encoding="utf-8")
+    demo, lab = projects.load()["demo"], projects.load()["lab"]
+    reads.clear()
+    scope = alerts.checkouts()
+    assert [r["repo"] for r in alerts.checkout_rows(lab, scope)] == ["demo"]
+    assert alerts.checkout_rows(demo, scope) == [] and len(reads) == 1
+    monkeypatch.setattr(alerts, "read_scheduler", lambda *a, **k: {})
+    monkeypatch.setattr(status, "_probes", lambda root, quick: (None, None))
+    monkeypatch.setattr(status, "audit_of", lambda p, **k: {"skipped": "test"})
+    data = alerts.run([demo, lab])
+    keys = {d["project"]: [a["key"] for a in d["alerts"]] for d in data["projects"]}
+    assert keys == {"demo": ["checkout:demo"], "lab": []}
+
+
+def test_brain_alerts_and_brain_status_raise_it_and_the_pass_resolves_it_once_clean(tmp_path, monkeypatch):
+    fake = Fake()
+    monkeypatch.setattr(notify, "_post_json", fake.post)
+    root = _repo(tmp_path / "demo")
+    p = _project(tmp_path, monkeypatch, notify_entry=NOTIFY, root=root)
+    monkeypatch.setattr(alerts, "read_scheduler", lambda *a, **k: {})
+    monkeypatch.setattr(status, "_probes", lambda root, quick: (None, None))
+    monkeypatch.setattr(status, "audit_of", lambda p, **k: {"skipped": "test"})
+    stray = root / "stray.txt"
+    stray.write_text("x", encoding="utf-8")
+    assert status.probed(p, None, None)["checkouts"][0]["files"] == ["?? stray.txt"]   # the cockpit's probe too
+    d = status.collect(p, sched={})
+    assert [a["key"] for a in d["alerts"]["alerts"]] == ["checkout:demo"]
+    assert "checkout" not in str(status.collect(p, quick=True)["alerts"])   # --quick: not read
+
+    def notify_pass():
+        data = alerts.run([p])
+        return alerts.notify_pass(data, {p.name: p}, env=ENV)
+
+    assert notify_pass()[0] == "demo: warn checkout:demo: delivered"
+    # a pass git cannot read: the alert is kept, nothing sent
+    real = alerts._porcelain
+    monkeypatch.setattr(alerts, "_porcelain", lambda path: (None, "git status took over 10 s"))
+    assert notify_pass() == ["demo: 1 open, 0 new, risen or retried, 0 resolved"]
+    assert alerts.state_load()["demo"]["open"]["checkout:demo"]["level"] == "warn"
+    monkeypatch.setattr(alerts, "_porcelain", real)
+    assert notify_pass() == ["demo: 1 open, 0 new, risen or retried, 0 resolved"]   # dirty still: not sent again
+    stray.unlink()
+    lines = notify_pass()
+    assert lines[0] == "demo: resolved checkout:demo: delivered" and len(fake.posts) == 2
+    assert fake.posts[-1][1]["title"].startswith("[demo info] resolved: main checkout ")

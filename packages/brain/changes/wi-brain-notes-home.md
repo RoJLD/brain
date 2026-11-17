@@ -1,3 +1,0 @@
-section: Added
-
-- `brain notes init DIR [--from VAULT] [--apply]`, `brain notes check` and `brain notes find WORDS`: the owner's notes home, Markdown with wikilinks in a private repo of its own, laid out by plan (lifecycle and class folders, a template per note type, the `.gitignore` of the confidential and sealed folders), checked against the new `notes.schema.json` (ids, Brain links, secrets, contact data, classes) and searched by SQLite FTS5 with zero token; found through the new optional `config.json` `knowledge` key or a `projects.yaml` entry with `kind: knowledge`, never loaded as a project (`wi-brain-notes-home`).
