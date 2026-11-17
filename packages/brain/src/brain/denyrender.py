@@ -8,8 +8,10 @@ on POSIX (on Windows the folder's own ACL: the owner's profile), and only outsid
 terms, so it never sits in a checkout. Its default place is ``$XDG_CONFIG_HOME/brain/gitleaks-private-patterns.toml``
 (``~/.config/brain/...``); ``--out`` names another.
 
-The gitleaks configuration it renders: ``[extend]`` the repo's own ``.gitleaks.toml`` (``--extend PATH``, a project's
-rules kept in its file), else gitleaks' default rules (``useDefault = true``); then one rule per category,
+The gitleaks configuration it renders stands alone by default: gitleaks' own default configuration carries global
+allowlists (lock files, images, vendored folders, ``true``, ``false``, ``null`` and system paths) that would hide some
+terms, so a repo runs it as a pass of its own. ``--extend PATH`` (a repo's ``.gitleaks.toml``, made absolute) extends
+another configuration instead, whose global allowlists then apply to these rules too. Then one rule per category,
 ``brain-private-<category>``, whose regex holds every term of it the way brain.public matches them (case aside, ``/``
 and ``\\`` alike, a separator ``-``, ``_`` or a space in every spelling, none included, whole words), written for
 gitleaks' Go regexp engine (RE2: no lookaround, so the word's edges are matched and the term is the secret group), and
@@ -128,8 +130,9 @@ def gitleaks(terms: dict[str, list[str]], extend: str | None = None) -> str:
     lines = ["# Rendered by brain public deny render --format gitleaks from config.json public.deny (and the terms",
              "# the brain derives): the private names a commit must not hold. Do not edit: render it again.",
              "# It names private terms: keep it outside any repository, readable by its owner only.",
-             'title = "brain private patterns"', "", "[extend]"]
-    lines.append(f"path = {toml_str(extend)}" if extend else "useDefault = true")
+             'title = "brain private patterns"']
+    if extend:   # its global allowlists then apply to these rules too (docs: a pass of its own is the safe use)
+        lines += ["", "[extend]", f"path = {toml_str(extend)}"]
     for cat in sorted(terms, key=lambda c: list(config.DENY).index(c) if c in config.DENY else 99):
         uniq = sorted({t for t in terms[cat] if t}, key=lambda t: (-len(t), t.lower()))
         if not uniq:
@@ -206,7 +209,9 @@ def render_plan(p: dict) -> list[str]:
     rules = ", ".join(f"{c} {n}" for c, n in p["rules"].items()) or "none"
     lines = [f"deny render ({p['format']}): {p['out']}",
              f"  rules     {len(p['rules'])} ({rules}), {p['terms']} terms",
-             f"  file      {p['state']}" + ("" if p["state"] == "unchanged" else " (--apply writes it, mode 600)")]
+             f"  file      {p['state']}" + ("" if p["state"] == "unchanged" else
+                                               " (--apply writes it" + (", mode 600)" if os.name != "nt" else
+                                                                       " in your profile's folder)"))]
     if p["refused"]:
         lines.append(f"  refused   {p['refused']}: --out a path outside any repository")
     return lines

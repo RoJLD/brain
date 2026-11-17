@@ -109,9 +109,10 @@ def test_toml_strings_escape_quotes_newlines_and_controls():
 
 
 def test_keywords_and_the_extended_config(ada):
-    text = denyrender.gitleaks(denyrender.by_category(ada), extend="../repo/.gitleaks.toml")
-    assert '[extend]\npath = "../repo/.gitleaks.toml"' in text and "useDefault" not in text
-    assert "[extend]\nuseDefault = true" in denyrender.gitleaks(denyrender.by_category(ada))
+    text = denyrender.gitleaks(denyrender.by_category(ada), extend="D:/repo/.gitleaks.toml")
+    assert '[extend]\npath = "D:/repo/.gitleaks.toml"' in text and "useDefault" not in text
+    alone = denyrender.gitleaks(denyrender.by_category(ada))   # gitleaks' default allowlists would hide terms
+    assert "[extend]" not in alone and "useDefault" not in alone
     assert denyrender.keyword("Ada Lovelace") == "lovelace" and denyrender.keyword("D:\\vault\\acme-notes") == "vault"
     # every rule's keywords are in each spelling its regex matches (gitleaks' prefilter would skip a fragment else)
     for spelled in ("acme lab", "AcmeLab", "acme-lab"):
