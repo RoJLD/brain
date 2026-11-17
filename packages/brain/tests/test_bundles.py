@@ -293,7 +293,7 @@ def test_a_changed_mounted_file_changes_its_service_and_only_its_own(tmp_path, m
     assert all(labels[n] for n in ("otel-collector", "prometheus", "loki", "grafana")) and labels["qdrant"] is None
     assert len(set(labels.values()) - {None}) == 4   # each service its own files
     p = bundles.plan(reg, "sovereign")
-    assert all(not r["action"].startswith("recreated: its mounted") for r in p.rows)   # nothing changed yet
+    assert all(not r["action"].startswith("recreated") for r in p.rows)   # nothing changed yet
     conf = src / "sovereign" / "otelcol.yaml"
     conf.write_bytes(conf.read_bytes() + b"\n# a processor added\n")
     p = bundles.plan(reg, "sovereign")
@@ -316,3 +316,21 @@ def test_the_config_hash_reads_bind_mounts_only():
     assert len(h) == 16 and h == bundles.config_hash(svc, dict(files))
     assert bundles.config_hash(svc, {**files, "b.yaml": b"three"}) != h
     assert bundles.config_hash({"volumes": ["data:/var/lib"]}, files) == ""
+
+
+def test_the_first_apply_with_the_label_says_it_recreates(tmp_path, monkeypatch, brain_home):
+    """The review: a rendering an older engine applied has no label, so the next up recreates each service that
+    mounts a file, once; the plan says so instead of « only if its configuration changed »."""
+    import yaml
+    reg = _registry(tmp_path, monkeypatch)
+    Docker(monkeypatch, up=COMPONENTS)
+    assert bundles.apply(reg, "sovereign", out=io.StringIO()) == 0
+    f = brain_home / "stacks" / "sovereign" / "compose.yaml"
+    doc = yaml.safe_load(f.read_text(encoding="utf-8"))
+    for svc in doc["services"].values():
+        svc.pop("labels", None)
+    f.write_text(yaml.safe_dump(doc), encoding="utf-8")   # what 0.5.1 rendered
+    rows = {r["component"]: r["action"] for r in bundles.plan(reg, "sovereign").rows}
+    assert all(rows[n].startswith("recreated: its brain.config-hash label is new")
+               for n in ("otel-collector", "prometheus", "loki"))
+    assert rows["qdrant"].startswith("up;") and rows["grafana"].startswith("waits for")   # its password file

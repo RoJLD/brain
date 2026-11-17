@@ -168,8 +168,28 @@ def render(bundle: str, comps: list[stacks.Stack]) -> tuple[dict, dict[str, byte
 CONFIG_LABEL = "brain.config-hash"
 
 
+def _label(svc) -> str:
+    """A service's :data:`CONFIG_LABEL` ('' without one), its labels a mapping or a list."""
+    labels = (svc or {}).get("labels") if isinstance(svc, dict) else None
+    if isinstance(labels, dict):
+        return str(labels.get(CONFIG_LABEL) or "")
+    return next((str(x).split("=", 1)[1] for x in labels or [] if str(x).startswith(CONFIG_LABEL + "=")), "")
+
+
+def _applied_services(where: Path) -> dict:
+    """The services of the compose file an earlier apply rendered there ({} when none or unreadable)."""
+    try:
+        import yaml
+        doc = yaml.safe_load((where / stacks.BUNDLE_FILE).read_text(encoding="utf-8"))
+    except (OSError, ValueError, ImportError, Exception):   # noqa: BLE001 - a file it cannot read is none
+        return {}
+    return doc.get("services") or {} if isinstance(doc, dict) else {}
+
+
 def mounted(svc: dict, files: dict[str, bytes]) -> list[str]:
-    """The bundle files ``svc`` bind-mounts (``./otelcol.yaml:/etc/...``), relative to the bundle, in its order."""
+    """The bundle files ``svc`` bind-mounts (``./otelcol.yaml:/etc/...``, a long form's ``source: ./x``), relative to
+    the bundle, in its order; a folder or a source that is not ``./`` of a bundle file is not hashed (the template has
+    none)."""
     out = []
     for v in svc.get("volumes") or []:
         src = v.split(":", 1)[0] if isinstance(v, str) else str((v or {}).get("source") or "") \
@@ -357,6 +377,7 @@ def plan(reg: dict[str, stacks.Stack], bundle: str, root: Path | None = None) ->
         elif waits:
             p.waiting[s.name] = f"{', '.join(waits)}"
     off = stacks.profile_off(reg, root)
+    applied_services = _applied_services(p.target)
     outside = []
     for s in stacks.plan(reg, [c.name for c in comps]):
         st, why = stacks.state(s, off.get(s.name, ""))
@@ -373,6 +394,9 @@ def plan(reg: dict[str, stacks.Stack], bundle: str, root: Path | None = None) ->
         elif st == "OK" and (changed := [r for r in mounted(services.get(s.name) or {}, rendered)
                                          if p.files.get(r) == "changed"]):
             action = f"recreated: its mounted configuration changed ({', '.join(changed)})"
+        elif st == "OK" and _label(services.get(s.name)) and _label(services.get(s.name)) != _label(
+                applied_services.get(s.name)):
+            action = f"recreated: its {CONFIG_LABEL} label is new (once, after the engine adds it)"
         elif st == "OK":
             action = "up; docker compose up -d recreates it only if its configuration changed"
         elif st == "STALE":
