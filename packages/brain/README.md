@@ -1702,6 +1702,20 @@ by: rerun `brain check --public --history` before the next push. A registry that
 conflict marker in `projects.yaml`, `members.yaml` or a module registry) never yields a shorter list: the public and
 secrets guards refuse, as for a configuration they cannot trust, and `brain check --public` stops (exit code 2).
 
+**The deny list for another scanner** (`wi-brain-deny-gitleaks-render`, brain.denyrender). `brain public deny render
+--format gitleaks` renders the same terms (`public.deny`, the scope tree's, the derived ones) as a gitleaks
+configuration, so that a repo's private-name scan reads one source instead of a second, hand-kept list: one rule per
+category, `brain-private-<category>`, each term matched as `brain check --public` matches it (case aside, `/` and
+`\` alike, its separators in every spelling, whole words), written for Go's regexp engine, its longest part as the
+rule's keyword (none when a term is not ASCII). The file stands alone: gitleaks' default configuration allows lock
+files, images, vendored folders, `true`, `false`, `null` and system paths, which would hide some terms, so a repo runs
+it as a pass of its own (`gitleaks dir . --config <that file>`) beside its usual scan; `--extend PATH` extends a
+configuration instead (made absolute), whose global allowlists then apply to these rules. The plan prints the file, the rules and the term counts, never a term; `--apply` writes it only
+when it changed, atomically, mode 600 on POSIX (on Windows its folder's ACL: the owner's profile), and never inside a
+git repository (default
+`$XDG_CONFIG_HOME/brain/gitleaks-private-patterns.toml`, `~/.config/brain/...`; `--out` another); `--json` gives the
+plan. The owner updates a CI secret from the file themselves. A registry that cannot be read renders nothing (exit 2).
+
 **The personal graph's ids** (`wi-brain-public-private-ids`, brain.privateids). When `config.json` names a public
 repo, `brain check --public` and the public commit guard also refuse, as the `graph` check, what the registry's stores
 hold of the owner's graph: an ADR's or a DDR's id (the owner's decisions and answers) whatever its project; any other
