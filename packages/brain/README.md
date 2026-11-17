@@ -1057,8 +1057,8 @@ Zero-token commands for many sessions on one brain ([`docs/merge-driver.md`](doc
   of main is not on the remote yet, against a fresh main, and refuses a file the merge resolved against a main that
   has moved on it since (docs/merge-driver.md).
 - **`brain gate`** (brain.gate): the pre-push checks of a branch in one call, before `git push`: clean (nothing left
-  out of HEAD, untracked files included), `brain merge-check` against a base fetched again, the review's stamp for
-  HEAD with no finding open, a graph store's views regenerated and checked (`brain refresh --offline`; a view it
+  out of HEAD, untracked files included), `brain merge-check` against the base (`--base`, origin's default branch
+  by default; a remote one fetched again), the review's stamp for HEAD with no finding open, a graph store's views regenerated and checked (`brain refresh --offline`; a view it
   rewrote fails: commit it), `brain audit --diff` (0 NEW, 0 LEFT), the public check's stamp for a public repo's HEAD
   (`brain check --public --history` when it has none) and the targeted tests (`brain test --changed`, `--strict`).
   Each step runs even when one before it failed (`--fail-fast` stops; `--skip STEP` skips one: INCOMPLETE, exit 1);

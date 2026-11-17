@@ -20,8 +20,8 @@ USAGE = """\
                         selection widens). Each step's log in <temp>/brain-gate/<run>/ (or --logs), then three lines:
                         what passed, what failed and why, the next command. Exit 0 only when every step that applies
                         passes (a --skip says INCOMPLETE, exit 1); 2 when it cannot start (not a git checkout, a
-                        --base that is no commit here). --python: the tests' interpreter (the brain steps run with
-                        this engine); a remote --base (origin/main) is fetched again
+                        --base found neither here nor on its remote). --python: the tests' interpreter (the brain
+                        steps run with this engine); a remote --base (origin/main) is fetched again
 """
 
 

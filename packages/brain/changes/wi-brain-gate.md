@@ -9,7 +9,8 @@ section: Added
   Every step runs (`--fail-fast` stops at the first failure; `--skip STEP` skips one, and the verdict then says
   INCOMPLETE with exit 1: a skipped check is no pass); the brain steps run with the engine running the gate,
   `--python` names the tests' interpreter; each step's command and output go to a log file under
-  `<temp>/brain-gate/<run>/` (or `--logs`, the newest 20 runs kept), the report to `verdict.json`, and three lines say what passed, what failed and why, and the next command.
+  `<temp>/brain-gate/<run>/` (or `--logs`, the newest 20 runs kept), the report to `verdict.json`, and three lines
+  say what passed, what failed and why, and the next command.
   Exit 0 only when every step that applies passes, 1 otherwise, 2 when it cannot start (not a git checkout, a
-  `--base` that is no commit here); `--json` for the report
+  `--base` that is a commit neither here nor on its remote); `--json` for the report
   (brain.gate, brain.verdict).

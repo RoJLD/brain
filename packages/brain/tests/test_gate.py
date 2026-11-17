@@ -250,9 +250,13 @@ def test_the_brain_steps_run_with_this_engine_and_the_tests_with_python(repo):
     assert [c for c in fake.calls if " test --changed" in c][0].endswith("--python other-python")
 
 
-def test_a_base_that_is_no_commit_cannot_start(repo, capsys):
-    with pytest.raises(gate.GateError, match="--base origin/nope: not a commit of this checkout"):
+def test_a_base_that_is_no_commit_cannot_start(repo, capsys, tmp_path):
+    with pytest.raises(gate.GateError, match="--base origin/nope: not a commit of this checkout, nor of its remote"):
         make(repo, base="origin/nope")
+    origin = run_git(repo, "remote", "get-url", "origin").strip()
+    later = f"later-{tmp_path.name}"
+    run_git(origin, "branch", later, "main")   # on the remote, never fetched by the clone
+    assert make(repo, base=f"origin/{later}").base == f"origin/{later}"   # fetched once, then it starts
     assert cli.main(["gate", "--repo-dir", str(repo), "--base", "origin/nope"]) == 2
     assert "not a commit" in capsys.readouterr().err
 
