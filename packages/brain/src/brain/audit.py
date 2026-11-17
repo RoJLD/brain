@@ -57,7 +57,7 @@ from . import (
 from .inventory import AuditError
 from .mergedriver import HEAD_LINES
 
-RULESET = 12   # 2: doc.links and test.links measured (wi-brain-doc-test-links); 3: features.md and feature.links
+RULESET = 13   # 2: doc.links and test.links measured (wi-brain-doc-test-links); 3: features.md and feature.links
 #               (wi-brain-feature-matrix); 4: test.coverage measured (wi-brain-test-coverage) and feature.tests
 #               (wi-brain-test-links-auto); 5: cmd.registry (wi-brain-cli-registry); 6: feature.coverage, info in
 #               the full audit, NEW in the scout for an added command or module (wi-brain-audit-feature-coverage); 7: the scout's norm lints
@@ -71,7 +71,8 @@ RULESET = 12   # 2: doc.links and test.links measured (wi-brain-doc-test-links);
 #               active CodeRef of a repo no project registers, P0 instead of not measured
 #               (wi-brain-audit-unregistered-coderef)
 #               12: doc.dead-ref for a doc line naming a prefix config.json moved: says moved
-#               (wi-brain-moved-paths)
+#               (wi-brain-moved-paths); 13: waive.stale, a repo's waive glob that matches no file of its tree
+#               (wi-brain-engine-debt, batch 2)
 # the scout's calibration (wi-brain-scout-rule, design section 8: fewer than 10 % wrong per check; the numbers are in
 # the journal and on the item); a detection change that the numbers do not cover clears it until measured again
 CALIBRATED = ("2026-11-02 (83 flagged units checked by hand over brain audit --all and --diff on 50 merges, 2 wrong; "
@@ -133,6 +134,9 @@ CHECKS = {c.id: c for c in (
           "a CodeRef, stands for its code)"),
     Check("test.coverage", "P2", "never", f"a Python module the tests run under {COVERAGE_FLOOR:g} % of, by the "
           "store's coverage summary (brain coverage)"),
+    # projects.yaml's, not the repo's to fix: never in the scout of a change to the repo
+    Check("waive.stale", "P2", "never", "a glob of the repo's waive: in projects.yaml that matches no file of its "
+          "tree: it waives nothing, and would hide the next file that takes its name"),
     Check("feature.tests", "P2", "never", "a have or partial feature with code that no test module is tested_by "
           "(no test imports, names or runs its code)"),
     # a generated view: the default branch's to hold fresh (brain check there, brain.views), never a branch's to fix
@@ -648,7 +652,7 @@ def _repo_tokens(p: projects.Project, cfgs: list[projects.Repo]) -> set[str] | N
 def measure(p: projects.Project, cfgs: list[projects.Repo], trees: dict[str, inventory.Tree],
             only: set[str] | None = None, layered: set[str] | None = None,
             extra_dirs: dict[str, set] | None = None, linked: dict | None = None,
-            featured: bool | None = None, coverage: dict | None = None) -> dict:
+            featured: bool | None = None, coverage: dict | None = None, stale: bool = True) -> dict:
     """Every check on every repo of ``p`` that has a tree (its findings only for the repos in ``only`` when given):
     the project's result, as the JSON output carries it. ``layered``: the repos whose store has a code layer, given
     by the trend from today's measure (a layer added since then is a rule of today, not a rise of the debt);
@@ -656,7 +660,9 @@ def measure(p: projects.Project, cfgs: list[projects.Repo], trees: dict[str, inv
     ``featured``, whether the project's store has the Feature type (then a week before it has no feature), and
     ``coverage``, each repo's coverage summary (test.coverage: a summary committed since is a rule of today).
     ``extra_dirs``: more top-level folders whose paths a doc names are checked (the scout passes the base tree's, so
-    a folder a change empties still has its dead references)."""
+    a folder a change empties still has its dead references). ``stale``: waive.stale measured (the trend turns it
+    off: today's waive globs against a past week's tree would count a file added since as a stale glob then, and its
+    fix as a fall of the debt)."""
     moved = _moved(p)
     registered = _repo_tokens(p, cfgs)   # before the filter: a repo of the project not cloned here is registered
     cfgs = [c for c in cfgs if c.name in trees]
@@ -742,7 +748,7 @@ def measure(p: projects.Project, cfgs: list[projects.Repo], trees: dict[str, inv
         if only is not None and c.name not in only:
             continue
         ctx = {"rf": rf, "idx": idx, "store": linked.get(c.name), "cache": {}, "cfg": c, "features": fm, "trees": trees,
-               "project": p, "moved": moved,
+               "project": p, "moved": moved, "stale": stale,
                "flabel": flabel, "fhome": fhome, "fpublic": fpublic, "fstrict": fstrict, "coverage": coverage.get(c.name),
                "mod_ev": {path: v for (r, path), v in mod_evidence.items() if r == c.name}}
         out_repos.append(_repo_result(c, rf, idx, tops, mod_evidence, facts, dangling.get(c.name, []),
@@ -972,6 +978,8 @@ def _repo_result(c: projects.Repo, rf: inventory.RepoFacts, idx: inventory.Index
         pending.append({"check": "coderef.dangling", "owner": f"CodeRefs of repos not measured here (another "
                                                               f"project's, or not cloned): {', '.join(unregistered)}"})
     found, waived = waived_findings(found, getattr(c, "waive", None))
+    if (ctx or {}).get("stale", True):   # not in the trend's past weeks (measure)
+        found += stale_waivers(name, t, getattr(c, "waive", None))
     found.sort(key=lambda f: (f["severity"] if f["severity"] != "info" else "P9", f["check"], f["unit"]))
     counts = {s: sum(1 for f in found if f["severity"] == s) for s in SEVERITIES + ("info",)}
     classes = {k: sum(1 for u in rf.units if u.cls == k) for k in ("entry", "prod", "other")}
@@ -999,6 +1007,15 @@ def waived_findings(found: list[dict], waive: dict[str, str] | None) -> tuple[li
         elif f["unit"] not in {u for u, _ in out}:
             out.append((f["unit"], why))
     return keep, out
+
+
+def stale_waivers(repo: str, t: inventory.Tree, waive: dict[str, str] | None) -> list[dict]:
+    """waive.stale: each glob of a repo's ``waive:`` that matches no file of its tree (the file renamed or removed):
+    it waives nothing today, keeps a reason no unit carries, and would hide the next file that takes its name."""
+    return [finding(repo, "waive.stale", glob, f"the waive glob matches no file of {repo} at {t.label} ({reason})",
+                    "remove it from projects.yaml (repos[].waive), or fix the glob to the files it means")
+            for glob, reason in sorted((waive or {}).items())
+            if not any(fnmatch.fnmatchcase(p, glob) for p in t.files)]
 
 
 def _parallel(fn, items: list) -> list:
@@ -1061,7 +1078,8 @@ def trend(p: projects.Project, cfgs: list[projects.Repo], refs: dict[str, str], 
     for i, (label, end) in enumerate(weeks if scope else []):
         trees = dict(zip([c.name for c in scope], _parallel(
             lambda c, i=i: inventory.git_tree(c.path, commits[c.name][i]), scope)))
-        res = measure(p, scope, trees, only, layered, linked=linked, featured=featured, coverage=coverage)
+        res = measure(p, scope, trees, only, layered, linked=linked, featured=featured, coverage=coverage,
+                      stale=False)
         out.append({"week": label, "end": end[:10], "debt": {s: res["counts"][s] for s in SEVERITIES}})
     return {"weeks": out, "repos": [c.name for c in scope],
             "left": sorted(c.name for c in cfgs if c not in scope)}

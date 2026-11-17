@@ -207,6 +207,26 @@ def test_a_repo_s_waive_globs_take_a_test_or_a_doc_of_the_links_checks_and_nothi
     assert ("doc.dead-ref", "docs/guide.md#scripts/gone.ps1") in found and ("doc.links", "docs/guide.md") not in found
 
 
+def test_a_waive_glob_that_matches_no_file_is_a_stale_waiver():
+    """waive.stale (ruleset 13): a glob of the repo's waive: that matches no file of its tree is a P2 finding, the glob
+    its unit; a glob that matches a file, even one with no finding to waive, is not stale; the scout never asks it."""
+    waive = {"tests/unit/*": "checks data no module stands for, by design",
+             "docs/gone.md": "a doc removed since, its reason left behind",
+             "src/p/a.py": "matches a file whose findings it does not take",
+             "scripts/legacy/*.ps1": "old installer scripts, removed since then"}
+    r = audit.measure(projects.Project("demo", Path("/m/demo"), [Path("/m/demo/notes/graph")]),
+                      [projects.Repo("demo", Path("/m/demo"), waive=waive)], {"demo": _tree()})["repos"][0]
+    stale = [f for f in r["findings"] if f["check"] == "waive.stale"]
+    assert [f["unit"] for f in stale] == ["docs/gone.md", "scripts/legacy/*.ps1"]
+    assert {f["severity"] for f in stale} == {"P2"} and "a doc removed since" in stale[0]["why"]
+    assert stale[0]["key"] == "demo:waive.stale:docs/gone.md" and "projects.yaml" in stale[0]["fix"]
+    assert audit.CHECKS["waive.stale"].scout == "never" and audit.RULESET >= 13
+    none = audit.measure(projects.Project("demo", Path("/m/demo"), [Path("/m/demo/notes/graph")]),
+                         [projects.Repo("demo", Path("/m/demo"))], {"demo": _tree()})["repos"][0]
+    assert not [f for f in none["findings"] if f["check"] == "waive.stale"]   # no waive: nothing stale
+    assert audit.stale_waivers("demo", _tree(), {"README.md": "a file at the root, matched"}) == []
+
+
 def test_sync_writes_the_links_and_check_warns_when_stale(tmp_path, monkeypatch, make_repo, capsys, request):
     repo = make_repo("demo", {"notes/graph/schema.yaml": SCHEMA, "notes/graph/nodes/work.yaml": NODES,
                               "notes/graph/edges.yaml": "[]\n", "README.md": "# demo\n\nAbout wi-a.\n",
