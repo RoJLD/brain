@@ -317,7 +317,7 @@ CLEARING = {"unset": "", "export": "-n", "declare": "+x", "typeset": "+x"}   # t
 PS_REMOVE = {"remove-item", "ri", "rm", "del", "erase", "clear-item", "cli", "rmdir", "rd"}
 CODE_CLEARS = re.compile(
     r"(?i)SetEnvironmentVariable\s*\(\s*(?:['\"]?(?:CLAUDE|BRAIN_AGENT)|\$)|-UseNewEnvironment\b|"
-    r"\.Environment\.(?:Clear|Remove)\s*\(|\b(?:del\s+os\.environ|environ\.(?:pop|clear)\s*\(|unsetenv|putenv)\b")
+    r"\.Environment\.(?:Clear|Remove)\s*\(|\bdel\s+os\.environ\b|\benviron\.(?:pop|clear)\s*\(|\b(?:unsetenv|putenv)\b")
 
 
 def _names_marker(word: str, named: bool) -> bool:
