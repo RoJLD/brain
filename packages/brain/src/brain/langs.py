@@ -90,23 +90,25 @@ class Tool:
 
 # The tools the new-project wizard knows, by language and slot (spec-brain-client-standards §8, question 3). Each
 # writes its report under reports/ (c8 under coverage/), where the project's CI or its developer runs it; the engine
-# only reads the file.
+# only reads the file. Each command runs as printed, from the repo's checkout (one run, never a watch); pytest-cov's is
+# the one the code templates' CI runs (templates/_software/ci.yml: reports/coverage.xml and reports/junit.xml).
 TOOLS = {(t.lang, t.slot, t.name): t for t in (
     Tool("ruff", "py", "lint", "ruff check --output-format sarif -o reports/ruff.sarif", "reports/ruff.sarif", "sarif"),
-    Tool("mypy", "py", "typecheck", "mypy --junit-xml reports/mypy.xml", "reports/mypy.xml", "junit"),
-    Tool("pytest", "py", "test", "pytest --junitxml reports/junit.xml", "reports/junit.xml", "junit"),
-    Tool("pytest-cov", "py", "coverage", "pytest --cov --cov-report json:reports/coverage.json",
-         "reports/coverage.json", "coverage-json"),
+    Tool("mypy", "py", "typecheck", "mypy --junit-xml reports/mypy.xml .", "reports/mypy.xml", "junit"),
+    Tool("pytest", "py", "test", "pytest --junitxml=reports/junit.xml", "reports/junit.xml", "junit"),
+    Tool("pytest-cov", "py", "coverage", "pytest --cov --cov-report=xml:reports/coverage.xml", "reports/coverage.xml",
+         "cobertura"),
     Tool("ruff", "py", "format", "ruff format --check"),
-    Tool("eslint", "ts", "lint", "eslint -f @microsoft/eslint-formatter-sarif -o reports/eslint.sarif",
+    Tool("eslint", "ts", "lint", "eslint . -f @microsoft/eslint-formatter-sarif -o reports/eslint.sarif",
          "reports/eslint.sarif", "sarif"),
     Tool("tsc", "ts", "typecheck", "tsc --noEmit"),
-    Tool("vitest", "ts", "test", "vitest --reporter=junit --outputFile reports/junit.xml", "reports/junit.xml",
+    Tool("vitest", "ts", "test", "vitest run --reporter=junit --outputFile=reports/junit.xml", "reports/junit.xml",
          "junit"),
-    Tool("jest", "ts", "test", "jest --reporters=default --reporters=jest-junit (JEST_JUNIT_OUTPUT_DIR=reports)",
+    Tool("jest", "ts", "test", "JEST_JUNIT_OUTPUT_DIR=reports jest --reporters=default --reporters=jest-junit",
          "reports/junit.xml", "junit"),
-    Tool("c8", "ts", "coverage", "c8 --reporter=json-summary", "coverage/coverage-summary.json", "istanbul-summary"),
-    Tool("prettier", "ts", "format", "prettier --check"),
+    Tool("c8", "ts", "coverage", "c8 --reporter=json-summary npm test", "coverage/coverage-summary.json",
+         "istanbul-summary"),
+    Tool("prettier", "ts", "format", "prettier --check ."),
 )}
 # The tools proposed for a language's slots when the owner names none (the plan shows them; --tool SLOT=none drops one).
 DEFAULT_TOOLS = {"py": {"lint": "ruff", "test": "pytest", "coverage": "pytest-cov", "format": "ruff"},

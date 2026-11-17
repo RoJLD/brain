@@ -16,12 +16,13 @@ USAGE = """\
                  typology catalog, brain typologies: code products and research first, STD-5), its stage, its
                  language and each check's tool (lint, typecheck, test, coverage, format: the language's usual one
                  unless --tool names another, none for none), its data (the class floor, a residency clause,
-                 personal data: the privacy standards included), then a plan (the layers its kinds are proposed,
-                 the tools and their reports, the standards rows it follows and those its tools run, the template,
-                 brain init's plan) and --apply: its brain written by brain init from the first kind's profile
-                 template, its registry entry recording lifecycle: {typologies, stage}, its repo's lang and tools,
-                 classes: {floor} and standards include; in a folder that holds its brain already, the plan shows
-                 what the answers change there (written by a PR of that brain, never here)
+                 personal data: the privacy standards included; a floor its own stores are under, which brain
+                 check refuses, is refused with them), then a plan (the layers its kinds are proposed, the tools and
+                 their reports, those the template's CI does not write, the standards rows it follows and those its
+                 tools run, the template, brain init's plan) and --apply: its brain written by brain init from the
+                 first kind's profile template, its registry entry recording lifecycle: {typologies, stage}, its
+                 repo's lang and tools, classes: {floor} and standards include; in a folder that holds its brain
+                 already, the plan shows what the answers change there (written by a PR of that brain, never here)
   brain project add NAME (--read | --existing DIR [--store PATH] | --template T --dir DIR) [--parent NODE]
                  [--floor CLASS] [--title TEXT] [--no-notes] [--apply]   a project registered in this brain's
                  projects.yaml
@@ -55,9 +56,10 @@ def register(sub, ctx) -> None:
     new.add_argument("--tool", dest="tools", action="append", metavar="SLOT=TOOL",
                      help="a check's tool (slots: lint, typecheck, test, coverage, format; TOOL none for none; "
                           "repeatable); a slot not named takes the language's usual tool")
-    new.add_argument("--floor", help="the class floor of its data (classes: {floor: CLASS}; brain classes)")
+    new.add_argument("--floor", help="the class floor of its data (classes: {floor: CLASS}; brain classes): "
+                                     "refused when its own stores are under it (brain check refuses them)")
     new.add_argument("--residency", action="store_true", help="its data are under a residency clause: the floor "
-                                                              "resident (its stores never leave the machine)")
+                                                              "resident, refused as --floor is")
     new.add_argument("--personal-data", action="store_true", help="it handles personal data: the privacy standards "
                                                                   "join its selection's include")
     new.add_argument("--apply", action="store_true", help="write it (default: the plan)")
