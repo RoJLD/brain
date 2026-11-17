@@ -2196,6 +2196,15 @@ install ([docs/identity.md](docs/identity.md), « Signed releases »).
 brain identity check | unsigned [--write DIR] [--json] | payload ID | attach SIG|DIR... | allowed-signers [--write [FILE]]
 ```
 
+**Access per person and per node** (`brain.access`, read only for now): `members.yaml` also declares `groups`
+(nested) and grants on nodes of the scope tree, a person or a group with a `grade` (`viewer` < `contributor` <
+`maintainer` < `owner`: read, propose, write, administer) and capability `roles` (`decider`, `releaser`, `auditor`),
+optionally `since` and `until`; a grant holds down the tree by union, the highest grade winning, and `config.json`
+`grades` renames the labels. `brain check` adds its reference checks to the identity findings (warnings, errors
+under `identity.require_signed`), and `brain access explain PERSON [--scope REF] [--client C] [--json]` prints a
+person's grade on a node, the grant behind each verb and an agent's reach (read and propose at most). Nothing is
+refused by it yet; a solo brain sees no change ([`docs/identity.md`](docs/identity.md), « Access »).
+
 ## Adding a command
 
 Each top-level command is a module of `src/brain/commands/`: its parser, its handlers and its lines of `brain --help`.

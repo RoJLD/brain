@@ -75,6 +75,7 @@ def load(root: Path) -> Members | None:
     data = plain(data)
     errors = [f"{FILE}: {e}" for e in schema.check("members", data, schema.mode())[0]]
     errors += [f"{FILE}: {e}" for e in _references(data)]
+    errors += [f"{FILE}: {e}" for e in _access(data, root)]
     text = f.read_text(encoding="utf-8", errors="replace")
     errors += [f"{FILE}:{line}: matches secret pattern {name} (public keys only)"
                for line, name in secretscan.scan_lines(text)]
@@ -102,14 +103,29 @@ def _id(x: dict, key: str = "person_id") -> str | None:
 
 
 def _references(data: dict) -> list[str]:
-    """What the schema cannot say: unique ids, and every person, organization and tenant named exists."""
+    """What the schema cannot say: unique ids, and every person, organization and tenant named exists (a grant to a
+    group names no person: brain.access checks it)."""
     people = [_id(p) for p in _list(data, "people")]
     dupes = {p for p in people if p is not None and people.count(p) > 1}
     errors = [f"people: person_id {p!r} is declared twice" for p in sorted(dupes)]
     errors += [f"{key}[{i}]: person_id {x.get('person_id')!r} is not in people"
                for key in ("accounts", "memberships") for i, x in enumerate(_list(data, key))
-               if _id(x) is None or _id(x) not in people]
+               if (_id(x) is None and not (key == "memberships" and "group" in x)) or
+               (_id(x) is not None and _id(x) not in people)]
+    errors += [f"memberships[{i}]: grants nothing: give it roles (or a grade)" for i, x in
+               enumerate(_list(data, "memberships")) if not x.get("roles") and x.get("grade") is None]
     return errors + _org_references(data)
+
+
+def _access(data: dict, root: Path) -> list[str]:
+    """The access fields' references (brain.access): groups, a grant's node and grade; the scope tree read once."""
+    from . import access, scopes
+    cfg = config.load(root)
+    new = _list(data, "groups") or any(k in m for m in _list(data, "memberships")
+                                       for k in ("group", "scope", "grade", "since", "until"))
+    if not new and "grades" not in cfg.data:
+        return []   # a members.yaml of before the grades: nothing more to read (the project: key is identity's)
+    return access.errors(data, scopes.load(root, cfg), cfg.data)
 
 
 def _org_references(data: dict) -> list[str]:

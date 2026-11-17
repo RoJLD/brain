@@ -227,9 +227,53 @@ Each release tag is then `git tag -s vX.Y.Z -m "..."` (your passphrase), checked
 (docs/release.md, « 3. The tag »). The same key may also be added to the GitHub account as a signing key, so that the
 web shows the tag as verified; that is the account's setting, not the engine's.
 
+## Access: groups, grades and grants (read only)
+
+Who may do what, where (`brain.access`; the first slice of the access model: **nothing is refused by it yet**, the
+decision function that the command line, the guards and the MCP server will call comes later). `members.yaml` grows,
+additively, still `v: 1`:
+
+```yaml
+groups:                                   # people and other groups, nested; never a cycle; never a person_id
+  - {id: finance-team, title: Finance team, members: [alice, bob]}
+  - {id: staff, title: Everyone, members: [finance-team, dave]}
+memberships:                              # each one a grant: a person or a group, exactly one
+  - {person_id: carol, roles: [owner]}                                     # no scope: Global, the whole brain
+  - {group: staff, scope: acme, grade: viewer}                             # a container: its whole subtree
+  - {group: finance-team, scope: finance, grade: maintainer, roles: [decider]}
+  - {person_id: dave, scope: ledger, grade: contributor, until: 2027-03-31}  # since / until: dates
+```
+
+- **Grades**, ordered, each including the one below: `viewer` (read), `contributor` (+ propose: a branch and a PR, a
+  memory proposal, a DDR asked), `maintainer` (+ write: landing a change on the node's main line), `owner` (+
+  administer: members and grades, the node's rules and permissions, classes, the owner's gestures). The ids are
+  fixed; `config.json` `grades` renames their labels (`{"contributor": {"fr": "Chercheur"}}`). A grade this engine
+  does not know reads as none, never above (noted; strict, CI: an error).
+- **Capability roles**, orthogonal: `decider` (decide: answers the node's DDRs; its signature verifies an
+  owner-decides answer, as above), `releaser` (signs release tags), `auditor` (reads the node's ledgers and access
+  log, not its stores). A role named as a grade (`owner`, `viewer`) reads as that grade, `member` as `viewer`.
+- **A node** is named by its id (`scope:`, `project:` its synonym), a container of `scopes.yaml` or a project of the
+  registry: a grant holds down the tree, by union, the highest grade winning. An alias of a node is refused there (a
+  grant names the frozen id). A membership of an organization or a tenant is another identity domain: no grade here.
+- **An agent** acts for a person: its reach is the person's verbs within its client's ceiling, read and propose by
+  default (writes per client come with the agents' attribution); an owner's gesture and a decision are never an
+  agent's.
+- **Honest promise**: locally the brain guides; the git host and CI gate; separate repositories and sealed stores
+  separate reads (a clone is a copy: a check cannot keep a member from reading it).
+
+`brain check` and `brain identity check` add the references (an unknown group, member or node, a cycle, a grant to a
+person and a group at once, one that grants nothing, `until` before `since`) to the other identity findings:
+warnings, errors under `identity.require_signed`. `brain access explain PERSON [--scope REF] [--client C] [--lang fr]
+[--json]` prints a person's grade on a node (Global and each node a grant of theirs names, by default), the verbs it
+gives with the grant behind each (direct, or through which groups), the roles, the grants that do not count today,
+and, with `--client`, an agent's reach. Read only, zero token. **A solo brain** (no `members.yaml`, or one owner on
+Global) sees no change. The fields need brain 0.6.0 on every machine: an older one notes them as unknown (CI refuses
+them) and reports a grant to a group as a membership without a `person_id`.
+
 ## Commands
 
 ```
+brain access explain PERSON [--scope REF] [--client C]   who may do what, where (read only)
 brain identity check                         members.yaml and the signatures (what brain check runs)
 brain identity unsigned [--write DIR] [--json]   the owner-decides answers without a signature
 brain identity payload ID                    what a signature of that answer covers
