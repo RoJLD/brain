@@ -758,7 +758,8 @@ fresh master and drains its own. It is never a refusal: no guard blocks start_se
 `memory_free_gb` (default 0: the percent) reads the committed memory in GB of commit left instead (Windows: the commit
 limit minus the commit charge; elsewhere MemAvailable plus SwapFree): a page file of a fixed size keeps the percent at
 91-94 % with 25 GB of RAM free, where 6 GB of commit left is a session's worth and a margin (`"memory_free_gb": 6`);
-`brain usage guard` and `brain status` show it beside the percent.
+with it set, `brain usage guard`, `brain status` and `brain lots` show it beside the percent (read to the hundredth:
+5.95 GB left is under 6).
 
 Every key is optional (the defaults above, except `brainstorms`: 2, and `memory_available_gb`: 0, no floor; 4 is the
 opt-in shown). `"enabled": false` turns the governor off. A

@@ -744,3 +744,19 @@ def test_brain_usage_allow_check(ada, brain_home, capsys):
         cli.main(["usage", "allow", "--check", "stale"])
     assert cli.main(["usage", "guard"]) == 0
     assert "override  critical, warn until" in capsys.readouterr().out
+
+
+def test_the_commit_left_is_read_to_the_hundredth(ada, brain_home, monkeypatch):
+    """The review (2026-11-17): 5.95 GB left is under a 6 GB cap (a tenth's rounding let it through)."""
+    m = governor.performance_memory(dict(INCIDENT, commit_total=INCIDENT["commit_limit"] - int(5.95 * 2 ** 30)))
+    assert m["commit_free_gb"] == 5.95
+    assert governor.memory_refusal(80.0, 25.0, dict(governor.DEFAULTS, memory_free_gb=6), m["commit_free_gb"]) == \
+        "committed"
+
+
+def test_brain_lots_shows_the_commit_left(ada, brain_home, monkeypatch):
+    from brain import lots
+    mem3(monkeypatch, 92.0, 25.0, 5.0)
+    ada({"memory_free_gb": 6})
+    c = lots.caps_in_force(ada.lab, "")
+    assert c["memory_refuses"] and "5.0 GB of commit left (refused under 6 GB)" in c["memory"]

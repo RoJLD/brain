@@ -498,7 +498,7 @@ def performance_memory(perf: dict | None) -> dict:
     return {"committed": round(100.0 * total / limit, 1) if ok else None,
             "available_gb": round(perf["physical_available"] / 2 ** 30, 1)
             if isinstance(perf.get("physical_available"), int) else None,
-            "commit_free_gb": round(max(0, limit - total) / 2 ** 30, 1) if ok else None}
+            "commit_free_gb": round(max(0, limit - total) / 2 ** 30, 2) if ok else None}
 
 
 def meminfo(text: str) -> dict:
@@ -508,7 +508,7 @@ def meminfo(text: str) -> dict:
     avail = kb.get("MemAvailable")
     return {"committed": round(100.0 * (1 - avail / kb["MemTotal"]), 1) if kb.get("MemTotal") and avail is not None
             else None, "available_gb": round(avail / 2 ** 20, 1) if avail is not None else None,
-            "commit_free_gb": round((avail + kb.get("SwapFree", 0)) / 2 ** 20, 1) if avail is not None else None}
+            "commit_free_gb": round((avail + kb.get("SwapFree", 0)) / 2 ** 20, 2) if avail is not None else None}
 
 
 def memory_pct() -> float | None:
