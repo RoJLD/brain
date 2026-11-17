@@ -153,12 +153,12 @@ def _check(args, root: Path, store: Path) -> int:
     """The closure rule (its exit), then the release forecast of that wave (advisory, brain.nextrelease)."""
     plan = waves.load(store, root)
     if args.tag:   # what a wave reached without props.shipped_as shipped as, as the last tag tells it
-        plan = waves.as_tagged(plan, args.version, args.tag)
+        plan = waveclose.as_tagged(plan, args.version, args.tag)
     found = waves.closure_problems(plan, args.version)
     for line in found:
         print(f"error: {line}")
     if not found:
-        closing = waves.closing(plan, args.version)   # the wave it closes when it ships under another number
+        closing = waveclose.closing(plan, args.version)   # the wave it closes when it ships under another number
         print(f"wave {args.version}: " + (f"{closing} closed" if closing else "no wave of that release")
               + " (its version PR may go)")
     wid = plan.resolve(args.version)

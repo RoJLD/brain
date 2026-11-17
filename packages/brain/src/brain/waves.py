@@ -505,8 +505,9 @@ def closure_problems(plan: Plan, version: str) -> list[str]:
     to a later wave (props.carried_to) nor dropped, and it is closed (reached by brain wave close). [] when the store
     has no such wave. What brain check refuses about that wave (its release twice, an item of it in two waves) is
     said too: the rule cannot be read through it. So is a wave before it reached without props.shipped_as that could
-    have shipped as ``version`` (:func:`_unrecorded_ship`): which wave it closes cannot be told (:func:`as_tagged`
-    tells it from the last release tag)."""
+    have shipped as ``version`` (brain.waveclose.unrecorded_ship): which wave it closes cannot be told
+    (brain.waveclose.as_tagged tells it from the last release tag)."""
+    from .waveclose import unrecorded_ship
     same = plan.same_release(version)
     if len(same) > 1:
         return [f"release {version} names {len(same)} waves ({', '.join(same)}): one wave per release (brain check)"]
@@ -514,7 +515,7 @@ def closure_problems(plan: Plan, version: str) -> list[str]:
     if amb:
         return [amb]
     w = plan.for_release(version)
-    unrecorded = _unrecorded_ship(plan, version, w)
+    unrecorded = unrecorded_ship(plan, version, w)
     if unrecorded and w is not None:   # the jump counts from a wave that may be the one shipping: w is not read
         return [unrecorded]
     behind = _behind(plan, version, w)
@@ -531,94 +532,6 @@ def closure_problems(plan: Plan, version: str) -> list[str]:
         out.append(f"wave {version} ({w}) is still pending: brain wave close {version} --write reaches it, then "
                    f"brain sync")
     return out
-
-
-def closing(plan: Plan, version: str) -> str:
-    """Which wave a version PR of ``version`` closes, as said: ``wave-s3 (1.0.2, closed as 1.1.0, a jump)`` when its
-    label is another release (the release jumped, or a reached wave shipped as ``version``), ``wave-s3 (1.1.0)``
-    when it is labelled so (or ``version`` is its id); '' when ``version`` names none
-    (wi-brain-release-check-shipped-wave). A shipped_as read from the last tag (:func:`as_tagged`) is said so."""
-    w = plan.for_release(version)
-    if w is None:
-        return ""
-    label = plan.label(w)
-    if label == version or release_key(version) is None:
-        return f"{w} ({label})"
-    how = "a jump" if plan.status(w) == "pending" else (plan.nodes[w].get(TOLD) or "its props.shipped_as")
-    return f"{w} ({label}, closed as {version}, {how})"
-
-
-TOLD = "_shipped_as_told"   # an in-memory key of a node as_tagged read: why it shipped as it did (never written)
-
-
-def as_tagged(plan: Plan, version: str, tag: str) -> Plan:
-    """The plan as the last release tag ``tag`` (vX.Y.Z or X.Y.Z) tells it, for a version PR of ``version``: of the
-    waves reached without a well-formed props.shipped_as (closed by hand, or by an engine up to 0.5.0, which wrote
-    none), the one labelled the tag's release shipped as itself, and the one reached after it (labelled above it,
-    up to ``version``; alone so) ships as ``version``, closed by hand before its version PR. In memory only, nothing
-    is written; ``plan`` itself when ``tag`` or ``version`` is no release or the tag tells nothing
-    (wi-brain-release-check-shipped-wave)."""
-    t, v = release_key(str(tag or "").strip().removeprefix("v")), release_key(version)
-    if t is None or v is None or v <= t:
-        return plan
-    bare = [w for w in plan.live if plan.status(w) == "reached" and plan.release(w)
-            and not release_key(_props(plan.nodes[w]).get("shipped_as"))]
-    tagged = ".".join(map(str, t))
-    told = {w: (tagged, f"the last tag v{tagged}") for w in bare if plan.release(w) == t}
-    after = [w for w in bare if t < plan.release(w) <= v]
-    if len(after) == 1:
-        told[after[0]] = (version, f"reached after the last tag v{tagged}")
-    if not told:
-        return plan
-    nodes = dict(plan.nodes)
-    for w, (rel, why) in told.items():
-        nodes[w] = {**nodes[w], "props": {**_props(nodes[w]), "shipped_as": rel}, TOLD: why}
-    return Plan(nodes, parents=plan.parents, members=plan.members, deps=plan.deps, ddrs=plan.ddrs, edges=plan.edges)
-
-
-def previous_wave(plan: Plan, version: str) -> str | None:
-    """The last live reached wave whose release (what it shipped as, else its label) is below ``version``: the one a
-    version PR of a release no wave names follows; None without one."""
-    key = release_key(version)
-    if key is None:
-        return None
-    below = [(release_key(plan.shipped(w)), w) for w in plan.live if plan.status(w) == "reached"]
-    below = [(k, w) for k, w in below if k and k < key]
-    return max(below)[1] if below else None
-
-
-def _could_ship(plan: Plan, x: str, key: tuple[int, int, int]) -> bool:
-    """Whether the wave ``x`` could have shipped as ``key``: the next minor or major after the release it counts from
-    (a jump of it), above its own label. The first wave counts from nothing: it ships as its label only."""
-    base, own = plan._counts[1].get(x), plan.release(x)
-    return bool(base and own and key > own and key in ((base[0], base[1] + 1, 0), (base[0] + 1, 0, 0)))
-
-
-def _unrecorded_ship(plan: Plan, version: str, w: str | None) -> str:
-    """What leaves untold the wave a version PR of ``version`` closes: the wave before it (the last reached below
-    ``version`` when it names none; the one the jump counts from when ``w`` is the current wave closed as a jump) was
-    reached without a well-formed props.shipped_as (by hand, or by an engine up to 0.5.0) and could have shipped as
-    ``version`` itself (:func:`_could_ship`). Then it may be that wave the version PR closes, not ``w`` or none, and
-    the closure rule would read the wrong one or pass unread (wave 0.3.3 closed by hand and shipped as 0.4.0: its
-    version PR found no wave 0.4.0, or jumped onto the next wave; wi-brain-release-check-shipped-wave). '' when that
-    wave records what it shipped as (:func:`as_tagged` reads it from the last tag), or could not have."""
-    key = release_key(version)
-    if key is None or (w is not None and (plan.status(w) != "pending" or plan.label(w) == version)):
-        return ""
-    if w is None:
-        x = previous_wave(plan, version)
-    else:
-        i = plan.live.index(w)
-        x = plan.live[i - 1] if i and plan.status(plan.live[i - 1]) == "reached" else None
-    raw = _props(plan.nodes[x]).get("shipped_as") if x else None
-    if x is None or release_key(raw) or not _could_ship(plan, x, key):
-        return ""
-    label, got = plan.label(x), "" if raw in (None, "") else f" (got {raw!r})"
-    then = "names no wave" if w is None else f"would close {w} ({plan.label(w)}) as a jump"
-    return (f"release {version} {then}, but {x} ({label}) before it was reached without a well-formed "
-            f"props.shipped_as{got} (by hand, or by an engine up to 0.5.0) and may be the wave {version} ships: "
-            f"record it, brain item set {x} props.shipped_as={version} (or ={label} if it shipped as {label}), then "
-            f"brain sync")
 
 
 def ambiguous(plan: Plan, version: str) -> str:

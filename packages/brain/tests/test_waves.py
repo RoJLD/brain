@@ -765,8 +765,8 @@ def test_a_wave_reached_by_hand_is_said_when_the_next_release_names_none(tmp_pat
     store = _write(tmp_path / "root" / "notes" / "graph", nodes, "")
     plan = waves.load(store)
     assert plan.for_release("1.1.0") is None
-    assert plan.status("wave-1.0.1") == "reached" and waves.previous_wave(plan, "1.1.0") == "wave-1.0.1"
-    assert waves.previous_wave(plan, "1.0.0") is None and waves.previous_wave(plan, "x") is None
+    assert plan.status("wave-1.0.1") == "reached" and waveclose.previous_wave(plan, "1.1.0") == "wave-1.0.1"
+    assert waveclose.previous_wave(plan, "1.0.0") is None and waveclose.previous_wave(plan, "x") is None
     got = waves.closure_problems(plan, "1.1.0")
     assert got == ["release 1.1.0 names no wave, but wave-1.0.1 (1.0.1) before it was reached without a well-formed "
                    "props.shipped_as (by hand, or by an engine up to 0.5.0) and may be the wave 1.1.0 ships: record "
@@ -779,7 +779,7 @@ def test_a_wave_reached_by_hand_is_said_when_the_next_release_names_none(tmp_pat
                             'title: "Wave 1.0.1", props: {kind: wave, release: 1.0.1, shipped_as: 1.0.1}')
     assert shipped != nodes
     plan = waves.load(_write(tmp_path / "other" / "notes" / "graph", shipped, ""))
-    assert waves.closure_problems(plan, "1.1.0") == [] and waves.closing(plan, "1.1.0") == ""
+    assert waves.closure_problems(plan, "1.1.0") == [] and waveclose.closing(plan, "1.1.0") == ""
     for bad, said in (("1.1", "(got 1.1)"), ("[1]", "(got [1])"), ("x", "(got 'x')")):   # not a release: said so
         plan = waves.load(_write(tmp_path / bad.strip("[]") / "notes" / "graph",
                                  shipped.replace("shipped_as: 1.0.1", f"shipped_as: {bad}"), ""))
@@ -814,7 +814,7 @@ def test_a_version_whose_jump_counts_from_a_wave_reached_by_hand_is_refused_unti
     wave-s3 pending (computed 0.3.4, an open item), a version PR of 0.4.0. 0.4.0 is the jump of wave-s3 only if
     wave-s2 shipped as 0.3.3; if wave-s2 is what ships as 0.4.0, the jump reads the wrong wave and its remedy would
     close wave-s3 as 0.4.0. So it is refused, naming wave-s2, until its shipped_as is recorded or the last tag tells
-    it (brain.waves.as_tagged): v0.3.3, the jump onto wave-s3 is read; v0.3.2, wave-s2 is the wave 0.4.0 ships."""
+    it (brain.waveclose.as_tagged): v0.3.3, the jump onto wave-s3 is read; v0.3.2, wave-s2 is the wave 0.4.0 ships."""
     store = _write(tmp_path / "root" / "notes" / "graph", SHIPPED_NODES, SHIPPED_EDGES)
     plan = waves.load(store)
     assert [plan.label(w) for w in plan.waves] == ["0.3.2", "0.3.3", "0.3.4"]
@@ -826,20 +826,20 @@ def test_a_version_whose_jump_counts_from_a_wave_reached_by_hand_is_refused_unti
                    "as 0.3.3), then brain sync"]
     assert not any("--carry-to" in line for line in got)   # no remedy that closes wave-s3 as 0.4.0
     assert waves.closure_problems(plan, "0.3.4") and "holds 1 open item" in waves.closure_problems(plan, "0.3.4")[0]
-    told = waves.as_tagged(plan, "0.4.0", "v0.3.3")   # wave-s2 shipped as itself: 0.4.0 is wave-s3's jump
+    told = waveclose.as_tagged(plan, "0.4.0", "v0.3.3")   # wave-s2 shipped as itself: 0.4.0 is wave-s3's jump
     assert told.shipped("wave-s2") == "0.3.3" and plan.shipped("wave-s2") == "0.3.3"
     assert "wave 0.4.0 (wave-s3) holds 1 open item(s)" in waves.closure_problems(told, "0.4.0")[0]
-    assert waves.closing(told, "0.4.0") == "wave-s3 (0.3.4, closed as 0.4.0, a jump)"
-    told = waves.as_tagged(plan, "0.4.0", "v0.3.2")   # wave-s2 reached after the last tag: it ships as 0.4.0
+    assert waveclose.closing(told, "0.4.0") == "wave-s3 (0.3.4, closed as 0.4.0, a jump)"
+    told = waveclose.as_tagged(plan, "0.4.0", "v0.3.2")   # wave-s2 reached after the last tag: it ships as 0.4.0
     assert told.for_release("0.4.0") == "wave-s2" and waves.closure_problems(told, "0.4.0") == []
-    assert waves.closing(told, "0.4.0") == "wave-s2 (0.3.3, closed as 0.4.0, reached after the last tag v0.3.2)"
+    assert waveclose.closing(told, "0.4.0") == "wave-s2 (0.3.3, closed as 0.4.0, reached after the last tag v0.3.2)"
     assert told.label("wave-s3") == "0.4.1"   # the later waves count from what it shipped as
     assert "shipped_as" not in waves._props(plan.nodes["wave-s2"])   # in memory only: the plan read is left as is
-    assert waves.as_tagged(plan, "0.4.0", "") is plan and waves.as_tagged(plan, "0.3.2", "v0.3.2") is plan
+    assert waveclose.as_tagged(plan, "0.4.0", "") is plan and waveclose.as_tagged(plan, "0.3.2", "v0.3.2") is plan
     base = ["--root", str(store.parents[1]), "wave", "check", "0.4.0"]
     assert cli.main(base) == 1 and "error: release 0.4.0 would close wave-s3" in capsys.readouterr().out
     assert cli.main(base + ["--tag", "v0.3.2"]) == 0
     recorded = SHIPPED_NODES.replace('props: {kind: wave, seq: 2}', 'props: {kind: wave, seq: 2, shipped_as: 0.3.3}')
     plan = waves.load(_write(tmp_path / "other" / "notes" / "graph", recorded, SHIPPED_EDGES))
     assert "wave 0.4.0 (wave-s3) holds 1 open item(s)" in waves.closure_problems(plan, "0.4.0")[0]
-    assert waves.closing(plan, "wave-s3") == "wave-s3 (0.3.4)"   # named by its id: no "closed as wave-s3"
+    assert waveclose.closing(plan, "wave-s3") == "wave-s3 (0.3.4)"   # named by its id: no "closed as wave-s3"

@@ -25,10 +25,10 @@ changelog fragments are checked (below). On a version PR, it fails when:
   brain.waves). That one check imports brain and research_graph from this checkout (``packages/brain/src``, ``src``)
   and needs PyYAML. The last tag tells which wave this version ships when a wave was reached without
   ``props.shipped_as`` (by hand, or by an engine up to 0.5.0): the one labelled the tag's release shipped as itself,
-  one reached after it ships as this version (brain.waves.as_tagged). A store with no wave of this version passes it,
-  unless the wave before it, reached without ``props.shipped_as``, could have shipped as this version and the tag
-  does not tell (refused: record it). Its line names the wave it checked, and how when that wave ships under another
-  number (the jump, its ``props.shipped_as``, or the tag);
+  one reached after it ships as this version (brain.waveclose.as_tagged). A store with no wave of this version passes
+  it, unless the wave before it, reached without ``props.shipped_as``, could have shipped as this version and the
+  tag does not tell (refused: record it). Its line names the wave it checked, and how when that wave ships under
+  another number (the jump, its ``props.shipped_as``, or the tag);
 - the brain the last tag's engine wrote is not frozen under ``packages/brain/tests/fixtures/stores/<tag>/``
   (``installer/freeze_store.py <tag>``; :func:`old_store`): the release's tests run every store-reading command on it.
 
@@ -56,6 +56,7 @@ from __future__ import annotations
 
 import argparse
 import ast
+import importlib
 import json
 import os
 import re
@@ -497,7 +498,7 @@ def closure(repo: Path, store: Path, version: str, tag: str = "") -> tuple[str |
     """(the wave a version PR of ``version`` closes, as said: its id, its label and how when the release jumped or it
     shipped under another number, '' when none, None when the engine that read it names none; what
     :func:`wave_closure` refuses). The last tag ``tag`` tells what a wave reached without props.shipped_as shipped as
-    (brain.waves.as_tagged), when the engine has it."""
+    (brain.waveclose.as_tagged), when the engine has it."""
     readable_store(store)
     try:
         import yaml   # before brain.graph, which exits on its own without it
@@ -508,10 +509,19 @@ def closure(repo: Path, store: Path, version: str, tag: str = "") -> tuple[str |
         plan = waves.load(store)
     except (OSError, UnicodeDecodeError, yaml.YAMLError) as exc:   # research_graph.yamlio.load's errors
         raise CannotTell(f"--store {store}: cannot be read: {type(exc).__name__}: {exc}") from exc
-    tagged = getattr(waves, "as_tagged", None)   # an installed engine older than this checkout has none
-    plan = tagged(plan, version, tag) if tagged and tag else plan
-    closing = getattr(waves, "closing", None)
-    return (closing(plan, version) if closing else None), waves.closure_problems(plan, version)
+    ship = _shipped(waves)
+    plan = ship.as_tagged(plan, version, tag) if ship and tag else plan
+    return (ship.closing(plan, version) if ship else None), waves.closure_problems(plan, version)
+
+
+def _shipped(waves):
+    """brain.waveclose beside the engine's brain.waves (:func:`_waves`), which says which wave a version PR ships
+    (``closing``, ``as_tagged``); None for an installed engine older than this checkout, which has neither."""
+    try:
+        mod = importlib.import_module(f"{waves.__name__.rpartition('.')[0]}.waveclose")
+    except (AttributeError, ImportError):
+        return None
+    return mod if hasattr(mod, "as_tagged") and hasattr(mod, "closing") else None
 
 
 def closure_state(wave: str | None, found: list[str]) -> str:
