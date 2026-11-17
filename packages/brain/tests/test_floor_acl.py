@@ -15,7 +15,7 @@ from test_floorlock import _Done, _install, _lock, _setup
 
 SID = "S-1-5-21-1111111111-2222222222-3333333333-1001"
 nt = pytest.mark.skipif(os.name != "nt", reason="floor.acl is a Windows deny entry")
-REAL_ACCOUNT, REAL_KIND = floor.account, floor.sid_kind
+REAL_ACCOUNT, REAL_KIND, REAL_OWNER = floor.account, floor.sid_kind, floor.owner
 
 
 def USER(sid):
@@ -363,6 +363,7 @@ def _acl_lock(tmp_path, monkeypatch, paths, account=SID):
     return c, floor.effective(c, floor.read_lock())
 
 
+@nt   # floor.acl counts on Windows only: elsewhere a lock with an ACL step is not the locked config's (_held_config)
 def test_the_guard_refuses_every_call_while_an_acl_path_is_not_held(tmp_path, monkeypatch):
     """The per-call check (brain.floor.unlocked): each path present, out of reach and owned by the administrators
     (review #3: a folder made again with a read-only DACL of its own is not), the account the session's (#8),
@@ -435,11 +436,13 @@ def test_the_account_its_kind_and_its_profile():
 
 
 @pytest.mark.skipif(os.name != "nt", reason="Windows' ACLs")
-def test_a_real_acl_step_on_a_scratch_profile(tmp_path):
+def test_a_real_acl_step_on_a_scratch_profile(tmp_path, monkeypatch):
     """The step's icacls commands for real, on a scratch profile and this process's own account: only in an elevated
-    terminal (CI's Windows runner); verify() then finds every right denied, and undo gives it all back."""
+    terminal (CI's Windows runner); verify() then finds every right denied, and undo lifts every deny (the owner stays
+    the administrators'). The real owner read (the autouse fixture fakes it for the planning tests)."""
     if not floorlock.elevated():
         pytest.skip("needs an elevated terminal: a session never elevates")
+    monkeypatch.setattr(floor, "owner", REAL_OWNER)
     import subprocess
     sid = REAL_ACCOUNT()
     home = tmp_path / "profile" / ".claude"
@@ -458,7 +461,8 @@ def test_a_real_acl_step_on_a_scratch_profile(tmp_path):
     finally:
         for cmd in flooracl.undo(a)[0]:
             subprocess.run(cmd, capture_output=True, timeout=300)
-    assert flooracl.denied(home / "settings.json", sid) == 0 and floor.owner(home / "settings.json") == sid
+    assert flooracl.denied(home / "settings.json", sid) == 0 == flooracl.denied(home / "hooks" / "sub" / "h.sh", sid)
+    assert floor.owner(home / "settings.json") == "S-1-5-32-544"   # an elevated step gives no owner away (round 3)
 
 
 def _ran(ran):
