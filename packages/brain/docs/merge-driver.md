@@ -235,7 +235,8 @@ writes the brief a coordinator hands to a sub-session, so that it edits only wha
   `haiku` at `low` effort, 400k; standard on the coordinator's own model, 400k; strategic on `opus` at `high`, 800k);
 - the cost estimate of `brain cost estimate`;
 - the coordinator's app session id (`--coordinator`, else `$CLAUDE_CODE_HOST_SESSION_ID`, the session that runs the
-  command) and the shared notes folder (`--notes`, else the desktop app's folder for that session when it exists);
+  command), which also tells the sub-session to sign its reports with its own id, read by `brain sessions self`, and
+  the shared notes folder (`--notes`, else the desktop app's folder for that session when it exists);
 - the item's subgraph (every edge in and out, the other node's type, status, title and anchor);
 - its line of `brain collisions`;
 - how to start: each repo's checkout and default branch (a session card cannot carry a source branch, so the brief
