@@ -1368,11 +1368,19 @@ a cwd in another repo (a code repo of P, say) or a plain folder keeps the regist
 One name for the machine everywhere (`brain.machine`): `$BRAIN_MACHINE`, else the host name, lowercase and
 `[a-z0-9-]` (the memory sync, the profile and the schedules read it; the permissions' `machines:` stay host names). It is tied to the OS install
 by an anchor, `sha256(install id || OS family)` of `MachineGuid`, `/etc/machine-id` or `IOPlatformUUID` (never the raw
-id), kept at first sight in `<BRAIN_HOME>/machine.json`. `brain doctor` prints the identity's state and, while the
+id; an MSYS or Cygwin Python reads `MachineGuid` through `/proc/registry`: the native Python's anchor), kept at first
+sight in `<BRAIN_HOME>/machine.json`. `brain doctor` prints the identity's state and, while the
 owner's `config.json` lacks it, the `hosts` line to add (`"hosts": {"<name>": {"anchor": "..."}}`): a name on another
 install (reused), two names on one install (a cloned image), a renamed machine, a copied `BRAIN_HOME` or an unreadable
 id is a doubt, said with its question; while it lasts the memory sync exports nothing (the machine's branch), and
-imports as before.
+imports as before. An id that cannot be read (no machine-id file) compares nothing (never moved, reused nor
+duplicate) and is cleared by the owner's confirmation of this home: `"<name>": {"local_id": "..."}` under `hosts`,
+the `local_id` of this machine's `machine.json`, which the doubt prints (the declared facts, if any, sit beside it).
+config.json is the same on every machine, so the confirmation is bound to that one home: another machine that takes
+the name with a fresh `BRAIN_HOME` stays a doubt (only a copied home, which nothing can tell apart without an anchor,
+passes). A home first seen with an anchor, or a name declared with one, that cannot be read here stays a doubt: run
+the brain with the Python that reads it. `brain doctor` then says `identity  ok, no anchor (...): confirmed by
+hosts.<name>.local_id`.
 
 Each fact is true, false or unknown: an unknown fact satisfies neither `FACT` nor `not FACT` in a `recommend_when`,
 and a requirement unknown counts as missing. `brain doctor` probes ECC memory (WMI on Windows, EDAC on Linux) and a

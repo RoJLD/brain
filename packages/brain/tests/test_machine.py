@@ -9,10 +9,11 @@ from pathlib import Path
 import pytest
 
 import brain
-from brain import machine, memory, probe, records, skew, tiers
+from brain import machine, memory, probe, records, schema, skew, tiers
 
 STATUS = Path(__file__).parent / "fixtures" / "formats" / "status" / "v1"
 RAW = "4c4c4544-0000-1111-2222-b3c04f4e3233"   # an invented install id
+REAL_INSTALL_ID_RAW = machine._install_id_raw
 
 
 @pytest.fixture
@@ -78,6 +79,76 @@ def test_doubts_renamed_moved_reused_duplicate_and_no_anchor(box, monkeypatch):
     assert ok["state"] == "ok" and ok["doubt"] == "" and "declare" not in ok
     monkeypatch.setattr(machine, "_install_id_raw", lambda system: (_ for _ in ()).throw(OSError("denied")))
     assert machine.identity({})["state"] == "no-anchor"
+
+
+def _no_machine_id(monkeypatch):
+    """A Linux machine with no machine-id file: its install id cannot be read."""
+    monkeypatch.setattr(machine, "_os", lambda: "linux")
+    monkeypatch.setattr(machine, "_install_id_raw", lambda system: "")
+
+
+def test_a_local_id_in_hosts_confirms_this_home_only(box, monkeypatch, tmp_path):
+    """wi-brain-machine-no-anchor-doubt (review, finding 2): the doubt prints the hosts line that names this home's
+    local_id, and only that line clears it: an entry of facts alone, shared by every machine through config.json,
+    vouches for nobody; another machine that takes the name with a fresh home stays a doubt."""
+    _no_machine_id(monkeypatch)
+    first = machine.identity({})
+    lid = first["local_id"]
+    assert first["state"] == "no-anchor" and first["anchor"] is None and "declare" not in first and len(lid) == 32
+    assert (f'confirm it by adding "box1": {{"local_id": "{lid}"}} under hosts in config.json (its declared facts, if '
+            "any, may sit in it): it vouches for this home only") in first["doubt"]
+    assert "/etc/machine-id not found" in first["doubt"] and machine.in_doubt({})
+    for hosts in ({"box1": {}}, {"box1": {"roles": ["instance"], "type": "laptop"}}, {"other": {"local_id": lid}},
+                  {"box1": "not a mapping"}, {"box1": {"local_id": "0" * 32}}):
+        assert machine.identity({"hosts": hosts})["state"] == "no-anchor", hosts
+    hosts = {"box1": {"local_id": lid, "type": "laptop"}}
+    ok = machine.identity({"hosts": hosts})
+    assert ok["state"] == "ok" and ok["doubt"] == "" and not machine.in_doubt({"hosts": hosts})
+    base = {"v": 1, "identity": {"owner": "Ada"}}
+    assert schema.validate("config", {**base, "hosts": hosts}, schema.STRICT)[0] == []
+    assert schema.validate("config", {**base, "hosts": {"box1": {"local_id": "x"}}}, schema.STRICT)[0]
+    # the export the item is about, through a real config.json
+    _cfg(box, hosts={"box1": {"type": "laptop"}})
+    assert "cannot be read here" in memory.export_held()
+    _cfg(box, hosts=hosts)
+    assert memory.export_held() == ""
+    monkeypatch.setenv("BRAIN_MACHINE", "box2")   # the first sight's name still counts
+    assert machine.identity({"hosts": {"box2": {"local_id": lid}}})["state"] == "renamed"
+    monkeypatch.setenv("BRAIN_MACHINE", "box1")
+    monkeypatch.setenv("BRAIN_HOME", str(tmp_path / "another-machine"))   # the name taken again, with a fresh home
+    other = machine.identity({"hosts": hosts})
+    assert other["state"] == "no-anchor" and "hosts.box1.local_id confirms another BRAIN_HOME" in other["doubt"]
+
+
+def test_an_unreadable_id_is_never_a_false_move(box, monkeypatch):
+    """Review, finding 1: a home first seen by a Python that read the id, then a Python that cannot read it: nothing to
+    compare, so never moved; the doubt stays (a copied home cannot be told apart) and says to run the first Python."""
+    first = machine.identity({})
+    assert first["state"] == "new" and first["anchor"] == ANCHOR
+    monkeypatch.setattr(machine, "_install_id_raw", lambda system: "")
+    for hosts in ({}, {"box1": {}}, {"box1": {"local_id": first["local_id"]}}):
+        ident = machine.identity({"hosts": hosts})
+        assert ident["state"] == "no-anchor" and "run the brain with the Python that reads it" in ident["doubt"], hosts
+    declared = machine.identity({"hosts": {"box1": {"anchor": ANCHOR, "local_id": first["local_id"]}}})
+    assert declared["state"] == "no-anchor" and "hosts.box1 declares it" in declared["doubt"]
+
+
+def test_an_msys_or_cygwin_python_reads_machineguid_through_proc_registry(box, monkeypatch, tmp_path):
+    """Review, finding 3: an MSYS or Cygwin Python has no winreg but reads the registry as files; it hashes with the
+    windows family, so it gives the native Python's anchor and a home first seen natively stays ok."""
+    guid = tmp_path / "MachineGuid"
+    guid.write_bytes(RAW.encode("utf-8") + b"\0")   # a REG_SZ there ends with its NUL
+    monkeypatch.setattr(machine, "PROC_REGISTRY", (str(tmp_path / "absent"), str(guid)))
+    monkeypatch.setattr(machine, "_install_id_raw", lambda system: RAW if system == "windows" else
+                        REAL_INSTALL_ID_RAW(system))
+    assert machine.identity({})["state"] == "new"   # first sight by the native Python
+    for system in ("msys_nt-10.0-26100", "cygwin_nt-10.0-26100"):
+        monkeypatch.setattr(machine, "_os", lambda system=system: system)
+        assert machine.family(system) == "windows"
+        assert machine.anchor() == (ANCHOR, "MachineGuid (/proc/registry)")
+        assert machine.identity({})["state"] == "ok"
+    monkeypatch.setattr(machine, "PROC_REGISTRY", (str(tmp_path / "absent"),))
+    assert machine.anchor() == (None, "MachineGuid (/proc/registry) not found")
 
 
 # --- the facts, their states and their sources ---
@@ -157,6 +228,16 @@ def test_doctor_shows_the_identity_and_each_facts_source(box):
     assert "identity  new, anchor " in text and "ecc yes (declared)" in text and "battery no (probed)" in text
     cached = json.loads((Path(brain.paths.brain_home()) / "facts.json").read_text(encoding="utf-8"))
     assert cached["machine"] == "box1" and cached["facts"]["ecc"]["source"] == "declared"
+
+
+def test_doctor_says_a_machine_runs_confirmed_without_an_anchor(box, monkeypatch):
+    """Review, finding 4: a confirmed machine whose id cannot be read is not a bare ``identity  ok``."""
+    _no_machine_id(monkeypatch)
+    lid = machine.identity({})["local_id"]
+    _cfg(box, hosts={"box1": {"local_id": lid}})
+    doc = tiers.doctor(None, doc=json.loads((STATUS / "older.json").read_text(encoding="utf-8")))
+    text = "\n".join(tiers.render_doctor(doc))
+    assert "identity  ok, no anchor (/etc/machine-id not found): confirmed by hosts.box1.local_id" in text
 
 
 def test_infra_node_is_a_custom_capability_off_by_default(box):
