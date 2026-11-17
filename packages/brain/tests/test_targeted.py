@@ -222,3 +222,8 @@ def test_a_test_that_scans_the_sources_runs_with_any_python_change(make_repo):
     sel = _select(repo, summary)
     assert "tests/test_scan.py" not in sel.tests and "tests/test_marked.py" not in sel.tests   # no Python change
     assert not targeted.SCANS.search("p.glob('*.json')") and targeted.SCANS.search("os.walk(root)")
+    for scanner in ("SRC.walk()", "os.scandir(SRC)", "os.listdir(SRC)", "glob.glob(os.path.join(SRC, '*.py'))",
+                    "HOOKS.glob('hooks/*.sh')", "SRC.rglob(f'*.py')", "glob.iglob('src/**/*.ps1', recursive=True)"):
+        assert targeted.SCANS.search(scanner), scanner
+    for other in ("ast.walk(tree)", "p.glob('*.md')", "os.path.join(a, b)", "tmp.iterdir()"):
+        assert not targeted.SCANS.search(other), other

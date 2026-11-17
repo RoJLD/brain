@@ -18,8 +18,10 @@ Each changed path:
 
 The answer also widens with no map, a map measured on a dirty tree, one whose commit this checkout lacks or that
 shares no history with HEAD, or package roots that cannot be read. When the change touches a Python file, the test
-modules the map never saw and those that start a Python process (``sys.executable``, ``-m brain``: a child's lines
-carry no test context) are selected too.
+modules the map never saw, those that start a Python process (``sys.executable``, ``-m brain``: a child's lines
+carry no test context) and those that read the package's sources as text (SCANS: a glob of ``*.py``, ``*.sh`` or
+``*.ps1``, a walk or a listing of a folder, or a ``# brain: scans-sources`` line; no coverage context links them to the
+module they read) are selected too.
 
 Shadow mode, report-only (the default, spec-brain-three-repos 1.2): the selection runs, a widened answer is reported
 and left to the CI's whole suite, the merge gate; each run is a line of ``<BRAIN_HOME>/ledger/targeted-tests.jsonl``
@@ -177,7 +179,10 @@ def _map_revs(top: Path, summary: dict | None, sel: Selection) -> list[str]:
 SPAWNS = re.compile(r"sys\.executable|[\"']-m[\"'],\s*[\"']brain[\"']|brain\.exe")
 # A contract test that reads the package's sources as text (every module scanned for a store, a variable, a walk): no
 # coverage context links it to the module it reads, a new module included (test_classes_home missed a new store)
-SCANS = re.compile(r"\.r?glob\(\s*[\"'](?:\*\*/)?\*\.(?:py|sh|ps1)[\"']\s*\)|\bos\.walk\(|#\s*brain:\s*scans-sources\b")
+# (a glob whose pattern ends in .py, .sh or .ps1, glob.glob(os.path.join(..., "*.py")), os.walk / scandir / listdir,
+# Path.walk(); a text match, strings included: a false hit costs one module; a scanner it misses carries the mark)
+SCANS = re.compile(r"\.i?r?glob\(\s*f?[\"'][^\"'\n]*\*\.(?:py|sh|ps1)[\"']|\bglob\.i?glob\(.*\*\.(?:py|sh|ps1)"
+                   r"|\bos\.(?:walk|scandir|listdir)\(|\.walk\(\s*\)|#\s*brain:\s*scans-sources\b")
 
 
 class _Selector:
@@ -278,8 +283,8 @@ class _Selector:
         """What runs a changed module without the map knowing: its importers, transitively (a call at import time
         carries no test context), the conftests that import one of them (a fixture's lines count for one test
         only), the test modules that start Python processes (a child's lines carry no test context), those that
-        read the package's sources as text (:data:`SCANS`: a glob of ``*.py``, an ``os.walk``, or a ``# brain:
-        scans-sources`` line), and those the map never saw."""
+        read the package's sources as text (:data:`SCANS`: a glob of ``*.py``, ``*.sh`` or ``*.ps1``, a walk or a
+        listing of a folder, or a ``# brain: scans-sources`` line), and those the map never saw."""
         if self.measured:
             self.reach()
         if not self.touched_py:

@@ -215,35 +215,122 @@ def _ok(out=""):
     return subprocess.CompletedProcess(["gh"], 0, out, "")
 
 
-def test_from_ci_reads_the_data_file_of_heads_green_run_and_says_why_it_cannot(make_repo, monkeypatch):
+
+
+def _runs(head, *runs):
+    """gh run list's JSON: each (id, event, status, conclusion) a run of ``head`` on main."""
+    return json.dumps([{"databaseId": i, "headSha": head, "headBranch": "main", "event": ev, "status": st,
+                        "conclusion": co} for i, ev, st, co in runs])
+
+
+def test_from_ci_reads_the_data_file_of_heads_green_push_run_and_says_why_it_cannot(make_repo, monkeypatch):
     repo = make_repo("lab", {"src/p/__init__.py": ""})
     head = testcov._git(repo, "rev-parse", "HEAD")
-    runs = json.dumps([{"databaseId": 7, "headSha": "0" * 40, "workflowName": "ci"},
-                       {"databaseId": 42, "headSha": head, "workflowName": "ci"}])
+    # a pull_request run of the same sha (it measured refs/pull/N/merge) comes first: never taken
+    runs = json.dumps([{"databaseId": 7, "headSha": "0" * 40, "headBranch": "main", "event": "push",
+                        "status": "completed", "conclusion": "success"},
+                       *json.loads(_runs(head, (41, "pull_request", "completed", "success"),
+                                         (42, "push", "completed", "success")))])
     seen = {}
     monkeypatch.setattr(testcov, "from_data", lambda data, cwd, root, name, python="": seen.update(
         data=data.name, cwd=cwd, root=root, text=data.read_text(encoding="utf-8")) or {"repo": name})
     gh = _Gh(_ok(runs), _ok(), files={"coverage.data": "sqlite"})
     assert testcov.from_ci(repo, repo / "src", "lab", runner=gh) == {"repo": "lab"}
     assert gh.calls[0][:5] == ["gh", "run", "list", "--commit", head]
-    assert gh.calls[1][:6] == ["gh", "run", "download", "42", "-n", "coverage-data"]   # HEAD's run, not another's
+    listed = " ".join(gh.calls[0])
+    assert "--workflow ci.yml --event push --branch main" in listed and "-R" not in listed   # no GitHub origin
+    assert gh.calls[1][:6] == ["gh", "run", "download", "42", "-n", "coverage-data"]   # HEAD's push run only
     assert seen["data"] == "coverage.data" and seen["text"] == "sqlite" and seen["root"] == repo
     for answers, said in (
             ([FileNotFoundError("gh")], "gh: FileNotFoundError (the GitHub CLI, installed and signed in?)"),
             ([subprocess.TimeoutExpired(["gh"], 300)], "gh run list: no answer within 300 s"),
             ([subprocess.CompletedProcess(["gh"], 1, "", "HTTP 401: Bad credentials")], "HTTP 401"),
             ([_ok("<html>")], "gh run list: not JSON"),
-            ([_ok("[]")], f"no successful CI run of {head[:12]} yet"),
+            ([_ok("[]")], f"no CI run of {head[:12]} on the push to main yet"),
+            ([_ok(_runs(head, (41, "pull_request", "completed", "success")))], "on the push to main yet"),
+            ([_ok(_runs(head, (43, "push", "in_progress", "")))], "the CI run 43 of"),
+            ([_ok(_runs(head, (44, "push", "completed", "failure")))], "ended failure: re-run it, or"),
             ([_ok(runs), _ok()], "artifact coverage-data holds no coverage data file")):
         with pytest.raises(testcov.CoverageError, match=re.escape(said)):
             testcov.from_ci(repo, repo, "lab", runner=_Gh(*answers))
+    subprocess.run(["git", "-C", str(repo), "remote", "add", "origin", "git@github.com:ada/lab.git"], check=True)
+    gh = _Gh(_ok(runs), _ok(), files={"coverage.data": "sqlite"})
+    testcov.from_ci(repo, repo, "lab", runner=gh)
+    assert gh.calls[0][3:5] == ["-R", "ada/lab"] and gh.calls[1][4:6] == ["-R", "ada/lab"]   # never gh's guess
+    assert testcov._github(repo) == ["-R", "ada/lab"]
+    subprocess.run(["git", "-C", str(repo), "remote", "set-url", "origin", "https://github.com/ada/lab"], check=True)
+    assert testcov._github(repo) == ["-R", "ada/lab"]
     (repo / "src" / "p" / "__init__.py").write_text("X = 1\n", encoding="utf-8")
     with pytest.raises(testcov.CoverageError, match="tracked files are modified"):
         testcov.from_ci(repo, repo, "lab", runner=_Gh())
 
 
-def test_brain_coverage_from_ci_parses(monkeypatch):
+def test_from_ci_picks_checks_and_reads_in_the_checkout_that_holds_its_cwd(make_repo, tmp_path, monkeypatch):
+    repo = make_repo("lab", {"src/p/__init__.py": ""})
+    wt = tmp_path / "wt-lab"
+    subprocess.run(["git", "-C", str(repo), "worktree", "add", "-q", "--detach", str(wt)], check=True,
+                   capture_output=True)
+    there = testcov._git(wt, "rev-parse", "HEAD")
+    make_repo.commit(repo, {"src/p/later.py": "Y = 2\n"})   # the main checkout moves on
+    (repo / "src" / "p" / "__init__.py").write_text("dirty = 1\n", encoding="utf-8")   # and is dirty: not read
+    seen = {}
+    monkeypatch.setattr(testcov, "from_data", lambda data, cwd, root, name, python="": seen.update(root=root) or {})
+    gh = _Gh(_ok(_runs(there, (42, "push", "completed", "success"))), _ok(), files={"coverage.data": "sqlite"})
+    testcov.from_ci(repo, wt / "src", "lab", runner=gh)
+    assert gh.calls[0][4] == there and Path(seen["root"]).resolve() == wt.resolve()   # the worktree's HEAD and tree
+    (wt / "src" / "p" / "__init__.py").write_text("dirty = 1\n", encoding="utf-8")
+    with pytest.raises(testcov.CoverageError, match="tracked files are modified"):   # the worktree's state
+        testcov.from_ci(repo, wt / "src", "lab", runner=_Gh())
+
+
+def test_measure_reads_a_relative_cwd_from_the_current_checkout_for_both_modes(make_repo, tmp_path, monkeypatch):
+    from types import SimpleNamespace
+    repo = make_repo("lab", {"src/p/__init__.py": ""})
+    wt = tmp_path / "wt-lab"
+    subprocess.run(["git", "-C", str(repo), "worktree", "add", "-q", "--detach", str(wt)], check=True,
+                   capture_output=True)
+    calls = []
+    monkeypatch.setattr(testcov, "from_ci", lambda root, cwd, name, python="": calls.append(("ci", root, cwd)) or {})
+    monkeypatch.setattr(testcov, "from_data", lambda data, cwd, root, name, python="": calls.append(
+        ("data", root, cwd)) or {})
+    r = SimpleNamespace(path=repo, name="lab")
+    monkeypatch.chdir(wt / "src")
+    testcov.measure(r, False, cwd="src", ci=True)
+    testcov.measure(r, False, data="x.data", cwd="src")
+    testcov.measure(r, False, data="x.data")
+    testcov.measure(r, False, cwd=str(repo / "src"), ci=True)
+    got = [(k, Path(root).resolve(), Path(cwd).resolve()) for k, root, cwd in calls]
+    assert got == [("ci", repo.resolve(), (wt / "src").resolve()), ("data", repo.resolve(), (wt / "src").resolve()),
+                   ("data", repo.resolve(), wt.resolve()), ("ci", repo.resolve(), (repo / "src").resolve())]
+
+
+def test_a_nested_worktrees_data_file_keeps_its_own_paths(make_repo, monkeypatch):
+    """The bug the map refresh fixed: a worktree nested in the main checkout (.claude/worktrees/x) gave keys
+    prefixed with .claude/worktrees/x/, read end to end through from_data and a real data file."""
+    repo = make_repo("lab", {"src/p/__init__.py": "", "tests/test_run.py": "def test_run():\n    pass\n"})
+    wt = repo / ".claude" / "worktrees" / "x"
+    subprocess.run(["git", "-C", str(repo), "worktree", "add", "-q", "--detach", str(wt)], check=True,
+                   capture_output=True)
+    (wt / "src" / "p" / "cli.py").write_text(CLI, encoding="utf-8")
+    data = wt / ".coverage"
+    _data_file(data, wt)
+    rep = {"files": {"src/p/cli.py": {"summary": {"num_statements": 9}, "executed_lines": [1, 4, 5, 8, 9, 12, 13]}}}
+    monkeypatch.setattr(testcov, "_report", lambda python, data, where, out: rep)
+    sm = testcov.from_data(data, wt, repo, "lab")
+    assert list(sm["files"]) == ["src/p/cli.py"]
+    assert sm["test_modules"] == ["tests/test_other.py", "tests/test_run.py"]
+    assert sm["commit"] == testcov._git(wt, "rev-parse", "HEAD")
+    _data_file(repo.parent / "far.coverage", repo.parent / "other-clone")   # another clone's paths: said, not dropped
+    with pytest.raises(testcov.CoverageError, match="none of its 2 files is under the checkout"):
+        testcov.from_data(repo.parent / "far.coverage", repo, repo, "lab")
+
+
+def test_brain_coverage_from_ci_parses_and_takes_one_source(capsys):
     from brain import cli as brain_cli
     args = brain_cli.build_parser().parse_args(["coverage", "--repo", "brain", "--from-ci", "--cwd",
                                                 "packages/brain", "--write"])
     assert args.from_ci and args.cwd == "packages/brain" and args.write
+    for two in (["--from", "x.data", "--from-ci"], ["--run", "--from-ci"], ["--run", "--from", "x.data"]):
+        with pytest.raises(SystemExit):
+            brain_cli.build_parser().parse_args(["coverage", *two])
+        assert "not allowed with argument" in capsys.readouterr().err

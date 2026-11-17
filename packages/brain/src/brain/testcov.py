@@ -23,8 +23,9 @@ relative_files) is refused: its summary would say no test ran anything.
 
 ``--from`` is read against the checkout that holds ``--cwd`` (a worktree of the repo, say, at the commit the data file
 measured), not the registered one, so its paths are that checkout's own; ``--from-ci`` downloads the data file of the
-CI's successful run of this checkout's HEAD (``gh``, the artifact ``coverage-data``), the step that refreshes the map
-after each merge of the repo's main (wi-brain-coverage-map-refresh).
+CI's successful push run of that checkout's HEAD on the default branch (``gh``, the workflow ``ci.yml``, the artifact
+``coverage-data``; never a pull_request run, which measured another tree), the step that refreshes the map after each
+merge of the repo's main (wi-brain-coverage-map-refresh).
 """
 
 from __future__ import annotations
@@ -33,6 +34,7 @@ import ast
 import json
 import os
 import posixpath
+import re
 import sqlite3
 import subprocess
 import sys
@@ -44,7 +46,8 @@ from . import inventory
 
 FOLDER = "coverage"
 CI_ARTIFACT = "coverage-data"   # the CI's artifact that holds the data file (.github/workflows/ci.yml)
-CI_TIMEOUT = 300                # seconds a gh call may take (a download of tens of megabytes)
+CI_WORKFLOW = "ci.yml"          # the workflow whose push runs to the default branch measure the data file
+CI_TIMEOUT = 300               # seconds a gh call may take (a download of tens of megabytes)
 VERSION = 2   # 2: functions and test_modules, so a reader tells "no test ran it" from "the summary never saw it"
 CONFIGS = ("pyproject.toml", "pytest.ini", "tox.ini", "setup.cfg")
 
@@ -312,6 +315,23 @@ def checkout_of(cwd: Path, root: Path) -> Path:
     return Path(top) if same else root
 
 
+def _under(data: Path, root: Path, cwd: Path) -> None:
+    """:class:`CoverageError` when the data file names files and none of them is under ``root``: read against the
+    wrong checkout (another clone, say), every path would be dropped and the summary refused for another cause."""
+    try:
+        db = sqlite3.connect(data.resolve().as_uri() + "?mode=ro", uri=True)
+        try:
+            names = [p for (p,) in db.execute("select path from file")]
+        finally:
+            db.close()
+    except sqlite3.Error:
+        return   # contexts() says what is wrong with it
+    if names and all(_rel(p, root, cwd) is None for p in names):
+        first = Path(names[0]) if Path(names[0]).is_absolute() else cwd / names[0]
+        raise CoverageError(f"{data}: none of its {len(names)} files is under the checkout {root} (the first: "
+                            f"{first}): --cwd names the folder pytest ran in, in a checkout of the repo")
+
+
 def from_data(data: Path, cwd: Path, root: Path, repo: str, python: str = "") -> dict:
     """The summary of a coverage data file made elsewhere (the CI's ``.coverage``, run with --cov-context=test and
     coverage's relative_files = true), pytest having run in ``cwd`` of this checkout: ``coverage json`` reads its
@@ -321,6 +341,7 @@ def from_data(data: Path, cwd: Path, root: Path, repo: str, python: str = "") ->
     if not data.is_file():
         raise CoverageError(f"{data}: no such file")
     root = checkout_of(cwd, root)
+    _under(data, root, cwd)
     ctxs, tool = contexts(data, root, cwd)
     with tempfile.TemporaryDirectory(prefix="brain-cov-") as tmp:
         rep = _report(python or sys.executable, data.resolve(), cwd, Path(tmp) / "coverage.json")
@@ -343,34 +364,72 @@ def _gh(args: list[str], cwd: Path, runner=None) -> str:
     return r.stdout or ""
 
 
+GITHUB = re.compile(r"github\.com[:/]+([\w.-]+/[\w.-]+?)(?:\.git)?/?$")
+
+
+def _github(root: Path) -> list[str]:
+    """``-R owner/name`` from the checkout's ``origin`` remote on GitHub ([] otherwise: gh picks), so that a clone
+    with a fork's remote too never asks which repo is meant."""
+    m = GITHUB.search(_git(root, "remote", "get-url", "origin"))
+    return ["-R", m.group(1)] if m else []
+
+
+def _default_branch(root: Path) -> str:
+    """The branch the CI's push runs measure: origin's HEAD (``main`` when the clone does not know it)."""
+    ref = _git(root, "symbolic-ref", "--quiet", "--short", "refs/remotes/origin/HEAD")
+    return ref.split("/", 1)[1] if ref.startswith("origin/") else "main"
+
+
 def ci_run(root: Path, runner=None) -> tuple[str, str]:
     """(the id of the CI's last successful run of ``root``'s HEAD, that commit): the run whose artifact holds the
-    data file. :class:`CoverageError` without one (the CI of a merge runs on the push to main: wait for it)."""
+    data file. Only a push run of the default branch by CI_WORKFLOW counts: a pull_request run measured
+    ``refs/pull/N/merge``, another tree than HEAD's. :class:`CoverageError` without one, saying whether a run is in
+    progress or failed (the CI of a merge runs on the push to main: wait for it)."""
     head = _git(root, "rev-parse", "HEAD")
     if not head:
         raise CoverageError(f"{root}: not a git checkout")
-    out = _gh(["run", "list", "--commit", head, "--status", "success", "--limit", "20", "--json",
-               "databaseId,headSha,workflowName"], root, runner)
+    branch = _default_branch(root)
+    out = _gh(["run", "list", *_github(root), "--commit", head, "--workflow", CI_WORKFLOW, "--event", "push",
+               "--branch", branch, "--limit", "20", "--json", "databaseId,headSha,headBranch,event,status,conclusion"],
+              root, runner)
     try:
         runs = json.loads(out or "[]")
     except ValueError:
         raise CoverageError(f"gh run list: not JSON ({out.strip()[:80]!r})") from None
-    ids = [str(r["databaseId"]) for r in runs if isinstance(r, dict) and r.get("databaseId")
-           and r.get("headSha") == head]
-    if not ids:
-        raise CoverageError(f"no successful CI run of {head[:12]} yet: the CI of a merge runs on the push to main; "
-                            "read it once it is green, in a checkout at that commit")
-    return ids[0], head
+    return _green(runs, head, branch), head
+
+
+def _green(runs, head: str, branch: str) -> str:
+    """The id of the first successful push run of ``head`` on ``branch`` in gh's list (another event, branch or commit
+    left out); :class:`CoverageError` saying whether one is in progress, failed, or none ran yet."""
+    runs = [r for r in runs if isinstance(r, dict) and r.get("databaseId") and r.get("headSha") == head
+            and r.get("event") == "push" and r.get("headBranch") == branch]
+    green = [str(r["databaseId"]) for r in runs if r.get("conclusion") == "success"]
+    if green:
+        return green[0]
+    going = [str(r["databaseId"]) for r in runs if r.get("status") != "completed"]
+    if going:
+        raise CoverageError(f"the CI run {going[0]} of {head[:12]} (push to {branch}) is in progress: read it once "
+                            "it is green")
+    if runs:
+        rid = runs[0]["databaseId"]
+        raise CoverageError(f"the CI run {rid} of {head[:12]} (push to {branch}) ended "
+                            f"{runs[0].get('conclusion') or 'without success'}: re-run it, or, when its artifact "
+                            f"{CI_ARTIFACT} is there, gh run download {rid} -n {CI_ARTIFACT} then --from")
+    raise CoverageError(f"no CI run of {head[:12]} on the push to {branch} yet: the CI of a merge runs on the push to "
+                        f"{branch}; read it once it is green, in a checkout at that commit")
 
 
 def from_ci(root: Path, cwd: Path, repo: str, python: str = "", runner=None) -> dict:
-    """The summary of the CI's data file for ``root``'s HEAD (:func:`ci_run`), downloaded to a temporary folder and
-    read with :func:`from_data` (``cwd``: the folder pytest ran in, in this checkout)."""
+    """The summary of the CI's data file for the HEAD of the checkout that holds ``cwd`` (the folder pytest ran in;
+    :func:`checkout_of`, ``root`` being the registered one), its run (:func:`ci_run`) downloaded to a temporary
+    folder and read with :func:`from_data`: one checkout is checked clean, gives the commit and reads the data."""
+    root = checkout_of(cwd, root)
     if _git(root, "status", "--porcelain", "--untracked-files=no"):
         raise CoverageError(f"{root}: tracked files are modified: the data file is read against the commit it measured")
     run_id, _ = ci_run(root, runner)
     with tempfile.TemporaryDirectory(prefix="brain-cov-ci-") as tmp:
-        _gh(["run", "download", run_id, "-n", CI_ARTIFACT, "-D", tmp], root, runner)
+        _gh(["run", "download", run_id, *_github(root), "-n", CI_ARTIFACT, "-D", tmp], root, runner)
         found = sorted(Path(tmp).rglob("*.data")) or sorted(Path(tmp).rglob(".coverage*"))
         if not found:
             raise CoverageError(f"the CI run {run_id}'s artifact {CI_ARTIFACT} holds no coverage data file")
@@ -381,16 +440,17 @@ def measure(repo, run_tests: bool, data: str = "", cwd: str = "", python: str = 
             workers: str = "", ci: bool = False) -> tuple[dict, int]:
     """brain coverage's measure of a registered repo (``repo``: its projects.Repo): its suites run (``run_tests``), or
     a data file read (``data``, pytest having run in ``cwd``, default the repo's root), or the CI's data file of this
-    checkout's HEAD (``ci``); (the summary, pytest's exit). A relative ``cwd`` is read from the current folder's
-    checkout of the repo."""
-    if ci:
+    checkout's HEAD (``ci``); (the summary, pytest's exit). For both, a relative ``cwd`` is read from the top of the
+    current folder's checkout of the repo (a worktree's, else the registered root), as is the default; the checkout
+    that holds ``cwd`` is the one read (its HEAD and sources, and with ``ci`` its run and its clean state)."""
+    if ci or data:
         here = checkout_of(Path.cwd(), repo.path)
-        where = Path(cwd) if Path(cwd).is_absolute() else here / (cwd or ".")
-        return from_ci(here, where.resolve(), repo.name, python), 0
-    if data:
-        return from_data(Path(data), Path(cwd or repo.path).resolve(), repo.path, repo.name, python), 0
+        where = (Path(cwd) if Path(cwd).is_absolute() else here / (cwd or ".")).resolve()
+        if ci:
+            return from_ci(repo.path, where, repo.name, python), 0
+        return from_data(Path(data), where, repo.path, repo.name, python), 0
     if not run_tests:
-        raise CoverageError("--run (run the repo's tests) or --from DATA (a .coverage file)")
+        raise CoverageError("--run (run the repo's tests), --from DATA (a .coverage file) or --from-ci (the CI's)")
     rf = inventory.collect(inventory.work_tree(repo.path), repo.name, repo.lang, repo.roots, repo.waive)
     return run(repo.path, repo.name, rf.tests, sorted(set(rf.root_of.values())) or (repo.roots or []), python,
                workers)

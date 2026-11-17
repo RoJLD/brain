@@ -19,9 +19,11 @@ USAGE = """\
                         a repo's line coverage: --run runs its pytest suites (from each suite's pytest configuration)
                         under pytest-cov with test contexts, --from reads a coverage data file made elsewhere (the
                         CI's .coverage, run with --cov-context=test), against the checkout that holds --cwd (a
-                        worktree's paths are its own); --from-ci downloads the data file of the CI's successful run of
-                        this checkout's HEAD (gh, the artifact coverage-data): the map's refresh after each merge, in
-                        a checkout at the merged commit; the summary (totals; per file its statements,
+                        worktree's paths are its own; a relative --cwd, and the default, from the top of the current
+                        folder's checkout); --from-ci downloads the data file of the CI's successful push run of that
+                        checkout's HEAD on the default branch (gh, ci.yml, the artifact coverage-data; never a
+                        pull_request run): the map's refresh after each merge, in a clean checkout at the merged
+                        commit; the summary (totals; per file its statements,
                         covered lines and the test modules that ran each function) printed, and with --write kept in
                         the store as coverage/<repo>.json: brain sync links a CodeRef's symbol to the tests that ran
                         it, brain audit measures test.coverage, FEATURES.md shows each feature's coverage; under
@@ -65,15 +67,18 @@ def register(sub, ctx) -> None:
     cv = sub.add_parser("coverage", help="a repo's line coverage under its tests, with test contexts: printed, kept "
                                          "in the store with --write (the tested_by links, test.coverage)")
     cv.add_argument("--repo", default="", help="a repo of the project (default: the one that holds the store)")
-    cv.add_argument("--run", action="store_true", help="run the repo's pytest suites under pytest-cov")
+    src = cv.add_mutually_exclusive_group()   # one source of the coverage data
+    src.add_argument("--run", action="store_true", help="run the repo's pytest suites under pytest-cov")
     cv.add_argument("-n", dest="workers", default="", help="pytest-xdist workers for --run (auto, 8...)")
     cv.add_argument("--python", default="", help="the Python that runs the tests (default: this one)")
-    cv.add_argument("--from", dest="from_data", default="", help="a coverage data file (.coverage, run with "
+    src.add_argument("--from", dest="from_data", default="", help="a coverage data file (.coverage, run with "
                                                                   "--cov-context=test) instead of a run")
-    cv.add_argument("--from-ci", action="store_true", help="the data file of the CI's successful run of this "
-                                                            "checkout's HEAD (gh, the artifact coverage-data)")
-    cv.add_argument("--cwd", default="", help="with --from or --from-ci: the folder pytest ran in (default: the "
-                                              "repo's root)")
+    src.add_argument("--from-ci", action="store_true", help="the data file of the CI's successful push run of the "
+                                                             "checkout's HEAD on the default branch (gh, ci.yml, the "
+                                                             "artifact coverage-data)")
+    cv.add_argument("--cwd", default="", help="with --from or --from-ci: the folder pytest ran in, whose checkout is "
+                                              "read (relative: from the top of the current folder's checkout of the "
+                                              "repo; default: that top, else the repo's registered root)")
     cv.add_argument("--write", action="store_true", help="keep the summary in the store: coverage/<repo>.json")
     cv.add_argument("--force", action="store_true", help="--write even when the running engine is not config.json "
                                                          "engine.pin (refused under views.strict)")
