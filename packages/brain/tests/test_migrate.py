@@ -100,7 +100,7 @@ def test_each_format_is_its_owners_file_and_version():
               "usage": ("brain.usage", "LEDGER_V"), "cockpit": ("brain.cockpit", "STATE_V"),
               "memory-sync": ("brain.memory", "STATE_V"), "machine": ("brain.machine", "V"),
               "spool": ("brain.spool", "INDEX_V"), "session-archive": ("brain.sessionarchive", "INDEX_V")}
-    assert set(consts) | {"config", "net", "outbox"} == set(migrations.BY_ID)
+    assert set(consts) | {"config", "net", "outbox", "ship"} == set(migrations.BY_ID)
     for fid, (mod, attr) in consts.items():
         assert migrations.BY_ID[fid].known() == getattr(importlib.import_module(mod), attr), fid
     assert migrations.BY_ID["net"].known() == migrations.BY_ID["outbox"].known() == 1   # stateio.load's default

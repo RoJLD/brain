@@ -480,7 +480,7 @@ A format whose `v` is bumped ships its migration (wi-brain-migrate): a step per 
 holds: the brain's `config.json` (the `brain config migrate` of the boundary design is this command) and these
 truth-local files of `$BRAIN_HOME`: `schedules/installed.json`, `alerts/state.json`, `vault/state.json`,
 `vault/device.json`, `usage/sessions.json`, `tui.json`, `memory-sync/state.json`, `machine.json`,
-`spool/spool.json`, `session-archive/index.json`, `net/breakers.json` and `outbox/queue.json`
+`spool/spool.json`, `session-archive/index.json`, `net/breakers.json`, `outbox/queue.json` and `ship/queue.json`
 (`brain.migrations.FORMATS`). A log is never rewritten (its reader upcasts a line), a derived file is rebuilt, and a
 session's own files live as long as their session: none of them is migrated (`brain.migrations.EXCLUDED` names each
 `stateio.load` caller left out, and why). A project's own formats and its database migrations are its own tool's

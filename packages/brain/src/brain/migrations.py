@@ -85,6 +85,7 @@ FORMATS: tuple[Format, ...] = (
     Format("session-archive", "session-archive/index.json", "session-archive", 1, "brain.sessionarchive.index_file"),
     Format("net", "net/breakers.json", "net", 1, "brain.net.path"),
     Format("outbox", "outbox/queue.json", "outbox", 1, "brain.outbox.path"),
+    Format("ship", "ship/queue.json", "ship", 1, "brain.ship.queue_path"),
 )
 BY_ID = {f.id: f for f in FORMATS}
 # The stateio.load callers whose files are not migrated, and why (tests/test_migrate.py).
