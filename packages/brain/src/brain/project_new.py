@@ -565,14 +565,19 @@ def _shown(value) -> str:
     return "(none)" if value is None else str(list(value) if isinstance(value, list) else value)
 
 
+def answers(cat: typologies.Catalog, args) -> Answers:
+    """The command's answers checked: the kinds, the stage and the template, the languages and tools, the data."""
+    a = resolve(cat, list(dict.fromkeys(args.kinds or [])), args.stage, args.template)
+    answer_tools(a, getattr(args, "lang", None), getattr(args, "tools", None))
+    return answer_data(a, getattr(args, "floor", None), getattr(args, "residency", False),
+                       getattr(args, "personal_data", False))
+
+
 def main(args) -> int:
     root = Path(args.dir).resolve()
     try:
         cat = typologies.load(config.load(root))
-        a = resolve(cat, list(dict.fromkeys(args.kinds or [])), args.stage, args.template)
-        answer_tools(a, getattr(args, "lang", None), getattr(args, "tools", None))
-        answer_data(a, getattr(args, "floor", None), getattr(args, "residency", False),
-                    getattr(args, "personal_data", False))
+        a = answers(cat, args)
         entry = existing(root, args.name)
         floor_refused(a, root, entry, args.name)
         rows, refused = _rows(a, args.name) if entry is None and _asked(a) else (None, "")
@@ -587,18 +592,24 @@ def main(args) -> int:
         print(f"  --apply refuses: {refused}")
     print("\n".join(project_parts.plan_lines(parts, args.name, entry is None)))
     if entry is not None:
-        diff = changes(entry, a)
-        pending = [s for s in parts.steps if not s.skip]
-        print(f"{root} already holds the brain of {args.name}: " + ("the answers change its entry in projects.yaml:"
-                                                                   if diff else "the answers change nothing there"))
-        print("\n".join(diff) + ("\n(written by a branch and a PR of that brain, never here)" if diff else ""))
-        return 2 if args.apply and (diff or pending) else 0
+        return _there(root, args, a, entry, parts)
     code = init.main(_init_args(args, a, refused, section))
     if code or not args.apply:
         return code
     owner = owner_of(args)
     project_parts.log_init(root, [*_words(args, a), "--apply"], code, owner)
     return project_parts.run(parts, root, owner)
+
+
+def _there(root: Path, args, a: Answers, entry: dict, parts) -> int:
+    """A folder that holds the project's brain already: what the answers change in its entry, never written; 2 when
+    --apply asks to write a change or a part's step left (a branch and a PR of that brain), else 0."""
+    diff = changes(entry, a)
+    pending = [s for s in parts.steps if not s.skip]
+    print(f"{root} already holds the brain of {args.name}: " + ("the answers change its entry in projects.yaml:"
+                                                               if diff else "the answers change nothing there"))
+    print("\n".join(diff) + ("\n(written by a branch and a PR of that brain, never here)" if diff else ""))
+    return 2 if args.apply and (diff or pending) else 0
 
 
 def _parts(cat: typologies.Catalog, a: Answers, root: Path, name: str, entry: dict | None):

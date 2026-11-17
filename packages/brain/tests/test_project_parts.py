@@ -7,8 +7,19 @@ import json
 
 import pytest
 import yaml
-from brain import __version__, cli, firstrun, init, neutral, paths, project_parts, render, skew, typologies
-from brain import typology_packs
+from brain import (
+    __version__,
+    cli,
+    firstrun,
+    init,
+    neutral,
+    paths,
+    project_parts,
+    render,
+    skew,
+    typologies,
+    typology_packs,
+)
 
 
 @pytest.fixture(autouse=True)

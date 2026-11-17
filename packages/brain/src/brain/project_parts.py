@@ -75,10 +75,7 @@ def plan_existing(cat: typologies.Catalog, kinds: list[str], root: Path, name: s
     whether its rendered files (the marketplace, AGENTS.md) are current; nothing runs (a branch and a PR of it)."""
     from . import project_add
     with project_add.this_brain(root / "projects.yaml"):
-        try:
-            cands = typology_packs._candidates(neutral.load(root), name)
-        except Exception:  # noqa: BLE001 - an unreadable source: no pack planned, brain check says why
-            cands = []
+        cands = typology_packs._candidates(neutral.load(root), name)   # neutral.load never raises: check says why
         std = entry.get("standards") if isinstance(entry.get("standards"), dict) else {}
         props = typology_packs.proposals(cands, kinds, cat, None, std.get("profiles"))
         pending = any(pr.step in ("add", "extend") for pr in props)
@@ -96,7 +93,7 @@ def _stale(root: Path, target: str, project: str | None = None) -> bool:
         obj = projects.load(root).get(project) if project else None
         r = render.render(root, target, project, obj.root if obj else None)
         return bool(render.stale(render.plan(r, render.bases_for(root, obj.root if obj else None, None))))
-    except Exception:  # noqa: BLE001 - a source or registry render cannot read: its own command says why
+    except (render.RenderError, projects.RepoError, OSError):   # the step's own render says why
         return True
 
 
@@ -129,25 +126,38 @@ def plan_lines(p: Parts, name: str, new: bool) -> list[str]:
         out.append("    no typology pack meets its kinds (brain typologies packs lists the packs and their typologies)")
     for pr in p.props:
         out += _pack_lines(pr, name, new and p.claude)
-    out.append("    hooks: the core pack's, the engine's Claude hooks (rules injection, guards, capture, announcements), "
-               "rendered into the brain's marketplace")
+    return out + _file_lines(p, new) + _step_lines(p, new)
+
+
+def _file_lines(p: Parts, new: bool) -> list[str]:
+    """The plan's lines of the hooks, the CI templates (a new brain's), CLAUDE.md and AGENTS.md."""
+    out = ["    hooks: the core pack's, the engine's Claude hooks (rules injection, guards, capture, announcements), "
+           "rendered into the brain's marketplace"]
     if new:
         out.append(f"    CI templates: {', '.join(p.workflows)} (the template's, brain init writes them)" if p.workflows
                    else "    CI templates: none (the template writes no workflow: the project's CI is its own)")
-    out.append(f"    {CLAUDE}: " + (("the template's, with « What it produces »: the packs' judgement (clauses of done, "
-                                     "one-way doors, roles, gates)" if p.props else "the template's")
-                                    if new else "its own (a PR of that brain edits it)")
-               if p.claude else f"    {CLAUDE}: none (the template writes none; brain typologies packs shows the "
-               "packs' judgement)")
-    out.append(f"    {AGENTS}: the rules' chain flattened (global, ancestors, its {CLAUDE} last)")
+    if not p.claude:
+        claude = "none (the template writes none; brain typologies packs shows the packs' judgement)"
+    elif not new:
+        claude = "its own (a PR of that brain edits it)"
+    elif p.props:
+        claude = "the template's, with « What it produces »: the packs' judgement (clauses of done, one-way doors, " \
+                 "roles, gates)"
+    else:
+        claude = "the template's"
+    return out + [f"    {CLAUDE}: {claude}", f"    {AGENTS}: the rules' chain flattened (global, ancestors, its "
+                  f"{CLAUDE} last)"]
+
+
+def _step_lines(p: Parts, new: bool) -> list[str]:
+    """The plan's lines of the steps that run (``new``: by --apply; else the owner's) and of the packs' step skipped."""
     run = [s for s in p.steps if not s.skip]
+    out = []
     if run:
-        head = ("  --apply runs, after brain init's files, each logged in <BRAIN_HOME>/ledger/setup-<month>.jsonl:"
-                if new else "  its parts' steps, by a branch and a PR of that brain (never here):")
-        out.append(head)
+        out.append("  --apply runs, after brain init's files, each logged in <BRAIN_HOME>/ledger/setup-<month>.jsonl:"
+                   if new else "  its parts' steps, by a branch and a PR of that brain (never here):")
         out += [f"    {i}. {firstrun.shown(s.words)}   ({s.what})" for i, s in enumerate(run, 1)]
-    out += [f"    skipped: {firstrun.shown(s.words)} ({s.skip})" for s in p.steps if s.skip and s.part == "packs"]
-    return out
+    return out + [f"    skipped: {firstrun.shown(s.words)} ({s.skip})" for s in p.steps if s.skip and s.part == "packs"]
 
 
 def _pack_lines(pr, name: str, written: bool) -> list[str]:
@@ -197,15 +207,17 @@ def claude_section(cat: typologies.Catalog, kinds: list[str], stage: str, lifecy
     for pr in props:
         spec = _spec(pr)
         out += ["", f"### {md(spec.get('title') or pr.pack)} (pack {pr.pack})"]
-        out += _list("Done, after the generic sentence:", [c.get("text") for c in spec.get("done") or []
-                                                           if isinstance(c, dict)])
-        out += _list("One-way doors (an ADR before crossing one):", [d.get("text") for d in spec.get("doors") or []
-                                                                    if isinstance(d, dict)])
-        out += _list("Roles:", [f"{r.get('id')}: {r.get('text')}" for r in spec.get("roles") or []
-                                if isinstance(r, dict)])
+        for key, head, text in JUDGEMENT:
+            out += _list(head, [text(x) for x in spec.get(key) or [] if isinstance(x, dict)])
         stages = spec.get("stages") if isinstance(spec.get("stages"), dict) else {}
         out += _list("Gates by stage:", [f"{s}: {'; '.join(map(str, g or []))}" for s, g in stages.items()])
     return "\n".join(out) + "\n"
+
+
+# A pack's judgement in CLAUDE.md: (its part, the list's head, the line of one entry).
+JUDGEMENT = (("done", "Done, after the generic sentence:", lambda c: c.get("text")),
+             ("doors", "One-way doors (an ADR before crossing one):", lambda d: d.get("text")),
+             ("roles", "Roles:", lambda r: f"{r.get('id')}: {r.get('text')}"))
 
 
 def _list(head: str, items: list) -> list[str]:
