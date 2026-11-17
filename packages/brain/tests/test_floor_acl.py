@@ -27,6 +27,7 @@ def a_user(monkeypatch):
     """The tests' SID looks up as a user's, and the guard's own account is it."""
     monkeypatch.setattr(floor, "sid_kind", USER)
     monkeypatch.setattr(floor, "account", lambda: SID)
+    monkeypatch.setattr(floor, "owner", lambda p: SID)   # the account's own files, before any lock
     monkeypatch.delenv("CLAUDE_CONFIG_DIR", raising=False)
 
 
@@ -116,10 +117,10 @@ def test_the_commands_act_on_the_path_itself_and_deny_the_account():
     sid, q = f"*{SID}", ["/L", "/C", "/Q"]
     cmds = [c[1:] for c in flooracl.commands(_plan(), nt=True)]
     assert cmds == [["H", "/setowner", "*S-1-5-32-544", *q], ["H", "/deny", f"{sid}:(DC,WDAC,WO)", *q],
+                    ["P/.claude", "/setowner", "*S-1-5-32-544", *q],   # a project's .claude before what it holds
+                    ["P/.claude", "/deny", f"{sid}:(WD,AD,WEA,WA,D,DC,WDAC,WO)", *q],
                     ["H/settings.json", "/setowner", "*S-1-5-32-544", *q],
                     ["H/settings.json", "/deny", f"{sid}:(WD,AD,WEA,WA,DC,D,WDAC,WO)", *q],
-                    ["P/.claude", "/setowner", "*S-1-5-32-544", *q],
-                    ["P/.claude", "/deny", f"{sid}:(WD,AD,WEA,WA,D,DC,WDAC,WO)", *q],
                     ["H/hooks", "/setowner", "*S-1-5-32-544", *q],
                     ["H/hooks", "/deny", f"{sid}:(OI)(CI)(WD,AD,WEA,WA,D,DC,WDAC,WO)", *q]]
     assert not [c for c in cmds if "/T" in c or any("*" in w and not w.startswith("*S-") for w in c)]   # round 2
@@ -131,15 +132,15 @@ def test_undo_gives_back_only_what_is_still_the_lock_s(tmp_path):
     h = tmp_path / "h"
     (h / "hooks").mkdir(parents=True)
     (h / "settings.json").write_text("{}", encoding="utf-8")
+    (h / "hooks" / "x.sh").write_text("x", encoding="utf-8")
     a = _plan(str(h), [str(h / "settings.json"), str(h / "gone.json")], [str(h / "hooks")], [])
     cmds, left = flooracl.undo(a, nt=True, owner=lambda p: "S-1-5-32-544")
     sid, q = f"*{SID}", ["/L", "/C", "/Q"]
-    assert [c[1:] for c in cmds][:2] == [[str(h / "hooks"), "/remove:d", sid, "/T", *q],
-                                         [str(h / "hooks"), "/setowner", sid, "/T", *q]]   # trees first
-    assert [c[1:] for c in cmds][-2:] == [[str(h), "/remove:d", sid, *q], [str(h), "/setowner", sid, *q]]   # home last
-    cmds, _ = flooracl.undo(a, nt=True, owner=lambda p: "S-1-5-32-544", keep_owner={str(h / "hooks")})
-    assert [c[1:] for c in cmds][:2] == [[str(h / "hooks"), "/remove:d", sid, "/T", *q],
-                                         [str(h / "settings.json"), "/remove:d", sid, *q]]   # its owner kept
+    assert [c[1:] for c in cmds] == [[str(h / "hooks"), "/remove:d", sid, *q],          # trees first, entry by entry
+                                     [str(h / "hooks" / "x.sh"), "/remove:d", sid, *q],
+                                     [str(h / "settings.json"), "/remove:d", sid, *q],
+                                     [str(h), "/remove:d", sid, *q]]                     # ~/.claude last
+    assert not [c for c in cmds if "/setowner" in c or "/T" in c]   # round 3: an elevated step gives no owner away
     assert left == [f"{h / 'gone.json'}: gone"]                     # a recorded path gone: skipped (review #6)
     cmds, left = flooracl.undo(a, nt=True, owner=lambda p: SID)     # a folder a session made again: never handed over
     assert cmds == [] and all("not owned by Administrators" in x or "gone" in x for x in left)
@@ -243,10 +244,11 @@ def test_the_apply_denies_the_account_its_files_before_the_hooks_and_the_lock(tm
 
 
 def _the_acl_commands_ran_in_order(ran, a, home):
-    resets = [cmd for cmd, *_ in ran if "/reset" in cmd and cmd[1].startswith(str(home))]   # one entry at a time
-    assert str(home / "hooks" / "h.sh") in [c[1] for c in resets] and not [c for c in resets if "/T" in c]
     denies = [(cmd, managed, locked) for cmd, managed, locked in ran if "/deny" in cmd and SID in cmd[3]]
-    assert len(denies) == len(a["files"]) + len(a["trees"]) + len(a["folders"]) + 1
+    denied_paths = [cmd[1] for cmd, *_ in denies]
+    assert str(home / "hooks" / "h.sh") in denied_paths                   # a tree's entry, one at a time
+    assert set(a["files"]) | set(a["trees"]) | set(a["folders"]) | {a["home"]} <= set(denied_paths)
+    assert not [c for c, *_ in ran if c[1].startswith(str(home)) and ("/T" in c or "/reset" in c)]
     assert not any(managed or locked for _, managed, locked in denies)   # before the managed hooks and the lock file
 
 
@@ -385,10 +387,12 @@ def test_the_guard_refuses_every_call_while_an_acl_path_is_not_held(tmp_path, mo
     monkeypatch.setattr(floor, "account", lambda: "")                       # unread: refused (round 2)
     assert "not this session's account" in floor.unlocked(c, fl, floor.read_lock(), writable=held)
     monkeypatch.setattr(floor, "account", lambda: SID)
-    for name in ("USERPROFILE", "HOME"):                                    # Claude Code's home moved (round 2)
-        monkeypatch.setenv(name, str(tmp_path / "elsewhere"))
-        assert f"{name} moves" in floor.unlocked(c, fl, floor.read_lock(), writable=held)
-        monkeypatch.setenv(name, str(tmp_path / "profile"))
+    monkeypatch.setenv("USERPROFILE", str(tmp_path / "elsewhere"))          # Claude Code's home moved (round 2)
+    assert "USERPROFILE moves" in floor.unlocked(c, fl, floor.read_lock(), writable=held)
+    monkeypatch.setenv("USERPROFILE", str(tmp_path / "profile"))
+    for home in ("/u/a", "H:\\", str(tmp_path / "elsewhere")):           # HOME is not node's home (round 3)
+        monkeypatch.setenv("HOME", home)
+        assert floor.unlocked(c, fl, floor.read_lock(), writable=held) == ""
     monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(tmp_path / "elsewhere"))
     assert "CLAUDE_CONFIG_DIR" in floor.unlocked(c, fl, floor.read_lock(), writable=held)
     monkeypatch.delenv("CLAUDE_CONFIG_DIR")
@@ -466,20 +470,21 @@ def _ran(ran):
 
 def test_lock_trees_walks_top_down_one_entry_at_a_time_and_refuses_a_link(tmp_path):
     """Round 2 (both skeptics): no wildcard nor /T, whose middle components icacls follows; each entry owned by the
-    administrators then reset, before its own entries are listed; a junction met is refused, never followed."""
+    administrators then given a deny of its own (round 3: never a reset, which would weaken a folder swapped in for
+    it), before its own entries are listed; a junction met is refused, never followed."""
     h = tmp_path / "h"
     (h / "hooks" / "sub").mkdir(parents=True)
     (h / "hooks" / "sub" / "x.sh").write_text("x", encoding="utf-8")
     (h / "hooks" / "a.sh").write_text("x", encoding="utf-8")
     ran = []
     failed = flooracl.lock_trees(_plan(str(h), [], [str(h / "hooks")], []), _ran(ran), nt=True)
-    q = ["/L", "/C", "/Q"]
+    q, deny = ["/L", "/C", "/Q"], ["/deny", f"*{SID}:{flooracl.TREE}"]
     assert failed == [] and ran == [[str(h / "hooks" / "a.sh"), "/setowner", "*S-1-5-32-544", *q],
-                                    [str(h / "hooks" / "a.sh"), "/reset", *q],
+                                    [str(h / "hooks" / "a.sh"), *deny, *q],
                                     [str(h / "hooks" / "sub"), "/setowner", "*S-1-5-32-544", *q],
-                                    [str(h / "hooks" / "sub"), "/reset", *q],
+                                    [str(h / "hooks" / "sub"), *deny, *q],
                                     [str(h / "hooks" / "sub" / "x.sh"), "/setowner", "*S-1-5-32-544", *q],
-                                    [str(h / "hooks" / "sub" / "x.sh"), "/reset", *q]]
+                                    [str(h / "hooks" / "sub" / "x.sh"), *deny, *q]]
     try:
         import _winapi
         _winapi.CreateJunction(str(tmp_path), str(h / "hooks" / "sub" / "j"))
@@ -492,13 +497,29 @@ def test_lock_trees_walks_top_down_one_entry_at_a_time_and_refuses_a_link(tmp_pa
 
 
 def test_a_relock_for_another_account_keeps_the_shared_paths_owned_by_the_administrators(monkeypatch):
-    """Round 2: the previous account's deny entries go, the ownership the new lock needs stays."""
+    """Round 2: the previous account's deny entries go, the ownership (the administrators') stays."""
     monkeypatch.setattr(flooracl, "_unsafe", lambda p, tree, owner: "")
     old = {**_plan(), "account": "S-1-5-21-9-9-9-1002"}
     cmds, _ = flooracl.undo_beside(old, _plan())
-    shared = flooracl.paths_of(_plan())
-    assert cmds and not [c for c in cmds if "/setowner" in c and c[1] in shared]
+    assert cmds and all(c[2] == "/remove:d" and c[3] == "*S-1-5-21-9-9-9-1002" for c in cmds)
     assert flooracl.undo_beside(_plan(), _plan())[0] == []                      # the same account, the same paths
+
+
+def test_the_plan_refuses_a_path_another_account_owns(tmp_path, monkeypatch):
+    """Round 3: a registry entry or a worktree a session wrote could aim the step at another account's folder."""
+    _acl_brain(tmp_path, monkeypatch)
+    lab = Path(os.path.realpath(tmp_path / "lab"))
+    with pytest.raises(floorlock.LockError, match="holds only the account's own paths"):
+        flooracl.plan(guards.config.load(), SID, nt=True,
+                      owner=lambda p: "S-1-5-21-9-9-9-500" if str(p).startswith(str(lab)) else SID)
+    assert flooracl.plan(guards.config.load(), SID, nt=True, owner=lambda p: "S-1-5-32-544")   # a previous lock's
+
+
+def test_the_worktrees_are_read_without_running_git(tmp_path):
+    root = tmp_path / "repo"
+    (root / ".git" / "worktrees" / "w1").mkdir(parents=True)
+    (root / ".git" / "worktrees" / "w1" / "gitdir").write_text(str(tmp_path / "w1" / ".git") + "\n", encoding="utf-8")
+    assert flooracl._worktrees(root) == [tmp_path / "w1"] and flooracl._worktrees(tmp_path / "w1") == []
 
 
 def test_the_plan_names_a_command_a_held_setting_runs_from_an_unheld_path(tmp_path, monkeypatch):

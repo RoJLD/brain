@@ -10,5 +10,6 @@ section: Added
   step), the apply checks each deny entry and records the paths in the lock file; on each call the guard then refuses
   every call while one is missing, writable or not the administrators', while the session's account is not the
   locked one or `CLAUDE_CONFIG_DIR` is set. `brain floor status` says whether each is held; `brain floor unlock
-  --apply` gives them back first (`--account` when the lock file cannot be read). While locked, Claude Code's own
+  --apply` lifts the account's deny entries first (`--account` when the lock file cannot be read), the ownership
+  staying the administrators' (`takeown` from the owner's terminal gives it back). While locked, Claude Code's own
   writes there fail (docs/guards.md, « The ACL step »).

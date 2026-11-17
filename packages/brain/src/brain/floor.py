@@ -330,14 +330,12 @@ def acl_loose(path, writable=None) -> str:
 
 
 def _home_moved(home: str) -> str:
-    """Which of USERPROFILE and HOME (Git Bash's /c/x read as C:/x) names another folder than the profile that holds
-    ``home`` (~/.claude, the ACL step's): Claude Code would read its settings from there."""
-    want = os.path.normcase(os.path.abspath(os.path.dirname(home)))
-    for name in ("USERPROFILE", "HOME"):
-        value = os.environ.get(name, "")
-        value = re.sub(r"^/([A-Za-z])(?=/|$)", lambda m: m.group(1) + ":", value)
-        if value and os.path.normcase(os.path.abspath(value)) != want:
-            return name
+    """'USERPROFILE' when it names another folder than the profile that holds ``home`` (~/.claude, the ACL step's), as
+    the file system resolves both (an 8.3 name, a case): Claude Code (node's os.homedir on Windows) would read its
+    settings from there; '' else. HOME is not node's home on Windows (Git Bash's /home/x, a home drive H:\\)."""
+    value = os.environ.get("USERPROFILE", "")
+    if value and _real(value) != _real(os.path.dirname(home)):
+        return "USERPROFILE"
     return ""
 
 

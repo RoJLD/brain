@@ -48,14 +48,14 @@ def wanted(cfg) -> bool:
     return floor.acl_wanted(cfg.data)
 
 
-def plan(cfg, sid: str, nt: bool | None = None, kind=None) -> dict:
+def plan(cfg, sid: str, nt: bool | None = None, kind=None, owner=None) -> dict:
     """The paths the step denies ``sid``: ``home`` (~/.claude itself, its other children kept), ``files`` (its
     settings, and each project's that exist), ``trees`` (its hooks, skills, commands, agents and plugins, and each
     project's that exist), ``folders`` (each project's .claude), ``create`` (what is missing and is made first, an empty
     settings file or folder, so that none can be made later; a folder's ends with a separator); the projects are the
     brain's own folder and its registry's that exist on this machine, with the repos they span. LockError for an
     account that is not a person's (``kind``: floor.sid_kind), a profile the registry does not name, a registry that
-    does not load, or off Windows (``nt``)."""
+    does not load, a path another account owns (``owner``: floor.owner), or off Windows (``nt``)."""
     if not (os.name == "nt" if nt is None else nt):
         raise _error("floor.acl is a Windows deny entry for the session's account: turn it off on this machine")
     if not ACCOUNT.fullmatch(sid or "") or (kind or floor.sid_kind)(sid) != SID_TYPE_USER:
@@ -79,7 +79,19 @@ def plan(cfg, sid: str, nt: bool | None = None, kind=None) -> dict:
     out["files"] += _scripts(home)
     for root in project_roots(cfg):
         _project(out, root / ".claude", home)
+    foreign = owned_by_others(out, (owner or floor.owner))
+    if foreign:
+        raise _error(f"the ACL step holds only the account's own paths (or a lock's): {'; '.join(foreign[:6])}; take "
+                     "it out of the registry, or give it to the account, then plan again")
     return out
+
+
+def owned_by_others(a: dict, owner) -> list[str]:
+    """Each existing path of a plan owned by another than the account or the administrators (a previous lock's): a
+    registry entry or a worktree a session wrote could otherwise aim the step at another account's folder."""
+    allowed = {a["account"], ADMINS[1:]}
+    return [f"{p} (owned by {who or 'an owner that cannot be read'})"
+            for p in sorted(paths_of(a)) if os.path.lexists(p) and (who := owner(p)) not in allowed]
 
 
 def _scripts(folder: Path) -> list[str]:
@@ -124,17 +136,21 @@ def project_roots(cfg) -> list[Path]:
 
 
 def _worktrees(root: Path) -> list[Path]:
-    """The worktrees git lists for the checkout at ``root`` (none when it is no git checkout)."""
-    if not (root / ".git").exists():
+    """The linked worktrees of the checkout at ``root``, read from its .git/worktrees/*/gitdir (no process: the elevated
+    step runs no git a session may have put first on PATH); none when it is no main checkout. LockError when one
+    cannot be read."""
+    admin = root / ".git" / "worktrees"
+    if not admin.is_dir():
         return []
-    import subprocess
+    out = []
     try:
-        r = subprocess.run([floor.git(), "-C", str(root), "worktree", "list", "--porcelain"], capture_output=True,
-                           text=True, timeout=60)
-    except (OSError, subprocess.SubprocessError):
-        return []
-    return [Path(ln[len("worktree "):]) for ln in r.stdout.splitlines() if ln.startswith("worktree ")] \
-        if r.returncode == 0 else []
+        for entry in sorted(admin.iterdir()):
+            gitdir = entry / "gitdir"
+            if gitdir.is_file():
+                out.append(Path(gitdir.read_text(encoding="utf-8").strip()).parent)
+    except OSError as exc:
+        raise _error(f"the worktrees of {root} cannot be read ({exc}): the plan would leave their settings out") from None
+    return out
 
 
 def _icacls(nt: bool | None) -> str:
@@ -149,10 +165,10 @@ def commands(a: dict, nt: bool | None = None) -> list[list[str]]:
     root ends it: :func:`lock_trees` then walks what it holds."""
     icacls, sid, q = _icacls(nt), f"*{a['account']}", ("/L", "/C", "/Q")
     out = [[icacls, a["home"], "/setowner", ADMINS, *q], [icacls, a["home"], "/deny", f"{sid}:{HOME}", *q]]
+    for d in a["folders"]:   # a project's .claude before what it holds
+        out += [[icacls, d, "/setowner", ADMINS, *q], [icacls, d, "/deny", f"{sid}:{FOLDER}", *q]]
     for f in a["files"]:
         out += [[icacls, f, "/setowner", ADMINS, *q], [icacls, f, "/deny", f"{sid}:{FILE}", *q]]
-    for d in a["folders"]:
-        out += [[icacls, d, "/setowner", ADMINS, *q], [icacls, d, "/deny", f"{sid}:{FOLDER}", *q]]
     for d in a["trees"]:
         out += [[icacls, d, "/setowner", ADMINS, *q], [icacls, d, "/deny", f"{sid}:{TREE}", *q]]
     return out
@@ -160,11 +176,11 @@ def commands(a: dict, nt: bool | None = None) -> list[list[str]]:
 
 def lock_trees(a: dict, run, nt: bool | None = None) -> list[str]:
     """Walk each tree from its root (already denied: nothing is added to it or removed through it any more), top down:
-    each entry's owner made Administrators, then its own entries reset to what it inherits (the deny), one entry at a
-    time with /L, before its own entries are listed; a link or a junction met is refused, never followed. What
-    failed."""
+    each entry's owner made Administrators, then a deny entry of its own for the account (never a reset, which would
+    weaken a folder swapped in for it), one entry at a time with /L, before its own entries are listed; a link or a
+    junction met is refused, never followed. What failed."""
     from .floorlock import _run
-    icacls, q = _icacls(nt), ("/L", "/C", "/Q")
+    icacls, sid, q = _icacls(nt), f"*{a['account']}", ("/L", "/C", "/Q")
     failed: list[str] = []
     stack = list(reversed(a["trees"]))
     while stack:
@@ -179,20 +195,20 @@ def lock_trees(a: dict, run, nt: bool | None = None) -> list[str]:
                 failed.append(f"{e.path}: a link or a junction")
                 continue
             failed += [w for w in (_run([icacls, e.path, "/setowner", ADMINS, *q], run),
-                                   _run([icacls, e.path, "/reset", *q], run)) if w]
+                                   _run([icacls, e.path, "/deny", f"{sid}:{TREE}", *q], run)) if w]
             if e.is_dir(follow_symlinks=False):
                 stack.append(e.path)
     return failed
 
 
-def undo(a: dict, nt: bool | None = None, owner=None, keep_owner=()) -> tuple[list[list[str]], list[str]]:
-    """(the commands that give the account its paths back, trees first and ~/.claude last: their deny entries removed,
-    then their ownership, on the path itself; what is left alone and why): only a path still there, no link nor
-    holding one, owned by Administrators (``owner``: floor.owner), so an elevated unlock never hands the account a
-    folder a session swapped in for one of them. ``keep_owner``: paths another lock holds now, whose deny entries for
-    this account alone go."""
+def undo(a: dict, nt: bool | None = None, owner=None) -> tuple[list[list[str]], list[str]]:
+    """(the commands that lift the account's deny entries, trees first, each of their entries, and ~/.claude last, on
+    the path itself with /L; what is left alone and why): only a path still there, no link nor holding one, owned by
+    Administrators (``owner``: floor.owner). The ownership stays the administrators': an elevated step never gives a
+    path's owner away (a folder a session swapped in for one of them would be handed to the account); the account
+    keeps the rights it inherits, and takes the ownership back itself if it wants (takeown /f <path> /r)."""
     icacls, sid, q = _icacls(nt), f"*{a['account']}", ("/L", "/C", "/Q")
-    owner, keep = owner or floor.owner, set(keep_owner)
+    owner = owner or floor.owner
     out, left = [], []
     for p, tree in [*((x, True) for x in a.get("trees", [])),
                     *((x, False) for x in (*a.get("files", []), *a.get("folders", []), a.get("home")) if x)]:
@@ -200,10 +216,10 @@ def undo(a: dict, nt: bool | None = None, owner=None, keep_owner=()) -> tuple[li
         if why:
             left.append(f"{p}: {why}")
             continue
-        t = ("/T",) if tree else ()
-        out.append([icacls, p, "/remove:d", sid, *t, *q])
-        if p not in keep:
-            out.append([icacls, p, "/setowner", sid, *t, *q])
+        out.append([icacls, p, "/remove:d", sid, *q])
+        if tree:
+            for root, dirs, files in os.walk(p):
+                out += [[icacls, os.path.join(root, n), "/remove:d", sid, *q] for n in sorted((*dirs, *files))]
     return out, left
 
 
@@ -276,7 +292,8 @@ def verify(a: dict, denied=None, writers=None) -> list[str]:
             if kind == "trees" and os.path.isdir(p) and not out[-1:] == [f"{p}: a link or a junction"]:
                 for root, dirs, files in os.walk(p):
                     for n in (*dirs, *files):
-                        out += _wrong(os.path.join(root, n), sid, mask, True, denied, writers)
+                        out += _wrong(os.path.join(root, n), sid, mask, not explicit_deny(os.path.join(root, n), sid),
+                                      denied, writers)
     return out
 
 
@@ -343,6 +360,12 @@ def denied(path, sid: str) -> int:
     return sum_rights(e[2] for e in (_aces(path) or []) if e[0] == 1 and not e[1] & INHERIT_ONLY and e[3] == sid)
 
 
+def explicit_deny(path, sid: str) -> bool:
+    """Whether the DACL of ``path`` holds an access-denied entry of its own (not inherited) for ``sid``: it comes
+    before any allow, explicit or inherited."""
+    return any(e[0] == 1 and not e[1] & (INHERITED | INHERIT_ONLY) and e[3] == sid for e in (_aces(path) or []))
+
+
 def sum_rights(masks) -> int:
     out = 0
     for m in masks:
@@ -373,11 +396,10 @@ def minus(a: dict, prev: dict | None) -> dict:
 
 def undo_beside(a: dict, other: dict | None) -> tuple[list[list[str]], list[str]]:
     """:func:`undo` of ``a`` while another step ``other`` holds now: for the same account, only the paths ``other``
-    does not hold; for another account, every path, its deny entries alone where ``other`` holds it (the
-    administrators stay its owner, as ``other`` needs)."""
+    does not hold; for another account, every path (its deny entries alone: the owner stays the administrators)."""
     if isinstance(other, dict) and other.get("account") == a["account"]:
         return undo(minus(a, other))
-    return undo(a, keep_owner=paths_of(other))
+    return undo(a)
 
 
 def released(prev: dict | None, a: dict | None, run) -> list[str]:
@@ -400,25 +422,45 @@ COMMAND_KEYS = ("statusLine", "apiKeyHelper", "otelHeadersHelper", "awsAuthRefre
                 "gcpAuthRefresh", "fileSuggestion")
 
 
+ENV_SCRIPT_KEYS = ("BASH_ENV", "ENV", "CLAUDE_ENV_FILE", "CLAUDE_CODE_SHELL_PREFIX", "NODE_OPTIONS")
+
+
 def unheld_commands(a: dict) -> list[str]:
-    """Each file a held settings file's command keys name that the step does not hold: '<path> (<key> in <file>)'."""
+    """Each file a held settings file's command keys (or an `env` value Claude Code's shell or node reads) name that
+    the step does not hold: '<path> (<key> in <file>)'. A word with no folder runs from wherever a session is: said
+    too."""
     import json
     held, trees = {os.path.normcase(p) for p in a["files"]}, [os.path.normcase(t) for t in a["trees"]]
-    home = Path(a["home"]).parent
+    home = str(Path(a["home"]).parent)
     out = []
     for f in a["files"]:
         try:
             data = json.loads(Path(f).read_text(encoding="utf-8")) if f.endswith(".json") else {}
         except (OSError, ValueError):
             continue
-        for key in COMMAND_KEYS if isinstance(data, dict) else ():
-            value = data.get(key)
-            text = value.get("command", "") if isinstance(value, dict) else value if isinstance(value, str) else ""
-            for word in re.findall(r"[^\s'\"]*[\\/][^\s'\"]*", text):
-                p = os.path.normcase(os.path.abspath(re.sub(r"^~(?=[\\/])", str(home).replace("\\", "/"), word)))
-                if os.path.isfile(p) and p not in held and not any(p.startswith(t + os.sep) for t in trees):
-                    out.append(f"{word} ({key} in {f})")
+        if not isinstance(data, dict):
+            continue
+        env = data.get("env") if isinstance(data.get("env"), dict) else {}
+        named = [(k, data.get(k)) for k in COMMAND_KEYS] + [(f"env.{k}", env.get(k)) for k in ENV_SCRIPT_KEYS]
+        for key, value in named:
+            text = value.get("command") if isinstance(value, dict) else value
+            for word in (text.split() if isinstance(text, str) else [])[:64]:
+                out += _unheld(word.strip("'\""), key, f, home, held, trees)
     return out
+
+
+def _unheld(word: str, key: str, f: str, home: str, held: set, trees: list) -> list[str]:
+    if not re.search(r"\.(?:" + "|".join(x[1:] for x in sorted(SCRIPTS)) + r")$", word, re.I) and "/" not in word \
+            and "\\" not in word:
+        return []
+    if not re.search(r"[\\/]", word):
+        return [f"{word} ({key} in {f}: a script named without a folder runs from wherever a session is)"]
+    word = re.sub(r"^(?:~|\$HOME|\$\{HOME\}|%USERPROFILE%|\$env:USERPROFILE)(?=[\\/])", home.replace("\\", "/"),
+                  word, flags=re.I)
+    p = os.path.normcase(os.path.abspath(word))
+    if p in held or any(p.startswith(t + os.sep) for t in trees):
+        return []
+    return [f"{word} ({key} in {f})"]
 
 
 def render(a: dict | None) -> list[str]:
