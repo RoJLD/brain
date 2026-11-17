@@ -12,7 +12,8 @@ section: Changes
     strict mode (CI); off, a note only.
   - `projects.ids_strict`: `brain project add` takes a name of 2 to 40 characters only, never an alias another project
     or container holds; off, a kebab-case name from a letter of any length (a registered name, a container's id and
-    the tree's root still refused).
+    the tree's root still refused, and so is a name another node holds as an alias: the entry would add an error to
+    `brain check --all`, which refuses the write).
   - `guards.gestures_wide` now reaches the MCP server: it matches the owner's gestures wide under the key only; off,
     as 0.5.1.
   - `guards.refuse_token_read` now reaches the MCP server: it runs the token check under the key only; off, no check

@@ -167,8 +167,10 @@ def test_brain_project_add_never_mints_a_name_in_use(brain, tmp_path):
 
 @pytest.mark.parametrize("on", [None, False])
 def test_brain_project_add_takes_0_5_1_s_names_without_the_key(brain, tmp_path, on):
-    """config.json projects.ids_strict absent or false: a kebab-case name from a letter of any length, as 0.5.1; a
-    registered name, a container's id, the tree's root and a name that is not kebab-case are still refused."""
+    """config.json projects.ids_strict absent or false: the name rule takes a kebab-case name from a letter of any
+    length, as 0.5.1; a registered name, a container's id, the tree's root and a name that is not kebab-case are still
+    refused. A name another node holds as an alias passes this rule but not the command: the entry would add an error
+    to brain check --all, which refuses the write (test_project_add)."""
     (brain.root / scopes.FILE).write_text(TREE, encoding="utf-8")
     _ids_strict(brain.root, on)
     cfg = config.load(brain.root)
