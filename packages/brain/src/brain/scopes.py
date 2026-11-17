@@ -722,15 +722,18 @@ def private_terms(cfg: config.Config) -> list[str]:
     public = {str(r).rsplit("/", 1)[-1].lower() for r in pub.get("repos") or [] if isinstance(r, str)}
     terms: dict[str, str] = {}
     for name in private_nodes(tree):
-        found = [name, *projectids.other_names(tree.nodes[name].data)]
-        p = every.get(name)
-        try:
-            found += [t for r in (projects.repos_of(p) if p is not None else []) for t in (r.name, r.folder) if t]
-        except (ValueError, OSError):   # RepoError, a path on another drive: the name is still denied
-            pass
-        for t in found:
+        for t in [name, *projectids.other_names(tree.nodes[name].data), *_repo_terms(every.get(name))]:
             terms.setdefault(t.lower(), t)
     return sorted((t for k, t in terms.items() if len(t) >= 2 and k not in public), key=str.lower)
+
+
+def _repo_terms(p: projects.Project | None) -> list[str]:
+    """The names and folders of ``p``'s repos; [] when it has none or they cannot be resolved (RepoError, a path on
+    another drive: its own name is still denied)."""
+    try:
+        return [t for r in (projects.repos_of(p) if p is not None else []) for t in (r.name, r.folder) if t]
+    except (ValueError, OSError):
+        return []
 
 
 def named_file(cfg: config.Config) -> Path | None:
