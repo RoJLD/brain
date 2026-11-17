@@ -316,7 +316,7 @@ def _include_line(text: str, new: list[str], name: str, held: list[str]) -> str:
 def _flow_standards(line: str, value: str, merged: list[str]) -> str:
     """A one-line ``standards: {..}`` with its include merged; InitError when it is not one mapping on its line."""
     try:
-        std = yaml.safe_load(value)
+        std = graph.load_yaml(value)
     except yaml.YAMLError:
         std = None
     if not isinstance(std, dict):
