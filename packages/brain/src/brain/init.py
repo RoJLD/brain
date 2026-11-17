@@ -490,12 +490,14 @@ def _appended_yaml(tpl: Template, rel: str, text: str, name: str) -> None:
 
 def files_for(owner: str, kind: str, tenant: str | None, tier: str, name: str,
               tpl: Template | None = None, stage: str = DEFAULT_STAGE, lifecycle: dict | None = None,
-              registry_edit=None) -> dict[str, str]:
+              registry_edit=None, spheres: tuple[str, ...] = ()) -> dict[str, str]:
     """{path relative to the brain: text} for every file brain init writes but the store and the Claude files:
     config.json, then the template's files (with what it appends to them) with their variables rendered. A YAML
     file must read as YAML once rendered (an appended fragment that breaks it is the template's error).
     ``registry_edit`` (brain project new's answers: the languages and tools, the data) takes the rendered
-    projects.yaml's text and gives it back with its lines; it raises InitError when they cannot land."""
+    projects.yaml's text and gives it back with its lines; it raises InitError when they cannot land. With
+    ``spheres`` (:func:`examples_for`), scopes.yaml with those default spheres (SCOPE-1), unless the template writes
+    one."""
     tpl = tpl or load_template()
     values = {"owner": owner, "owner_q": json.dumps(owner, ensure_ascii=False), "name": name,
               "title_q": json.dumps(f"{owner}'s brain: rules, decisions, backlog and journal", ensure_ascii=False),
@@ -510,6 +512,10 @@ def files_for(owner: str, kind: str, tenant: str | None, tier: str, name: str,
         _lifecycle_landed(tpl, out["projects.yaml"], name, lifecycle)
     if registry_edit is not None and "projects.yaml" in out:
         out["projects.yaml"] = registry_edit(out["projects.yaml"])
+    if spheres:
+        from . import scopes
+        if scopes.FILE not in out:
+            out[scopes.FILE] = scopes.default_spheres_text(spheres)
     return out
 
 
@@ -526,6 +532,59 @@ def _lifecycle_landed(tpl: Template, text: str, name: str, lifecycle: dict) -> N
             "typologies"):
         raise InitError(f"--template {tpl.name}: projects.yaml: the lifecycle line goes under the brain's own entry "
                         f"({name}), indented two spaces, which must be the registry's last")
+
+
+def kind_in(root: Path) -> str:
+    """identity.kind of the config.json already in ``root`` ('' when it has none): a re-run keeps that file."""
+    try:
+        data = json.loads((Path(root) / config.FILE).read_text(encoding="utf-8-sig"))
+    except (OSError, ValueError):
+        return ""
+    ident = data.get("identity") if isinstance(data, dict) else None
+    kind = ident.get("kind") if isinstance(ident, dict) else None
+    return kind if isinstance(kind, str) else ""
+
+
+def registry_ids(root: Path) -> set[str]:
+    """The entries' ids of the projects.yaml already in ``root`` (none when it has none or it is not readable)."""
+    import yaml
+    try:
+        data = graph.load_yaml((Path(root) / "projects.yaml").read_text(encoding="utf-8"))
+    except (OSError, ValueError, yaml.YAMLError):   # none there, or not readable: brain check's to report
+        return set()
+    return {str(k) for k in data} if isinstance(data, dict) else set()
+
+
+def examples_for(root: Path, kind: str, name: str) -> tuple[str, tuple[str, ...], tuple[str, ...]]:
+    """(the brain's kind, the default spheres --examples writes, those left out) for brain init in ``root``: the kind
+    is the identity.kind of a config.json already there (a re-run keeps it), else ``kind``; a team has none; a sphere
+    whose id is a project's of the registry (the brain's own ``name``, an entry of a projects.yaml already there) is
+    left out, the tree's ids being unique."""
+    from . import scopes
+    kind = kind_in(root) or kind
+    if kind != "person":
+        return kind, (), ()
+    taken = {name} | registry_ids(root)
+    return (kind, tuple(s for s in scopes.DEFAULT_SPHERES if s not in taken),
+            tuple(s for s in scopes.DEFAULT_SPHERES if s in taken))
+
+
+def examples_line(root: Path, kind: str, name: str) -> str:
+    """What --examples adds, said in the plan: a person's default spheres (SCOPE-1), none for a team, a sphere whose
+    id a project holds left out and named."""
+    kind, spheres, left = examples_for(root, kind, name)
+    if kind != "person":
+        return f"--examples: a {kind} has no default spheres (SCOPE-1): scopes.yaml is left out"
+    out = "--examples: "
+    if spheres:
+        out += (f"scopes.yaml holds the default spheres of a person ({', '.join(spheres)}; brain scopes shows them, "
+                f"brain project add NAME --parent {spheres[0]} places a project under one)")
+    else:
+        out += "no default sphere is written"
+    if left:
+        out += (f"; left out: {', '.join(left)} (a project of the registry has that id; a scope id is unique: "
+                "brain init --name names the brain's own another way)")
+    return out
 
 
 def lifecycle_line(lifecycle: dict) -> str:
@@ -599,10 +658,17 @@ def _file_step(path: Path, text: str, appended: str) -> Step:
 
 def plan(root: Path, owner: str, *, kind: str = "person", tenant: str | None = None, tier: str = "lite",
          name: str = "brain", template_spec: str = DEFAULT_TEMPLATE, stage: str = DEFAULT_STAGE,
-         lifecycle: dict | None = None, registry_edit=None) -> list[Step]:
+         lifecycle: dict | None = None, registry_edit=None, examples: bool = False) -> list[Step]:
     """What brain init would do in ``root``, file by file, in order (the owner: ``owner``, else the one of the
-    config.json already in ``root``)."""
+    config.json already in ``root``); ``examples``: a person's default spheres in scopes.yaml (SCOPE-1)."""
     owner = " ".join((owner or owner_in(root) or "").split())
+    _check_plan(owner, kind, tier, name, stage)
+    return _plan_files(Path(root).resolve(), owner, kind, tenant, tier, name, template_spec, stage, lifecycle,
+                       examples, registry_edit)
+
+
+def _check_plan(owner: str, kind: str, tier: str, name: str, stage: str) -> None:
+    """brain init's options, InitError naming the first it does not take."""
     if not owner:
         raise InitError('--owner NAME: the person or team who decides for this brain (brain init --owner "Your Name")')
     if kind not in KINDS:
@@ -614,10 +680,17 @@ def plan(root: Path, owner: str, *, kind: str = "person", tenant: str | None = N
         raise InitError(f"--name {name!r}: lower case letters, digits, '.', '_' and '-'")
     if stage not in STAGES:
         raise InitError(f"--stage {stage!r}: one of {', '.join(STAGES)} (the standards a profile's template selects)")
+
+
+def _plan_files(root: Path, owner: str, kind: str, tenant: str | None, tier: str, name: str, template_spec: str,
+                stage: str, lifecycle: dict | None, examples: bool, registry_edit=None) -> list[Step]:
+    """:func:`plan`'s steps once its options are checked: the files, the graph stores, the Claude files, the
+    pointer."""
     tpl = load_template(template_spec)
-    root = Path(root).resolve()
     steps, created = [], set()
-    for rel, text in files_for(owner, kind, tenant, tier, name, tpl, stage, lifecycle, registry_edit).items():
+    spheres = examples_for(root, kind, name)[1] if examples else ()
+    for rel, text in files_for(owner, kind, tenant, tier, name, tpl, stage, lifecycle, registry_edit,
+                               spheres).items():
         steps.append(_file_step(root / rel, text, tpl.appended(rel)))
         if steps[-1].action == "create":
             created.add(rel)
@@ -742,6 +815,8 @@ def command_line(root: Path, args, owner: str, tier: str, preset: str, with_: li
             words += [flag, str(value)]
     if getattr(args, "tier", None):
         words += ["--tier", tier]
+    if getattr(args, "examples", False):
+        words.append("--examples")
     words += ["--preset", preset] + [w for m in with_ for w in ("--with", m)] + [w for m in without
                                                                               for w in ("--without", m)]
     return words + ["--apply"]
@@ -826,12 +901,27 @@ def _apply_files(root: Path, steps: list[Step], owner: str, same: list[str]) -> 
     """The files, then config.json checked; with the modules, brain init's own step logged (``same``: its command)."""
     from . import firstrun
     code = apply(root, steps, owner)
+    _scopes_view(root, steps)
     errors = config.check(root)
     for e in errors:
         print(f"error: {e}")
     if same:
         firstrun.log_init(root, same, code or (1 if errors else 0), by=owner)
     return code or (1 if errors else 0)
+
+
+def _scopes_view(root: Path, steps: list[Step]) -> None:
+    """The scope tree's view (notes/scopes_graph.md) beside a scopes.yaml brain init wrote (--examples), so the new
+    brain's first brain check finds it current; brain sync writes it otherwise. Read as the new brain sees itself
+    (brain.project_add.this_brain): never the registry or tree another brain's $BRAIN_PROJECTS, $BRAIN_SCOPES,
+    $BRAIN_CONFIG or $CLAUDE_BRAIN_DIR name."""
+    from . import project_add, projects, scopes
+    if not any(s.action == "create" and s.path.name == scopes.FILE for s in steps):
+        return
+    with project_add.this_brain(Path(root) / projects.REGISTRY):
+        cfg = config.load(root)
+        if scopes.view_applies(root, cfg):
+            scopes.write_view(root, cfg)
 
 
 def _planned(root: Path, args) -> tuple:
@@ -842,7 +932,8 @@ def _planned(root: Path, args) -> tuple:
     tier = _tier(args, mod[0].base if mod else None)
     steps = plan(root, args.owner or "", kind=args.kind, tenant=args.tenant, tier=tier, name=args.name,
                  stage=getattr(args, "stage", None) or DEFAULT_STAGE, template_spec=spec,
-                 lifecycle=getattr(args, "lifecycle", None), registry_edit=getattr(args, "registry_edit", None))
+                 lifecycle=getattr(args, "lifecycle", None), registry_edit=getattr(args, "registry_edit", None),
+                 examples=bool(getattr(args, "examples", False)))
     owner = " ".join((args.owner or owner_in(root)).split())
     return steps, load_template(spec), owner, tier, mod
 
@@ -866,6 +957,8 @@ def main(args) -> int:
     print(f"brain init: {root} for {owner} ({args.kind}, {tier}), template {tpl.name} v{tpl.version}, engine "
           f"{ENGINE_REPO}@v{__version__}")
     print("\n".join(show(root, steps)))
+    if getattr(args, "examples", False):
+        print(examples_line(root, args.kind, args.name))
     same = _show_modules(root, args, owner, tier, mod) if mod else []
     if not args.apply:
         if getattr(args, "plan_hint", ""):   # brain project new's own words

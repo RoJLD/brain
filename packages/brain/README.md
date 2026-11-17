@@ -701,6 +701,7 @@ When a session reads one of those files by hand anyway, a PreToolUse hint names 
 ```bash
 brain init ~/my-brain --owner "Your name"            # the plan
 brain init ~/my-brain --owner "Your name" --apply    # writes it; a second apply changes nothing
+brain init ~/my-brain --owner "Your name" --examples --apply   # the same, with the default spheres in scopes.yaml
 cd ~/my-brain && git init && git add -A && git commit -m "my brain"
 brain check                                          # graph-check OK, and the boundary's public scan green
 brain profile                                        # this machine's profile: Lite unless you choose another
@@ -719,6 +720,15 @@ what the machine does not hold is refused). It ends on the same choice as one co
 `brain mod disable|enable ID`, each `--apply`): the plan shows them, `--apply` runs them in order and logs each one
 in `<BRAIN_HOME>/ledger/setup-<month>.jsonl`. What must be downloaded (a pip extra) is named, never fetched. The
 catalogue is `brain catalogue emit`'s ([docs/catalogue.md](docs/catalogue.md)).
+
+**The default spheres** (`--examples`, SCOPE-1 of the scope tree): for a person, `brain init` also writes
+`scopes.yaml` with three spheres, `pro` (Professional), `personal` (Personal) and `academic` (Academic), the scope
+tree's first level, and its view `notes/scopes_graph.md`; `brain project add NAME --parent pro` places a project under
+one. A team gets none (a team has no personal sphere); in a folder whose `config.json` is already there, its
+`identity.kind` decides (a re-run keeps that file, whatever `--kind` says). A sphere whose id a project of the registry
+holds (the brain's own `--name pro`, an entry of a `projects.yaml` already there) is left out, and the plan names it:
+a scope id is unique. The ids stay; a title is renamed by an edit of `scopes.yaml`. A `scopes.yaml` already there is
+kept. The view is read from the new brain's own files, never from what `$BRAIN_PROJECTS` or `$BRAIN_SCOPES` name.
 
 `brain init` writes, from a template (`--template`, default `generic`: `src/brain/templates/generic/`) and
 `research_graph init`, never over an existing file. `--owner` may be left out in a folder that already has a
@@ -839,7 +849,7 @@ that holds the brain shows what the answers change (language, each slot's tool, 
 and writes nothing. The pack, procedures and permissions it will propose are its later slice.
 
 `brain project add NAME (--read | --existing DIR [--store PATH] | --template T --dir DIR) [--parent NODE] [--floor
-CLASS] [--title TEXT] [--no-notes] [--apply]` registers a project in a brain's `projects.yaml` (`wi-brain-project-add`),
+CLASS] [--title TEXT] [--profile P] [--kind K]... [--stage S] [--team] [--interactive] [--no-notes] [--apply]` registers a project in a brain's `projects.yaml` (`wi-brain-project-add`),
 a plan then `--apply`, instead of a hand edit of the file:
 - `--read`: a project the brain reads and never writes (its entry: `title`, `access: read`, `parent`, `classes`);
 - `--existing DIR`: an instance that has its own brain, registered without a copy: its `root` and `stores` when
@@ -873,6 +883,29 @@ temporary name, never over a file (`wi-brain-project-add-notes`). The project ge
 home's folders say the lifecycle and the class, never the subject, and a note joins the project by its `scope`. The
 step is optional: without a notes home, or with `--no-notes`, the plan says why there is no map; a map that cannot be
 written leaves the entry registered and says so. The owner commits the map in the notes repo.
+
+**The qualification** (`wi-brain-project-add-spheres`, spec-brain-product-lifecycle 3.10): the plan asks five
+questions, each a setting of the Brain, and names each one left unanswered with its option; `--interactive` (`-i`)
+asks those the options leave, in the terminal (an empty answer leaves one unanswered), never through a model, once
+the options are checked (nothing is asked to be refused then); without a terminal, or when its input ends, it writes
+nothing and says so:
+
+| Question | Option | Written to |
+|---|---|---|
+| 1. its purpose and audience | `--profile maker\|client\|startup\|internal\|open-source\|research` | `lifecycle.profile` |
+| 2. what it produces | `--kind K` (repeatable, ids of `brain typologies`) | `lifecycle.typologies` (its items' clauses of done) |
+| 3. its stage, the entry point | `--stage S`: a lifecycle stage, or a standards stage read as one (`mvp`: `build`) | `lifecycle.stage`, with `since` the local day it is written |
+| 4. its criticity | `--floor CLASS` | `classes.floor` |
+| 5. who works on it | `--team`, with `--template` (`brain init --kind team`) | the new brain's `identity.kind`; an instance's own `config.json` is shown, never written |
+
+A read-only project takes only its criticity, `--floor` (its entry holds `title`, `access`, `parent` and `classes`
+only; its own sessions answer the rest): another answer with `--read` is refused, as is an unknown kind or stage. With
+`--template`, `brain init --stage` takes the standards stage the entry's stage reads back as (`build`: `mvp`,
+`launch`: `v1`, `grow`: `scale`, `explore`: `prototype`; another stage keeps its default, and the plan says so), so the
+standards and `lifecycle.stage` agree. `brain check` reads the entry's `lifecycle.stage` against the catalog's stages
+(a standards stage written there, `mvp`, is named with the stage it reads as), `shape` against `living` and `finite`,
+`profile` against the six profiles: an unknown value is a note, an error in strict mode (CI), as an unknown typology
+is.
 
 It also writes `<BRAIN_HOME>/personal.json` when the machine has none, so that the hooks and commands run from any
 folder find this brain. The brain is the owner's private repo: push it to their own account, never to a public one.

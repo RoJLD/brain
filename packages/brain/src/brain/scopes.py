@@ -67,6 +67,9 @@ TYPES: dict[str, dict] = {
     "tenant": {"en": "Tenant", "fr": "Locataire"},
 }
 LANGS = ("en", "fr")
+# The default spheres of a person (SCOPE-1, spec 3.3): what ``brain init --examples`` writes in scopes.yaml for an
+# identity.kind person, none for a team (a team has no personal sphere); the ids stay, the titles change by an edit.
+DEFAULT_SPHERES: dict[str, str] = {"pro": "Professional", "personal": "Personal", "academic": "Academic"}
 KINDS = ("container", "project", "read", "mount", "knowledge")   # read: a read-only project; mount: a tenant
 # (another brain); knowledge: the owner's notes home (kind: knowledge, brain.knowledge), never loaded as a project
 
@@ -612,6 +615,18 @@ def view_text(tree: Tree, lang: str = "en") -> str:
 
 def view_file(cfg: config.Config) -> Path:
     return cfg.root / VIEW
+
+
+def default_spheres_text(spheres=None) -> str:
+    """scopes.yaml with the default spheres of a person (SCOPE-1), as ``brain init --examples`` writes it: those of
+    ``spheres`` (ids of :data:`DEFAULT_SPHERES`), all of them by default."""
+    keep = [s for s in DEFAULT_SPHERES if spheres is None or s in spheres]
+    lines = ["# The scope tree's containers (brain scopes): the default spheres of a person (brain init --examples).",
+             "# A project goes under one by its parent: in projects.yaml (brain project add NAME --parent pro ...);",
+             "# rename a title here, never an id; brain check --all checks the tree.", "v: 1", "scopes:"]
+    width = max((len(s) for s in keep), default=0) + 1
+    lines += [f"  {sid + ':':<{width}} {{type: sphere, title: {DEFAULT_SPHERES[sid]}}}" for sid in keep]
+    return "\n".join(lines) + "\n"
 
 
 def view_applies(root: Path, cfg: config.Config | None = None) -> bool:

@@ -146,8 +146,10 @@ KEYS = {
                "(brain.formats)",
     "lifecycle": "its lifecycle (spec-brain-product-lifecycle LC-1), {typologies, stage, shape, profile, since, "
                  "paused}: typologies (the typology catalog's ids, brain typologies) give its items' clauses of done "
-                 "(brain item clauses, brain item close); the other keys are kept as declared and read by "
-                 "wi-brain-lifecycle-stage",
+                 "(brain item clauses, brain item close); stage (a catalog stage), shape (living, finite) and "
+                 "profile (maker, client, startup, internal, open-source, research) are checked, an unknown value a "
+                 "note (strict: an error); brain project add writes typologies, stage, since and profile from its "
+                 "qualification; the rest is read by wi-brain-lifecycle-stage",
     "migrations": "the scout's glob check, a list of {when, add, repo}: a change of a when file comes with a new file "
                   "of each add glob (a migration, a fixture), else brain audit --diff finds it (brain.formats)",
     "software": "the software pack's keys grouped (wi-brain-software-pack), {repos, audit, code_index, production}: each "
@@ -158,6 +160,8 @@ KEYS = {
 SOFTWARE = "software"
 SOFTWARE_KEYS = ("repos", "audit", "code_index", "production")
 LIFECYCLE_KEYS = ("typologies", "stage", "shape", "profile", "since", "paused")   # LC-1; typologies read so far
+# LC-1's profiles (the purpose and the audience, question 1 of the qualification, spec-brain-product-lifecycle 3.10)
+LIFECYCLE_PROFILES = ("maker", "client", "startup", "internal", "open-source", "research")
 ACCESS = ("write", "read")
 READ_ONLY_KEYS = {"title", "access", "parent", "classes"}
 KNOWLEDGE = "knowledge"
@@ -913,8 +917,9 @@ def _software_errors(where: str, entry: dict) -> list[str]:
 
 
 def _lifecycle_errors(where: str, value, root: Path | None) -> list[str]:
-    """A project's lifecycle: a mapping; its typologies a list of the typology catalog's ids (an unknown id a note in
-    read mode, an error in strict mode); an unknown key a note in read mode."""
+    """A project's lifecycle: a mapping; its typologies a list of the typology catalog's ids, its stage one of the
+    catalog's stages, its shape one of its shapes, its profile one of :data:`LIFECYCLE_PROFILES` (each unknown value a
+    note in read mode, an error in strict mode: a later engine's); an unknown key a note in read mode."""
     from . import config, typologies
     where = f"{where}: lifecycle"
     if not isinstance(value, dict):
@@ -922,12 +927,29 @@ def _lifecycle_errors(where: str, value, root: Path | None) -> list[str]:
     unknown = sorted(set(map(str, value)) - set(LIFECYCLE_KEYS))
     errors = schema.tolerate(f"{where}: unknown key(s) {', '.join(unknown)} (known: {', '.join(LIFECYCLE_KEYS)})"
                              ) if unknown else []
+    cat = None
+    for key, known in (("stage", None), ("shape", typologies.SHAPES), ("profile", LIFECYCLE_PROFILES)):
+        got = value.get(key)
+        if got is None:
+            continue
+        if key == "stage":
+            cat = cat or typologies.load(config.load(root))
+            known = tuple(cat.stages)
+        if got not in known:
+            errors += schema.tolerate(f"{where}: {key} {got!r} is not one of {', '.join(known)}"
+                                      + _standards_hint(key, got, cat))
     typs = value.get("typologies")
     if typs is None:
         return errors
     if not (isinstance(typs, list) and all(isinstance(t, str) and t for t in typs)):
         return errors + [f"{where}: typologies is a list of typology ids (brain typologies)"]
-    return errors + typologies.unknown(f"{where}.typologies", typs, typologies.load(config.load(root)))
+    return errors + typologies.unknown(f"{where}.typologies", typs, cat or typologies.load(config.load(root)))
+
+
+def _standards_hint(key: str, got, cat) -> str:
+    """For a standards stage written as lifecycle.stage (mvp), the lifecycle stage it reads as (build), "" else."""
+    mapped = cat.standards_stages.get(got) if key == "stage" and cat is not None and isinstance(got, str) else None
+    return f" (a standards stage: write {mapped}, the lifecycle stage {got} reads as)" if mapped else ""
 
 
 def _standards_errors(where: str, value, registry: Path | None, engine: list) -> list[str]:
