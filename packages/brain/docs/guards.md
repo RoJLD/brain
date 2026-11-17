@@ -120,7 +120,8 @@ guard `floor`:
 - `config`: what would lift the floor: an edit or a shell write of the config.json the guard reads, or of the pointer
   that finds it (`<BRAIN_HOME>/personal.json`), and a variable that chooses that file (`BRAIN_CONFIG`,
   `CLAUDE_BRAIN_DIR`, `BRAIN_PERSONAL`, `BRAIN_HOME`) set for later sessions (`setx`, the registry, Claude Code's
-  settings, a shell profile). A worktree's own config.json is another file: a pull request still changes it.
+  settings, a shell profile). A worktree's own config.json is another file: a pull request still changes it; a
+  `BRAIN_CONFIG` naming it never lowers the floor (« The environment » below).
 
 The third line of the floor, no secret in a commit, is the secrets guard's already. They run under config.json
 `floor.refuse: true` (off by default: refusals 0.5.1 adds) or `floor.only: true`; `BRAIN_GUARD_ALLOW=floor` (or
@@ -297,13 +298,37 @@ Round 7 (the same classes, new spellings; on any machine with the floor on):
   setting `alias.*`, `include.path`, `includeIf.*.path`, `remote.*`, `push.*` or `url.*`, `git remote add --mirror`,
   and a write of git's configuration files. An alias is read as what it runs, an alias of an alias too (ten levels);
   a shell alias (`!`), or one that starts with an option, is refused.
-- **The environment**: a variable of `brain.floor.WATCHED_VARS` (git's that change its configuration, repository or
-  programs, `HOME`, `XDG_CONFIG_HOME`, `BASH_ENV`, `SHELLOPTS`, `BASHOPTS`, `PATH`, `BRAIN_*`, and Claude Code's that
-  choose its settings or plugin) assigned in any form (`NAME=`, `export`, `declare`, `printf -v`, `read`, `env`,
-  `${NAME:=}`, `(( NAME = ))`, `set -a`, `$env:`, `${env:}`, the `env:` provider, `SetEnvironmentVariable`), and any
-  assignment whose name the guard cannot read, are refused; only an `echo`'s or `printf`'s quoted words and the value
-  of `-m`, `--message`, `--body` or `--title` are prose, never an `export` or `env` argument. `GIT_EDITOR=true`,
-  `GIT_TRACE`, `ENV=` and `CLAUDE_CODE_*` pass. Any
+- **The environment**: a variable of `brain.floor.watched` (git's that change its configuration, repository or
+  programs, `HOME`, `XDG_CONFIG_HOME`, `BASH_ENV`, `SHELLOPTS`, `BASHOPTS`, `PATH`, the Brain's own `BRAIN_*`, and
+  Claude Code's that choose its settings or plugin) assigned in any form (`NAME=`, `NAME[0]=`, `export`, `declare`,
+  `printf -v`, `read`, `env`, `${NAME:=}`, `(( NAME = ))`, `set -a`, `$env:`, `${env:}`, the `env:` provider,
+  `SetEnvironmentVariable`), and any assignment whose name the guard cannot read, are refused; only an `echo`'s or
+  `printf`'s quoted words and the value of `-m`, `--message`, `--body` or `--title` are prose, never an `export` or
+  `env` argument. On Windows, where a native program reads a variable's name in any case, the names are read in any
+  case (`brain_home=` is `BRAIN_HOME`), but `HOME` and `PATH` (see Limits). `GIT_EDITOR=true`, `GIT_TRACE`, `ENV=`
+  and `CLAUDE_CODE_*` pass. A command's assignment reaches that command and its children only, but a child may be a
+  nested Claude Code whose hooks inherit it, so the `BRAIN_*` names are watched as a class and a name passes only
+  where `brain.floor` says why it lifts and redirects nothing (wi-brain-floor-watched-vars):
+  - `brain.floor.READ_PATH_VARS`, in any form: `BRAIN_STRICT` (how strictly a check reads its files), and the read
+    hint's, the wait hint's and the budget reminder's switches;
+  - `brain.floor.SCRATCH_VARS`, `BRAIN_NOW` and `BRAIN_FAULT`, while the guard's own home is the default one: the
+    engine honours them on a scratch home alone (`brain.faults.scratch`), and `BRAIN_HOME` stays watched;
+  - `brain.floor.WORKTREE_VARS`, `BRAIN_CONFIG` and `BRAIN_PROJECTS`, as one literal absolute path inside a worktree
+    of the repository that holds the config.json the guard reads (the folders `git worktree list` gives, the main
+    checkout first; a prunable one is none; links resolved): `BRAIN_PROJECTS=<worktree>/projects.yaml brain audit
+    --diff`, `export BRAIN_CONFIG='<worktree>/config.json'`, `env NAME=...`, PowerShell's `$env:BRAIN_CONFIG =
+    '<worktree>\config.json'`. The value is single-quoted, double-quoted with nothing a shell expands in it, or bare
+    path characters (no backslash: bash drops it; Git Bash's `/e/x` is `E:/x`); a relative path, a variable, a
+    substitution, `~`, a network path, another form (`declare -n`, `read`, `printf -v`, `${env:...}`, `Set-Item`)
+    stays watched. And the guard never lowers its floor for `BRAIN_CONFIG` (`brain.config.anchored`): when it names
+    another file than the config.json found without it, the guard holds both floors (either on is on, an unreadable
+    one is on), keeps both files and both core plugins, and `guard.sh` reads both when it cannot run Python; so a
+    nested session started with `BRAIN_CONFIG` pointing at a worktree's config.json, which the session may write,
+    still holds the owner's floor.
+  Every other `BRAIN_*` name stays watched: `BRAIN_GUARD_ALLOW`, `BRAIN_PYTHON`, `BRAIN_HOME`, `BRAIN_PERSONAL`,
+  `BRAIN_AGENT_SESSION`, `BRAIN_IPC_TOKEN_FILE`, `BRAIN_ROOT`, a name the engine does not know yet. `guard.sh`'s
+  pre-filter starts Python for every shape of a watched assignment (a watched name given a value, a builtin that sets
+  a variable, `allexport`, `set -a`, `env:`, `Environment`), its quotes, escapes and carets dropped. Any
   write of the registry's `Environment` key is refused, whatever the value's name (`Set-ItemProperty`,
   `New-ItemProperty`, .NET's `Registry`, `reg add` or `import`). `hooks.json` runs `guard.sh` under `bash -p`, which
   reads no `BASH_ENV` nor `SHELLOPTS`.
@@ -319,8 +344,17 @@ Round 7 (the same classes, new spellings; on any machine with the floor on):
   code host's API writes of main's ref (`gh api` on `git/refs` or `merges`, short options glued or not; a GraphQL
   `updateRef`, `createRef`, `deleteRef`, `createCommitOnBranch` or `mergeBranch`) are refused.
 - **The checkout that holds config.json**: only reads run there (`brain.floor.CHECKOUT_SAFE`: reads, `fetch`,
-  `push` judged on its own, `worktree`, `branch`, `tag`; `git config` and `git remote` that only read; `git pull
-  --ff-only` with no remote nor refspec). A removal or a move of it, or of a folder that holds it or the guard's
+  `push` judged on its own, `worktree`, `branch`, `tag`; `git config` and `git remote` that only read), and a pull of
+  its upstream (`brain.floorguard._pull`): `git pull`, `git pull --ff-only`, `git pull --ff-only origin main`, with
+  the options of `brain.floorguard.PULL_OPTS` only (`--ff-only`, `--ff`, `--no-ff`, `--rebase`, `--no-rebase`,
+  `--autostash`, `-q`, `-v`, `--stat`...; no strategy, interactive rebase, submodules or unrelated histories). The
+  pull is judged by what it brings, read from git's configuration when it is judged, whoever set it (`git branch
+  -u`, `git push -u` from a worktree that shares the configuration): a branch checked out whose upstream is `main` or
+  `master` of a remote whose URL is no local path (`file:`, a folder, a drive), and a remote and branch named by the
+  command, if any, that are that upstream. So a pull there brings only what was merged into main by a pull request.
+  In any worktree of that repository (the same git common folder), a `git remote` that writes (`add`, `set-url`,
+  `rename`, `remove`...) is refused: the worktrees share the remotes the checkout pulls from. A commit there stays
+  refused. A removal or a move of it, or of a folder that holds it or the guard's
   interpreter (`rm`, `mv`, `Remove-Item`, `Move-Item`, `Rename-Item`, `robocopy /MIR` or `/PURGE` onto it), is
   refused; a mover's target (`-t`, `-Destination`) is no source, and a write into such a folder (`cp x ~/`,
   `tar -C ~`) is no removal and passes.
@@ -442,6 +476,14 @@ Round 7 (the same classes, new spellings; on any machine with the floor on):
   from its parent (the hook then fails, a non-blocking error). A repo's `.git/hooks` are code the guard does not read
   either: a write into them is refused (class 2 above), but one made through code the guard does not read runs at the
   next `git commit`; the operating system's lock on these files (a later wave) is the answer to that class.
+- **The environment's limits**: on Windows `HOME` and `PATH` are read in their case alone (`path=$(pwd)` and `read
+  -r home` are ordinary bash; a lowercase `home=x cmd` beside the exported `HOME` gives a native program both, which
+  one it reads is its own). A `BRAIN_CONFIG` or `BRAIN_PROJECTS` that passes may name any file inside a worktree of
+  the repository, one the session wrote included: the guard holds the floor of the config.json found without
+  `BRAIN_CONFIG` (above), and the registry is no part of the floor; the other guards a nested session runs read
+  that worktree's settings, as a session opened in that worktree would. The upstream a pull of the checkout reads
+  is the owner's to keep: a remote URL or an upstream set before the floor was on, or by code the guard does not
+  read, is not undone.
 - Also: a guard the hook never reaches (the core plugin removed from outside a session, on a machine that is not
   locked); a clone, which brings the cloned repo's own project settings, as any repo the owner opens does.
 

@@ -10,8 +10,10 @@ past a wrapper, a launcher or a nested shell (brain.guards.actions); a wrapper w
 - :func:`check_files` (check ``config``): what would lift or stop the floor: a write, a copy, an extraction, a removal
   or a move of the config.json the guard reads, of its pointer, of git's configuration files, of the guard's
   interpreter (<BRAIN_HOME>/venv) or of the plugin that runs the guard (~/.claude/plugins, $CLAUDE_PLUGIN_ROOT); a
-  git command other than a read in the checkout that holds config.json; a variable of brain.floor.WATCHED_VARS
-  assigned in any form, or one of FLOOR_ENV set for later sessions, or a name the guard cannot read; any write to the
+  git command other than a read or a pull of its upstream in the checkout that holds config.json, a git remote that
+  writes in any worktree of its repository; a variable of brain.floor.watched assigned in any form (but a
+  brain.floor.WORKTREE_VARS path inside a worktree of that repository), or one of FLOOR_ENV set for later sessions,
+  or a name the guard cannot read; any write to the
   registry's Environment key; ``claude plugin disable`` or ``uninstall`` of the core plugin; Claude Code's settings
   or a profile left (the edit applied to the file) setting what stops the guards.
 
@@ -95,14 +97,15 @@ class Kept:
     that runs the guard (~/.claude/plugins, $CLAUDE_PLUGIN_ROOT), and the folders of the files (the checkout,
     BRAIN_HOME)."""
 
-    def __init__(self, cfg_file):
+    def __init__(self, cfg_file, anchor_file=None):
         home = paths.brain_home()
-        self.files = [g._real(f) for f in (cfg_file, home / paths.PERSONAL) if f]
+        self.configs = [g._real(f) for f in (cfg_file, anchor_file) if f]   # the anchor: brain.config.anchored
+        self.files = [*self.configs, g._real(home / paths.PERSONAL)]
         self.runtimes = _interpreters(home)
         self.venv = g._real(home / "venv")
         self.plugins = [g._real(p) for p in (Path.home() / ".claude" / "plugins", os.environ.get("CLAUDE_PLUGIN_ROOT"))
                         if p]
-        self.folders = sorted({os.path.dirname(f) for f in self.files[:2]})
+        self.folders = sorted({os.path.dirname(f) for f in self.files})
         self.paths = [*self.files, *self.runtimes, *self.plugins]
 
     def inside(self, real: str) -> bool:
@@ -122,12 +125,14 @@ class Kept:
 
 # --- check config: what would lift or stop the floor ---------------------------------------------------------------
 
-def check_files(tool: str, inp: dict, cmds, cwd: str, fl: dict, cfg_file, command: str = "") -> str | None:
+def check_files(tool: str, inp: dict, cmds, cwd: str, fl: dict, cfg_file, command: str = "",
+                anchor_file=None) -> str | None:
     """While the floor is on, what would lift it or stop the guard for this session or the next (module docstring),
-    else None. A worktree's own config.json is another file: a pull request still changes it."""
+    else None. A worktree's own config.json is another file: a pull request still changes it. ``anchor_file``: the
+    config.json found without $BRAIN_CONFIG when it names another (brain.config.anchored), kept as well."""
     if not on(fl) or not (tool in g.EDIT_TOOLS or cmds or command):   # export X=1 alone parses to no command
         return None
-    kept = Kept(cfg_file)
+    kept = Kept(cfg_file, anchor_file)
     what = _edit(tool, inp, cwd, kept) if tool in g.EDIT_TOOLS else \
         _shell(cmds, "ps" if tool == "PowerShell" else "bash", command, kept)
     return (f"{what}; the locked floor (config.json floor) is {config.owner_of()}'s to change, in their own terminal "
@@ -163,8 +168,15 @@ def _edit(tool: str, inp: dict, cwd: str, kept: Kept) -> str | None:
 
 def _plugin_off(text: str) -> bool:
     """Whether settings text turns the core plugin (the one that carries guard.sh) off in enabledPlugins."""
-    plugin = config.claude(config.load())["plugin"]
-    return bool(re.search(rf"{re.escape(plugin)}(?:@[^\s:,]*)?\s*:\s*false", text))
+    return any(re.search(rf"{re.escape(c['plugin'])}(?:@[^\s:,]*)?\s*:\s*false", text) for c in _cores())
+
+
+def _cores() -> list[dict]:
+    """The core plugin's and marketplace's names (config.claude) of the config.json the guard reads and of its
+    anchor (brain.config.anchored): either one turned off stops the guard."""
+    cfg = config.load()
+    anchor = config.anchored(cfg)
+    return [config.claude(c) for c in (cfg, anchor) if c is not None]
 
 
 def _shell(cmds, sub: str, command: str, kept: Kept) -> str | None:
@@ -174,7 +186,7 @@ def _shell(cmds, sub: str, command: str, kept: Kept) -> str | None:
     dot = "dotglob" if floorpwsh.DOTGLOB.search(command) else "bash"   # bash's dot rule off (review round 14 #6)
     shells = [dot if s in ("bash", "ssh") else s for _, _, s, _ in full]
     plain = floor.unspelled(_code(command))
-    checks = (lambda: _opaque(cmds, acts, command), lambda: _env(plain), lambda: _registry(plain),
+    checks = (lambda: _opaque(cmds, acts, command), lambda: _env(command, sub, kept), lambda: _registry(plain),
               lambda: _removals(acts, kept), lambda: _acl(acts, kept), lambda: _writes(cmds, sub, kept),
               lambda: _copies(acts, kept, shells), lambda: floorpwsh.extractions(acts, kept, shells),
               lambda: floorpwsh.archived_settings(acts, SETTINGS), lambda: floorpwsh.links(full, cmds, sub, command, kept),
@@ -282,11 +294,62 @@ def _start_unread(prog: str, args: list[str]) -> str:
     return ""
 
 
-def _env(plain: str) -> str | None:
-    """A variable of brain.floor.WATCHED_VARS assigned in any form, or an assignment whose name the guard cannot read
-    (on the call's unspelled text)."""
-    m = floor.ENV_ASSIGN.search(plain) or floor.ENV_DYNAMIC.search(plain)
+def _env(command: str, sub: str, kept: Kept) -> str | None:
+    """A variable of brain.floor.watched assigned in any form, or an assignment whose name the guard cannot read (on
+    the call's unspelled text, its prose out), once the assignments of brain.floor.WORKTREE_VARS that pass are taken
+    out (:func:`_read_paths`)."""
+    plain = floor.unspelled(_read_paths(_code(command), sub, kept))
+    m = floor.assignments().search(plain) or floor.ENV_DYNAMIC.search(plain)
     return f"{m.group(0).strip()[:60]!r} refused: a variable the floor watches (or one it cannot read) set" if m else None
+
+
+def _read_paths(code: str, sub: str, kept: Kept) -> str:
+    """``code`` with each assignment of brain.floor.WORKTREE_ASSIGN whose value is one literal absolute path inside a
+    worktree of the repository that holds the config.json the guard reads (:func:`_worktrees`) made a space: a
+    read-path use (``BRAIN_PROJECTS=<worktree>/projects.yaml brain audit``). PowerShell's form counts in its own tool
+    only; a bash value reads no backslash outside double quotes (bash drops it)."""
+    trees: list[str] | None = None
+
+    def keep(m: re.Match) -> str:
+        nonlocal trees
+        if m.group("psname") and sub != "ps":
+            return m.group(0)
+        value = m.group("value") or m.group("psvalue") or ""
+        if value[:1] in ("'", '"'):
+            value = value[1:-1]
+        if trees is None:
+            trees = _worktrees(kept)
+        return " " if _inside(value, trees) else m.group(0)
+    return floor.WORKTREE_ASSIGN.sub(keep, code)
+
+
+def _worktrees(kept: Kept) -> list[str]:
+    """The folders of every worktree (git worktree list: the main checkout first) of the repositories that hold the
+    config.json the guard reads and its anchor, as the file system resolves them; a worktree git says is prunable, a
+    bare repository or a folder that is gone is none."""
+    out: list[str] = []
+    for root in sorted({r for r in (_repo_of(os.path.dirname(f)) for f in kept.configs) if r}):
+        for block in g._git_out(root, "worktree", "list", "--porcelain").replace("\r", "").split("\n\n"):
+            lines = block.splitlines()
+            path = next((ln[len("worktree "):] for ln in lines if ln.startswith("worktree ")), "")
+            if path and not any(ln == "bare" or ln.startswith("prunable") for ln in lines) and os.path.isdir(path):
+                out.append(g._real(path))
+    return out
+
+
+def _inside(value: str, trees: list[str]) -> bool:
+    """Whether ``value`` names an absolute local path (a drive's on Windows, where Git Bash's /e/x is E:/x) inside one
+    of ``trees``, links resolved; a network or device path never is."""
+    if os.name == "nt":
+        value = re.sub(r"^/([A-Za-z])(?=/|$)", lambda m: m.group(1) + ":", value)
+        if not re.match(r"^[A-Za-z]:[\\/]", value):
+            return False
+    elif not value.startswith("/"):
+        return False
+    if floor.UNC.match(value):
+        return False
+    real = g._real(value)
+    return any(_under(real, t) for t in trees)
 
 
 def _registry(plain: str) -> str | None:
@@ -618,24 +681,80 @@ def _repo_of(folder: str) -> str:
 
 
 def _checkout(acts, kept: Kept) -> str | None:
-    """A git command in (or pointed at, -C) the checkout that holds config.json other than a read: CHECKOUT_SAFE,
-    git config and git remote that only read, git pull --ff-only with no remote nor refspec."""
+    """A git command in (or pointed at, -C) the checkout that holds config.json other than a read (CHECKOUT_SAFE, git
+    config and git remote that only read) or a pull of its upstream (:func:`_pull`); and, in any worktree of its
+    repository, which shares its remotes, a git remote that writes one (a pull there would then fetch elsewhere)."""
     roots = {r for r in (_repo_of(f) for f in kept.folders) if r}
     if not roots:
         return None
+    shared: set[str] | None = None
     for _, folder, sub, args in _git(acts):
-        if _reads(sub, args) or sub == "!":
+        if sub == "!":
             continue
-        if _repo_of(folder) in roots:
+        if sub == "remote" and not _reads(sub, args):
+            shared = shared if shared is not None else {_common_dir(r) for r in roots} - {""}
+            if _common_dir(folder) in shared:
+                pos = [a for a in args if not a.startswith("-")]
+                return (f"git remote {(pos or ['?'])[0]} in {folder} refused: its repository holds config.json, whose "
+                        "checkout pulls from these remotes")
+        if _repo_of(folder) not in roots:
+            continue
+        if sub == "pull":
+            why = _pull(folder, args)
+            if why:
+                return f"git pull in {folder} refused: {why}"
+            continue
+        if not _reads(sub, args):
             return f"git {sub} in {folder} refused: only reads change nothing in the checkout that holds config.json"
     return None
 
 
-def _reads(sub: str, args: list[str]) -> bool:
-    """Whether a git command leaves the checkout's files and settings alone (_checkout)."""
+def _common_dir(folder: str) -> str:
+    """The git common folder of the repository ``folder`` is in (shared by all its worktrees), as _real gives it;
+    '' for none."""
+    out = g._git_out(folder, "rev-parse", "--path-format=absolute", "--git-common-dir").strip()
+    return g._real(out) if out else ""
+
+
+# The options a pull in the checkout that holds config.json may take: what merges or rebases its upstream, quietly or
+# not; any other (a strategy, an interactive rebase, submodules, unrelated histories, a prefix git would take) is
+# refused.
+PULL_OPTS = {"--ff-only", "--ff", "--no-ff", "--rebase", "--rebase=true", "--rebase=false", "--rebase=merges",
+             "--no-rebase", "-r", "-q", "--quiet", "-v", "--verbose", "--stat", "-n", "--no-stat", "--autostash",
+             "--no-autostash", "--progress", "--no-progress", "--no-edit", "--prune", "-p", "--tags", "--no-tags",
+             "--verify-signatures", "--no-verify-signatures"}
+LOCAL_URL = re.compile(r"(?i)^(?:file:|[./~\\]|[A-Za-z]:(?:[\\/]|$))")
+
+
+def _pull(folder: str, args: list[str]) -> str:
+    """Why a git pull in the checkout that holds config.json may bring what the owner did not merge, '' when it
+    cannot: it brings only its branch's upstream, read from git's configuration when it is judged (whoever set it):
+    a branch checked out, whose upstream is main or master of a remote that is no local path, named by the command
+    or not; its options those of PULL_OPTS."""
+    odd = next((a for a in args if a.startswith("-") and a not in PULL_OPTS), "")
+    if odd:
+        return f"its option {odd} (a pull there takes only {', '.join(sorted(PULL_OPTS))})"
+    conf = floor.git_config(g._git_out(folder, "config", "-z", "--list"))
+    current = g._git_out(folder, "symbolic-ref", "-q", "--short", "HEAD").strip()
+    if not current:
+        return "no branch is checked out, so no upstream says what it brings"
+    remote, merge = floor.last(conf, f"branch.{current}.remote"), floor.last(conf, f"branch.{current}.merge")
+    branch = floor.HEADS.sub("", merge)
+    if not remote or remote == "." or branch not in floor.BRANCHES:
+        return (f"{current}'s upstream is {remote or 'none'}/{branch or 'none'}, not main or master of a remote: a "
+                "pull there brings only what was merged by a pull request")
+    url = floor.last(conf, f"remote.{remote}.url")
+    if not url or LOCAL_URL.match(url):
+        return f"the remote {remote} is {url or 'without a URL'}, a local path a session can write"
     pos = [a for a in args if not a.startswith("-")]
-    if sub == "pull":
-        return "--ff-only" in args and not pos
+    if pos and (pos[0] != remote or any(floor.HEADS.sub("", p) != branch for p in pos[1:])):
+        return f"it names {' '.join(pos)}, not {current}'s upstream {remote} {branch}"
+    return ""
+
+
+def _reads(sub: str, args: list[str]) -> bool:
+    """Whether a git command leaves the checkout's files and settings alone (_checkout; a pull is judged by _pull)."""
+    pos = [a for a in args if not a.startswith("-")]
     if sub == "config":
         return bool({"--get", "--get-all", "--get-regexp", "--list", "-l"} & set(args)) or pos[:1] in (["get"], ["list"]) \
             or (len(pos) == 1 and not set(args) & {"--add", "--replace-all", "--unset", "--unset-all"})
@@ -661,7 +780,7 @@ def _named(acts, command: str) -> str | None:
 def _plugin_cmd(acts) -> str | None:
     """claude plugin disable, uninstall or marketplace remove of the core plugin or its marketplace, or of a name the
     guard cannot read."""
-    cfg = config.claude(config.load())
+    cores = _cores()
     for words, _ in acts:
         if g._prog(words[0]) != "claude":
             continue
@@ -672,7 +791,7 @@ def _plugin_cmd(acts) -> str | None:
         if not ({"plugin", "plugins"} & set(low) and {"disable", "uninstall", "remove", "rm"} & set(low)):
             continue
         names = " ".join(low)
-        if cfg["plugin"].lower() in names or cfg["marketplace"].lower() in names or "$" in names:
+        if any(c["plugin"].lower() in names or c["marketplace"].lower() in names for c in cores) or "$" in names:
             return f"claude {' '.join(words[1:4])} refused: it turns off the plugin that runs the guard"
     return None
 

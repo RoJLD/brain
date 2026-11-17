@@ -3890,8 +3890,9 @@ def refusals(payload: dict, strict: bool = False):
         return
     try:
         cfg = config.load()   # read once per call: the floor's settings and the file that sets them
+        anchor = config.anchored(cfg)   # the config.json found without BRAIN_CONFIG, when it names another
         lock = floor.read_lock()   # the machine's lock (brain floor lock), out of a session's reach once applied
-        fl = floor.effective(cfg, lock)   # config.json's floor and the lock file's: either says on
+        fl = floor.effective(cfg, lock, anchor)   # config.json's floor, its anchor's and the lock file's: any says on
         unlocked = floor.unlocked(cfg, fl, lock)   # the paths the lock holds checked once per call
     except Exception as exc:   # the floor cannot be known (brain_home refused, say): the guard fails closed
         _log("floor", exc)
@@ -3917,7 +3918,8 @@ def refusals(payload: dict, strict: bool = False):
         hit = check_owner(tool, inp, [], cwd)
         if hit and (not only or hit[0] == "override"):
             yield "owner", *hit
-        reason = floorguard.check_files(tool, inp, [], cwd, fl, cfg.file) if floorguard else None
+        reason = floorguard.check_files(tool, inp, [], cwd, fl, cfg.file, anchor_file=anchor and anchor.file) \
+            if floorguard else None
         if reason:
             yield "floor", "config", reason, None
         yield from _token(lambda: tokenguard.check(tool, inp, cwd, strict=mcp), strict)   # whatever the floor
@@ -3933,7 +3935,8 @@ def refusals(payload: dict, strict: bool = False):
     powershell = tool == "PowerShell"
     cmds = calls(command, cwd, powershell)
     shell = "ps" if powershell else "bash"
-    floor_checks = (("floor", "config", lambda: floorguard.check_files(tool, inp, cmds, cwd, fl, cfg.file, command)),
+    floor_checks = (("floor", "config", lambda: floorguard.check_files(tool, inp, cmds, cwd, fl, cfg.file, command,
+                                                                        anchor and anchor.file)),
                     ("floor", None, lambda: floorguard.check_floor(cmds, fl, command, shell))) if floorguard else ()
     checks = ((("owner", "override", lambda: check_override(cmds, powershell, command)),
                ("owner", tokenguard.CHECK, lambda: tokenguard.check(tool, inp, cwd, cmds, command, powershell, mcp)),
@@ -4013,8 +4016,9 @@ def check_override(cmds, powershell: bool = False, command: str = ""):
 
 
 def floor_settings(cfg) -> dict:
-    """The floor the guard holds (brain.floor.effective): config.json's and the machine's lock file's."""
-    return floor.effective(cfg, floor.read_lock())
+    """The floor the guard holds (brain.floor.effective): config.json's, its anchor's (brain.config.anchored) and the
+    machine's lock file's."""
+    return floor.effective(cfg, floor.read_lock(), config.anchored(cfg))
 
 
 def _floor_state() -> str:

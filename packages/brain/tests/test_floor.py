@@ -397,6 +397,8 @@ def test_the_checkout_that_holds_config_json_is_not_rewritten(repo, tmp_path, mo
         assert "floor" in (bash(repo, command) or ""), command
     assert "git's configuration" in edit(repo, repo / ".git" / "config", "[alias]\n  ship = push\n")
     assert "git's configuration" in bash(repo, "echo '[alias]' >> .git/config")
+    run_git(repo, "config", "branch.main.remote", "origin")   # a pull brings its upstream only (_pull)
+    run_git(repo, "config", "branch.main.merge", "refs/heads/main")
     for command in ("git status", "git pull --ff-only", "git log -1"):
         assert bash(repo, command) is None, command
 
@@ -440,7 +442,7 @@ def test_alias_chains_and_shell_aliases(repo, tmp_path, monkeypatch):
 
 @pytest.mark.parametrize("command", [
     "git sparse-checkout set --no-cone /nothing", "git bisect start", "git stash list",
-    "git filter-branch --tree-filter 'rm -f config.json' HEAD", "git commit -m x", "git pull origin feat/x",
+    "git filter-branch --tree-filter 'rm -f config.json' HEAD", "git commit -m x",
 ])
 def test_only_reads_run_in_the_checkout_that_holds_config_json(repo, monkeypatch, command):
     _floor_in(repo, monkeypatch, refuse=True)
@@ -629,6 +631,9 @@ def test_a_copy_or_an_extraction_is_judged_on_what_it_writes(repo, tmp_path, mon
 
 def test_the_config_checkout_pulls_only_its_own_branch(repo, monkeypatch):
     _floor_in(repo, monkeypatch, refuse=True)
+    run_git(repo, "config", "branch.main.remote", "origin")
+    run_git(repo, "config", "branch.main.merge", "refs/heads/main")
+    assert "it names origin feat/x, not main's upstream" in bash(repo, "git pull origin feat/x")
     for command in ("git pull --ff-only origin feat/off", "git remote set-url origin https://code.example/evil.git",
                     "git config branch.main.merge refs/heads/feat/off", "git remote add other https://code.example/o"):
         assert "floor" in (bash(repo, command) or ""), command
