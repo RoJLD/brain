@@ -90,7 +90,7 @@ the owner's password), a variable the call sets to several words (`x="install
 --apply"; brain schedule $x`, PowerShell's `$a = 'install', '--apply'`), `${x}` (the guards' reader splits a brace),
 PowerShell's parenthesised arguments (`brain schedule install ('--apply')`), an option the guard takes for one with a
 value (`brain usage --json $x`), the arguments `xargs`, `find -exec` or `parallel` add from their input, and code fed
-by a heredoc or stdin (`python - <<EOF`).
+by a heredoc or stdin (`python - <<EOF`). Inline code is matched by its words, a heuristic: a flag's prefix (`--ap`) or a positional `True` in a call is not read, and a code that names a gesture's words only to read it (`help(usage.allow)`) is refused under the key; the command's own check holds against the first two.
 
 **Strict** (config.json `guards.owner_strict: true`, off by default): the refusals 0.5.1 adds to what the guard let
 through before. At the guard: `brain vault reseal --apply`, and the gestures whose commands refuse themselves in an
