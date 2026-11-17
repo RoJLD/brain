@@ -42,9 +42,14 @@ def register(sub, ctx) -> None:
 
 def early(args) -> int:
     out = Path(args.out).expanduser() if args.out else denyrender.default_out()
+    extend = str(Path(args.extend).expanduser()) if args.extend and args.extend.startswith("~") else args.extend
     try:
-        p = denyrender.plan(config.load(root_of(args)), out, args.extend, args.format)
-        done = denyrender.apply(p) if args.apply else ""
+        p = denyrender.plan(config.load(root_of(args)), out, extend, args.format)
+    except (denyrender.RenderError, OSError) as exc:
+        print(f"brain public deny render: {exc}", file=sys.stderr)
+        return 2
+    try:
+        done = denyrender.apply(p) if args.apply and not p["refused"] else ""
     except (denyrender.RenderError, OSError) as exc:
         print(f"brain public deny render: {exc}", file=sys.stderr)
         return 2

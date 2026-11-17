@@ -4,7 +4,7 @@ scope tree's (public.deny_from_tree), as one source for a repo's private-name sc
 
 ``brain public deny render --format gitleaks`` prints the plan (the file, its rules and terms by category, whether it
 would change); ``--apply`` writes it, atomically (a temporary file, then a rename), only when it changed, with mode 600
-on POSIX (the owner's profile folder on Windows), and only outside any git repository: the file names the private
+on POSIX (on Windows the folder's own ACL: the owner's profile), and only outside any git repository: the file names the private
 terms, so it never sits in a checkout. Its default place is ``$XDG_CONFIG_HOME/brain/gitleaks-private-patterns.toml``
 (``~/.config/brain/...``); ``--out`` names another.
 
@@ -67,6 +67,18 @@ def _slashes(body: str) -> str:
     return body.replace("/", "[/\\\\]")
 
 
+WORD = __import__("re").compile(r"[A-Za-z0-9_]")
+
+
+def bounded(term: str) -> str:
+    """The term's regexp with zero-width edges, as term_regex's lookarounds (no word character beside it): ``\\b``
+    where its end is a word character, ``\\B`` where it is not (RE2's are ASCII, as brain.boundary's class); a match
+    consumes no neighbour, so a term right after another is found too."""
+    t = term.replace("\\", "/")
+    edge = lambda c: "\\b" if WORD.match(c) else "\\B"
+    return f"{edge(t[0])}{term_re2(term)}{edge(t[-1])}" if t else ""
+
+
 def keyword(term: str) -> str:
     """The term's longest part between separators and slashes, lower case: in every spelling the term matches."""
     parts = [p for p in re.split(r"[-_ /\\]+", term) if p]
@@ -122,13 +134,15 @@ def gitleaks(terms: dict[str, list[str]], extend: str | None = None) -> str:
         uniq = sorted({t for t in terms[cat] if t}, key=lambda t: (-len(t), t.lower()))
         if not uniq:
             continue
-        body = "|".join(term_re2(t) for t in uniq)
-        regex = f"(?i)(?:^|[^A-Za-z0-9_])({body})(?:[^A-Za-z0-9_]|$)"
+        body = "|".join(bounded(t) for t in uniq)
+        regex = f"(?i)({body})"
         kws = sorted({keyword(t) for t in uniq})
+        if not all(k.isascii() for k in kws):   # Go lower-cases otherwise than Python: no keyword, the rule always runs
+            kws = []
         lines += ["", "[[rules]]", f"id = {toml_str(RULE_PREFIX + cat)}",
                   f"description = {toml_str(f'a private name of config.json public.deny {cat}')}",
                   f"regex = {toml_str(regex)}", "secretGroup = 1",
-                  "keywords = [" + ", ".join(toml_str(k) for k in kws) + "]",
+                  *(["keywords = [" + ", ".join(toml_str(k) for k in kws) + "]"] if kws else []),
                   f"tags = [{toml_str('brain')}, {toml_str('private-name')}, {toml_str(cat)}]"]
     return "\n".join(lines) + "\n"
 
@@ -164,6 +178,9 @@ def apply(p: dict) -> str:
         raise RenderError(p["refused"])
     out = Path(p["out"])
     if p["state"] == "unchanged":
+        if os.name != "nt" and stat.S_IMODE(out.stat().st_mode) != 0o600:
+            os.chmod(out, stat.S_IRUSR | stat.S_IWUSR)
+            return "unchanged, its mode set to 600"
         return "unchanged"
     out.parent.mkdir(parents=True, exist_ok=True)
     fd, tmp = tempfile.mkstemp(prefix=".brain-deny-", dir=str(out.parent))

@@ -48,8 +48,8 @@ def _rules(text: str) -> dict[str, str]:
 
 
 def _python(regex: str) -> re.Pattern:
-    """Go's (?i) flag and syntax, which this subset shares with Python's re."""
-    return re.compile(regex)
+    """Go's (?i) flag and syntax, which this subset shares with Python's re (ASCII: RE2's \\b is)."""
+    return re.compile(regex, re.ASCII)
 
 
 def test_every_term_matches_as_brain_public_matches(ada):
@@ -62,17 +62,37 @@ def test_every_term_matches_as_brain_public_matches(ada):
         got = set()
         for cat, regex in rules.items():
             for t in DENY[cat.removeprefix("brain-private-")]:
-                one = denyrender.term_re2(t)
-                if re.search(rf"(?i)(?:^|[^A-Za-z0-9_])({one})(?:[^A-Za-z0-9_]|$)", line) and _python(regex).search(line):
+                if _python(f"(?i){denyrender.bounded(t)}").search(line):
                     got.add(t)
+            assert bool(_python(regex).search(line)) == any(t in want for t in DENY[cat.removeprefix(
+                "brain-private-")]), (cat, line)
         assert got == want, line
+    for cat, ts in DENY.items():   # each term alone, by its own rule (a term left out of its rule would fail here)
+        for t in ts:
+            assert _python(rules[f"brain-private-{cat}"]).search(f"x {t} y"), t
+
+
+def test_adjacent_terms_are_all_found(ada):
+    rules = _rules(denyrender.gitleaks({"people": ["ada", "bob"]}))
+    rx = _python(rules["brain-private-people"])
+    assert [m.group(1) for m in rx.finditer("Ada Bob")] == ["Ada", "Bob"]
+    assert len(rx.findall("ada ada ada")) == 3
+
+
+def test_a_term_with_a_non_ascii_part_has_no_keyword():
+    text = denyrender.gitleaks({"people": ["İlker"], "hosts": ["box-one"]})
+    people = text[text.index('id = "brain-private-people"'):]
+    assert "keywords" not in people.split("[[rules]]")[0]
+    assert 'keywords = ["box"]' in text or 'keywords = ["one"]' in text
 
 
 def test_the_regexes_are_go_regexp(ada):
-    """RE2 has no lookaround and refuses an escaped letter or space: the rendered regexes use neither."""
+    """RE2 has no lookaround and refuses an escaped letter or space but its own classes (\\b, \\B): the rendered
+    regexes use neither."""
     for regex in _rules(denyrender.gitleaks(denyrender.by_category(ada))).values():
         assert not re.search(r"\(\?<?[=!]", regex)
-        assert not re.search(r"\\[A-Za-z0-9 ]", regex.replace("\\\\", ""))
+        bare = regex.replace("\\\\", "").replace("\\b", "").replace("\\B", "")
+        assert not re.search(r"\\[A-Za-z0-9 ]", bare)
     assert denyrender.re2_escape("a.b+c (d) [e] {f} ^$|*?\\") == "a\\.b\\+c \\(d\\) \\[e\\] \\{f\\} \\^\\$\\|\\*\\?\\\\"
     assert denyrender.re2_escape("plain-name_1 %$#") == "plain-name_1 %\\$#"
 
