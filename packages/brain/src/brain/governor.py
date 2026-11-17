@@ -569,7 +569,8 @@ def _unlink(f: Path) -> None:
 
 def lifted_checks(override: dict | None) -> tuple[str, ...]:
     """The checks an override lifts: its ``checks`` (the liftable ones, critical with warn); an override written
-    before 0.5.1 has no ``checks`` key and lifts every liftable check, as it did then; any other value lifts none."""
+    before 0.5.1 has no ``checks`` key and lifts every liftable check (a stale reading is none: that override lifted
+    it under 0.5.0, and no longer does); any other value lifts none."""
     if not override:
         return ()
     if "checks" not in override:

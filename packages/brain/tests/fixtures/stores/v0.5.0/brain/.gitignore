@@ -1,0 +1,4 @@
+# machine-local state lives in <BRAIN_HOME> (~/.brain), never here
+__pycache__/
+.venv/
+*.local.json

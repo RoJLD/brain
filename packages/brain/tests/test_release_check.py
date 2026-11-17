@@ -6,6 +6,7 @@ import os
 import shutil
 import subprocess
 import sys
+import types
 from pathlib import Path
 
 import conftest
@@ -820,9 +821,91 @@ def test_a_version_pr_whose_wave_holds_an_open_item_fails_with_store(repo, tmp_p
     rc = release_check.main(["--repo", str(repo), "--store", str(store)])
     text = "".join(capsys.readouterr())
     assert rc == 0, text
-    assert "the wave 0.2.6 in" in text and "closed or none" in text
+    assert "the wave 0.2.6 in" in text and ": wave-0.2.6 (0.2.6), closed" in text   # the wave it checked, named
     assert "(read by brain " in text   # which engine read the store: a wave's label depends on it
     assert release_check.main(["--repo", str(repo), "--store", str(tmp_path / "nowhere")]) == 2
+
+
+SHIPPED_STORE = {
+    "schema.yaml": WAVE_STORE["schema.yaml"],
+    "nodes/work.yaml": (
+        "- {id: wave-0.2.5, type: Milestone, status: reached, title: P, props: {kind: wave, release: 0.2.5}}\n"
+        "- {id: wave-0.2.6, type: Milestone, status: pending, title: W, props: {kind: wave, release: 0.2.6}}\n"
+        "- {id: wi-open, type: WorkItem, status: todo, title: Open}\n"),
+    "edges/work.yaml": "- {from: wi-open, to: wave-0.2.6, type: part_of}\n",
+}
+
+
+def test_a_wave_that_ships_under_another_number_is_found_and_checked(repo, tmp_path, capsys, monkeypatch):
+    """wi-brain-release-check-shipped-wave: wave 0.2.6 ships as 0.3.0 (a minor). Its version PR finds it (the jump
+    while it is pending, its props.shipped_as once reached) and checks it. A wave reached by hand records no
+    shipped_as: the last tag (v0.2.5) tells it, wave 0.2.5 shipped as itself (also how a wave the 0.5.0 engine closed
+    reads) and wave 0.2.6, reached after it, ships as 0.3.0 and is the one checked. When the tag cannot tell (two
+    waves reached since it), the version PR is refused instead of passing unread, until what it shipped as is
+    recorded."""
+    store = tmp_path / "plan"
+    for rel, text in SHIPPED_STORE.items():
+        write(store, rel, text)
+    versions(repo, "0.3.0")
+    changelogs(repo, "0.3.0")
+    commit(repo)
+
+    def check() -> tuple[int, str]:
+        rc = release_check.main(["--repo", str(repo), "--store", str(store)])
+        out = capsys.readouterr()
+        return rc, out.out + out.err
+
+    rc, text = check()   # pending, an open item: the jump finds wave 0.2.6 and the closure refuses it
+    assert rc == 1 and "FAILED: wave 0.3.0 (wave-0.2.6) holds 1 open item(s)" in text, text
+    assert "wave-0.2.6 (0.2.6, closed as 0.3.0, a jump), refused" in text
+    by_hand = SHIPPED_STORE["nodes/work.yaml"].replace("status: pending, title: W", "status: reached, title: W")
+    write(store, "nodes/work.yaml", by_hand)
+    rc, text = check()   # closed by hand, an item left open: the tag tells it ships as 0.3.0, so it is checked
+    assert rc == 1 and "FAILED: wave 0.3.0 (wave-0.2.6) holds 1 open item(s)" in text, text
+    nodes = SHIPPED_STORE["nodes/work.yaml"].replace("status: todo", "status: done")
+    write(store, "nodes/work.yaml", nodes.replace("status: pending, title: W", "status: reached, title: W"))
+    rc, text = check()
+    assert rc == 0, text
+    assert "wave-0.2.6 (0.2.6, closed as 0.3.0, reached after the last tag v0.2.5), closed" in text
+    two = (nodes.replace("status: pending, title: W", "status: reached, title: W")
+           + "- {id: wave-0.2.7, type: Milestone, status: reached, title: N, props: {kind: wave, release: 0.2.7}}\n")
+    write(store, "nodes/work.yaml", two)
+    rc, text = check()   # two waves reached since the tag: which one ships as 0.3.0 cannot be told
+    assert rc == 1, text
+    assert ("FAILED: release 0.3.0 names no wave, but wave-0.2.7 (0.2.7) before it was reached without a well-formed "
+            "props.shipped_as") in text
+    assert "brain item set wave-0.2.7 props.shipped_as=0.3.0 (or =0.2.7 if it shipped as 0.2.7)" in text
+    assert "no wave of that release, refused" in text
+    legacy = SHIPPED_STORE["nodes/work.yaml"].replace("release: 0.2.6}", "release: 0.3.0}")
+    write(store, "nodes/work.yaml", legacy)
+    versions(repo, "0.2.6")   # a patch of a wave the 0.5.0 engine closed (no shipped_as), the next wave pinned
+    changelogs(repo, "0.2.6")
+    commit(repo)
+    rc, text = check()
+    assert rc == 0, text
+    assert "no wave of that release, none to close" in text
+    versions(repo, "0.3.0")
+    changelogs(repo, "0.3.0")
+    commit(repo)
+    write(store, "nodes/work.yaml", nodes.replace("status: pending, title: W", "status: reached, title: W"))
+    from brain import waves
+    old = types.SimpleNamespace(load=waves.load, closure_problems=waves.closure_problems, __file__=waves.__file__)
+    with monkeypatch.context() as mp:
+        mp.setattr(release_check, "_waves", lambda repo: old)   # an installed engine older than this checkout
+        rc, text = check()   # it names no wave and reads no tag: said so, not "no wave of that release"
+    assert "(this engine names no wave)" in text and "no wave of that release" not in text, text
+    write(store, "nodes/work.yaml", nodes.replace("status: pending, title: W, props: {kind: wave, release: 0.2.6}",
+                                                  "status: reached, title: W, props: {kind: wave, release: 0.2.6, "
+                                                  "shipped_as: 0.3.0}"))
+    rc, text = check()
+    assert rc == 0, text
+    assert "wave-0.2.6 (0.2.6, closed as 0.3.0, its props.shipped_as), closed" in text   # the wave checked, named
+    write(store, "nodes/work.yaml", nodes.replace("status: pending, title: W, props: {kind: wave, release: 0.2.6}",
+                                                  "status: reached, title: W, props: {kind: wave, release: 0.2.6, "
+                                                  "shipped_as: 0.2.6}"))
+    rc, text = check()   # 0.2.6 shipped as itself: 0.3.0 has no wave, and says so
+    assert rc == 0, text
+    assert "no wave of that release, none to close" in text
 
 
 def test_store_that_cannot_be_read_gives_exit_2_on_any_pr(repo, tmp_path, capsys):

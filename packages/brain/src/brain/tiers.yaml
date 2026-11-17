@@ -184,6 +184,29 @@ capabilities:
     requires: [container_runtime]
     resources: {ram_mb: 4096, disk_gb: 10}
     fallback: the markdown views and the cockpit
+  code-index-gitnexus:
+    title: the code index on GitNexus, the stack whose index key names it (brain index, code-map, impact, health
+      code-index); the code authority for search, the default
+    class: service
+    profile: custom
+    auto: true
+    provides: [code index, code search, code map, symbol impact]
+    requires: [container_runtime]
+    resources: {ram_mb: 2048, disk_gb: 2}
+    fallback: codebase-memory-mcp when installed (code-index-cbm), else the CodeRefs at the file level, a Python
+      symbol's checked by the AST of both sides
+  code-index-cbm:
+    title: the code index on codebase-memory-mcp's binary under BRAIN_HOME/code-index/cbm, run as a stdio MCP server
+      for the time of a command (brain index, impact on a worktree, health code-index); its UI, watcher and
+      auto-index kept off
+    class: extra
+    profile: custom
+    auto: true
+    provides: [code index, worktree impact]
+    requires: []
+    resources: {ram_mb: 1024, disk_mb: 500}
+    fallback: GitNexus when its stack answers (code-index-gitnexus), else the CodeRefs at the file level, a Python
+      symbol's checked by the AST of both sides
   infra-node:
     title: the machine facts of an infra agent's report (inventory.agent_json), read before the local probe
     class: extra

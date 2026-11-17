@@ -490,10 +490,12 @@ def _appended_yaml(tpl: Template, rel: str, text: str, name: str) -> None:
 
 def files_for(owner: str, kind: str, tenant: str | None, tier: str, name: str,
               tpl: Template | None = None, stage: str = DEFAULT_STAGE, lifecycle: dict | None = None,
-              spheres: tuple[str, ...] = ()) -> dict[str, str]:
+              registry_edit=None, spheres: tuple[str, ...] = ()) -> dict[str, str]:
     """{path relative to the brain: text} for every file brain init writes but the store and the Claude files:
     config.json, then the template's files (with what it appends to them) with their variables rendered. A YAML
-    file must read as YAML once rendered (an appended fragment that breaks it is the template's error). With
+    file must read as YAML once rendered (an appended fragment that breaks it is the template's error).
+    ``registry_edit`` (brain project new's answers: the languages and tools, the data) takes the rendered
+    projects.yaml's text and gives it back with its lines; it raises InitError when they cannot land. With
     ``spheres`` (:func:`examples_for`), scopes.yaml with those default spheres (SCOPE-1), unless the template writes
     one."""
     tpl = tpl or load_template()
@@ -508,6 +510,8 @@ def files_for(owner: str, kind: str, tenant: str | None, tier: str, name: str,
     if lifecycle and "projects.yaml" in out:   # brain project new's answers, under the brain's own entry (the last)
         out["projects.yaml"] = out["projects.yaml"].rstrip("\n") + "\n" + lifecycle_line(lifecycle)
         _lifecycle_landed(tpl, out["projects.yaml"], name, lifecycle)
+    if registry_edit is not None and "projects.yaml" in out:
+        out["projects.yaml"] = registry_edit(out["projects.yaml"])
     if spheres:
         from . import scopes
         if scopes.FILE not in out:
@@ -654,13 +658,13 @@ def _file_step(path: Path, text: str, appended: str) -> Step:
 
 def plan(root: Path, owner: str, *, kind: str = "person", tenant: str | None = None, tier: str = "lite",
          name: str = "brain", template_spec: str = DEFAULT_TEMPLATE, stage: str = DEFAULT_STAGE,
-         lifecycle: dict | None = None, examples: bool = False) -> list[Step]:
+         lifecycle: dict | None = None, registry_edit=None, examples: bool = False) -> list[Step]:
     """What brain init would do in ``root``, file by file, in order (the owner: ``owner``, else the one of the
     config.json already in ``root``); ``examples``: a person's default spheres in scopes.yaml (SCOPE-1)."""
     owner = " ".join((owner or owner_in(root) or "").split())
     _check_plan(owner, kind, tier, name, stage)
     return _plan_files(Path(root).resolve(), owner, kind, tenant, tier, name, template_spec, stage, lifecycle,
-                       examples)
+                       examples, registry_edit)
 
 
 def _check_plan(owner: str, kind: str, tier: str, name: str, stage: str) -> None:
@@ -679,13 +683,14 @@ def _check_plan(owner: str, kind: str, tier: str, name: str, stage: str) -> None
 
 
 def _plan_files(root: Path, owner: str, kind: str, tenant: str | None, tier: str, name: str, template_spec: str,
-                stage: str, lifecycle: dict | None, examples: bool) -> list[Step]:
+                stage: str, lifecycle: dict | None, examples: bool, registry_edit=None) -> list[Step]:
     """:func:`plan`'s steps once its options are checked: the files, the graph stores, the Claude files, the
     pointer."""
     tpl = load_template(template_spec)
     steps, created = [], set()
     spheres = examples_for(root, kind, name)[1] if examples else ()
-    for rel, text in files_for(owner, kind, tenant, tier, name, tpl, stage, lifecycle, spheres).items():
+    for rel, text in files_for(owner, kind, tenant, tier, name, tpl, stage, lifecycle, registry_edit,
+                               spheres).items():
         steps.append(_file_step(root / rel, text, tpl.appended(rel)))
         if steps[-1].action == "create":
             created.add(rel)
@@ -927,7 +932,8 @@ def _planned(root: Path, args) -> tuple:
     tier = _tier(args, mod[0].base if mod else None)
     steps = plan(root, args.owner or "", kind=args.kind, tenant=args.tenant, tier=tier, name=args.name,
                  stage=getattr(args, "stage", None) or DEFAULT_STAGE, template_spec=spec,
-                 lifecycle=getattr(args, "lifecycle", None), examples=bool(getattr(args, "examples", False)))
+                 lifecycle=getattr(args, "lifecycle", None), registry_edit=getattr(args, "registry_edit", None),
+                 examples=bool(getattr(args, "examples", False)))
     owner = " ".join((args.owner or owner_in(root)).split())
     return steps, load_template(spec), owner, tier, mod
 

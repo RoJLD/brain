@@ -145,7 +145,10 @@ runs, and the answer is exit 0 or the list of what blocks (exit 1; 2 when gh or 
 - **ci**: every check GitHub reports on the head completed green (success, neutral or skipped); one still running or
   failed blocks, and so does a head with no check at all;
 - **review**: `brain review stamp` recorded the review of this very head ([review.md](review.md)), with no finding left
-  open (findings minus fixed minus contested);
+  open (findings minus fixed minus contested). One narrow case carries the stamp of another head: a head that only
+  merges the base into a reviewed head, that is a merge commit of two parents, the first one stamped, the second one
+  on the base (its tip or before it), whose tree is git's own merge of the two (`git merge-tree` with the repo's merge
+  driver: no conflict, nothing changed by hand after the merge). Any other head needs its own stamp;
 - **public**: for a repo of `config.json` `public.repos`, `brain check --public --history` stamped this head and the
   stamp is still valid (the push guard's own question); n/a for another repo;
 - **body**: the PR's title and body hold nothing `brain check --public` refuses (a term of `public.deny`, a secret, an
@@ -191,6 +194,86 @@ brain merge-ready 12 --with 14,15            # the order said, what blocks, the 
 brain merge-ready 12 --with 14,15 --test     # and the tests run on the three merged together
 ```
 
+### The merge queue: `brain ship <pr>`
+
+Sessions that merge their own PRs race main: each catches main up, waits for its CI, and loses when another PR
+merges first (the median between a PR's last catch-up and its merge was under a minute, and some PRs lost the race
+twice or more). `brain ship` queues the PR instead, and one merger merges the queue in order.
+
+```bash
+brain ship 152                          # from a checkout or worktree of the PR's repo: queued, its place said
+brain ship 152 --repo-dir ../lab --slug acme/lab --json
+brain ship --list                       # the queue, a Markdown table, the red bases, the merger's lock when held
+brain ship --run --dry-run              # what the merger would do, nothing run
+brain ship --run --batch 5              # the merger
+brain ship --run --force                # the merger, the PRs of a red base shipped too
+```
+
+**The queue** is `<BRAIN_HOME>/ship/queue.json` (the store `ship`, [vault.md](vault.md)): one entry per PR, keyed by
+its GitHub repo and number, so queuing the same PR twice keeps one entry and two repos never mix. An entry names the
+repo's main checkout (a session's worktree may be gone when the merger runs), the remote, the PR's title and branch
+as gh last read them (gh down, slow or answering what cannot be read: the PR is queued all the same, with a
+warning), and its state: `queued`, `running`, `merged`, `failed`, `refused` or `culprit`, with its reason. A failed
+or refused PR queued again goes back to `queued`. Each change is a read, an edit and an atomic write under the
+short lock `ship-queue.lock`, so two sessions queuing at once both land; a repo's finished entries past its newest
+50 are dropped (a culprit stays). `--list` prints it as a Markdown table, a title's pipes, backticks and angle
+brackets escaped and its newlines folded. The PR must be one of the checkout's own repo: a PR URL or a `--slug` that
+names another repo than the remote's is refused, and so are `--project` and `--root` (the checkout is `--repo-dir`
+or the current folder).
+
+**The merger**, `brain ship --run`, takes the lock `<BRAIN_HOME>/locks/ship.lock` (brain.filelock). The lock file
+holds its holder (pid, the process's start, the agent session's id, the host, when it started, when it expires); a
+second merger is refused with exit 1 and that holder. A holder on this machine keeps the lock as long as its process
+runs, whatever its TTL says (a step longer than the TTL never loses it), and loses it when its pid is gone or is now
+another process; a holder on another host is judged by its TTL (an hour, renewed by a heartbeat every quarter of
+it). The lock is released in a `finally`, whatever stops the run; a release Windows refuses (a reader holds the file
+open) is retried, then said. It is never taken on a file system where it cannot be trusted (a UNC path, a remote
+drive, a network, WSL or FUSE mount). It is the merge queue's own lock until the general agent locks exist; they
+will generalize it. The run first sweeps the scratch worktrees a killed merger left, then takes each queued PR in
+order (never a `running` one a live merger holds):
+
+1. **the merge gate**, through its own function (`brain merge-ready`'s checks, above), on the PR's head: any check it
+   blocks refuses the PR (`refused`, with the blocks), except `fresh`: main moving under the PR is what the merger
+   answers itself. A PR from a fork (or one gh does not say is not), or whose branch is the base or the default
+   branch, is refused too: the merger pushes to the base repo's PR branch only, never to the base;
+2. a scratch worktree of the head the gate checked (no checkout hook run); when the head lacks main, main merged
+   into it with the repo's merge driver (a conflict it leaves fails the PR: merge it by hand, push, queue it again);
+   in a repo with a graph store, the views regenerated once and the store checked (`brain refresh --offline`; `brain
+   check` when nothing was merged); after a merge, `brain merge-check`;
+3. the targeted tests, `brain test --changed <remote>/<base> --strict` on the scratch, its own sources first on
+   PYTHONPATH: a selection the evidence cannot answer (no coverage map, a module never measured) runs the whole suite;
+4. a head merged with main is a new head, and it is gated like any other before its merge: for a repo of
+   `public.repos`, `brain check --public --history` stamps it in the scratch before its push; it is pushed to the
+   PR's branch (never forced: a push made since refuses it); its CI is awaited (every check GitHub reports on it
+   green: one failed fails the PR, and so does a check still running after an hour); then the merge gate runs on it
+   with nothing waived. Its review stamp is the reviewed head's only when the new head is git's own merge of main
+   into it (the gate's narrow rule above): regenerated views, or a conflict resolved, need a new stamp (`brain
+   review stamp`), and the PR fails asking for it;
+5. the gate's stamp written for the head merged, then `gh pr merge N --match-head-commit <head>` with the merge
+   method the repo allows (merge commit, else squash, else rebase), and the PR read back: merged at that head (its
+   merge commit kept for the batch), failed while it is still open (a GitHub merge queue or auto-merge that only
+   queued it), and any other answer (gh slow after GitHub merged, an unreadable PR) stops the run: check it by hand.
+
+A step that fails, or raises, marks the PR `failed` with its reason, and the merger goes on with the next PR. Every
+`--batch N` PRs merged in a repo onto one base (5 by default), the full suite runs once on that base as it is after
+them; each other pending batch is tested before the run ends, a smaller one too, even when the run stops on a red
+one, and a batch that cannot be tested (the lock lost) is marked `untested` on its entries. When the full suite
+fails, a bisection over the batch's merges finds the first one the suite fails from, and confirms it: the suite fails
+again there and passes on its parent. Then that PR is marked `culprit`; a failure that does not come back is
+flaky, and one already there before the PR's merge is main's own: no culprit either way. A red suite (or one that
+cannot answer: pytest missing, no answer in time) marks the base red in the queue file and stops the run before the
+next PR. A red base's PRs wait, left queued, until `brain ship --run --force` ships them and a green suite clears it.
+The merger never reverts main: that is the owner's call. Batches count per repo and base: two repos never mix, nor
+two bases of one repo.
+
+Every call the merger makes (git, gh, the Python that runs `brain` and pytest) goes through one runner with a
+timeout that stops the whole process tree (a test worker, a credential helper), and never a credential prompt
+(`GIT_TERMINAL_PROMPT=0`, `GCM_INTERACTIVE=never`): a tool missing or silent fails the PR it was for, never the queue.
+The merge gate's own git calls are its own. Exit 0 when every PR shipped and every batch is green, 1 otherwise (a
+PR failed or waits, a batch untested, another merger holds the lock; with `--json`, `{"ok": false, "error"}`), 2 on
+a command line that mixes the modes. `brain ship` is a command, not a service: starting the merger on a schedule is
+the owner's decision.
+
 ### Checking it on a repo's history
 
 `brain merge-driver replay` merges past merges again with `git merge-tree` (nothing is checked out, the working tree
@@ -235,7 +318,8 @@ writes the brief a coordinator hands to a sub-session, so that it edits only wha
   `haiku` at `low` effort, 400k; standard on the coordinator's own model, 400k; strategic on `opus` at `high`, 800k);
 - the cost estimate of `brain cost estimate`;
 - the coordinator's app session id (`--coordinator`, else `$CLAUDE_CODE_HOST_SESSION_ID`, the session that runs the
-  command) and the shared notes folder (`--notes`, else the desktop app's folder for that session when it exists);
+  command), which also tells the sub-session to sign its reports with its own id, read by `brain sessions self`, and
+  the shared notes folder (`--notes`, else the desktop app's folder for that session when it exists);
 - the item's subgraph (every edge in and out, the other node's type, status, title and anchor);
 - its line of `brain collisions`;
 - how to start: each repo's checkout and default branch (a session card cannot carry a source branch, so the brief

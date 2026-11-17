@@ -1,6 +1,8 @@
 """``brain typologies``: the typology catalog (brain.typologies, wi-brain-typology-catalog): its entries and their
 sub-profiles, with the brain's labels (config.json typologies), the lifecycle's stages and the standards' stages mapped
-to them; ``show ID``: one id, its entry and, with ``--stage``, the graph layers it is proposed there."""
+to them; ``show ID``: one id, its entry and, with ``--stage``, the graph layers it is proposed there; ``packs``: the
+typology packs (brain.typology_packs, wi-brain-typology-packs), the engine's and the brain's; ``propose PROJECT``: the
+packs a project's typologies propose, a plan, then ``--apply`` writes packs.yaml (TYPO-4)."""
 
 from __future__ import annotations
 
@@ -8,7 +10,7 @@ import argparse
 import json
 from pathlib import Path
 
-from .. import config, status, typologies
+from .. import config, neutral, status, typologies, typology_packs
 
 ORDER = 192   # its place in brain --help's list of commands (brain.commands)
 USAGE_ORDER = 222   # its usage lines' place in brain --help's epilog
@@ -19,6 +21,14 @@ USAGE = """\
                  the standards' stages mapped to them; config.json typologies renames labels and adds a brain's ids
   brain typologies show ID [--stage S] [--lang en|fr] [--json]   one id: its entry, labels and description; --stage
                  (a lifecycle or standards stage): the graph layers a project of that kind is proposed there
+  brain typologies packs [--json]   the typology packs: the engine's (software, research) and this brain's
+                 (source/packs.yaml), each with its typologies and parts (layers, standards, stages, done, doors,
+                 roles, guards, registry keys) and the projects that take it
+  brain typologies propose PROJECT [--apply] [--json]   the packs the project's lifecycle.typologies meet: those it
+                 takes, and for each other the step that gives it (a pack from: engine with projects: [PROJECT], or
+                 PROJECT added to a pack's projects), the layers its store lacks and the standards profiles it does
+                 not opt in to; --apply writes packs.yaml's steps (comments kept; refused if brain check would fail),
+                 the layers and standards stay the owner's next steps (TYPO-4: nothing turns on by itself)
 """
 
 
@@ -30,6 +40,10 @@ def cmd_typologies(args, root: Path) -> int:
         raise SystemExit(f"brain: {exc} (reinstall the engine)") from None
     if getattr(args, "typ_cmd", None) == "show":
         return _show(cat, args)
+    if getattr(args, "typ_cmd", None) == "packs":
+        return _packs(root, args)
+    if getattr(args, "typ_cmd", None) == "propose":
+        return _propose(root, args)
     if args.json:
         print(json.dumps(typologies.describe(cat, args.lang), ensure_ascii=False, indent=1, sort_keys=True))
         return 0
@@ -75,6 +89,67 @@ def _show(cat: typologies.Catalog, args) -> int:
     return 0
 
 
+def _packs(root: Path, args) -> int:
+    """The engine's typology packs and the brain's packs that name typologies (or take one from the engine)."""
+    brain = neutral.brain_root(root)   # from a project's repo: its brain's source, as brain render reads it
+    try:
+        rows = typology_packs.rows(neutral.load(brain) if neutral.applies(brain) else None)
+    except typology_packs.PackError as exc:
+        raise SystemExit(f"brain: {exc} (reinstall the engine)") from None
+    if args.json:
+        print(json.dumps({"packs": rows}, ensure_ascii=False, indent=1, sort_keys=True))
+        return 0
+    for r in rows:
+        whom = ("every project" if r["projects"] is None else ", ".join(r["projects"]) or "no project")
+        state = f"taken for {whom}" if r["taken"] else "not taken (brain typologies propose PROJECT)"
+        print(f"{r['id']} ({r['origin']}): for {', '.join(r['typologies']) or '-'}; {state}")
+        for key in typology_packs.PARTS[1:]:
+            value = r.get(key)
+            if value:
+                print(f"  {key}: {_short(value)}")
+    return 0
+
+
+def _short(value) -> str:
+    if isinstance(value, dict):
+        return "; ".join(f"{k}: {', '.join(map(str, v)) if isinstance(v, list) else v}" for k, v in value.items())
+    return ", ".join(str(x.get("id")) if isinstance(x, dict) else str(x) for x in value)
+
+
+def _propose(root: Path, args) -> int:
+    brain = neutral.brain_root(root)   # from a project's repo: its brain's registry and source, as brain render
+    try:
+        kinds, props, store = typology_packs.propose(brain, args.name)
+    except (typology_packs.ProposeError, typology_packs.PackError) as exc:
+        return _refused(args, str(exc), 2)
+    written: list[str] = []
+    if args.apply and any(p.step in ("add", "extend") for p in props):
+        try:
+            written = typology_packs.apply(brain, args.name, props)
+        except ValueError as exc:
+            return _refused(args, f"{exc}; nothing written", 1)
+    if args.json:
+        print(json.dumps({"project": args.name, "typologies": kinds, "packs": [p.as_dict() for p in props],
+                          "store": store.as_posix() if store else None, "written": written},
+                         ensure_ascii=False, indent=1, sort_keys=True))
+        return 0
+    print("\n".join(typology_packs.plan_lines(args.name, kinds, props, store)))
+    for line in written:
+        print(f"written: {line}")
+    if written:
+        print("next: brain render (or brain sync) renders what the packs carry; a PR of this brain records it")
+    elif any(p.step in ("add", "extend") for p in props) and not args.apply:
+        print(f"(plan only: brain typologies propose {args.name} --apply writes it)")
+    return 0
+
+
+def _refused(args, why: str, code: int) -> int:
+    """A propose that cannot be made or applied: said as text, or as {error} with --json."""
+    print(json.dumps({"project": args.name, "error": why}, ensure_ascii=False) if args.json
+          else f"brain typologies propose: {why}")
+    return code
+
+
 def register(sub, ctx) -> None:
     ty = sub.add_parser("typologies", help="the typology catalog: the kinds of project, their sub-profiles and "
                                            "stages (brain.typologies)")
@@ -88,6 +163,14 @@ def register(sub, ctx) -> None:
     sh.add_argument("--lang", choices=typologies.LANGS, default=argparse.SUPPRESS,
                     help="the labels' language (default en)")
     sh.add_argument("--json", action="store_true", default=argparse.SUPPRESS, help="stable keys")
+    pk = tsub.add_parser("packs", help="the typology packs: the engine's and this brain's, their typologies and parts")
+    pk.add_argument("--json", action="store_true", default=argparse.SUPPRESS, help="stable keys")
+    pp = tsub.add_parser("propose", help="the packs a project's typologies propose: a plan, then --apply writes "
+                                         "packs.yaml")
+    # its dest: the parent's --project is another flag (the project acted on)
+    pp.add_argument("name", metavar="PROJECT", help="a project of this brain's registry (projects.yaml)")
+    pp.add_argument("--apply", action="store_true", help="write packs.yaml's steps (default: the plan)")
+    pp.add_argument("--json", action="store_true", default=argparse.SUPPRESS, help="stable keys")
 
 
 run = cmd_typologies
