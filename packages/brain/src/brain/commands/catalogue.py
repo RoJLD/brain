@@ -12,6 +12,7 @@ from pathlib import Path
 from .. import __version__, catalogue
 
 ORDER = 254   # its place in brain --help's list of commands (brain.commands): after mod, spool and session-archive
+PHASE = "both"   # its handlers: early first, then run with the root (brain.commands)
 USAGE_ORDER = 252   # its usage lines' place in brain --help's epilog, after brain mod's
 USAGE = """\
   brain catalogue validate FILE... [--json] | emit [--out FILE]   the module catalogue's contract, catalogue/v1

@@ -11,6 +11,7 @@ from pathlib import Path
 from ..inventory import AuditError
 
 ORDER = 502   # its place in brain --help's list of commands (brain.commands), after merge-check
+PHASE = "early"   # its handlers: early only, before any root is resolved (brain.commands)
 USAGE_ORDER = 161
 USAGE = """\
   brain merge-ready PR [--repo-dir D] [--slug OWNER/NAME] [--remote R] [--no-fetch] [--json]   the merge gate: the

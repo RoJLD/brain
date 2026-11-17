@@ -10,18 +10,9 @@ import pytest
 import help_dump
 from brain import audit, audit_measure, cli, commands, inventory
 from brain.commands import _registry
-from brain.commands import audit as audit_cmd
-from brain.commands import (bundle, capture, catalogue, check, code_map, collisions, decision, docgraph, down,
-                            formats, handover, health, impact, index, init, ipc, mcp, memory, merge_check, merge_driver,
-                            milestone, notes, perf, probes, profile, project, quiet, refresh, resume, retro, review,
-                            rules, schedule, schema, sessions, spec, timed, up, update)
-from brain.commands import lint, lot, merge_ready, migrate, ship, telemetry
-from brain.commands import public as public_cmd
-from brain.commands import floor as floor_cmd
-from brain.commands import gate as gate_cmd
-from brain.commands import release as release_cmd
-from brain.commands import test as test_cmd
-from brain.commands import uninstall
+from brain.commands import (bundle, capture, check, code_map, collisions, decision, formats, ipc, lint, memory,
+                            merge_check, merge_driver, merge_ready, milestone, probes, profile, quiet, refresh, release,
+                            resume, retro, sessions, spec)
 from test_audit import README, _measure
 
 MODULES = _registry.load()
@@ -39,8 +30,8 @@ def test_every_command_module_keeps_the_contract():
     usage_orders = [m.USAGE_ORDER for m in MODULES if getattr(m, "USAGE", "")]
     assert len(set(orders)) == len(orders) and len(set(usage_orders)) == len(usage_orders)   # one place each
     assert owners["doctor"] is owners["profile"] and owners["lessons"] is owners["lesson"]   # an alias, its module
-    assert _registry.no_project() == {"capture", "announce", "memory", "sessions", "quiet", "probes", "mcp", "ipc",
-                                      "release", "telemetry", "notes", "migrate"}
+    assert {"capture", "announce", "memory", "sessions", "quiet", "probes", "mcp", "ipc", "release", "telemetry",
+            "notes", "migrate"} <= _registry.no_project()   # pinned: none of them gains --project; a new one adds none
 
 
 def test_the_help_of_every_parser_formats_and_a_second_build_is_the_same(monkeypatch):
@@ -61,27 +52,52 @@ def test_the_help_of_every_parser_formats_and_a_second_build_is_the_same(monkeyp
 # Before the registry, cli._dispatch ran these before any root was resolved (a hook, a machine-wide command, a repo
 # that may hold no graph store): their module defines early, and no run; decision, resume and check define both (early
 # for announce, --hook and --public only), and profile (early when no root is found: a first install); every other
-# command needs the project's root (run only)
-EARLY = {capture, memory, timed, perf, init, merge_driver, merge_check, sessions, schedule, update, audit_cmd, impact,
-         index, up, down, health, bundle, quiet, review, probes, schema, test_cmd, merge_ready, mcp, ipc,
-         handover, project, uninstall, lot, rules, release_cmd, telemetry, notes, floor_cmd, ship, migrate,
-         public_cmd, gate_cmd}
-BOTH = {decision, resume, check, docgraph, catalogue, profile, lint}   # lint formats: any repo
-ALIASES = {"profile": ("doctor",)}
-ROOTED = {code_map, collisions, formats, milestone, refresh, retro, spec}   # a sample of the rest: they need the graph store
+# command needs the project's root (run only). Each module declares its phase (PHASE), its aliases and its NO_PROJECT
+# in its own file (wi-brain-cli-registry-declared): no shared list here, which every command PR used to edit; a sample
+# stays pinned (a new command never joins it): the move of one of them is a change to review.
+SAMPLE = {"early": (bundle, capture, ipc, memory, merge_check, merge_driver, merge_ready, probes, quiet, release,
+                    sessions),
+          "both": (check, decision, lint, profile, resume),
+          "run": (code_map, collisions, formats, milestone, refresh, retro, spec)}
 
 
-def test_the_commands_that_run_before_a_root_is_resolved_keep_their_phase():
-    def phase(m):
-        return "both" if hasattr(m, "early") and hasattr(m, "run") else "early" if hasattr(m, "early") else "run"
-    assert {m.__name__ for m in MODULES if phase(m) == "early"} == {m.__name__ for m in EARLY}
-    assert {m.__name__ for m in MODULES if phase(m) == "both"} == {m.__name__ for m in BOTH}
-    assert all(phase(m) == "run" for m in ROOTED)
-    for m in EARLY | BOTH | ROOTED:   # each registers the command of its file name (and its aliases: doctor)
-        sub = argparse.ArgumentParser().add_subparsers()
-        m.register(sub, _registry.Context("Ada", "ada"))
-        name = m.__name__.rsplit(".", 1)[1].replace("_", "-")
-        assert list(sub.choices) == [name, *ALIASES.get(name, ())], m.__name__
+def test_every_command_module_declares_its_phase_aliases_and_no_project():
+    assert _registry.undeclared() == []
+    for ph, mods in SAMPLE.items():
+        assert {m.__name__: _registry.phase(m) for m in mods} == {m.__name__: ph for m in mods}
+        assert all(m in MODULES and _registry.handled(m) == ph for m in mods)
+    by_name = {m.__name__.rsplit(".", 1)[1]: m for m in MODULES}
+    assert by_name["profile"].ALIASES == ("doctor",) and by_name["lesson"].ALIASES == ("lessons",)
+
+
+def test_a_declaration_that_disagrees_is_listed(monkeypatch):
+    def run(args, root):
+        return 0
+
+    def early(args):
+        return None
+
+    def register(sub, ctx):
+        sub.add_parser("fake").add_subparsers().add_parser("leaf")
+
+    fake = types.ModuleType("brain.commands.fake")
+    fake.__dict__.update(ORDER=1, register=register, run=run)
+    monkeypatch.setattr(_registry, "load", lambda: (fake,))
+    assert _registry.undeclared() == []   # run only, no PHASE: the default
+    fake.early = early
+    assert _registry.undeclared() == ["fake: PHASE 'run', its handlers give 'both'"]
+    fake.PHASE, fake.NO_PROJECT, fake.ALIASES = "both", ("leaf",), ()
+    assert _registry.undeclared() == []   # a nested parser's name is one NO_PROJECT may hold
+    del fake.run
+    fake.NO_PROJECT, fake.ALIASES = ("nope",), ("fakes",)
+    assert _registry.undeclared() == [
+        "fake: PHASE 'both', its handlers give 'early'",
+        "fake: registers ['fake'], declares ['fake', 'fakes'] (its file name, then ALIASES)",
+        "fake: NO_PROJECT names ['nope'], parsers it does not register"]
+    fake.run, fake.PHASE, fake.ALIASES, fake.NO_PROJECT = run, "run", (), ("fake",)
+    del fake.early
+    assert _registry.undeclared() == [
+        "fake: NO_PROJECT on a run-only command (it needs the project's root: declare early)"]
 
 
 def test_brain_cli_adds_no_parser_itself():

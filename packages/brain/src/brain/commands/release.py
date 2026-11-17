@@ -4,6 +4,7 @@ command each (brain.release), a plan then --write."""
 from __future__ import annotations
 
 ORDER = 905   # its place in brain --help's list of commands (brain.commands)
+PHASE = "early"   # its handlers: early only, before any root is resolved (brain.commands)
 USAGE_ORDER = 905   # its usage lines' place in brain --help's epilog
 USAGE = """\
   brain release prepare X.Y.Z --theme T [--repo DIR] [--planning ROOT] [--store DIR] [--repo-name NAME]

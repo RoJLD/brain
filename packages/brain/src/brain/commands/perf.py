@@ -9,6 +9,7 @@ from pathlib import Path
 from .. import perf
 
 ORDER = 450   # its place in brain --help's list of commands (brain.commands)
+PHASE = "early"   # its handlers: early only, before any root is resolved (brain.commands)
 USAGE_ORDER = 500   # its usage lines' place in brain --help's epilog
 USAGE = """\
   brain perf [--project P] [--since 28d|4w|DATE] [--task TEXT] [--top N] [--from PATH]... [--json]

@@ -7,6 +7,7 @@ from __future__ import annotations
 from ._common import _whole, root_of
 
 ORDER = 390   # its place in brain --help's list of commands (brain.commands)
+PHASE = "early"   # its handlers: early only, before any root is resolved (brain.commands)
 USAGE_ORDER = 480   # its usage lines' place in brain --help's epilog
 USAGE = """\
   brain impact [--diff [BASE|A..B]] [--repo-dir D] [--depth N] [--backend gitnexus|cbm] [--json | --markdown]

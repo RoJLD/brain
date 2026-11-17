@@ -10,6 +10,7 @@ import sys
 from .. import config, floorlock
 
 ORDER = 487   # its place in brain --help's list of commands (brain.commands)
+PHASE = "early"   # its handlers: early only, before any root is resolved (brain.commands)
 USAGE_ORDER = 367   # its usage lines' place in brain --help's epilog
 USAGE = """\
   brain floor lock [--apply] [--lower] [--account SID] [--wait] | unlock [--apply] [--account SID] [--wait] | status
