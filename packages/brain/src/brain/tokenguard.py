@@ -260,7 +260,8 @@ def _shell(cmds, command: str, powershell: bool, cwd: str, prot: Protected) -> s
                 return f"{' '.join(words)[:120]} over ssh (it names the token's file)"
             continue
         if INTERPRETER.match(prog):
-            fed = fed or all(w.startswith("-") for w in words[1:])
+            first = next((w for w in words[1:] if not w.startswith("-") or w == "-"), None)
+            fed = fed or first in (None, "-", "/dev/stdin")   # no script named: its code comes from stdin
             if any(CODE.search(w) and _code_says(w, text) for w in words[1:]):
                 return f"{prog} (its code names the token's file)"
         if any(DOTNET.search(w) and text.search(w) for w in words):
@@ -271,10 +272,13 @@ def _shell(cmds, command: str, powershell: bool, cwd: str, prot: Protected) -> s
         if prog in METADATA:
             if not (piped and prog in PRINTERS):
                 continue
-            # its output may reach a reader: refused when it names the file or its folder (not the home: ls ~/.brain)
+            # its output may reach a reader: refused when it names the file or its folder, or lists the home
+            # recursively (gci -Recurse ~/.brain | Get-Content); ls ~/.brain | head passes
+            deep = any(w.lower() in ("-r", "-recurse", "--recursive", "-rec") or re.fullmatch(r"-[a-z]*R[a-z]*", w)
+                       for w in words[1:])
             for w in words:
                 kind = _names(w, d, prot)
-                if kind in ("file", "folder"):
+                if kind in ("file", "folder") or (kind == "home" and deep):
                     return f"{prog} on {w} in a pipe or a substitution (the token's {kind})"
             continue
         if prog == "join-path":   # Join-Path $h ipc token: the path it makes, not its base alone
@@ -283,10 +287,14 @@ def _shell(cmds, command: str, powershell: bool, cwd: str, prot: Protected) -> s
             if kind in ("file", "folder"):
                 return f"Join-Path {' '.join(parts)} (the token's {kind})"
             continue
-        if prog in SEARCHERS and not any(w in ("-e", "-f", "--regexp", "--file") or w.startswith(("-e", "--regexp="))
-                                         for w in words[1:]):
-            pos = next((i for i, w in enumerate(words[1:], 1) if not w.startswith("-")), None)
-            words = [w for i, w in enumerate(words) if i != pos]   # the pattern is no path
+        if prog in SEARCHERS:   # the pattern is no path: the first positional word, or -e's values (-f's is a file)
+            given = [i + 1 for i, w in enumerate(words[:-1]) if w in ("-e", "--regexp")]
+            given += [i for i, w in enumerate(words) if re.fullmatch(r"-e.+|--regexp=.+", w)]
+            if given or any(w in ("-f", "--file") or w.startswith("--file=") for w in words[1:]):
+                words = [w for i, w in enumerate(words) if i not in given]
+            else:
+                pos = next((i for i, w in enumerate(words[1:], 1) if not w.startswith("-")), None)
+                words = [w for i, w in enumerate(words) if i != pos]
         for w in words:
             kind = _names(w, d, prot)
             if kind:

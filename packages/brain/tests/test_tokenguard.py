@@ -79,6 +79,9 @@ BASH = [
     "cat {home}/i*/../ipc/t?ken",
     # round 2
     "grep -r . \"$BRAIN_HOME\"",
+    # round 3: a heredoc's code with argv after python's -, or /dev/stdin
+    "python - foo <<'X'\nprint(open('{tok}').read())\nX", "python /dev/stdin <<'X'\nopen('{tok}')\nX",
+    "python3 - a b <<'X'\nimport brain.ipcauth as a\nX",
 ]
 PWSH = [
     "Get-Content {tok}", "gc '{tok}'", "Get-Content -Path:{tok}", "Get-Content -Raw -LiteralPath {tok}",
@@ -91,6 +94,8 @@ PWSH = [
     "Get-Item {tok} | Get-Content", "gci {home}\\ipc | % {{ gc $_ }}", "'x' > {tok}",
     "Copy-Item -Recurse {home} C:\\tmp\\b", "Compress-Archive {home} C:\\tmp\\b.zip",
     "Select-String -Path $env:BRAIN_HOME\\ipc\\* -Pattern .",
+    # round 3: the home listed recursively into a reader
+    "Get-ChildItem -Recurse {home} | Select-String .", "gci {home} -Recurse -File | gc",
 ]
 
 
@@ -191,7 +196,8 @@ PASSES = [
     "git commit -F - <<'X'\nGuard python and node: open('ipc/token') is refused\nX",
     "cat > notes.md <<'X'\npython -c \"open('.brain/ipc/token')\"\nX",
     "ls {home} && git log | head", "test -f {tok} && echo yes | cat", "ls {home} | head",
-    "cd {home} && grep -rn 'ipc/token' handover",
+    "cd {home} && grep -rn 'ipc/token' handover", "grep -e '{tok}' notes.txt", "rg -e 'ipc/token' -e x src",
+    "python script.py <<'X'\nopen('{tok}')\nX",
 ]
 
 
