@@ -342,3 +342,63 @@ def test_labels_now_reads_each_project_s_waves(monkeypatch, tmp_path):
     monkeypatch.setattr(projects, "load", lambda root=None: {"lab": SimpleNamespace(stores=[store, tmp_path / "x"])})
     got = review.labels_now()
     assert got[("lab", "wave-s3")] == "1.0.2" and got[("lab", "wave-1.0.1")] == "1.0.1"
+
+
+# --- the rounds and the stop rule (wi-brain-review-convergence) ---
+
+def _round(head, findings, high=None, pr="7", slug="acme/eng", at="2026-11-17T10:00:00+00:00", rows=()):
+    rec = {**_rec(head, findings, pr=pr, at=at, rows=rows), "repo_slug": slug}
+    return rec if high is None else {**rec, "high": high}
+
+
+def test_the_stop_rule_halves_the_highs_over_three_rounds():
+    assert review.converging([9, 9])["state"] == "early"
+    assert review.converging([9, 9, 10])["state"] == "not converging"   # a PR that took 14 rounds began so
+    assert "structural decision" in review.converging([9, 9, 10])["why"]
+    assert review.converging([9, 9, 10, 9, 6])["state"] == "not converging"   # 10 > 9 > 6: 6 is not half of 10
+    assert review.converging([9, 9, 10, 9, 3])["state"] == "converging"   # 10 > 9 > 3
+    assert review.converging([10, 9, 3, 1])["state"] == "converging"   # the last three: 9 > 3 > 1
+    assert review.converging([4, 2, 2])["state"] == "converging" and review.converging([0, 0, 0])["state"] == "converging"
+    assert review.converging([1, 1, 1])["state"] == "not converging"
+    assert review.converging([9, None, 2])["state"] == "unknown"
+    assert review.converging([9, 6, 4, 3], n=4)["state"] == "converging"
+
+
+def test_rounds_reads_a_prs_stamps_in_order_with_their_highs():
+    note_rows = review.parse_note(NOTE)   # one confirmed high line
+    recs = [
+        _round("c" * 40, 3, at="2026-11-17T12:00:00+00:00", rows=note_rows),   # high from the note's lines
+        _round("a" * 40, 9, high=9, at="2026-11-17T10:00:00+00:00"),
+        _round("b" * 40, 8, high=7, at="2026-11-17T11:00:00+00:00"),
+        _round("d" * 40, 5, high=5, slug="other/repo"),                       # another repo's PR 7
+        _round("e" * 40, 2, high=2, pr="8"),                                  # another PR
+        _round("f" * 40, 1, at="2026-11-17T13:00:00+00:00"),                  # no high said
+    ]
+    rep = review.rounds("7", "acme/eng", recs=recs)
+    assert [(r["round"], r["head"][0], r["high"]) for r in rep["rounds"]] == [(1, "a", 9), (2, "b", 7), (3, "c", 1),
+                                                                               (4, "f", None)]
+    assert rep["verdict"]["state"] == "unknown"
+    rep = review.rounds("7", "acme/eng", recs=recs[:3])
+    assert rep["verdict"] == {"state": "converging", "why": "high findings 9 > 7 > 1: halved over 3 rounds"}
+    text = "\n".join(review.rounds_lines(rep))
+    assert "review rounds of acme/eng#7: 3 round(s)" in text and "findings 9 (high 9)" in text
+    assert "no stamp names this PR" in review.rounds_lines(review.rounds("99", "", recs=recs))[0]
+    assert len(review.rounds("7", "", recs=recs)["rounds"]) == 5   # no repo named: every repo's PR 7
+
+
+def test_stamp_high_then_rounds_through_the_cli(pr, brain_home, capsys):
+    repo, base, head = pr
+    with pytest.raises(review.ReviewError, match="high 3"):
+        review.stamp(head, 2, 2, high=3)
+    assert cli.main(["review", "stamp", base, "--findings", "9", "--fixed", "9", "--high", "9", "--pr", "4",
+                     "--repo", str(repo)]) == 0
+    assert review.check(base)["high"] == 9
+    assert cli.main(["review", "stamp", head, "--findings", "9", "--fixed", "9", "--high", "8", "--pr", "4",
+                     "--repo", str(repo)]) == 0
+    capsys.readouterr()
+    assert cli.main(["review", "rounds", "4", "--rounds", "2", "--repo", str(repo)]) == 0   # it says, never refuses
+    out = capsys.readouterr().out
+    assert "2 round(s)" in out and "not converging: high findings 9 > 8" in out
+    assert cli.main(["review", "rounds", "4", "--json", "--repo", str(repo)]) == 0
+    assert json.loads(capsys.readouterr().out)["verdict"]["state"] == "early"
+    assert cli.main(["review", "rounds", "4", "--rounds", "1", "--repo", str(repo)]) == 1
