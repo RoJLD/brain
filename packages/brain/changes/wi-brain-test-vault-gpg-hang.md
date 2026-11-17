@@ -1,6 +1,9 @@
 section: Fixes
 
-- The test suite no longer waits forever on a real gpg key generation: `test_vault` bounds it (120 s, in a thread)
-  and skips the test with its reason when gpg's agent or entropy never answers (`wi-brain-test-vault-gpg-hang`);
-  `test_handover` no longer fails when pytest's temporary folder holds the pid it searches for, such as
-  `pytest-4242` (`wi-brain-test-handover-basetemp`).
+- The test suite no longer waits forever on a real gpg call: `test_vault` runs each key generation and each
+  decryption in a child Python process, bounded (120 s for the test's calls together); on the deadline it kills that
+  process as a tree (gpg and its agent: `taskkill /T` on Windows, its process group on POSIX), stops the agents of
+  the gpg homes left and removes them, and skips the test with its reason; the child's temporary folder is in
+  pytest's basetemp, so nothing is left in the system's temporary folder; an error other than gpg's own surfaces as
+  itself (`wi-brain-test-vault-gpg-hang`). `test_handover` no longer fails when pytest's temporary folder holds the
+  pid it searches for, such as `pytest-4242`, its paths quoted for sh included (`wi-brain-test-handover-basetemp`).

@@ -1,9 +1,13 @@
 import hashlib
 import io
 import json
+import os
 import shutil
+import signal
+import subprocess
 import sys
 import tarfile
+import time
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
@@ -50,80 +54,185 @@ def brain(tmp_path, monkeypatch, brain_home):
     return write
 
 
-GPG_KEYGEN_S = 120   # the deadline of a real gpg key generation in a test (wi-brain-test-vault-gpg-hang)
+GPG_KEYGEN_S = 120   # the deadline of a test's real gpg calls (wi-brain-test-vault-gpg-hang)
+
+# A real gpg call, run in a child Python process: the test can kill it as a process tree on its deadline (a thread
+# could not stop it). It writes its outcome as JSON to the result file: the value, a VaultError's message, or any
+# other error's type, arguments and traceback.
+_GPG_CHILD = """
+import json, sys, traceback
+from brain import vault
+job = json.loads(sys.argv[1])
+try:
+    out = {"ok": getattr(vault.Gpg(job["cmd"]), job["call"])(*job["args"], **job["kwargs"])}
+except vault.VaultError as exc:
+    out = {"vault_error": str(exc)}
+except BaseException as exc:
+    try:
+        args = json.loads(json.dumps(list(exc.args)))
+    except (TypeError, ValueError):
+        args = [str(a) for a in exc.args]
+    out = {"error": [type(exc).__module__, type(exc).__qualname__, args, traceback.format_exc()]}
+with open(job["result"], "w", encoding="utf-8") as f:
+    json.dump(out, f)
+"""
 
 
-def keygen(n: int, ad: vault.Adapter, deadline: float = GPG_KEYGEN_S) -> list[tuple[str, str]]:
-    """``n`` key pairs of ``ad``. A real gpg's within ``deadline`` seconds, else the test is skipped with its reason:
-    gpg --quick-gen-key can wait forever on its agent or on entropy, and a gpg-agent the key generation spawned can
-    hold the output pipe open past subprocess.run's own timeout, so the wait is bounded here, in a thread."""
+def keygen(n: int, ad: vault.Adapter, deadline: float = GPG_KEYGEN_S, tmp: Path | None = None) -> list[tuple[str, str]]:
+    """``n`` key pairs of ``ad``. A real gpg's all within ``deadline`` seconds (one end time for the ``n`` keys), each
+    in a child process whose temporary folder is ``tmp`` (a folder of pytest's basetemp), else the test is skipped
+    with its reason: gpg --quick-gen-key can wait forever on its agent or on entropy, and a gpg-agent the key generation
+    spawned can hold the output pipe open past subprocess.run's own timeout (:func:`gpg_call`)."""
     if not isinstance(ad, vault.Gpg):
         return [ad.keygen(f"test {i}") for i in range(n)]
-    return [_bounded_gpg_keygen(ad, f"test {i}", deadline) for i in range(n)]
+    end = time.monotonic() + deadline
+    return [gpg_call(ad, "keygen", f"test {i}", end=end, deadline=deadline, tmp=tmp) for i in range(n)]
 
 
-def _bounded_gpg_keygen(ad: vault.Gpg, label: str, deadline: float) -> tuple[str, str]:
-    import threading
-
-    got: dict = {}
-
-    def run() -> None:
+def gpg_call(ad: vault.Gpg, call: str, *args, end: float, deadline: float, tmp: Path | None, **kwargs):
+    """``ad.<call>(*args, **kwargs)`` in a child Python process, its TEMP, TMP and TMPDIR the folder ``tmp`` (so the
+    gpg home it makes lands in pytest's basetemp; a short one, tmp_path_factory.mktemp: under a test's tmp_path, the
+    agent's socket path is past what gpg takes on Windows), waited on until ``end`` (time.monotonic). Past it, the child
+    is killed with its whole process tree (gpg, its agent), the agents of the homes it left are stopped and the
+    homes removed, and the test is skipped with its reason. A VaultError comes back as one (a timeout of gpg's own:
+    skipped); any other error as itself."""
+    assert tmp is not None, "a real gpg call needs a folder of pytest's basetemp"
+    temp, run = Path(tmp), os.urandom(4).hex()
+    result, child_log = temp / f"result-{run}.json", temp / f"child-{run}.log"
+    env = {**os.environ, "TEMP": str(temp), "TMP": str(temp), "TMPDIR": str(temp),
+           "PYTHONPATH": os.pathsep.join([str(Path(vault.__file__).resolve().parents[1]),
+                                          *filter(None, [os.environ.get("PYTHONPATH")])])}
+    job = {"cmd": ad.cmd, "call": call, "args": [_plain(a) for a in args],
+           "kwargs": {k: _plain(v) for k, v in kwargs.items()}, "result": str(result)}
+    with open(child_log, "wb") as log:
+        child = subprocess.Popen([sys.executable, "-c", _GPG_CHILD, json.dumps(job)], stdin=subprocess.DEVNULL,
+                                 stdout=log, stderr=subprocess.STDOUT, env=env,
+                                 **({} if os.name == "nt" else {"start_new_session": True}))
         try:
-            got["key"] = ad.keygen(label)
-        except vault.VaultError as exc:
-            got["error"] = exc
+            child.wait(timeout=max(end - time.monotonic(), 0))
+        except subprocess.TimeoutExpired:
+            _kill_tree(child)
+            _remove_homes(ad, temp)
+            pytest.skip(f"gpg {call} did not end within {deadline:g} s (its agent or entropy): its process tree "
+                        "killed, skipped, not waited on")
+    if not result.is_file():
+        tail = child_log.read_text(encoding="utf-8", errors="replace")[-2000:]
+        raise RuntimeError(f"gpg {call}: its child process exited {child.returncode} without a result: {tail}")
+    return gpg_outcome(call, json.loads(result.read_text(encoding="utf-8")))
 
-    t = threading.Thread(target=run, name=f"gpg-keygen-{label}", daemon=True)
-    t.start()
-    t.join(deadline)
-    if t.is_alive():
-        pytest.skip(f"gpg key generation did not end within {deadline:g} s (its agent or entropy): skipped, "
-                    "not waited on")
-    if "error" in got:
-        if "Timeout" in str(got["error"]):
-            pytest.skip(f"gpg key generation timed out: {got['error']}")
-        raise got["error"]
-    return got["key"]
+
+def _plain(v):
+    return str(v) if isinstance(v, Path) else v
+
+
+def gpg_outcome(call: str, out: dict):
+    """The child's outcome: its value (keygen's pair a tuple), a skip (gpg's own timeout), a VaultError, or the other
+    error as itself (a builtin one by its type, its child traceback chained; another as a RuntimeError naming it)."""
+    import builtins
+    if "ok" in out:
+        return tuple(out["ok"]) if call == "keygen" else out["ok"]
+    if "vault_error" in out:
+        if "Timeout" in out["vault_error"]:
+            pytest.skip(f"gpg {call} timed out: {out['vault_error']}")
+        raise vault.VaultError(out["vault_error"])
+    module, name, args, tb = out["error"]
+    cls = getattr(builtins, name, None) if module == "builtins" else None
+    if isinstance(cls, type) and issubclass(cls, Exception):
+        raise cls(*args) from RuntimeError(f"in the gpg child process:\n{tb}")
+    raise RuntimeError(f"gpg {call}: {module}.{name}: {args}\n{tb}")
+
+
+def _kill_tree(child: subprocess.Popen) -> None:
+    """The child and every process it started: taskkill /T on Windows, its process group (its own session) on
+    POSIX."""
+    if os.name == "nt":
+        subprocess.run(["taskkill", "/PID", str(child.pid), "/T", "/F"], capture_output=True, timeout=30, check=False)
+    else:
+        try:
+            os.killpg(child.pid, signal.SIGKILL)
+        except ProcessLookupError:
+            pass
+    try:
+        child.wait(timeout=10)
+    except subprocess.TimeoutExpired:
+        pass
+
+
+def _remove_homes(ad: vault.Gpg, temp: Path) -> None:
+    """The gpg homes a killed child left under ``temp``: their agent stopped (one that left the process tree: a
+    daemon in its own session), then removed."""
+    gpgconf = shutil.which("gpgconf")
+    for home in temp.glob("bv-*"):
+        if gpgconf:
+            try:
+                subprocess.run([gpgconf, "--homedir", ad.home(home), "--kill", "gpg-agent"], capture_output=True,
+                               timeout=10, stdin=subprocess.DEVNULL, check=False)
+            except (OSError, subprocess.SubprocessError):
+                pass
+        shutil.rmtree(home, ignore_errors=True)
 
 
 def tree(d: Path) -> dict:
     return {p.relative_to(d).as_posix(): p.read_bytes() for p in sorted(d.rglob("*")) if p.is_file()}
 
 
-class _StuckGpg(vault.Gpg):
-    """A gpg whose key generation never ends (an agent that never answers), or fails the way it is told."""
-
-    def __init__(self, error: Exception | None = None):
-        super().__init__(["gpg"])
-        self.error = error
-
-    def keygen(self, label):
-        import threading
-        if self.error:
-            raise self.error
-        threading.Event().wait(30)   # longer than the deadline below: the test never waits on it
-        return "never", "never"
+def _sleeping_gpg(pidfile: Path) -> vault.Gpg:
+    """A gpg that never answers (an agent that never does): its command a Python that writes its pid, then sleeps."""
+    ad = vault.Gpg([sys.executable, "-c", f"import os, time; open({str(pidfile)!r}, 'w').write(str(os.getpid())); "
+                                          "time.sleep(60)"])
+    ad._msys = False   # the test's own process never asks it its version: it would sleep too
+    return ad
 
 
-def test_a_gpg_key_generation_that_hangs_is_skipped_with_its_reason_not_waited_on():
-    import time
+def _alive(pid: int) -> bool:
+    if os.name == "nt":
+        out = subprocess.run(["tasklist", "/FI", f"PID eq {pid}", "/NH", "/FO", "CSV"], capture_output=True,
+                             text=True, check=False).stdout
+        return f'"{pid}"' in out
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True
+    return True
+
+
+def test_a_gpg_call_that_hangs_is_killed_as_a_tree_and_skipped_with_its_reason(tmp_path):
+    """On the deadline the child, and the 'gpg' it started, are killed; no gpg home is left; the skip says why."""
+    pidfile = tmp_path / "gpg.pid"
     start = time.monotonic()
-    with pytest.raises(pytest.skip.Exception, match=r"did not end within 0.2 s \(its agent or entropy\)"):
-        keygen(1, _StuckGpg(), deadline=0.2)
-    assert time.monotonic() - start < 10
-    with pytest.raises(pytest.skip.Exception, match="gpg key generation timed out"):
-        keygen(1, _StuckGpg(vault.VaultError("gpg: TimeoutExpired: Command timed out after 300 seconds")))
+    with pytest.raises(pytest.skip.Exception, match=r"did not end within 4 s \(its agent or entropy\): its process"):
+        keygen(1, _sleeping_gpg(pidfile), deadline=4, tmp=tmp_path)
+    assert time.monotonic() - start < 30
+    pid = int(pidfile.read_text(encoding="utf-8"))   # the sleeping 'gpg' had started: the kill reached it
+    gone = time.monotonic() + 10
+    while _alive(pid) and time.monotonic() < gone:
+        time.sleep(0.2)
+    assert not _alive(pid)
+    assert not list(tmp_path.rglob("bv-*"))   # no temporary gpg home left behind
+
+
+def test_a_gpg_childs_outcome_is_its_value_a_skip_or_its_own_error(tmp_path):
+    assert gpg_outcome("keygen", {"ok": ["key", "pub"]}) == ("key", "pub")
+    with pytest.raises(pytest.skip.Exception, match="gpg keygen timed out"):
+        gpg_outcome("keygen", {"vault_error": "gpg: TimeoutExpired: Command timed out after 300 seconds"})
     with pytest.raises(vault.VaultError, match="gpg: key generation: bad"):   # any other failure is a failure
-        keygen(1, _StuckGpg(vault.VaultError("gpg: key generation: bad")))
+        gpg_outcome("keygen", {"vault_error": "gpg: key generation: bad"})
+    with pytest.raises(PermissionError, match="denied"):   # an error other than VaultError: itself
+        gpg_outcome("keygen", {"error": ["builtins", "PermissionError", [13, "denied"], "Traceback ..."]})
+    with pytest.raises(AttributeError, match="no_such_call"):   # through a real child process
+        gpg_call(vault.Gpg([sys.executable]), "no_such_call", end=time.monotonic() + 60, deadline=60, tmp=tmp_path)
 
 
 # --- the round trips ---
-def test_gpg_seal_then_open_with_each_of_two_recipients(brain, brain_home, tmp_path):
+def test_gpg_seal_then_open_with_each_of_two_recipients(brain, brain_home, tmp_path, tmp_path_factory):
     """Real cryptography: a store sealed to two gpg recipients opens with either key, and not with a third."""
     ad = vault.Gpg()
     if not ad.found():
         pytest.skip("gpg not available")
-    (a, a_pub), (b, b_pub), (c, _) = keygen(3, ad)
+    g = tmp_path_factory.mktemp("g")   # the gpg calls' temporary folder: short, in pytest's basetemp
+    (a, a_pub), (b, b_pub), (c, _) = keygen(3, ad, tmp=g)
     keys = brain.root / "vault" / "keys"
     keys.mkdir(parents=True)
     (keys / "box1.asc").write_text(a_pub, encoding="utf-8")
@@ -136,13 +245,14 @@ def test_gpg_seal_then_open_with_each_of_two_recipients(brain, brain_home, tmp_p
     sealed = brain_home / "vault" / "sealed" / "ledger" / man["file"]
     assert sealed.is_file() and b'"e": 1' not in sealed.read_bytes()
     assert json.loads(sealed.with_name(sealed.name + ".json").read_text())["files"] == 2
+    end = time.monotonic() + GPG_KEYGEN_S   # each open imports a secret key into a fresh home: an agent, bounded too
     for i, ident in enumerate((a, b)):
         out = tmp_path / f"opened{i}"
-        ad.open(sealed, tmp_path / f"plain{i}", ident=ident)
+        gpg_call(ad, "open", sealed, tmp_path / f"plain{i}", ident=ident, end=end, deadline=GPG_KEYGEN_S, tmp=g)
         vault._safe_extract(tmp_path / f"plain{i}", out)
         assert tree(out / "ledger") == tree(brain_home / "ledger")
     with pytest.raises(vault.VaultError):
-        ad.open(sealed, tmp_path / "nope", ident=c)
+        gpg_call(ad, "open", sealed, tmp_path / "nope", ident=c, end=end, deadline=GPG_KEYGEN_S, tmp=g)
 
 
 def test_age_wiring_seal_then_open_with_each_of_two_recipients(brain, brain_home, tmp_path):
