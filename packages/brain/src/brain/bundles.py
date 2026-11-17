@@ -178,10 +178,10 @@ def _label(svc) -> str:
 
 def _applied_services(where: Path) -> dict:
     """The services of the compose file an earlier apply rendered there ({} when none or unreadable)."""
+    import yaml
     try:
-        import yaml
         doc = yaml.safe_load((where / stacks.BUNDLE_FILE).read_text(encoding="utf-8"))
-    except (OSError, ValueError, ImportError, Exception):   # noqa: BLE001 - a file it cannot read is none
+    except (OSError, UnicodeDecodeError, yaml.YAMLError):   # none rendered yet, or a file it cannot read: none
         return {}
     return doc.get("services") or {} if isinstance(doc, dict) else {}
 
