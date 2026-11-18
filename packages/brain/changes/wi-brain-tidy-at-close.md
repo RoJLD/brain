@@ -1,4 +1,4 @@
-section: Changed
+section: Changes
 
 - `brain tidy` is applied where work ends, not only reported. `brain close ID --pr "repo #N" --write` removes the PR's
   head branch and its worktrees at once: the PR's merge stands for tidy's 24-hour idle rule, so a worktree made with
