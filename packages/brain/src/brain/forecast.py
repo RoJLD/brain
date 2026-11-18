@@ -66,7 +66,7 @@ from collections import Counter
 from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 
-from . import __version__, config, cost, diffs, graph, paths, projects, ranking, records, resume
+from . import __version__, config, cost, diffs, graph, paths, projects, ranking, records, resume, waves
 from . import gates as gate_data
 
 FORMAT = 1            # the JSON's layout
@@ -322,19 +322,28 @@ def settings() -> dict:
 
 
 def _parents(nodes: dict[str, dict], edges: list[dict], items) -> dict[str, dict]:
-    """{item: {milestone, wave, parents}}: the Milestones each of ``items`` is part of, its thematic one (not of kind
-    wave: an era counts) and its wave apart, each the first by id, so an item in both keeps both."""
+    """{item: {milestone, wave, parents}}: the Milestones each of ``items`` is part of, its thematic one (the first by
+    id not of kind wave: an era counts) and its wave apart, so an item in both keeps both. Its wave is the one it is
+    in now (brain.waves: the wave its props.carried_to names once the planned one closed without it, else the one it
+    is part of), added to its parents when it is not part of it."""
     by: dict[str, set[str]] = {}
     for e in edges:
         if e.get("type") == "part_of" and e.get("from") in items and (nodes.get(e.get("to")) or {}).get(
                 "type") == "Milestone":
             by.setdefault(e["from"], set()).add(e["to"])
-    out = {}
+    plan = waves.Plan(nodes)
     for nid, ms in by.items():
-        ids = sorted(ms)
-        waves = [m for m in ids if ((nodes[m].get("props") or {}).get("kind") or "") == "wave"]
-        out[nid] = {"milestone": next((m for m in ids if m not in waves), ""), "wave": waves[0] if waves else "",
-                    "parents": ids}
+        plan.parents[nid] = sorted(ms)
+    out = {}
+    for nid in items:
+        ms = by.get(nid, set())
+        carried = ((nodes.get(nid) or {}).get("props") or {}).get("carried_to")
+        if not ms and not carried:
+            continue
+        wave = plan.wave_of(nid) or ""
+        thematic = sorted(m for m in ms if waves.kind(nodes[m]) != waves.WAVE)
+        out[nid] = {"milestone": thematic[0] if thematic else "", "wave": wave,
+                    "parents": sorted(ms | ({wave} if wave else set()))}
     return out
 
 
@@ -382,7 +391,8 @@ def gather(p: projects.Project, led: cost.Ledger, now: datetime) -> dict:
         pri, proposed = _priority(props)
         est = estimate(nid)
         row = {"id": nid, "title": " ".join(str(n.get("title") or "").split())[:120], "status": s,
-               "priority": pri, "proposed": proposed, **(parents.get(nid) or {"milestone": "", "wave": "", "parents": []}), **est}
+               "priority": pri, "proposed": proposed,
+               **(parents.get(nid) or {"milestone": "", "wave": "", "parents": []}), **est}
         if s == DEFERRED:
             deferred.append(row)
             continue

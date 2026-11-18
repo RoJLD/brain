@@ -120,15 +120,21 @@ def test_an_item_in_a_wave_and_a_thematic_milestone_keeps_both(project):
     whichever edge comes last; one in a wave alone counts in « (no milestone) »; each milestone reads its members."""
     store = project.stores[0]
     with (store / "nodes" / "work.yaml").open("a", encoding="utf-8") as f:
-        f.write('- {id: wave-s9, type: Milestone, status: pending, title: "Wave 9", props: {kind: wave}}\n')
+        f.write('- {id: wave-s9, type: Milestone, status: pending, title: "Wave 9", props: {kind: wave}}\n'
+                '- {id: wave-s8, type: Milestone, status: reached, title: "Wave 8", props: {kind: wave}}\n'
+                '- {id: wi-carry, type: WorkItem, status: todo, title: "Build carried", props: {priority: P2, '
+                'theme: "3.9", carried_to: wave-s9}}\n')
     with (store / "edges" / "work.yaml").open("a", encoding="utf-8") as f:   # the wave edge after the thematic one
-        f.write("- {from: wi-p1, to: wave-s9, type: part_of}\n- {from: wi-p2, to: wave-s9, type: part_of}\n")
+        f.write("- {from: wi-p1, to: wave-s9, type: part_of}\n- {from: wi-p2, to: wave-s9, type: part_of}\n"
+                "- {from: wi-carry, to: wave-s8, type: part_of}\n")
     model = forecast.gather(project, ledger(project), NOW)
     rows = {i["id"]: i for i in model["items"]}
     assert (rows["wi-p1"]["milestone"], rows["wi-p1"]["wave"], rows["wi-p1"]["parents"]) == (
         "ms-x", "wave-s9", ["ms-x", "wave-s9"])
     assert (rows["wi-p2"]["milestone"], rows["wi-p2"]["wave"], rows["wi-p2"]["parents"]) == ("", "wave-s9", ["wave-s9"])
     assert (rows["wi-one"]["milestone"], rows["wi-one"]["wave"], rows["wi-one"]["parents"]) == ("", "", [])
+    # carried out of a closed wave: its wave is the one it was carried to, the planned one kept among its parents
+    assert (rows["wi-carry"]["wave"], rows["wi-carry"]["parents"]) == ("wave-s9", ["wave-s8", "wave-s9"])
     res = json.loads(forecast.as_json(forecast.run(model, 100)))
     out = {i["id"]: i for i in res["items"]}
     assert (out["wi-p1"]["milestone"], out["wi-p1"]["wave"], out["wi-p1"]["parents"]) == (
