@@ -213,7 +213,10 @@ def test_scan_reads_subagents_and_workflow_agents_apart(projects_dir):
                                 "?": {"count": 1, "cost": near(one(500))}}
     ag = row["agents"]
     assert ag["subagents"] == {"Review lens: tests": {"count": 1, "cost": pytest.approx(plain, abs=1e-4),
-                                                      "output": 1000, "tokens": 1010}}
+                                                      "output": 1000, "tokens": 1010, "models": {OPUS: 1},
+                                                      "roles": {"general-purpose": {
+                                                          "count": 1, "cost": pytest.approx(plain, abs=1e-4),
+                                                          "models": {OPUS: 1}}}}}
     run = ag["workflows"]["wf_run1"]
     assert run["agents"] == 3 and run["cost"] == pytest.approx(wf, abs=1e-4) and run["output"] == 5000
     assert run["start"] == "2026-11-09T10:01:00Z" and run["end"] == "2026-11-10T00:30:00Z"
@@ -223,7 +226,7 @@ def test_scan_reads_subagents_and_workflow_agents_apart(projects_dir):
     # the quota and the governor read the hours: the agents' cost is in them
     assert sum(h["cost"] for h in row["hours"].values()) == pytest.approx(row["cost"], abs=1e-3)
     assert row["hours"]["2026-11-10T00"]["cost"] == pytest.approx(one(500), abs=1e-4)
-    assert row["v"] == usage.SCAN_V == 4
+    assert row["v"] == usage.SCAN_V == 6
 
 
 def test_a_new_workflow_agent_rescans_its_session(projects_dir):
@@ -236,7 +239,10 @@ def test_a_new_workflow_agent_rescans_its_session(projects_dir):
     assert n == 1 and set(rows["proj/boss.jsonl"]["agents"]["workflows"]) == {"wf_run1", "wf_run2"}
     assert rows["proj/boss.jsonl"]["agents"]["workflows"]["wf_run2"]["labels"] == {
         usage.NO_LABEL: {"count": 1, "cost": pytest.approx(rows["proj/boss.jsonl"]["agents"]["workflows"]["wf_run2"]
-                                                            ["cost"])}}
+                                                            ["cost"]), "models": {OPUS: 1},
+                        "roles": {"-": {"count": 1, "cost": pytest.approx(rows["proj/boss.jsonl"]["agents"]
+                                                                          ["workflows"]["wf_run2"]["cost"]),
+                                        "models": {OPUS: 1}}}}}
 
 
 def test_a_label_written_after_the_transcript_rescans_its_session(projects_dir):
@@ -324,3 +330,47 @@ def test_windows_and_distributions():
     q = usage.quantiles([1, 2, 3, 4, 10])
     assert q["n"] == 5 and q["median"] == 3 and q["p25"] == 2 and q["p75"] == 4 and q["total"] == 20
     assert usage.quantiles([])["n"] == 0
+
+
+def test_each_agent_s_role_and_model(projects_dir):
+    """wi-brain-review-model-routing: a workflow agent's role is its label before the colon, else its phase; a plain
+    subagent's its type; its model the one its messages ran on, else its meta's."""
+    assert usage.role_of({"run": "r", "label": "verify:a finding#1", "phase": "Verify"}) == "verify"
+    assert usage.role_of({"run": "r", "label": "fix confirmed findings", "phase": "Fix"}) == "fix"
+    assert usage.role_of({"run": "r", "label": "", "phase": ""}) == "-"
+    assert usage.role_of({"run": "", "label": "Review lens: tests", "type": "Explore"}) == "Explore"
+    main = _launcher(projects_dir)
+    run = main.with_suffix("") / "subagents" / "workflows" / "wf_run1"
+    v = _write(run / "agent-w04.jsonl", [{**_asst("2026-11-09T10:05:00Z", "y5", [], out=100),
+                                         "message": {**_asst("x", "y5", [])["message"], "model": "claude-sonnet-5-5"}}])
+    _meta(v, agentType="workflow-subagent", description="verify:views#0", workflowPhase="Verify", model="sonnet")
+    labels = usage.scan(main)["agents"]["workflows"]["wf_run1"]["labels"]
+    assert set(labels["verify:views#0"]["roles"]) == {"verify"}
+    assert labels["verify:views#0"]["models"] == {"claude-sonnet-5-5": 1}
+    assert set(labels["impl:views"]["roles"]) == {"impl"} and set(labels["fix:views"]["roles"]) == {"fix"}
+
+
+def _fake_scan(cost: float, model: str | None):
+    from collections import Counter
+    from types import SimpleNamespace
+    st = SimpleNamespace(tokens={"output": 10}, models=Counter({model: 3} if model else {}), first_ts="", last_ts="")
+    return SimpleNamespace(cost=cost, st=st, days={})
+
+
+def test_agents_of_one_label_keep_each_role_apart():
+    """Agents that share a label but not a role (one description given to two subagent types, a label with no colon
+    used in two phases of a run) are counted under each role, not under the last one's."""
+    plain = {"label": "check tests", "type": "Explore", "run": ""}
+    got = usage.agents_of([(plain, _fake_scan(1.0, "claude-haiku-5-5")),
+                           ({**plain, "type": "general-purpose"}, _fake_scan(5.0, OPUS)),
+                           ({"label": "", "type": "Explore", "run": ""}, _fake_scan(2.0, None)),
+                           ({"run": "r", "label": "triage", "phase": "Review"}, _fake_scan(1.0, OPUS)),
+                           ({"run": "r", "label": "triage", "phase": "Fix"}, _fake_scan(3.0, OPUS))])
+    row = got["subagents"]["check tests"]
+    assert (row["count"], row["cost"]) == (2, 6.0)
+    assert row["roles"] == {"Explore": {"count": 1, "cost": 1.0, "models": {"claude-haiku-5-5": 1}},
+                            "general-purpose": {"count": 1, "cost": 5.0, "models": {OPUS: 1}}}
+    assert got["subagents"][usage.NO_LABEL]["roles"] == {"Explore": {"count": 1, "cost": 2.0,
+                                                                     "models": {usage.UNKNOWN_MODEL: 1}}}
+    assert got["workflows"]["r"]["labels"]["triage"]["roles"] == {
+        "review": {"count": 1, "cost": 1.0, "models": {OPUS: 1}}, "fix": {"count": 1, "cost": 3.0, "models": {OPUS: 1}}}

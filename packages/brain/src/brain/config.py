@@ -213,6 +213,20 @@ def rules_files(cfg: Config) -> list[Path]:
     return [cfg.root / r for r in rules if isinstance(r, str) and r] if isinstance(rules, list) else []
 
 
+# The model of each agent role (brief.agent_models, wi-brain-review-model-routing): the verifiers and skeptics on the
+# smaller model; the review lenses and the fix agent on the session's until a comparison on the same diffs moves them.
+AGENT_MODELS = {"verify": "sonnet"}
+
+
+def agent_models(cfg: Config | None) -> dict[str, str]:
+    """{role: model alias}: config.json ``brief.agent_models`` over :data:`AGENT_MODELS`; a null value drops the role
+    (it inherits the session's model)."""
+    brief = cfg.data.get("brief") if cfg is not None and isinstance(cfg.data.get("brief"), dict) else {}
+    given = brief.get("agent_models") if isinstance(brief.get("agent_models"), dict) else {}
+    merged = {**AGENT_MODELS, **given}
+    return {str(k): str(v) for k, v in merged.items() if isinstance(v, str) and v}
+
+
 def claude(cfg: Config) -> dict[str, str]:
     """adapters.claude, each name defaulting to :data:`CLAUDE`: the marketplace, the core plugin (its guards and hooks
     sign with its name) and the marketplace's source repo on GitHub."""

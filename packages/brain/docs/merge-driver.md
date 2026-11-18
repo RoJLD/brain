@@ -318,6 +318,9 @@ writes the brief a coordinator hands to a sub-session, so that it edits only wha
   `haiku` at `low` effort, 400k; standard on the coordinator's own model, 400k; strategic on `opus` at `high`, 400k);
   a budget above `brief.ceiling` (default 400k: a message costs two to three times more above it) is warned about, as
   the expansion step of an unfinished task rather than a start;
+- the model of each agent role: config.json `brief.agent_models` (`{role: model}`, default `verify` on `sonnet`: the
+  verifiers and skeptics; every other role on the session's model; null drops a role), the `model` an Agent call or a
+  workflow agent passes, and what `brain usage --by role` counts the agents against;
 - the cost estimate of `brain cost estimate`;
 - the coordinator's app session id (`--coordinator`, else `$CLAUDE_CODE_HOST_SESSION_ID`, the session that runs the
   command), which also tells the sub-session to sign its reports with its own id, read by `brain sessions self`, and
