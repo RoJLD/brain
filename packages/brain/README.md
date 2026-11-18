@@ -982,6 +982,21 @@ The views name the owner by `identity.display_name` (else `identity.owner`): the
 one is named; `settings.titles` there gives any panel a free title (the settings tab edits both). `identity.owner` stays the id `--by` writes and the
 stores declare.
 
+What waits on the owner reaches the queue only as a field: an item's `props.open` (a question), its
+`props.external_blocker` (a gesture of theirs) or a pending DDR that names it (a choice). `brain check` warns, never
+fails, of an open item whose title or text props say it waits on the owner while none of those carries it
+(`brain.ownerwaits`): « waits on Ada's install », « blocked on the owner », « pending Ada's answer », « until Ada
+signs », « once Ada pushes », « a session Ada runs », « Ada still has to confirm », « left: Ada », and in French
+« attend … Ada », « en attente de … du propriétaire », « bloqué par Ada », « dès que Ada », « Ada doit » (a straight
+or a typographic apostrophe alike). The owner's
+names are `identity.owner` and `identity.display_name`; « the owner » always counts. The line gives the `brain item
+set ID external_blocker=...` (or `open=...`) that records the wait. Left alone: a closed item, the props that record
+a past call (`idea`, `validated`, `priority_reason`, `size_reason`, `created`, `decided*`, `answered*`, `split*`,
+`reframed*`), quoted text (« », “ ”, "", backticks), a noun (« a wait on the owner ») and a compound
+(« waiting-on-Ada time »), and the owner named as who decides in general (« with Ada's go », « Ada decides »). A
+sentence that matches and is no wait (history, a condition to come) is marked once: `brain item set ID
+owner_wait_checked="DATE: why"`.
+
 ### The owner's answers: one writer per batch
 
 The session that asks the owner records the answers, in one PR per batch (wi-brain-answers-lane):
