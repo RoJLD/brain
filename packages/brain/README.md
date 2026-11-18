@@ -157,7 +157,8 @@ action, `⇢` another project) and band; the done items folded under « ✓ N do
 last. On the waves axis a pending wave's open items sit in its lots, by round, as `brain wave plan` cuts them (lots
 that share no file but hot ones, rounds at the caps in force), the items carried in first among the rest; each item
 shows the wave it was carried from (`↩`), its PR (`props.pr`) and the live session whose report names it. `f` keeps the
-P0 and P1 items alone. The dates are the last `brain forecast`'s (`<BRAIN_HOME>/forecast/<project>/latest.json`,
+P0 and P1 items alone, each lot's and group's count of what it still holds. The dates are the last `brain forecast`'s
+(`<BRAIN_HOME>/forecast/<project>/latest.json`,
 re-read when it changes), never recomputed and UNCALIBRATED until judged; without one, « no forecast yet: brain forecast ». `←`/`→`
 fold, Enter opens an item's detail or a milestone's row in Trajectories, and the axis is kept with the tab's view. Its
 third view, Trajectories, is the Gantt as bands (`brain.planbands`): one row per milestone, era and wave the same

@@ -101,6 +101,23 @@ def test_only_keeps_the_p0_and_p1_items_and_what_holds_them(st):
     assert planviews.only([{"kind": "item", "priority": "P1?", "children": []}])   # a proposed P1 counts
 
 
+def test_only_counts_and_chains_what_each_row_still_holds(st):
+    """A lot of a P0 and a P2 item reads (1) and chains the P0 alone under f; the groups count what they keep."""
+    st.nodes["wi-x1"]["props"]["priority"] = "P2"
+    nodes = planviews.tree(st, FC, "waves", "demo")
+    lot = _find(nodes, "demo:wave-s2:lot-2")
+    assert (lot["name"], lot["chain"]) == ("round 1 · lot 2 (2)", "wi-x2 P0 → wi-x1 P2")
+    kept = planviews.only(nodes)
+    lot = _find(kept, "demo:wave-s2:lot-2")
+    assert (lot["name"], lot["chain"]) == ("round 1 · lot 2 (1)", "wi-x2 P0")
+    assert planviews.label(lot) == "round 1 · lot 2 (1)  wi-x2 P0"
+    assert next(n for n in nodes if n["kind"] == "group")["name"] == "(no wave)  5 open item(s)"
+    assert next(n for n in kept if n["kind"] == "group")["name"] == "(no wave)  2 open item(s)"
+    done = {"kind": "done", "name": "3 done", "children": [
+        {"kind": "item", "priority": p, "children": []} for p in ("P1", "P2", "P3")]}
+    assert planviews.only([done])[0]["name"] == "1 done"
+
+
 def test_the_text_twin_and_the_cockpit_draw_the_lots_and_the_sessions(st):
     panel = {"projects": [planviews.collect(st, FC, "demo")]}
     out = "\n".join(planviews.lines(panel, "waves", 160, plain=False, working=planviews.sessions_of(SESSIONS)))

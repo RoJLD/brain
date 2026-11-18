@@ -236,7 +236,7 @@ def _wave_children(c: _Ctx, wid: str, rows: list[dict]) -> list[dict]:
         kids = [by_id[i] for i in lot.items if i in by_id]
         placed.update(lot.items)
         out.append({"key": f"{c.project}:{wid}:lot-{lot.n}", "kind": "lot", "id": "", "project": c.project,
-                    "name": f"round {rnd} · lot {lot.n} ({len(kids)})", "chain": _chain(kids),
+                    "round": rnd, "lot": lot.n, "name": _lot_name(rnd, lot.n, kids), "chain": _chain(kids),
                     "checked": lot.checked, "children": kids})
     return out + _items_folded([r for r in rows if r["id"] not in placed], c.project, wid)
 
@@ -253,6 +253,10 @@ def _lots(c: _Ctx, wid: str) -> list[tuple]:
     for n, (_, lot) in enumerate(out, 1):
         lot.n = n
     return out
+
+
+def _lot_name(rnd: int, n: int, kids: list[dict]) -> str:
+    return f"round {rnd} · lot {n} ({len(kids)})"
 
 
 def _chain(kids: list[dict], n: int = 3) -> str:
@@ -316,10 +320,10 @@ def tree(st: resume.Store, fc: dict | None, axis: str = "milestones", project: s
     what = "wave" if axis == "waves" else "milestone"
     rows = _no_era(c, ms)
     if rows:
-        roots.append(_group(project, "(no era)", f"{len(rows)} {what}(s)", rows, fold=False))
+        roots.append(_group(project, "(no era)", f"{what}(s)", rows, fold=False))
     stray = _stray(c, ms)
     if stray:
-        roots.append(_group(project, f"(no {what})", f"{len(stray)} open item(s)", stray, fold=True))
+        roots.append(_group(project, f"(no {what})", "open item(s)", stray, fold=True))
     return roots
 
 
@@ -338,9 +342,10 @@ def _stray(c: _Ctx, ms: dict[str, dict]) -> list[dict]:
                    if n.get("status") in (*resume.WORK_OPEN, "deferred") and n["id"] not in homed), key=_item_order)
 
 
-def _group(project: str, name: str, count: str, children: list[dict], fold: bool) -> dict:
-    return {"key": f"{project}:{name}", "kind": "group", "id": "", "project": project, "name": f"{name}  {count}",
-            "fold": fold, "children": children}
+def _group(project: str, name: str, unit: str, children: list[dict], fold: bool) -> dict:
+    """A group named by ``name`` and the count of its children in ``unit`` (« (no era)  2 wave(s) »)."""
+    return {"key": f"{project}:{name}", "kind": "group", "id": "", "project": project, "base": name, "unit": unit,
+            "name": f"{name}  {len(children)} {unit}", "fold": fold, "children": children}
 
 
 def collect(st: resume.Store, fc: dict | None, project: str, at_once: int = AT_ONCE) -> dict:
@@ -351,7 +356,8 @@ def collect(st: resume.Store, fc: dict | None, project: str, at_once: int = AT_O
 
 
 def only(nodes: list[dict], levels: tuple[str, ...] = URGENT) -> list[dict]:
-    """The nodes that hold an item of ``levels`` (a proposed priority counts), those items alone under them."""
+    """The nodes that hold an item of ``levels`` (a proposed priority counts), those items alone under them; a lot's,
+    a group's and the done items' counts, and a lot's chain, of what they still hold."""
     out = []
     for n in nodes:
         if n["kind"] == "item":
@@ -360,8 +366,20 @@ def only(nodes: list[dict], levels: tuple[str, ...] = URGENT) -> list[dict]:
             continue
         kids = only(n["children"], levels)
         if kids:
-            out.append({**n, "children": kids})
+            out.append(_recounted({**n, "children": kids}))
     return out
+
+
+def _recounted(n: dict) -> dict:
+    """A container's name (and a lot's chain) from the children it holds now."""
+    kids = n["children"]
+    if n["kind"] == "lot" and "round" in n:
+        return {**n, "name": _lot_name(n["round"], n["lot"], kids), "chain": _chain(kids)}
+    if n["kind"] == "done":
+        return {**n, "name": f"{len(kids)} done"}
+    if n["kind"] == "group" and "unit" in n:
+        return {**n, "name": f"{n['base']}  {len(kids)} {n['unit']}"}
+    return n
 
 
 def sessions_of(panel: dict | None) -> dict[str, str]:

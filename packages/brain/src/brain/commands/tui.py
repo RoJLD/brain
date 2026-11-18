@@ -249,8 +249,9 @@ def register(sub, ctx) -> None:
                          "--plain, "
                          "print that view's panels alone")
     tu.add_argument("--axis", choices=("milestones", "waves"),
-                    help="the milestones tab's tree: era > milestone > item (default) or era > wave > item; alone, "
-                         "it means --tab milestones --view tree")
+                    help="the milestones tab's tree: era > milestone > item (default) or era > wave > lot > item (a "
+                         "pending wave's lots by round as brain wave plan cuts them, each item's PR and live session; "
+                         "f in the app: its P0 and P1 items alone); alone, it means --tab milestones --view tree")
     tu.add_argument("--tz", choices=cockpit.TZS,
                     help="the times shown: this machine's timezone (local, the interactive default) or UTC; --once "
                          "and --json keep the recorded UTC times unless it is given")
