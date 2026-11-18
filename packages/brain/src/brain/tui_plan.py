@@ -4,8 +4,8 @@ read from the graph and the forecast's latest.json by the cockpit's worker (brai
 
 Keys: ``g`` the next axis (``cockpit.MODES``: milestones, waves), ``←`` folds (or goes to the parent), ``→`` unfolds (or
 goes to the first child), Enter opens a record's detail (an item's, a milestone's) and folds or unfolds a group,
-``space`` stays the cockpit's pause. A refresh rebuilds the tree with the same nodes open and the cursor on the same key; the
-axis is kept in tui.json with the tab's view. Under 120 columns a milestone's row drops its bar.
+``space`` stays the cockpit's pause. A refresh rebuilds the tree with the same nodes open and the cursor on the same
+key; the axis is kept in tui.json with the tab's view. Under 120 columns a milestone's row drops its bar.
 """
 
 from __future__ import annotations
@@ -88,20 +88,10 @@ class PlanTreeApp:
         at = (tree.cursor_node.data or {}).get("key") if tree.cursor_node is not None else None
         tree.clear()
         groups = (panel or {}).get("projects") or []
-        width = max(40, tree.size.width or cockpit.NARROW_COLUMNS)
         roots = [(g, (g.get("trees") or {}).get(self.plan_axis) or []) for g in groups]
         if self.plan_open is None:
-            self.plan_open = {k for _, ns in roots for k in opened(ns)}
-        multi = len(groups) > 1
-        for g, nodes in roots:
-            top = tree.root
-            if multi:
-                top = tree.root.add(f"{g['project']}  {g['forecast']}", data={"key": g["project"], "kind": "group"},
-                                    expand=g["project"] in self.plan_open or not self.plan_open)
-            for n in nodes:
-                _add(top, n, 0, width, self.plan_open)
-        if not groups:
-            tree.root.add_leaf("not read yet")
+            self.plan_open = {g["project"] for g, _ in roots} | {k for _, ns in roots for k in opened(ns)}
+        _fill(tree, roots, max(40, tree.size.width or cockpit.NARROW_COLUMNS), self.plan_open)
         tree.border_subtitle = (f"axis: {self.plan_axis} · g axis · ←/→ fold · Enter detail · "
                                 f"{groups[0]['forecast'] if len(groups) == 1 else 'ranges p10–p90'}")
         target = next((n for n in _nodes(tree.root) if (n.data or {}).get("key") == at), None) if at else None
@@ -140,6 +130,20 @@ def _nodes(root) -> list:
         out.append(n)
         stack.extend(n.children)
     return out
+
+
+def _fill(tree: PlanTree, roots: list[tuple[dict, list[dict]]], width: int, open_: set[str]) -> None:
+    """Each project's nodes under the tree's root; several projects: each under its own node."""
+    multi = len(roots) > 1
+    for g, nodes in roots:
+        top = tree.root
+        if multi:
+            top = tree.root.add(f"{g['project']}  {g['forecast']}", data={"key": g["project"], "kind": "group"},
+                                expand=g["project"] in open_)
+        for n in nodes:
+            _add(top, n, 0, width, open_)
+    if not roots:
+        tree.root.add_leaf("not read yet")
 
 
 def _add(parent, n: dict, depth: int, width: int, open_: set[str]) -> None:

@@ -76,28 +76,34 @@ def test_the_tree_view_its_axis_its_folds_and_its_detail(store, monkeypatch):
         assert app.plan_axis == "waves" and "axis: waves" in str(tree.border_subtitle)
         assert any("0.2.0 (wave-s2)" in x for x in _labels(tree))
         assert saved[-1]["tabs"]["milestones"] == {"view": "tree", "axis": "waves"}
-        s2 = next(n for n in _all(tree) if (n.data or {}).get("id") == "wave-s2")
-        tree.move_cursor(s2)
-        await pilot.press("right")   # unfolds it
-        assert s2.is_expanded and any("wi-carry" in x for x in _labels(tree))
-        await pilot.press("right")   # then goes to its first child
-        assert tree.cursor_node is s2.children[0]
-        app.open_detail = lambda name, r: opened_details.append((name, r["id"]))
-        await pilot.press("enter")
-        assert opened_details == [("frontier", s2.children[0].data["id"])]
-        await pilot.press("left")    # an item: to its parent
-        assert tree.cursor_node is s2
-        await pilot.press("left")    # folds it
-        assert not s2.is_expanded
-        await pilot.press("enter")   # a wave: its detail
-        assert opened_details[-1] == ("milestones", "wave-s2")
-        paused = app.paused
-        await pilot.press("space")   # the cockpit's pause, not the tree's toggle
-        assert app.paused is not paused and not s2.is_expanded
-        app.draw({"plan"})   # a refresh keeps the cursor's key
-        await pilot.pause(0.1)
-        assert (tree.cursor_node.data or {}).get("id") == "wave-s2"
+        await _folds_and_detail(app, pilot, tree, opened_details)
     _run(check, PlanCockpit(plan), tabs={"milestones": {"view": "list"}})
+
+
+async def _folds_and_detail(app, pilot, tree, opened_details):
+    """→ unfolds then goes to the first child, ← to the parent then folds, Enter a detail, space the pause, a refresh
+    keeps the cursor."""
+    s2 = next(n for n in _all(tree) if (n.data or {}).get("id") == "wave-s2")
+    tree.move_cursor(s2)
+    await pilot.press("right")   # unfolds it
+    assert s2.is_expanded and any("wi-carry" in x for x in _labels(tree))
+    await pilot.press("right")   # then goes to its first child
+    assert tree.cursor_node is s2.children[0]
+    app.open_detail = lambda name, r: opened_details.append((name, r["id"]))
+    await pilot.press("enter")
+    assert opened_details == [("frontier", s2.children[0].data["id"])]
+    await pilot.press("left")    # an item: to its parent
+    assert tree.cursor_node is s2
+    await pilot.press("left")    # folds it
+    assert not s2.is_expanded
+    await pilot.press("enter")   # a wave: its detail
+    assert opened_details[-1] == ("milestones", "wave-s2")
+    paused = app.paused
+    await pilot.press("space")   # the cockpit's pause, not the tree's toggle
+    assert app.paused is not paused and not s2.is_expanded
+    app.draw({"plan"})   # a refresh keeps the cursor's key
+    await pilot.pause(0.1)
+    assert (tree.cursor_node.data or {}).get("id") == "wave-s2"
 
 
 def _all(tree):

@@ -77,18 +77,21 @@ def _calibrated(fc: dict | None) -> bool:
 def _when_milestone(m: dict, fc: dict | None) -> str:
     """A milestone's dates: reached and its day, the forecast's range, or why it has none."""
     if m.get("status") == "reached":
-        day = _md(str((m.get("props") or {}).get("reached") or ""))
-        return f"reached {day}".strip()
-    if not fc:
-        return ""
-    f = next((x for x in fc.get("milestones") or [] if x.get("id") == m["id"]), None)
-    if f is None:
+        return f"reached {_md(str((m.get('props') or {}).get('reached') or ''))}".strip()
+    f = _forecast_of(m["id"], fc)
+    if not f:
         return ""
     if f.get("shown") == "undated":
-        why = forecast.gate_kind(f.get("held") or "") if f.get("held") else (
-            f"{len(f.get('undated') or [])} item(s) not dated" if f.get("undated") else "")
-        return "undated" + (f": {why}" if why else "")
+        return _undated(f)
     return forecast.span(f, _calibrated(fc)) if f.get("dates") else ("all done" if not f.get("open") else "no date")
+
+
+def _undated(f: dict) -> str:
+    """Why the forecast gives a milestone no date: its own gate, or its items it cannot date."""
+    if f.get("held"):
+        return f"undated: {forecast.gate_kind(f['held'])}"
+    n = len(f.get("undated") or [])
+    return f"undated: {n} item(s) not dated" if n else "undated"
 
 
 def _item_forecast(fc: dict | None) -> tuple[dict, dict]:
@@ -103,23 +106,25 @@ def _item(st: resume.Store, nid: str, items: dict, undated: dict, cal: bool, pro
     n = st.nodes.get(nid) or {}
     props = n.get("props") or {}
     status = str(n.get("status") or "")
-    prio = str(props.get("priority") or "")
-    if not prio and props.get("priority_proposed"):
-        prio = f"{props['priority_proposed']}?"
-    f = items.get(nid) or {}
-    gates = (["ddr"] if f.get("ddr") else []) + (["action"] if f.get("action") else [])
-    when = ""
-    if status == "done":
-        when = f"done {_md(str(props.get('done') or ''))}".strip()
-    elif nid in undated:
-        kind = forecast.gate_kind(undated[nid])
-        gates.append("outside" if kind == "after another project" else "undated")
-        when = f"undated: {kind}"
-    elif f.get("dates"):
-        when = forecast.span({"dates": f["dates"], "shown": forecast._shown(f.get("days"))}, cal)
+    prio = str(props.get("priority") or "") or (f"{props['priority_proposed']}?" if props.get("priority_proposed")
+                                                 else "")
+    gates, when = _item_when(status, props, items.get(nid) or {}, undated.get(nid), cal)
     return {"key": f"{project}:{nid}", "kind": "item", "id": nid, "project": project, "name": nid,
             "title": str(n.get("title") or ""), "state": status, "priority": prio, "gates": gates, "when": when,
             "children": []}
+
+
+def _item_when(status: str, props: dict, f: dict, why: str | None, cal: bool) -> tuple[list[str], str]:
+    """An item's gates and band: done and its day; undated and why (``why``: the forecast's reason); its range."""
+    gates = (["ddr"] if f.get("ddr") else []) + (["action"] if f.get("action") else [])
+    if status == "done":
+        return gates, f"done {_md(str(props.get('done') or ''))}".strip()
+    if why is not None:
+        kind = forecast.gate_kind(why)
+        return gates + ["outside" if kind == "after another project" else "undated"], f"undated: {kind}"
+    if f.get("dates"):
+        return gates, forecast.span({"dates": f["dates"], "shown": forecast._shown(f.get("days"))}, cal)
+    return gates, ""
 
 
 def _item_order(x: dict) -> tuple:
@@ -194,21 +199,28 @@ def _milestone(c: _Ctx, mid: str) -> dict:
     # a wave counts the items in it now (one carried out of it counts in the wave it went to); else through its subs
     of = c.members.get(mid, ()) if _kind(n) == WAVE and c.axis == "waves" else st.milestone_items(mid)
     live = [i for i in of if st.status(i) != "dropped"]
-    done = sum(1 for i in live if st.status(i) == "done")
     kind = _kind(n) or "milestone"
-    node = {"key": f"{project}:{mid}", "kind": kind, "id": mid, "project": project,
-            "name": (mid if kind == ERA else _short(mid, project)) if kind != WAVE else
-            str((n.get("props") or {}).get("release") or mid),
-            "title": str(n.get("title") or ""), "state": str(n.get("status") or ""), "done": done, "items": len(live),
+    node = {"key": f"{project}:{mid}", "kind": kind, "id": mid, "project": project, "name": _name(n, kind, project),
+            "title": str(n.get("title") or ""), "state": str(n.get("status") or ""),
+            "done": sum(1 for i in live if st.status(i) == "done"), "items": len(live),
             "when": _when_milestone(n, fc), "gates": _milestone_gates(mid, fc), "p10": _p10(mid, fc), "children": []}
-    if kind == WAVE and node["name"] != mid:
-        node["name"] = f"{node['name']} ({mid})"
     c.seen.add(mid)
     subs = [_milestone(c, s) for s in c.sub_milestones(mid) if s not in c.seen]
     node["children"] += sorted(subs, key=lambda x: _milestone_order(x, st))
     own = [c.item(i) for i in sorted(c.members.get(mid, ())) if st.status(i) != "dropped"]
     node["children"] += _items_folded(own, project, mid)
     return node
+
+
+def _name(n: dict, kind: str, project: str) -> str:
+    """An era by its id, a wave by its release and id (« 0.6.0 (wave-s7) »), a milestone by its short id."""
+    mid = n["id"]
+    if kind == ERA:
+        return mid
+    if kind == WAVE:
+        release = str((n.get("props") or {}).get("release") or "")
+        return f"{release} ({mid})" if release and release != mid else mid
+    return _short(mid, project)
 
 
 def _forecast_of(mid: str, fc: dict | None) -> dict:
@@ -249,22 +261,34 @@ def tree(st: resume.Store, fc: dict | None, axis: str = "milestones", project: s
     c = _Ctx(st, fc, axis, project)
     ms = {m["id"]: m for m in st.of_type("Milestone") if m.get("status") != "dropped"}
     roots = [_milestone(c, e["id"]) for e in sorted((m for m in ms.values() if _kind(m) == ERA), key=lambda m: m["id"])]
-    held = {s for m, ss in c.subs.items() if m in ms and c.keep(ms[m]) for s in ss}   # under a milestone of the axis
+    what = "wave" if axis == "waves" else "milestone"
+    rows = _no_era(c, ms)
+    if rows:
+        roots.append(_group(project, "(no era)", f"{len(rows)} {what}(s)", rows, fold=False))
+    stray = _stray(c, ms)
+    if stray:
+        roots.append(_group(project, f"(no {what})", f"{len(stray)} open item(s)", stray, fold=True))
+    return roots
+
+
+def _no_era(c: _Ctx, ms: dict[str, dict]) -> list[dict]:
+    """The milestones of the axis under no era nor any other of its milestones, in their order."""
+    held = {s for m, ss in c.subs.items() if m in ms and c.keep(ms[m]) for s in ss}
     rows = [_milestone(c, m["id"]) for m in sorted(ms.values(), key=lambda m: m["id"])
             if m["id"] not in c.seen and _kind(m) != ERA and c.keep(m) and m["id"] not in held]
-    if rows:
-        roots.append({"key": f"{project}:(no era)", "kind": "group", "id": "", "project": project,
-                      "name": f"(no era)  {len(rows)} {'wave' if axis == 'waves' else 'milestone'}(s)",
-                      "children": sorted(rows, key=lambda x: _milestone_order(x, st))})
+    return sorted(rows, key=lambda x: _milestone_order(x, c.st))
+
+
+def _stray(c: _Ctx, ms: dict[str, dict]) -> list[dict]:
+    """The open items in no milestone of the axis, in their order."""
     homed = {i for m in ms.values() if c.keep(m) for i in c.members.get(m["id"], ())}
-    stray = [c.item(n["id"]) for n in st.of_type("WorkItem")
-             if n.get("status") in (*resume.WORK_OPEN, "deferred") and n["id"] not in homed]
-    if stray:
-        what = "wave" if axis == "waves" else "milestone"
-        roots.append({"key": f"{project}:(no {what})", "kind": "group", "id": "", "project": project,
-                      "name": f"(no {what})  {len(stray)} open item(s)", "fold": True,
-                      "children": sorted(stray, key=_item_order)})
-    return roots
+    return sorted((c.item(n["id"]) for n in c.st.of_type("WorkItem")
+                   if n.get("status") in (*resume.WORK_OPEN, "deferred") and n["id"] not in homed), key=_item_order)
+
+
+def _group(project: str, name: str, count: str, children: list[dict], fold: bool) -> dict:
+    return {"key": f"{project}:{name}", "kind": "group", "id": "", "project": project, "name": f"{name}  {count}",
+            "fold": fold, "children": children}
 
 
 def collect(st: resume.Store, fc: dict | None, project: str) -> dict:
@@ -290,13 +314,23 @@ def label(node: dict, depth: int = 0, width: int = WIDE, plain: bool | None = No
     plain = words() if plain is None else plain
     name_w = max(12, NAME_W - GUIDE * depth)
     kind = node["kind"]
-    if kind in ("group", "done"):
-        return (("done " if plain else "✓ ") + node["name"]) if kind == "done" else node["name"]
+    if kind == "group":
+        return node["name"]
+    if kind == "done":
+        return ("done " if plain else "✓ ") + node["name"]
     if kind == "item":
-        gates = " ".join((g if plain else GATES[g][0] + " " + GATES[g][1]) for g in node["gates"])
-        head = f"{_glyph(node['state'], plain)} {node['priority'] or '-':<3} {node['name']}"
-        text = f"{head:<{name_w + 12}}  {node['state']:<8} {gates}".rstrip()
-        return f"{text}  {node['when']}" if node["when"] else text
+        return _item_label(node, name_w, plain)
+    return _milestone_label(node, name_w, width, plain)
+
+
+def _item_label(node: dict, name_w: int, plain: bool) -> str:
+    gates = " ".join((g if plain else GATES[g][0] + " " + GATES[g][1]) for g in node["gates"])
+    head = f"{_glyph(node['state'], plain)} {node['priority'] or '-':<3} {node['name']}"
+    text = f"{head:<{name_w + 12}}  {node['state']:<8} {gates}".rstrip()
+    return f"{text}  {node['when']}" if node["when"] else text
+
+
+def _milestone_label(node: dict, name_w: int, width: int, plain: bool) -> str:
     mark = ("reached " if plain else "✓ ") if node["state"] == "reached" else ""
     counts = f"{node['done']:>3}/{node['items']:<3}"
     cols = [f"{mark}{node['name']}"[:name_w].ljust(name_w), counts]

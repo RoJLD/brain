@@ -670,8 +670,7 @@ def test_the_tabs_are_the_eleven_of_ux18_with_their_keys():
         assert set(t["label"]) == set(cockpit.LANGS) and set(t["question"]) == set(cockpit.LANGS)
         assert t["views"] or t["arrives"], name  # a tab not built says what brings it
     # every panel and frame has a tab, and each view its words
-    assert {p for t in cockpit.built_tabs() for p in cockpit.tab_panels(t)} == {*cockpit.PANELS, *cockpit.FRAMES,
-                                                                              *cockpit.MODES, "settings"}
+    assert {p for t in cockpit.built_tabs() for p in cockpit.tab_panels(t)} == {*cockpit.PANELS, *cockpit.FRAMES, *cockpit.MODES, "settings"}
     assert {v for t in cockpit.TABS.values() for v in t["views"]} <= set(cockpit.VIEW_LABELS)
     assert [cockpit.panel_tab(p) for p in ("queue", "alerts", "exec", "digest")] == ["queue", "health", "health",
                                                                                       "overview"]

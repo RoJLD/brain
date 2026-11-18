@@ -49,8 +49,8 @@ USAGE = """\
                  (milestones: era > milestone > item, waves: era > wave > item; g in the app). The project selector
                  (p: global or one project), the sessions', queue's and frontier's filters and sorts (f, s, o), a
                  table's columns (C: shown or hidden, their order, the longest a title may be; the sessions also
-                 offer Cost, App id, Id and Branch), the palette (ctrl+p: every tab, view, project, sort, filter and table's columns, and reset
-                 the views), the search (/), a panel's
+                 offer Cost, App id, Id and Branch), the palette (ctrl+p: every tab, view, project, sort, filter
+                 and table's columns, and reset the views), the search (/), a panel's
                  help (i), a full view where a tab shows several panels (m, Escape back), the pause (space) and ? for
                  every key; a refresh keeps the scroll and the cursor; an empty
                  table says why (a filter, nothing in the scope, a project not on this machine), a panel not probed
@@ -136,12 +136,7 @@ def cmd_tui(args, root: Path) -> int:
 
 
 def _interactive(args, cp, saved: dict, views: dict, settings: dict) -> int:
-    tab, tabs, columns = args.tab or saved.get("tab"), dict(saved.get("tabs") or {}), saved.get("columns") or {}
-    if args.view or args.axis:   # --view and --axis win, as --tab does
-        t = args.tab or "milestones"
-        tabs[t] = {**(tabs.get(t) or {}), **({"view": args.view} if args.view else {}),
-                   **({"axis": args.axis} if args.axis else {})}
-        tabs[t].setdefault("view", "tree")
+    tab, tabs, columns = args.tab or saved.get("tab"), _asked_view(args, saved.get("tabs")), saved.get("columns") or {}
     kept = (saved.get("scope") or cp.scope) if args.scope else cp.scope   # --scope keeps the one remembered
     if not cockpit.save_state({"scope": kept, "panels": views, "settings": settings, "tab": tab, "tabs": tabs,
                                "columns": columns}):
@@ -160,6 +155,17 @@ def _interactive(args, cp, saved: dict, views: dict, settings: dict) -> int:
             return tui.run(cp, refresh=args.refresh, probe=args.probe, views=views, search=args.search,
                            settings=settings, tab=tab, tabs=tabs, columns=columns)
     return cockpit.watch(cp, args.refresh, args.probe, views=views, search=args.search, tz=settings["tz"], tab=args.tab)
+
+
+def _asked_view(args, saved: dict | None) -> dict:
+    """Each tab's view remembered, --view and --axis winning as --tab does (--axis alone: the milestones' tree)."""
+    tabs = dict(saved or {})
+    if args.view or args.axis:
+        t = args.tab or "milestones"
+        tabs[t] = {**(tabs.get(t) or {}), **({"view": args.view} if args.view else {}),
+                   **({"axis": args.axis} if args.axis else {})}
+        tabs[t].setdefault("view", "tree")
+    return tabs
 
 
 def _projects(args, root: Path) -> list:

@@ -2086,10 +2086,16 @@ def render(snap: dict, width: int = WIDTH, views: dict[str, dict] | None = None,
                         ("digest", digest_lines(p.get("digest"), width)),
                         ("impact", impact_lines(p.get("health"), width)),
                         ("plan", planviews.lines(p.get("plan"), axis_of("plan", axis), width))):
-        if name in (tab_panels(tab, view) if tab and view else
-                    tuple(x for x in tab_panels(tab) if x not in MODES) if tab else PANELS):   # a tree: asked by view
+        if name in _printed(tab, view):
             out += ["", *lines, *(_line("  ", s, width) for s in states(name, snap, v(name), search, tz))]
     return out + _plugged_text(snap, width, views, search, tz, tab)
+
+
+def _printed(tab: str | None, view: str | None) -> tuple[str, ...]:
+    """The panels the text view prints: a tab's view's, a tab's (a tree only when its view is asked), else the grid's."""
+    if tab and view:
+        return tab_panels(tab, view)
+    return tuple(x for x in tab_panels(tab) if x not in MODES) if tab else PANELS
 
 
 def _plugged_text(snap: dict, width: int, views: dict | None, search: str, tz: str | None, tab: str | None) -> list:
