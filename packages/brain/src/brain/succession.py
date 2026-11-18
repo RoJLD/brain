@@ -224,6 +224,14 @@ def _target_why(host: str, target: str, tm: dict, now: float) -> str:
     return "" if st in guards.RC_LIVE + ("starting",) else f"{target} is {st}" + (f": {how}" if how else "")
 
 
+def _children_fields(host: str, parent: str, index: dict, meta, now: float) -> dict:
+    """The children, blocking, parent_children and parent_blocking keys of :func:`check`."""
+    kids = children(host, index, meta, now)
+    pkids = children(parent, index, meta, now) if parent else []
+    return {"children": kids, "blocking": [c["id"] for c in kids if c["verdict"] == "blocking"],
+            "parent_children": pkids, "parent_blocking": [c["id"] for c in pkids if c["verdict"] == "blocking"]}
+
+
 def check(host: str | None = None, *, successor: str = "", now: float | None = None, env=None) -> dict:
     """Each condition of the hand-over for session ``host`` (this one by default), as the guard reads them:
     {id, name, root, coordinator, parent, parent_name, parent_ok, parent_archived, note, note_age_min, successors,
@@ -246,15 +254,11 @@ def check(host: str | None = None, *, successor: str = "", now: float | None = N
     target = successor or next(iter(succ), "")
     on_why = why or _target_why(host, target, meta(target) if target else {}, now)
     off_why = why or ("it has started no live coordinator to succeed it, detached" * (not succ))
-    kids = children(host, index, meta, now)
-    pkids = children(parent, index, meta, now) if parent else []
     return {"id": host, "name": me.get("name") or "", "root": guards.chain_root(host, me),
             "coordinator": guards._coordinator(me), "parent": parent, "parent_name": pm.get("name") or "",
             "parent_ok": parent_ok, "parent_archived": bool(pm.get("archived")), "note": str(note or ""),
             "note_age_min": age, "successors": succ, "successor": target,
-            "children": kids, "blocking": [c["id"] for c in kids if c["verdict"] == "blocking"],
-            "parent_children": pkids, "parent_blocking": [c["id"] for c in pkids if c["verdict"] == "blocking"],
-            "why": why, "ok": not why,
+            **_children_fields(host, parent, index, meta, now), "why": why, "ok": not why,
             "on": not on_why, "on_why": on_why, "off": not off_why, "off_why": off_why}
 
 
