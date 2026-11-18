@@ -353,5 +353,8 @@ writes the brief a coordinator hands to a sub-session, so that it edits only wha
   decides » lines. The engine writes none of them itself.
 
 ```json
-"brief": {"classes": {"standard": {"model": "", "effort": "", "budget": "600k"}}, "never": "Never"}
+"brief": {"classes": {"standard": {"model": "", "effort": "", "budget": "600k"}}, "ceiling": "600k", "never": "Never"}
 ```
+
+A class budget above the ceiling is warned about in every brief of that class, so a project that starts its standard
+briefs at 600k raises `brief.ceiling` with it, as above.
