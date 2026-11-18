@@ -90,7 +90,7 @@ class PlanTreeApp:
         groups = (panel or {}).get("projects") or []
         roots = [(g, (g.get("trees") or {}).get(self.plan_axis) or []) for g in groups]
         if self.plan_open is None and roots:   # the defaults once there is a tree: an empty first read keeps them
-            self.plan_open = {g["project"] for g, _ in roots} | {k for _, ns in roots for k in opened(ns)}
+            self.plan_open = _first_open(roots)
         _fill(tree, roots, max(40, tree.size.width or cockpit.NARROW_COLUMNS), self.plan_open or set())
         dates = groups[0]["forecast"] if len(groups) == 1 else "ranges p10–p90"
         tree.border_subtitle = f"axis: {self.plan_axis} · g axis · ←/→ fold · Enter detail · {dates}"
@@ -130,6 +130,11 @@ def _nodes(root) -> list:
         out.append(n)
         stack.extend(n.children)
     return out
+
+
+def _first_open(roots: list[tuple[dict, list[dict]]]) -> set[str]:
+    """The keys open at first: each project's node and ``opened``'s."""
+    return {g["project"] for g, _ in roots} | {k for _, ns in roots for k in opened(ns)}
 
 
 def _cursor_key(tree: PlanTree) -> str | None:
