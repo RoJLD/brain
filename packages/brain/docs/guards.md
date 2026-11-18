@@ -56,7 +56,7 @@ install --ap\ply`, `ins''tall`, PowerShell's backtick, cmd's caret), and so are 
 one word (`x=install; brain schedule $x --apply`, `$a = '--apply'; brain schedule install $a`), through the launchers
 the guards read (brain's `.exe` or `.cmd`, a venv's, `python -m brain`, `-mbrain`, `py -3.12 -X utf8 -m brain.cli`,
 `uv run`, `uvx`, `pipx run`, `env`, `sudo`, `nohup`, `timeout`, `Start-Process`, `bash -c`, `cmd /c`, `iex`).
-**Wide** (config.json `guards.gestures_wide: true`, off by default: refusals 0.5.2 adds): a word the guard cannot
+**Wide** (config.json `guards.gestures_wide: true`, off by default: refusals 0.6.0 adds): a word the guard cannot
 resolve where a gesture's word or flag would stand may hold them (`brain schedule install $FLAG`, `brain schedule
 $x`, `brain schedule $(echo install) --apply`, `brain $opts schedule install --apply`, `& $brain schedule install
 --apply`, PowerShell's `@a` and `@('--apply')`; a word that may hold any gesture, `brain $x` or `brain "$@"`, is
@@ -993,7 +993,7 @@ scale study's) is Claude Code's own setting: the owner sets it through their ins
 the Brain's local services. Claude Code's `otelHeadersHelper` runs `brain ipc otel-headers`, the one command that
 prints it, which the owner guard refuses to a session (the gestures above); the file itself is the other door.
 
-Under config.json `"guards": {"refuse_token_read": true}` (off by default: a refusal 0.5.2 adds), the owner guard's
+Under config.json `"guards": {"refuse_token_read": true}` (off by default: a refusal 0.6.0 adds), the owner guard's
 check `token` (`brain.tokenguard`) refuses a session's call that reaches the file:
 
 | Door | Refused | Passes |

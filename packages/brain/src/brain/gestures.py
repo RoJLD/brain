@@ -442,7 +442,7 @@ def clears_marker(command: str) -> str:
 
 def wide_matching(data: dict | None = None) -> bool:
     """config.json's ``guards.gestures_wide``: a gesture is matched through words the guard cannot resolve and
-    Python's inline code too (off by default: refusals 0.5.2 adds; the MCP server follows it too)."""
+    Python's inline code too (off by default: refusals 0.6.0 adds; the MCP server follows it too)."""
     if data is None:
         from . import config
         data = config.load().data
