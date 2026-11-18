@@ -1095,7 +1095,7 @@ Zero-token commands for many sessions on one brain ([`docs/merge-driver.md`](doc
   can start now, and those that wait on a branch and its session.
 - **`brain brief ITEM [--class C] [--budget B] [--coordinator ID]`**: a sub-session's brief from the graph: the item
   and its subgraph, its collisions, the class's model and effort (config.json `brief.classes`), the budget, the cost
-  estimate, while `usage.guard.wave_quota` is set the streams that fit now for the coordinator (its live streams
+  estimate, the model of each agent role (config.json `brief.agent_models`, default `verify` on `sonnet`), while `usage.guard.wave_quota` is set the streams that fit now for the coordinator (its live streams
   under `max_streams`, the streams at the item's estimate under `ask_over_pct` at the week's reset), the coordinator's
   id, what to do after the merge (the close-item procedure's step 5: the session that
   merges its own PR archives itself once the main checkout is pulled, the note written and its report sent; a
@@ -2032,7 +2032,10 @@ The token ledger (`brain usage`) reads each session's subagents and workflow age
 the session's cost and hours, so the quota forecast and the governor count it, and a message is counted once, as the
 subagent's, should the parent's transcript copy it. `brain usage` says whose the cost is (main threads, subagents,
 workflows), `--by workflow` lists each run (its agents, phases and the session that launched it) and `--by agent` each
-agent's label (the `description` of its `.meta.json`, else the run's `journal.jsonl`). `brain usage quota` measures
+agent's label (the `description` of its `.meta.json`, else the run's `journal.jsonl`). `--by role` groups the agents by role (a workflow
+agent's label before its colon, `verify:<finding>#0`, else its phase; a subagent's type) with each model's count and
+how many ran off config.json `brief.agent_models` (`{role: model}`, default `{"verify": "sonnet"}`: the verifiers
+and skeptics on the smaller model, every other role on the session's). `brain usage quota` measures
 the cost of a session-hour, the agents' included, as information: the governor's parallel-sessions cap uses it only
 with `usage.guard.session_hour_measured` true (default false), and then when it is above `usage.guard.session_hour_usd`;
 `brain usage guard` shows the measured value and whether it is applied.

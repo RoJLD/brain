@@ -126,8 +126,10 @@ def item_prs(pr_prop: str) -> list[str]:
 class Ledger:
     """The ledger's rows (the projects placed by the registry) joined to the projects' backlogs."""
 
-    def __init__(self, rows: list[dict], projs: list[projects.Project], placer=None, cfg_usage=None) -> None:
+    def __init__(self, rows: list[dict], projs: list[projects.Project], placer=None, cfg_usage=None,
+                 agent_models: dict[str, str] | None = None) -> None:
         placer = placer or queue.Placer(projs)
+        self.agent_models = config.AGENT_MODELS if agent_models is None else agent_models  # by role: the map
         self.cfg_usage, self.accts, self._where = cfg_usage, provenance.accounts(cfg_usage), set()
         self.rows = []
         for r in rows:
@@ -554,6 +556,14 @@ def _session_rows(rows: list[dict], dim: str) -> dict[str, list[dict]]:
     return groups
 
 
+def _off_map(expected: str | None, models: Counter) -> dict:
+    """A role's row against the agent-model map (brief.agent_models): the model expected and how many of its agents
+    ran on another (the alias read in the model id: sonnet in claude-sonnet-5-5); nothing for a role off the map."""
+    if not expected:
+        return {}
+    return {"expected": expected, "off": sum(n for m, n in models.items() if expected not in str(m))}
+
+
 def table_of(led: Ledger, rows: list[dict], dim: str, since: str, until: str) -> list[dict]:
     """The rows of one ``--by``: each group's total, share and distribution (per session, or per item)."""
     total = sum(r.get("cost") or 0 for r in rows) or 1e-9
@@ -650,7 +660,8 @@ def table_of(led: Ledger, rows: list[dict], dim: str, since: str, until: str) ->
                         add(label, v, "workflow", run)
         for k, a in per.items():
             out.append({"key": k, "total": round(a["total"], 4), "share": a["total"] / total, "n": a["n"],
-                        "kind": "+".join(sorted(a["kinds"])), "runs": len(a["runs"]), "models": dict(a["models"])})
+                        "kind": "+".join(sorted(a["kinds"])), "runs": len(a["runs"]), "models": dict(a["models"]),
+                        **(_off_map(led.agent_models.get(k), a["models"]) if dim == "role" else {})})
     elif dim in TIME_DIMS:
         buckets: dict[str, dict] = {}
         for r in rows:
@@ -839,6 +850,7 @@ def _render_table(dim: str, rows: list[dict], top: int) -> list[str]:
         lines += [f"  {str(r['key'])[:40]:<40} {usage.usd(r['total']):>9} {_pct(r['share']):>4}  n {r['n']:>3}  "
                   f"{r['kind']}" + (f", {r['runs']} run(s)" if r["runs"] else "") + "  " + ", ".join(
                       f"{m.removeprefix('claude-')} {n}" for m, n in sorted((r.get("models") or {}).items()))
+                  + (f"  (map {r['expected']}: {r['off']} off)" if r.get("expected") else "")
                   for r in shown]
         return lines if rows else lines + ["  none"]
     if dim == "session":
@@ -976,8 +988,9 @@ def load(projs: list[projects.Project], root: Path | None = None, refresh: bool 
         registry = list(projects.load(root).values())
     except (OSError, ValueError):
         registry = []
-    cfg_usage = config.load(root).data.get("usage")
-    return Ledger(list(rows.values()), projs, queue.Placer(registry + list(projs)), cfg_usage)
+    cfg = config.load(root)
+    return Ledger(list(rows.values()), projs, queue.Placer(registry + list(projs)), cfg.data.get("usage"),
+                  config.agent_models(cfg))
 
 
 def scoped(led: Ledger, projs: list[projects.Project], every: bool) -> Ledger:

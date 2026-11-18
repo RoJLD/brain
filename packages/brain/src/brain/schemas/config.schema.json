@@ -194,6 +194,11 @@
             "properties": {"model": {"type": "string"}, "effort": {"type": "string"}, "budget": {"type": "string"}}
           }
         },
+        "agent_models": {
+          "type": "object",
+          "description": "{role: model}: the model each agent role runs on (wi-brain-review-model-routing): a workflow agent's role is its label before its colon (verify:<finding>#0: verify), else its phase; a plain subagent's, its type. Default {\"verify\": \"sonnet\"}: the verifiers and skeptics on the smaller model, every other role on the session's; null drops a role (it inherits). brain brief prints it, brain usage --by role counts the agents off it.",
+          "additionalProperties": {"type": ["string", "null"]}
+        },
         "done": {"type": "string", "minLength": 1, "description": "The heading of the rules' section copied as the definition of done (default 'Definition of done')."},
         "never": {"type": "string", "minLength": 1, "description": "The heading of the rules' section copied as the never-list (default 'Never'); without one, the rules' sentences that start with Never and their '<owner> decides' lines."},
         "after_merge": {"type": "array", "items": {"type": "string"}, "description": "The lines of the brief's 'After the merge' section (default the engine's, brain.brief.AFTER_MERGE: the session that merges its own PR archives itself after its after-merge steps, the coordinator archives a child reported merged and verified without asking again, never another running session or one with uncommitted or unmerged work, and the owner's auto_archive_inactive_days net); [] drops the section."}

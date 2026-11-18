@@ -167,7 +167,9 @@ def register(sub, ctx) -> None:
     us.add_argument("--by", choices=(*cost.DIMS, *spend.DIMS), default="summary",
                     help="one breakdown (default: a summary of project, item, class, phase, tool, command, the "
                          "workflow runs when there are any, and the script candidates; workflow: each workflow run; "
-                         "agent: each subagent's or workflow agent's label; provider, harness, account: where the "
+                         "agent: each subagent's or workflow agent's label; role: the agents by role (a workflow agent's label "
+                         "before its colon, else its phase; a subagent's type) with each model's count and those off "
+                         "config.json brief.agent_models; provider, harness, account: where the "
                          "sessions ran; context: the messages by context size per role, the base, the cost by token "
                          "kind and the hand-over simulation; output: the downstream cost of each kind of output)")
     us.add_argument("--report", choices=("daily", "weekly"), help="the same as --by day or --by week")

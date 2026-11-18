@@ -329,3 +329,25 @@ def test_the_size_is_the_first_key_only_while_it_lowers_the_backtests_error(proj
     key = cost.size_key(led)
     assert not key["kept"] and key["with"] == key["without"] == 2.0
     assert cost.estimate(led, cost.target_of(led, "wi-new"), "2026-10-30")["basis"] == "class+theme"
+
+
+def test_usage_by_role_counts_the_models_and_those_off_the_map(project):
+    """wi-brain-review-model-routing: the agents by role, each model's count, those off brief.agent_models."""
+    labels = {"verify:a#0": {"count": 3, "cost": 3.0, "role": "verify", "models": {"claude-sonnet-5-5": 2,
+                                                                                   "claude-opus-5-5": 1}},
+              "review:tests": {"count": 2, "cost": 8.0, "role": "review", "models": {"claude-opus-5-5": 2}}}
+    boss = row("boss", usd=40.0, main_cost=20.0, agents={
+        "subagents": {"find x": {"count": 1, "cost": 1.0, "role": "Explore", "models": {"claude-haiku-5-5": 1}},
+                      "old": {"count": 1, "cost": 1.0}},   # scanned before SCAN_V 6: role -
+        "workflows": {"wf_a": _run(11.0, "2026-11-01", 5, labels, {"Verify": {"count": 3, "cost": 3.0}})}})
+    led = ledger(project, [boss])
+    roles = {r["key"]: r for r in cost.report(led, "", "", "role")["tables"]["role"]}
+    assert set(roles) == {"verify", "review", "Explore", "-"}
+    assert roles["verify"]["models"] == {"claude-sonnet-5-5": 2, "claude-opus-5-5": 1}
+    assert (roles["verify"]["expected"], roles["verify"]["off"]) == ("sonnet", 1)
+    assert "expected" not in roles["review"] and roles["review"]["n"] == 2
+    text = "\n".join(cost.render_report(cost.report(led, "", "", "role")))
+    assert "By agent role" in text and "sonnet-5-5 2" in text and "(map sonnet: 1 off)" in text
+    led.agent_models = {"review": "sonnet"}
+    roles = {r["key"]: r for r in cost.report(led, "", "", "role")["tables"]["role"]}
+    assert roles["review"]["off"] == 2 and "expected" not in roles["verify"]
