@@ -335,3 +335,22 @@ def test_brief_says_how_many_streams_fit_now(project, tmp_path, monkeypatch, bra
     (cfg / "config.json").write_text('{"v": 1, "identity": {"owner": "Ada"}}', encoding="utf-8")
     b = brief.build(project, "wi-c", coordinator=coord)
     assert b.streams == "" and "Streams that fit" not in brief.render(b)
+
+
+def test_brief_says_each_agent_roles_model(project, tmp_path, monkeypatch):
+    """wi-brain-review-model-routing: the verifiers on the smaller model by default, the map from config.json, a null
+    role dropped (it inherits)."""
+    b = brief.build(project, "wi-c")
+    assert b.agent_models == {"verify": "sonnet"}
+    assert "- **Agent models:** verify on sonnet (`model: 'sonnet'`); every other role" in brief.render(b)
+    cfg = tmp_path / "brain4"
+    cfg.mkdir()
+    (cfg / "config.json").write_text('{"v": 1, "identity": {"owner": "Ada"}, "brief": {"agent_models": '
+                                     '{"verify": null, "review": "opus"}}}', encoding="utf-8")
+    monkeypatch.setenv("BRAIN_CONFIG", str(cfg / "config.json"))
+    assert config.check() == []   # the schema knows brief.agent_models
+    b = brief.build(project, "wi-c")
+    assert b.agent_models == {"review": "opus"} and "review on opus" in brief.render(b)
+    (cfg / "config.json").write_text('{"v": 1, "identity": {"owner": "Ada"}, "brief": {"agent_models": '
+                                     '{"verify": null}}}', encoding="utf-8")
+    assert "Agent models" not in brief.render(brief.build(project, "wi-c"))

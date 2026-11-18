@@ -55,7 +55,7 @@ from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from pathlib import Path
 
-from . import auditrecord, config, graph, paths, projects, provenance, queue, resume, sizing, usage
+from . import auditrecord, config, graph, paths, projects, provenance, queue, resume, sizing, spend, usage
 
 MIN_SIMILAR = 3
 OFF = 1.5  # an actual above OFF x its estimate, or below estimate / OFF, is off
@@ -73,7 +73,7 @@ SESSION_DIMS = ("project", "class", "kind", "model", "pr", *SOURCE_DIMS)
 ITEM_DIMS = ("item", "theme", "milestone")
 PART_DIMS = {"phase": "phases", "tool": "tools", "command": "commands", "skill": "skills"}
 TIME_DIMS = ("day", "week")
-AGENT_DIMS = ("workflow", "agent")  # a workflow run, an agent's label (wi-brain-usage-workflow-agents)
+AGENT_DIMS = ("workflow", "agent", "role")  # a workflow run, an agent's label, its role (verify, review, Explore...)
 DIMS = ("summary", *SESSION_DIMS, *ITEM_DIMS, *PART_DIMS, "session", "family", *AGENT_DIMS, *TIME_DIMS, "sequences")
 METRICS = ("cost", "output", "peak", "active_s", "sessions")
 # The signals explain() names; {owner}: config.owner_of(), read when it runs.
@@ -132,8 +132,10 @@ def item_prs(pr_prop: str) -> list[str]:
 class Ledger:
     """The ledger's rows (the projects placed by the registry) joined to the projects' backlogs."""
 
-    def __init__(self, rows: list[dict], projs: list[projects.Project], placer=None, cfg_usage=None) -> None:
+    def __init__(self, rows: list[dict], projs: list[projects.Project], placer=None, cfg_usage=None,
+                 agent_models: dict[str, str] | None = None) -> None:
         placer = placer or queue.Placer(projs)
+        self.agent_models = config.AGENT_MODELS if agent_models is None else agent_models  # by role: the map
         self.cfg_usage, self.accts, self._where = cfg_usage, provenance.accounts(cfg_usage), set()
         self.rows = []
         for r in rows:
@@ -633,28 +635,8 @@ def table_of(led: Ledger, rows: list[dict], dim: str, since: str, until: str) ->
                             "title": r.get("title") or r.get("branch") or "", "start": w.get("start") or "",
                             "phases": [[k, v.get("count") or 0, round(v.get("cost") or 0.0, 4)] for k, v in phases],
                             "output": w.get("output") or 0})
-    elif dim == "agent":
-        per: dict[str, dict] = {}
-
-        def add(label: str, v: dict, kind: str, run: str = "") -> None:
-            a = per.setdefault(label, {"total": 0.0, "n": 0, "kinds": set(), "runs": set()})
-            a["total"] += v.get("cost") or 0.0
-            a["n"] += v.get("count") or 0
-            a["kinds"].add(kind)
-            if run:
-                a["runs"].add(run)
-
-        for r in rows:
-            ag = r.get("agents") or {}
-            for label, v in (ag.get("subagents") or {}).items():
-                add(label, v, "subagent")
-            for run, w in (ag.get("workflows") or {}).items():
-                if usage.in_window(w, since, until):
-                    for label, v in (w.get("labels") or {}).items():
-                        add(label, v, "workflow", run)
-        for k, a in per.items():
-            out.append({"key": k, "total": round(a["total"], 4), "share": a["total"] / total, "n": a["n"],
-                        "kind": "+".join(sorted(a["kinds"])), "runs": len(a["runs"])})
+    elif dim in ("agent", "role"):   # by label, or by role with each model's count (wi-brain-review-model-routing)
+        out += spend.agents_table(rows, dim, since, until, total, led.agent_models)
     elif dim in TIME_DIMS:
         buckets: dict[str, dict] = {}
         for r in rows:
@@ -722,7 +704,7 @@ def agents_split(rows: list[dict], since: str = "", until: str = "") -> dict:
     return out
 
 
-def report(led: Ledger, since: str, until: str, by: str, plans=None) -> dict:
+def report(led: Ledger, since: str, until: str, by: str, plans=None, handover_usd: float | None = None) -> dict:
     rows = led.window(since, until)
     total = sum(r.get("cost") or 0 for r in rows)
     tokens = Counter()
@@ -736,8 +718,11 @@ def report(led: Ledger, since: str, until: str, by: str, plans=None) -> dict:
            "tokens": dict(tokens), "plans": sorted({usage.plan_of(d, plans) for d in days}),
            "unpriced": sum(r.get("unpriced") or 0 for r in rows), "start": start,
            "agents": agents_split(rows, since, until)}
-    dims = ("project", "item", "class", "phase", "tool", "command") if by == "summary" else (by,)
     rep["sources"] = sources(rows)
+    if by in spend.DIMS:   # where the tokens go (wi-brain-cache-report)
+        h = spend.HANDOVER_USD if handover_usd is None else handover_usd
+        return {**rep, "tables": {}, by: spend.context_view(rows, h) if by == "context" else spend.output_view(rows)}
+    dims = ("project", "item", "class", "phase", "tool", "command") if by == "summary" else (by,)
     rep["tables"] = {d: (sequences(rows) if d == "sequences" else table_of(led, rows, d, since, until)) for d in dims}
     if by == "summary":
         if rep["agents"]["workflows"]["runs"]:
@@ -806,7 +791,7 @@ def render_report(rep: dict, top: int = TOP) -> list[str]:
                      f"p90 {usage.usd(s['p90'])}")
     for dim, rows in rep["tables"].items():
         lines += ["", *_render_table(dim, rows, top)]
-    return lines
+    return lines + spend.render(rep, top)
 
 
 def _dist(r: dict) -> str:
@@ -835,10 +820,14 @@ def _render_table(dim: str, rows: list[dict], top: int) -> list[str]:
             lines.append(f"  {r['key'][:18]:<18} {usage.usd(r['total']):>9} {_pct(r['share']):>4}  {r['agents']:>3} "
                          f"agent(s)  <{r['session']} {r['start'][:10]}  {ph}  {r['title'][:40]}".rstrip())
         return lines if rows else lines + ["  none"]
-    if dim == "agent":
-        lines = [f"By agent label{more}: the subagents and the workflow agents"]
+    if dim in ("agent", "role"):
+        lines = [f"By agent {'label' if dim == 'agent' else 'role'}{more}: the subagents and the workflow agents"]
         lines += [f"  {str(r['key'])[:40]:<40} {usage.usd(r['total']):>9} {_pct(r['share']):>4}  n {r['n']:>3}  "
-                  f"{r['kind']}" + (f", {r['runs']} run(s)" if r["runs"] else "") for r in shown]
+                  f"{r['kind']}" + (f", {r['runs']} run(s)" if r["runs"] else "") + "  " + ", ".join(
+                      f"{m.removeprefix('claude-')} {n}" for m, n in sorted((r.get("models") or {}).items()))
+                  + (f"  (map {r['expected']}: {r['off']} off"
+                     + (f", {r['unknown']} unknown" if r.get("unknown") else "") + ")" if r.get("expected") else "")
+                  for r in shown]
         return lines if rows else lines + ["  none"]
     if dim == "session":
         lines = [f"By session{more}"]
@@ -977,8 +966,9 @@ def load(projs: list[projects.Project], root: Path | None = None, refresh: bool 
         registry = list(projects.load(root).values())
     except (OSError, ValueError):
         registry = []
-    cfg_usage = config.load(root).data.get("usage")
-    return Ledger(list(rows.values()), projs, queue.Placer(registry + list(projs)), cfg_usage)
+    cfg = config.load(root)
+    return Ledger(list(rows.values()), projs, queue.Placer(registry + list(projs)), cfg.data.get("usage"),
+                  config.agent_models(cfg))
 
 
 def scoped(led: Ledger, projs: list[projects.Project], every: bool) -> Ledger:

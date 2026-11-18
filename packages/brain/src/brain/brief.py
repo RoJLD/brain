@@ -9,6 +9,9 @@ The brief holds, in this order:
   :data:`CLASSES`: a trivial task on a small model at low effort, a strategic one on the strongest at high effort,
   each at 400k); ``--budget`` else the class's; a budget above config.json ``brief.ceiling`` (default :data:`CEILING`,
   400k) is warned about: it is the expansion step of an unfinished task, not a start;
+- the model of each agent role (config.json ``brief.agent_models``, :func:`brain.config.agent_models`: the verifiers
+  and skeptics on the smaller model, the others on the session's), the ``model`` an Agent call or a workflow agent
+  passes;
 - the cost estimate of brain cost (wi-brain-brief-estimate) when the token ledger has a basis;
 - while config.json ``usage.guard.wave_quota`` is set (wi-brain-wave-quota-gate), how many streams fit now: the
   coordinator's live streams under ``max_streams``, and the streams at this item's estimate that keep the week's
@@ -103,6 +106,7 @@ class Brief:
     failure_modes: list[str] = field(default_factory=list)
     invariants: list[str] = field(default_factory=list)
     after_merge: list[str] = field(default_factory=list)
+    agent_models: dict[str, str] = field(default_factory=dict)
     done: list[str] = field(default_factory=list)
     never: list[str] = field(default_factory=list)
     sources: list[str] = field(default_factory=list)
@@ -375,6 +379,7 @@ def build(p: projects.Project, nid: str, *, task_class: str = "standard", budget
                  collisions=collisions.item_line(rep, nid), start=_start(p, node),
                  failure_modes=failure_modes(p, st, node, cfg),
                  invariants=standards.invariants(p), after_merge=after_merge(opts),
+                 agent_models=config.agent_models(cfg),
                  done=done, never=never,
                  sources=sources, warnings=warnings,
                  generated=datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC"))
@@ -392,6 +397,15 @@ def _section(title: str, lines: list[str]) -> list[str]:
     return ["", f"## {title}", ""] + lines if lines else []
 
 
+def agent_lines(models: dict[str, str]) -> list[str]:
+    """The brief's line on the agents' models (brief.agent_models): the ``model`` each role's Agent call passes; none
+    for an empty map."""
+    roles = ", ".join(f"{r} on {m} (`model: '{m}'`)" for r, m in sorted(models.items()))
+    return [] if not models else [(f"- **Agent models:** {roles}; every other role (review lenses, fix) on the session's model. A workflow "
+            "agent's role is its label before its colon (`verify:<finding>#0`), else its phase; `brain usage --by "
+            "role` counts the agents off this map.")]
+
+
 def render(b: Brief) -> str:
     n = b.item
     props = dict(n.get("props") or {})
@@ -407,6 +421,7 @@ def render(b: Brief) -> str:
              f"{who(b.effort, 'the coordinator’s')}. **Context budget:** {b.budget}; at ~80 %, commit, write a "
              "hand-over note in the shared notes folder and report.",
              f"- **Cost estimate:** {b.estimate}",
+             *agent_lines(b.agent_models),
              *([f"- **Streams that fit now:** {b.streams}"] if b.streams else []),
              f"- **Coordinator:** {who(b.coordinator, 'unknown (--coordinator)')}: report to it by SendMessage, "
              "signed with your own `local_` id (`brain sessions self` prints it; or the app's get_session with the id "

@@ -2,11 +2,12 @@
 Enter on a Tree milestone opens its row there, [ ] the scale, ←/→ the pan, Enter a milestone's detail, a refresh keeps
 the row (the data and the text are brain.planbands', tested in test_planbands)."""
 
-from brain import planbands, planviews, resume, tui
-from brain.tui_plan import PlanTree, TrajView, band_keys, traj_options
 from test_planbands import FCB
 from test_planviews import EDGES, NODES
-from test_tui_plan import PlanCockpit, _all, _run  # skipped with test_tui, without Textual
+from test_tui_plan import PlanCockpit, _all, _run  # skipped with test_tui, without Textual: first
+
+from brain import planbands, planviews, resume, tui
+from brain.tui_plan import PlanTree, TrajView, band_keys, traj_options
 
 
 def _plan(store):
