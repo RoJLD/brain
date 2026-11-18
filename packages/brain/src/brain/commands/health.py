@@ -12,6 +12,7 @@ from .. import codeindex, config, ipchealth, projects, sessionarchive, spool, st
 from ._common import root_of
 
 ORDER = 340   # its place in brain --help's list of commands (brain.commands)
+PHASE = "early"   # its handlers: early only, before any root is resolved (brain.commands)
 USAGE_ORDER = 440   # its usage lines' place in brain --help's epilog
 USAGE = """\
   brain health [STACK]... [--all]   check the named stacks, the watched ones, or every one; starts nothing; a

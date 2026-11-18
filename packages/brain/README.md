@@ -2251,6 +2251,13 @@ def run(args, root: Path) -> int:
 - `run(args, root)` gets the project's root: `--root`, else `--project`'s, else the nearest folder above with a graph
   store. A command that must run before any root is resolved (a hook, a machine-wide command, a repo that may hold
   no graph store) defines `early(args)`: its exit code, or `None` to go on to `run`.
+- `PHASE = "early"` (early and no run) or `PHASE = "both"` (early, then run) declares it in the module itself; a
+  module with `run` only declares nothing (`"run"`, the default). The handlers decide, the declaration is checked:
+  `brain.commands._registry.undeclared()` lists a module whose `PHASE` is not the phase of its handlers, whose
+  parsers are not its file name then its `ALIASES` (`ALIASES = ("hi",)`, passed as `aliases=list(ALIASES)`), or
+  whose `NO_PROJECT` names a parser it does not register or sits on a run-only command, and
+  `tests/test_cli_registry.py` fails on any. A new command touches no shared list: two command PRs no longer
+  conflict in the test.
 - Every command runs under `brain.shutdown.graceful()`: SIGINT (Ctrl+C), SIGTERM, SIGHUP and SIGBREAK (Ctrl+Break
   on Windows) stop it with `Stopped` (a `KeyboardInterrupt`), so its `finally` and `with` blocks run and its locks
   are released; one that arrives inside `brain.shutdown.critical()` (each ledger line, each atomic state write)
@@ -2260,7 +2267,8 @@ def run(args, root: Path) -> int:
   from Python returns that code instead. `brain timed` passes a signal sent to brain alone to its command (POSIX),
   and the text cockpit quits with 0 on Ctrl+C. A long command's own write that must not be cut goes in `critical()`, or through
   `stateio.write_atomic`; `taskkill /F` and SIGKILL cannot be trapped.
-- `NO_PROJECT = {"hello"}`: no `--project` is added after its subcommand (the hooks', machine-wide commands).
+- `NO_PROJECT = {"hello"}`: no `--project` is added after its subcommand (the hooks', machine-wide commands); on a
+  module with `early` only.
 - `RUNS_VIA = {"hello wave": "wired: the session-start hook runs brain.hello"}`: a subcommand that may never run
   from the CLI and is no gap, with how it is reached: `wired: ...` (a hook, another command or a schedule runs its
   code) or `on demand: ...` (run by hand when its occasion comes, an owner's gesture); `brain perf --usage` lists it
@@ -2268,8 +2276,9 @@ def run(args, root: Path) -> int:
 - What several commands share is in `_common.py` (the text options, the project, its store and scope) and
   `_stores.py` (the passes of sync, check and refresh); a module whose name starts with `_` is not a command.
 - `brain audit` flags a parser added in `cli.py` and a module of `commands/` without `register` (the check
-  `cmd.registry`). `tests/test_cli_registry.py` checks every module's contract; `python tests/help_dump.py` prints
-  every command's and subcommand's help and arguments: run it before and after a change of the parsers, and diff.
+  `cmd.registry`). `tests/test_cli_registry.py` checks every module's contract and its declarations; `python
+  tests/help_dump.py` prints every command's and subcommand's help and arguments: run it before and after a change
+  of the parsers, and diff.
 
 ### A project's command plugin
 

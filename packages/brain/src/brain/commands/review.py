@@ -13,6 +13,7 @@ from .. import review
 from ..inventory import AuditError
 
 ORDER = 57   # its place in brain --help's list of commands (brain.commands)
+PHASE = "early"   # its handlers: early only, before any root is resolved (brain.commands)
 USAGE_ORDER = 57   # its usage lines' place in brain --help's epilog
 USAGE = """\
   brain review prep [PR | BASE..HEAD] [--item ID] [--out DIR] [--no-scout] [--json]   the review packet at zero

@@ -5,6 +5,7 @@ from __future__ import annotations
 from .. import capture
 
 ORDER = 550   # its place in brain --help's list of commands (brain.commands)
+PHASE = "early"   # its handlers: early only, before any root is resolved (brain.commands)
 USAGE_ORDER = 390   # its usage lines' place in brain --help's epilog
 RUNS_VIA = {   # brain perf --usage: how a subcommand that may never run from the CLI is reached (brain.adoption)
     "capture": "wired: the capture hook (capture.sh) runs hooks/capture.py on each event, not the CLI",

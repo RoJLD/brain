@@ -12,6 +12,8 @@ from pathlib import Path
 from .. import paths, probe, tiers
 
 ORDER = 270   # its place in brain --help's list of commands (brain.commands)
+PHASE = "both"   # its handlers: early first, then run with the root (brain.commands)
+ALIASES = ("doctor",)   # the other names of its command (brain.commands)
 USAGE_ORDER = 250   # its usage lines' place in brain --help's epilog
 USAGE = """\
   brain profile [--json] [--quick]   (alias brain doctor) this machine's facts at zero token, each probe with its
@@ -77,7 +79,7 @@ def cmd_profile(args, root: Path) -> int:
 
 
 def register(sub, ctx) -> None:
-    pf = sub.add_parser("profile", aliases=["doctor"],
+    pf = sub.add_parser("profile", aliases=list(ALIASES),
                         help="this machine's facts, its profile (Lite, Défaut, Recommandé, Personnalisable), each "
                              "capability's and stack's state, and the Recommended profile, at zero token")
     pf.add_argument("--json", action="store_true", help="the report as JSON: the machines brick's inventory fields, "

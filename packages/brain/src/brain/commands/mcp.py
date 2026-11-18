@@ -8,6 +8,7 @@ from .. import ipcauth, mcpserver, neutral
 from ._common import root_of
 
 ORDER = 445   # its place in brain --help's list of commands (brain.commands)
+PHASE = "early"   # its handlers: early only, before any root is resolved (brain.commands)
 USAGE_ORDER = 405   # its usage lines' place in brain --help's epilog
 USAGE = """\
   brain mcp serve [--http [--host H] [--port N]]   the Brain as an MCP server, in the foreground (brain.mcpserver):

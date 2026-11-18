@@ -9,6 +9,7 @@ import sys
 from pathlib import Path
 
 ORDER = 503   # its place in brain --help's list of commands (brain.commands), after merge-ready
+PHASE = "early"   # its handlers: early only, before any root is resolved (brain.commands)
 USAGE_ORDER = 162
 USAGE = """\
   brain ship PR [--repo-dir D] [--slug OWNER/NAME] [--remote R] [--json]   the local merge queue: the PR queued

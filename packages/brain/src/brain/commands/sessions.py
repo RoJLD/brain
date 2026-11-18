@@ -7,6 +7,7 @@ from __future__ import annotations
 import argparse
 
 ORDER = 540   # its place in brain --help's list of commands (brain.commands)
+PHASE = "early"   # its handlers: early only, before any root is resolved (brain.commands)
 USAGE_ORDER = 200   # its usage lines' place in brain --help's epilog
 USAGE = """\
   brain sessions [tree [ID] | show ID [--report]] [--hours H] [--all] [--json]   the session tree at zero token, from

@@ -12,6 +12,7 @@ from ..inventory import AuditError, git
 from ._common import _now, _queue_changed, _scope, _store
 
 ORDER = 400   # its place in brain --help's list of commands (brain.commands)
+PHASE = "both"   # its handlers: early first, then run with the root (brain.commands)
 USAGE_ORDER = 320   # its usage lines' place in brain --help's epilog
 USAGE = """\
   brain lint rules [--project P | --all] [--json] [--propose [--max N] [--dry-run]]

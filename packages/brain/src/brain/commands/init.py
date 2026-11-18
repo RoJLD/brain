@@ -7,6 +7,7 @@ from __future__ import annotations
 from .. import init
 
 ORDER = 200   # its place in brain --help's list of commands (brain.commands)
+PHASE = "early"   # its handlers: early only, before any root is resolved (brain.commands)
 USAGE_ORDER = 230   # its usage lines' place in brain --help's epilog
 USAGE = """\
   brain init [DIR] [--owner NAME] [--template NAME|DIR] [--kind person|team] [--tenant ID] [--tier lite|default]

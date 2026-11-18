@@ -11,6 +11,7 @@ import sys
 from .. import lotcheck
 
 ORDER = 292   # its place in brain --help's list of commands (brain.commands): after tidy
+PHASE = "early"   # its handlers: early only, before any root is resolved (brain.commands)
 USAGE_ORDER = 141   # its usage lines' place in brain --help's epilog
 USAGE = """\
   brain lot check [SESSION] [--branch B]... [--keep B]... [--repo-dir D]... [--scratch GLOB]... [--lot NAME]
