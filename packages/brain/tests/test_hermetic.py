@@ -44,6 +44,8 @@ PASSTHROUGH = {
     "GITHUB_STEP_SUMMARY": "the CI's step summary (release_check): the tests pass --summary",
     "CI": "the read mode's default: BRAIN_STRICT, pinned, wins over it; the tests about it set it themselves",
     "COLUMNS": "the terminal's width for argparse's help: brain.readme sets it while it renders",
+    "TERM": "the terminal's type: brain.planviews gives the legacy console (linux) words for its glyphs; the tests pass "
+            "plain or set it themselves",
     "PYTHONPATH": "passed to the venv a test builds (brain.detail): the checkout under test",
     "PYTEST_CURRENT_TEST": "pytest's own: the engine refuses the real ~/.brain and keystore under it",
     "EPOCHREALTIME": "bash's own clock (the hooks' timings)",
