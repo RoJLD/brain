@@ -393,10 +393,14 @@ def render_output(v: dict, top: int = 10) -> list[str]:
 
 def _off_map(expected: str | None, models: Counter) -> dict:
     """A role's row against the agent-model map (brief.agent_models): the model expected and how many of its agents
-    ran on another (the alias read in the model id: sonnet in claude-sonnet-5-5); nothing for a role off the map."""
+    ran on another (the alias read in the model id: sonnet in claude-sonnet-5-5), those whose model is unknown
+    (:data:`usage.UNKNOWN_MODEL`: stopped before a reply, or left to the session) apart; nothing for a role off the
+    map."""
     if not expected:
         return {}
-    return {"expected": expected, "off": sum(n for m, n in models.items() if expected not in str(m))}
+    unknown = models.get(usage.UNKNOWN_MODEL, 0)
+    return {"expected": expected, "unknown": unknown,
+            "off": sum(n for m, n in models.items() if m != usage.UNKNOWN_MODEL and expected not in str(m))}
 
 
 def agents_table(rows: list[dict], dim: str, since: str, until: str, total: float,
@@ -406,14 +410,16 @@ def agents_table(rows: list[dict], dim: str, since: str, until: str, total: floa
     per: dict[str, dict] = {}
 
     def add(label: str, v: dict, kind: str, run: str = "") -> None:
-        a = per.setdefault(label if dim == "agent" else v.get("role") or "-",
-                           {"total": 0.0, "n": 0, "kinds": set(), "runs": set(), "models": Counter()})
-        a["total"] += v.get("cost") or 0.0
-        a["n"] += v.get("count") or 0
-        a["kinds"].add(kind)
-        a["models"].update(v.get("models") or {})
-        if run:
-            a["runs"].add(run)
+        # by role, each of the label's roles apart (its ``roles``); an entry without them, its own ``role`` or -
+        parts = {label: v} if dim == "agent" else v.get("roles") or {v.get("role") or "-": v}
+        for key, p in parts.items():
+            a = per.setdefault(key, {"total": 0.0, "n": 0, "kinds": set(), "runs": set(), "models": Counter()})
+            a["total"] += p.get("cost") or 0.0
+            a["n"] += p.get("count") or 0
+            a["kinds"].add(kind)
+            a["models"].update(p.get("models") or {})
+            if run:
+                a["runs"].add(run)
 
     for r in rows:
         ag = r.get("agents") or {}

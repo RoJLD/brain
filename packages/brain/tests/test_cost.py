@@ -351,3 +351,30 @@ def test_usage_by_role_counts_the_models_and_those_off_the_map(project):
     led.agent_models = {"review": "sonnet"}
     roles = {r["key"]: r for r in cost.report(led, "", "", "role")["tables"]["role"]}
     assert roles["review"]["off"] == 2 and "expected" not in roles["verify"]
+
+
+def test_usage_by_role_splits_a_label_s_roles_and_keeps_unknown_models_apart(project):
+    """Agents of one label with different roles each count under their own (the label's ``roles``); an agent whose
+    model is unknown (``?``: stopped before a reply) is not counted off the map, but apart."""
+    labels = {"triage": {"count": 3, "cost": 6.0, "models": {"claude-sonnet-5-5": 1, "claude-opus-5-5": 1, "?": 1},
+                         "roles": {"verify": {"count": 2, "cost": 2.0, "models": {"claude-sonnet-5-5": 1, "?": 1}},
+                                   "fix": {"count": 1, "cost": 4.0, "models": {"claude-opus-5-5": 1}}}}}
+    boss = row("boss", usd=20.0, main_cost=10.0, agents={
+        "subagents": {"check tests": {"count": 2, "cost": 6.0, "models": {"claude-haiku-5-5": 1, "claude-opus-5-5": 1},
+                                      "roles": {"Explore": {"count": 1, "cost": 1.0,
+                                                            "models": {"claude-haiku-5-5": 1}},
+                                                "general-purpose": {"count": 1, "cost": 5.0,
+                                                                    "models": {"claude-opus-5-5": 1}}}}},
+        "workflows": {"wf_a": _run(6.0, "2026-11-01", 3, labels, {"Verify": {"count": 2, "cost": 2.0}})}})
+    led = ledger(project, [boss])
+    roles = {r["key"]: r for r in cost.report(led, "", "", "role")["tables"]["role"]}
+    assert set(roles) == {"verify", "fix", "Explore", "general-purpose"}
+    assert (roles["Explore"]["n"], roles["Explore"]["total"], roles["Explore"]["models"]) == (
+        1, 1.0, {"claude-haiku-5-5": 1})
+    assert (roles["general-purpose"]["n"], roles["general-purpose"]["total"]) == (1, 5.0)
+    assert (roles["verify"]["n"], roles["verify"]["off"], roles["verify"]["unknown"]) == (2, 0, 1)
+    assert (roles["fix"]["n"], roles["fix"]["total"]) == (1, 4.0)
+    text = "\n".join(cost.render_report(cost.report(led, "", "", "role")))
+    assert "(map sonnet: 0 off, 1 unknown)" in text
+    agents = {r["key"]: r for r in cost.report(led, "", "", "agent")["tables"]["agent"]}
+    assert (agents["check tests"]["n"], agents["triage"]["n"]) == (2, 3)

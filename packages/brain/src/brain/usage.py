@@ -693,10 +693,12 @@ def tooling_rounded(t: dict, fired: dict) -> dict:
 
 
 def _rounded(d: dict) -> dict:
-    return {k: {kk: round(vv, 4) if isinstance(vv, float) else vv for kk, vv in v.items()} for k, v in d.items()}
+    return {k: {kk: round(vv, 4) if isinstance(vv, float) else _rounded(vv) if kk == "roles" else vv
+                for kk, vv in v.items()} for k, v in d.items()}
 
 
 NO_LABEL = "(no label)"
+UNKNOWN_MODEL = "?"  # an agent with no priced message and no model in its meta
 
 
 def role_of(info: dict) -> str:
@@ -710,21 +712,31 @@ def role_of(info: dict) -> str:
 
 def _model_of(s: "Scan", info: dict) -> str:
     """The model an agent ran on: its messages' (the most of them), else its meta's alias."""
-    return (s.st.models.most_common(1)[0][0] if s.st.models else str(info.get("model") or "")) or "?"
+    return (s.st.models.most_common(1)[0][0] if s.st.models else str(info.get("model") or "")) or UNKNOWN_MODEL
 
 
 def _add_agent(d: dict, key: str, role: str, model: str, **vals) -> None:
+    """One agent into its label's entry: its counts and model, and the same under its role in ``roles`` ({role:
+    {count, cost, models}}): agents of one label can have different roles (one description given to two subagent
+    types, a label with no colon used in two phases of a run)."""
     _add_to(d, key, **vals)
-    d[key]["role"] = role
-    d[key].setdefault("models", {})
-    d[key]["models"][model] = d[key]["models"].get(model, 0) + 1
+    _count_model(d[key], model)
+    by_role = d[key].setdefault("roles", {})
+    _add_to(by_role, role, count=vals.get("count", 0), cost=vals.get("cost", 0.0))
+    _count_model(by_role[role], model)
+
+
+def _count_model(entry: dict, model: str) -> None:
+    models = entry.setdefault("models", {})
+    models[model] = models.get(model, 0) + 1
 
 
 def agents_of(subs: list[tuple[dict, "Scan"]]) -> dict:
     """A session's subagents apart (wi-brain-usage-workflow-agents): ``subagents``, the plain ones by label
-    ({count, cost, output, tokens, role, models: {model: count}}); ``workflows``, each run by its id ({cost, agents,
-    output, tokens, start, end, days: {day: cost}, phases: {phase: {count, cost}}, labels: {label: {count, cost, role,
-    models}}}). An agent's role (:func:`role_of`) and model are what wi-brain-review-model-routing reads. Their cost
+    ({count, cost, output, tokens, models: {model: count}, roles: {role: {count, cost, models}}}); ``workflows``, each
+    run by its id ({cost, agents, output, tokens, start, end, days: {day: cost}, phases: {phase: {count, cost}},
+    labels: {label: {count, cost, models, roles}}}). An agent's role (:func:`role_of`) and model are what
+    wi-brain-review-model-routing reads. Their cost
     is already in the session's ``cost`` (not in its ``main_cost``): this says whose it is."""
     plain: dict[str, dict] = {}
     runs: dict[str, dict] = {}

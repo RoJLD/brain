@@ -819,7 +819,8 @@ def _render_table(dim: str, rows: list[dict], top: int) -> list[str]:
         lines += [f"  {str(r['key'])[:40]:<40} {usage.usd(r['total']):>9} {_pct(r['share']):>4}  n {r['n']:>3}  "
                   f"{r['kind']}" + (f", {r['runs']} run(s)" if r["runs"] else "") + "  " + ", ".join(
                       f"{m.removeprefix('claude-')} {n}" for m, n in sorted((r.get("models") or {}).items()))
-                  + (f"  (map {r['expected']}: {r['off']} off)" if r.get("expected") else "")
+                  + (f"  (map {r['expected']}: {r['off']} off"
+                     + (f", {r['unknown']} unknown" if r.get("unknown") else "") + ")" if r.get("expected") else "")
                   for r in shown]
         return lines if rows else lines + ["  none"]
     if dim == "session":

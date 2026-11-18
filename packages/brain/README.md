@@ -2035,7 +2035,8 @@ workflows), `--by workflow` lists each run (its agents, phases and the session t
 agent's label (the `description` of its `.meta.json`, else the run's `journal.jsonl`). `--by role` groups the agents by role (a workflow
 agent's label before its colon, `verify:<finding>#0`, else its phase; a subagent's type) with each model's count and
 how many ran off config.json `brief.agent_models` (`{role: model}`, default `{"verify": "sonnet"}`: the verifiers
-and skeptics on the smaller model, every other role on the session's). `brain usage quota` measures
+and skeptics on the smaller model, every other role on the session's); an agent whose model is unknown (stopped
+before its first reply) is counted apart, not off the map. `brain usage quota` measures
 the cost of a session-hour, the agents' included, as information: the governor's parallel-sessions cap uses it only
 with `usage.guard.session_hour_measured` true (default false), and then when it is above `usage.guard.session_hour_usd`;
 `brain usage guard` shows the measured value and whether it is applied.

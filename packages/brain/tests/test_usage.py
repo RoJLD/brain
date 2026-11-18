@@ -213,8 +213,10 @@ def test_scan_reads_subagents_and_workflow_agents_apart(projects_dir):
                                 "?": {"count": 1, "cost": near(one(500))}}
     ag = row["agents"]
     assert ag["subagents"] == {"Review lens: tests": {"count": 1, "cost": pytest.approx(plain, abs=1e-4),
-                                                      "output": 1000, "tokens": 1010, "role": "general-purpose",
-                                                      "models": {OPUS: 1}}}
+                                                      "output": 1000, "tokens": 1010, "models": {OPUS: 1},
+                                                      "roles": {"general-purpose": {
+                                                          "count": 1, "cost": pytest.approx(plain, abs=1e-4),
+                                                          "models": {OPUS: 1}}}}}
     run = ag["workflows"]["wf_run1"]
     assert run["agents"] == 3 and run["cost"] == pytest.approx(wf, abs=1e-4) and run["output"] == 5000
     assert run["start"] == "2026-11-09T10:01:00Z" and run["end"] == "2026-11-10T00:30:00Z"
@@ -237,7 +239,10 @@ def test_a_new_workflow_agent_rescans_its_session(projects_dir):
     assert n == 1 and set(rows["proj/boss.jsonl"]["agents"]["workflows"]) == {"wf_run1", "wf_run2"}
     assert rows["proj/boss.jsonl"]["agents"]["workflows"]["wf_run2"]["labels"] == {
         usage.NO_LABEL: {"count": 1, "cost": pytest.approx(rows["proj/boss.jsonl"]["agents"]["workflows"]["wf_run2"]
-                                                            ["cost"]), "role": "-", "models": {OPUS: 1}}}
+                                                            ["cost"]), "models": {OPUS: 1},
+                        "roles": {"-": {"count": 1, "cost": pytest.approx(rows["proj/boss.jsonl"]["agents"]
+                                                                          ["workflows"]["wf_run2"]["cost"]),
+                                        "models": {OPUS: 1}}}}}
 
 
 def test_a_label_written_after_the_transcript_rescans_its_session(projects_dir):
@@ -340,6 +345,32 @@ def test_each_agent_s_role_and_model(projects_dir):
                                          "message": {**_asst("x", "y5", [])["message"], "model": "claude-sonnet-5-5"}}])
     _meta(v, agentType="workflow-subagent", description="verify:views#0", workflowPhase="Verify", model="sonnet")
     labels = usage.scan(main)["agents"]["workflows"]["wf_run1"]["labels"]
-    assert labels["verify:views#0"]["role"] == "verify"
+    assert set(labels["verify:views#0"]["roles"]) == {"verify"}
     assert labels["verify:views#0"]["models"] == {"claude-sonnet-5-5": 1}
-    assert labels["impl:views"]["role"] == "impl" and labels["fix:views"]["role"] == "fix"
+    assert set(labels["impl:views"]["roles"]) == {"impl"} and set(labels["fix:views"]["roles"]) == {"fix"}
+
+
+def _fake_scan(cost: float, model: str | None):
+    from collections import Counter
+    from types import SimpleNamespace
+    st = SimpleNamespace(tokens={"output": 10}, models=Counter({model: 3} if model else {}), first_ts="", last_ts="")
+    return SimpleNamespace(cost=cost, st=st, days={})
+
+
+def test_agents_of_one_label_keep_each_role_apart():
+    """Agents that share a label but not a role (one description given to two subagent types, a label with no colon
+    used in two phases of a run) are counted under each role, not under the last one's."""
+    plain = {"label": "check tests", "type": "Explore", "run": ""}
+    got = usage.agents_of([(plain, _fake_scan(1.0, "claude-haiku-5-5")),
+                           ({**plain, "type": "general-purpose"}, _fake_scan(5.0, OPUS)),
+                           ({"label": "", "type": "Explore", "run": ""}, _fake_scan(2.0, None)),
+                           ({"run": "r", "label": "triage", "phase": "Review"}, _fake_scan(1.0, OPUS)),
+                           ({"run": "r", "label": "triage", "phase": "Fix"}, _fake_scan(3.0, OPUS))])
+    row = got["subagents"]["check tests"]
+    assert (row["count"], row["cost"]) == (2, 6.0)
+    assert row["roles"] == {"Explore": {"count": 1, "cost": 1.0, "models": {"claude-haiku-5-5": 1}},
+                            "general-purpose": {"count": 1, "cost": 5.0, "models": {OPUS: 1}}}
+    assert got["subagents"][usage.NO_LABEL]["roles"] == {"Explore": {"count": 1, "cost": 2.0,
+                                                                     "models": {usage.UNKNOWN_MODEL: 1}}}
+    assert got["workflows"]["r"]["labels"]["triage"]["roles"] == {
+        "review": {"count": 1, "cost": 1.0, "models": {OPUS: 1}}, "fix": {"count": 1, "cost": 3.0, "models": {OPUS: 1}}}
