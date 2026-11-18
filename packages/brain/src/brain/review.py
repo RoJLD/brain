@@ -10,6 +10,9 @@ gathered without a model is gathered here, at zero token:
   to run them;
 - ``brain review stamp HEAD --findings N --fixed M [--contested K] [--note FILE]`` records that the review ran on that
   head, with its counts (the error score's record, wi-brain-review-error-score);
+- ``brain review rounds PR`` lists the review rounds of a PR from its stamps (one stamp per head reviewed) and says
+  when they do not converge: the high findings not halved over ``CONVERGE`` rounds, the next step being a structural
+  decision of the owner rather than another round (wi-brain-review-convergence); it says, never refuses;
 - ``brain review check HEAD`` says whether that head was reviewed: the merge gate's question (wi-brain-merge-gate);
   with ``--pr N`` (or ``--body FILE``), it also refuses while a pinned decision the change touches is neither kept
   nor overridden in the PR body (``pins_gate``, brain.pins, wi-brain-decision-pins).
@@ -48,6 +51,7 @@ ROW = {"severity": "", "lens": "", "cause": "", "outcome": "", "when": "before",
 # registered project ``project`` (a label moves when an earlier wave ships as a higher version: a wave id is a store's)
 PLACES = ("pr", "item", "stream", "wave", "wave_id", "project", "repo_slug")
 FALLS = 2   # the reviews lighten once the findings per PR fall over this many waves in a row
+CONVERGE = 3   # the rounds whose high findings must halve (the latest at most half the first), else not converging
 
 # The lenses, each chosen by the surfaces a diff touches: (name, what it asks, path patterns).
 # "correctness" and "scope" always.
@@ -216,10 +220,10 @@ def stamp_file(head: str) -> Path:
 
 
 def stamp(head: str, findings: int, fixed: int, contested: int = 0, note: str = "", repo: Path | None = None,
-          **where: str) -> Path:
+          high: int | None = None, **where: str) -> Path:
     """Record that the review of ``head`` ran, with its counts; a full sha only (a short one could name two).
     ``where`` (pr, item, stream, wave, wave_id, project, repo_slug) places it for the error score; the note's finding lines
-    (:func:`parse_note`) are kept as its rows."""
+    (:func:`parse_note`) are kept as its rows; ``high``, the confirmed high findings of the round (else its rows')."""
     if not re.fullmatch(r"[0-9a-f]{40}", head):
         if repo is None:
             raise ReviewError(f"{head}: a stamp is keyed by a full commit sha")
@@ -227,11 +231,15 @@ def stamp(head: str, findings: int, fixed: int, contested: int = 0, note: str = 
     if min(findings, fixed, contested) < 0 or fixed + contested > findings:
         raise ReviewError(f"findings {findings}, fixed {fixed}, contested {contested}: fixed and contested are among "
                           "the findings")
+    if high is not None and not 0 <= high <= findings:
+        raise ReviewError(f"high {high}: the high findings are among the {findings} finding(s)")
     f = stamp_file(head)
     f.parent.mkdir(parents=True, exist_ok=True)
-    rec = {"v": 1, "head": head, "at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+    seq = 1 + max((r["seq"] for r in stamps() if _seq(r)), default=0)   # the stamping order within a second
+    rec = {"v": 1, "head": head, "at": datetime.now(timezone.utc).isoformat(timespec="seconds"), "seq": seq,
            "findings": findings, "fixed": fixed, "contested": contested, "open": findings - fixed - contested,
-           "note": note, **{k: str(v) for k, v in where.items() if k in PLACES and v}, "rows": parse_note(note)}
+           "note": note, **{k: str(v) for k, v in where.items() if k in PLACES and v}, "rows": parse_note(note),
+           **({"high": high} if high is not None else {})}
     f.write_text(json.dumps(rec, indent=2) + "\n", encoding="utf-8", newline="\n")
     return f
 
@@ -381,8 +389,18 @@ def confirmed(rows: list[dict]) -> list[dict]:
     return [r for r in rows if r.get("outcome") != "refuted"]
 
 
+def _seq(rec: dict) -> bool:
+    return isinstance(rec.get("seq"), int) and not isinstance(rec.get("seq"), bool)
+
+
+def _order(rec: dict) -> tuple[str, int]:
+    """A stamp's place in the stamping order: its ``at`` (to the second), then its ``seq`` (the stamps of one second;
+    a stamp written before ``seq`` counts 0)."""
+    return str(rec.get("at") or ""), rec["seq"] if _seq(rec) else 0
+
+
 def stamps() -> list[dict]:
-    """Every stamp recorded, oldest first."""
+    """Every stamp recorded, oldest first (in the stamping order, :func:`_order`)."""
     folder = paths.brain_home() / FOLDER / "stamps"
     out = []
     for f in sorted(folder.glob("*.json")) if folder.is_dir() else []:
@@ -392,7 +410,7 @@ def stamps() -> list[dict]:
             continue
         if rec:
             out.append(rec)
-    return sorted(out, key=lambda r: str(r.get("at") or ""))
+    return sorted(out, key=_order)
 
 
 def _pr_key(rec: dict) -> str:
@@ -505,6 +523,58 @@ def score_lines(sc: dict, wave: str = "") -> list[str]:
                      "count a stamp without --pr once per head, so a PR reviewed on several heads counts several times")
     verdict = "the reviews may lighten" if sc["lighten"]["ok"] else "the reviews stay complete"
     return lines + [f"  {verdict}: {sc['lighten']['why']}"]
+
+
+def high_of(rec: dict) -> int | None:
+    """A round's high findings: the stamp's ``high``; else 0 for a round of no finding; else its confirmed high rows
+    when its note has finding lines (0 when none is a confirmed high, all refuted included); else None (not said)."""
+    if isinstance(rec.get("high"), int) and not isinstance(rec.get("high"), bool):
+        return rec["high"]
+    if rec.get("findings") == 0:
+        return 0
+    rows = rec.get("rows") or []
+    return sum(1 for r in confirmed(rows) if r.get("severity") == "high") if rows else None
+
+
+def converging(highs: list[int | None], n: int = CONVERGE) -> dict:
+    """The stop rule (the owner's TOK-3, 2026-11-17): over the last ``n`` rounds, the latest round's high findings are
+    at most half the first's; else the rounds do not converge and the next step is a structural decision, not another
+    round. Fewer than ``n`` rounds, or a round whose high findings were not said: no verdict."""
+    last = highs[-n:]
+    if len(last) < n:
+        return {"state": "early", "why": f"{len(highs)} round(s), {n} needed"}
+    if any(h is None for h in last):
+        return {"state": "unknown", "why": "a round of the last " + str(n) + " does not say its high findings: stamp "
+                "with --high, or a note whose finding lines give the severity"}
+    seq = " > ".join(str(h) for h in last)
+    if last[-1] <= last[0] / 2:
+        return {"state": "converging", "why": f"high findings {seq}: halved over {n} rounds"}
+    return {"state": "not converging", "why": f"high findings {seq}: not halved over {n} rounds; ask the owner a "
+            "structural decision (a DDR) instead of another round"}
+
+
+def rounds(pr: str, slug: str = "", recs: list[dict] | None = None, n: int = CONVERGE) -> dict:
+    """The review rounds of PR ``pr`` (of the repo ``slug``, when both the stamp and the call name one): one per head
+    stamped, in the stamping order (:func:`_order`), with its counts and high findings, and :func:`converging`'s
+    verdict."""
+    pool = stamps() if recs is None else [x for x in map(_normal, recs) if x]
+    mine = [r for r in pool if str(r.get("pr") or "") == str(pr)
+            and (not slug or not r.get("repo_slug") or r["repo_slug"] == slug)]
+    rows = [{"round": i + 1, "head": r["head"], "at": str(r.get("at") or ""), "findings": r["findings"],
+             "fixed": r.get("fixed", 0), "contested": r.get("contested", 0), "open": r.get("open", 0),
+             "high": high_of(r)} for i, r in enumerate(sorted(mine, key=_order))]
+    return {"pr": str(pr), "repo": slug, "rounds": rows, "verdict": converging([r["high"] for r in rows], n)}
+
+
+def rounds_lines(rep: dict) -> list[str]:
+    name = f"{rep['repo']}#{rep['pr']}" if rep["repo"] else f"#{rep['pr']}"
+    if not rep["rounds"]:
+        return [f"review rounds of {name}: no stamp names this PR (brain review stamp --pr)"]
+    lines = [f"review rounds of {name}: {len(rep['rounds'])} round(s)"]
+    lines += [f"  {r['round']:>2}  {r['head'][:12]}  {r['at'][:16]}  findings {r['findings']} (high "
+              f"{'-' if r['high'] is None else r['high']}), fixed {r['fixed']}, contested {r['contested']}, open "
+              f"{r['open']}" for r in rep["rounds"]]
+    return lines + [f"  {rep['verdict']['state']}: {rep['verdict']['why']}"]
 
 
 def check(head: str, repo: Path | None = None) -> dict | None:
