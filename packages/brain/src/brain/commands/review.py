@@ -157,10 +157,9 @@ def cmd_review(args, root: Path | None = None) -> int:
                       f"{', '.join(p.lenses)}" + (f", scout exit {p.scout_rc}" if p.scout_rc is not None else "")
                       + f"\n  {p.folder}/README.md (docs/review.md: the agents, the skeptics, then brain review stamp)")
             return 0
-        if args.review_cmd == "stamp":
-            return _stamp(args, repo)
-        if args.review_cmd == "rounds":
-            return _rounds(args, repo)
+        own = {"stamp": _stamp, "rounds": _rounds}.get(args.review_cmd)   # the subcommands with their own helper
+        if own is not None:
+            return own(args, repo)
         if args.review_cmd == "score":
             sc = review.score(labels=review.labels_now())
             wave = _wave_of(repo, "", args.wave)[0] if args.wave else ""   # a wave id read as its release now
