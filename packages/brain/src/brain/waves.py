@@ -323,19 +323,25 @@ def load(store: Path, root: Path | None = None) -> Plan:
     """The plan of ``store``; ``root`` holds the records whose pending DDRs wait on the owner."""
     nodes = {str(n["id"]): n for f in sorted((store / "nodes").glob("*.yaml")) for n in _list(f)
              if isinstance(n, dict) and n.get("id")}
-    plan = Plan(nodes, ddrs=_pending_ddrs(root))
-    for f in [store / "edges.yaml", *sorted((store / "edges").glob("*.yaml"))]:
-        for e in _list(f):
-            if not isinstance(e, dict) or not e.get("from"):
-                continue
-            src, dst, etype = str(e["from"]), str(e.get("to")), e.get("type")
-            if etype in ("part_of", "depends_on", "gated_by", "delivers"):
-                plan.edges.append(e)
-            if etype == "part_of" and (nodes.get(dst) or {}).get("type") == "Milestone":
-                plan.parents[src].append(dst)
-                plan.members[dst].append(src)
-            elif etype in ("depends_on", "gated_by"):
-                plan.deps[src].append(dst)
+    edges = [e for f in [store / "edges.yaml", *sorted((store / "edges").glob("*.yaml"))] for e in _list(f)]
+    return build(nodes, edges, _pending_ddrs(root))
+
+
+def build(nodes: dict[str, dict], edges: list, ddrs: dict[str, list[str]] | None = None) -> Plan:
+    """The plan of nodes and edges already read (a resume.Store's: the cockpit's plan views); ``ddrs`` the pending
+    DDRs on each item (none: nothing waits on the owner through a DDR)."""
+    plan = Plan(nodes, ddrs=defaultdict(list, ddrs or {}))
+    for e in edges:
+        if not isinstance(e, dict) or not e.get("from"):
+            continue
+        src, dst, etype = str(e["from"]), str(e.get("to")), e.get("type")
+        if etype in ("part_of", "depends_on", "gated_by", "delivers"):
+            plan.edges.append(e)
+        if etype == "part_of" and (nodes.get(dst) or {}).get("type") == "Milestone":
+            plan.parents[src].append(dst)
+            plan.members[dst].append(src)
+        elif etype in ("depends_on", "gated_by"):
+            plan.deps[src].append(dst)
     return plan
 
 

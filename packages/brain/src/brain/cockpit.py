@@ -536,9 +536,12 @@ def signature(files: list[Path]) -> tuple:
     return tuple(out)
 
 
-def _plan_of(st: resume.Store, fc: dict | None, project: str) -> dict:
-    """One project's part of the plan panel: its Tree (brain.planviews) and its bands (brain.planbands)."""
-    return {**planviews.collect(st, fc, project), "bands": planbands.collect(st, fc, project)}
+def _plan_of(st: resume.Store, fc: dict | None, project: str, root: Path | None = None) -> dict:
+    """One project's part of the plan panel: its Tree (brain.planviews; its waves' rounds at the size ``brain wave
+    plan`` gives them, brain.lots.caps_in_force) and its bands (brain.planbands)."""
+    from . import lots   # here: brain.lots reaches brain.detail, which imports this module
+    at_once = lots.caps_in_force(root, project)["at_once"]
+    return {**planviews.collect(st, fc, project, at_once), "bands": planbands.collect(st, fc, project)}
 
 
 class Cockpit:
@@ -663,7 +666,7 @@ class Cockpit:
         dates, no band, their headings say how to get one)."""
         names = {p.name for p in self.found}
         stores = stores if stores is not None else {n: st for n, st in self.stores.items() if n in names}
-        self._set(plan={"projects": [_plan_of(st, forecast.load_latest(n), n) for n, st in stores.items()]})
+        self._set(plan={"projects": [_plan_of(st, forecast.load_latest(n), n, self.root) for n, st in stores.items()]})
 
     def probe(self, now: datetime | None = None) -> None:
         """The slow panels: alerts, audit, health, digest, and the queue again with a new scan of the denied calls.
@@ -1128,13 +1131,18 @@ HELP = {
                      "done out of its live items through its sub-milestones, its bar and its p10-p90; each item's "
                      "state (● doing, ○ todo, ⊘ blocked, ◌ deferred, ✓ done), priority, gates (⧗ a DDR, ⚑ an owner's "
                      "action, ⇢ another project, ⊘ undated) and band; the done items folded under « ✓ N done », the "
-                     "items of no milestone (of no wave) last. The dates are the last brain forecast's, never "
-                     "recomputed, UNCALIBRATED until judged. Keys: Enter the detail (a milestone's: its row in "
-                     "Trajectories), ←/→ fold and unfold, g the axis.",
-             "from": "the graph (Milestone nodes of kind era and wave, part_of) and "
-                     "<BRAIN_HOME>/forecast/<project>/latest.json (brain.planviews)",
-             "read": "when a graph file or the forecast changes",
-             "detail": "brain tui --once --tab milestones --view tree [--axis waves]; brain forecast --items"},
+                     "items of no milestone (of no wave) last. On the waves axis a pending wave's open items sit in "
+                     "its lots, by round (brain wave plan: lots that share no file but hot ones), the items carried "
+                     "in first among the rest; each item shows the wave it came from (↩), its PR and the live "
+                     "session working on it. The dates are the last brain forecast's, never recomputed, UNCALIBRATED "
+                     "until judged. Keys: Enter the detail (a milestone's: its row in Trajectories), ←/→ fold and "
+                     "unfold, g the axis, f the P0 and P1 items alone.",
+             "from": "the graph (Milestone nodes of kind era and wave, part_of, depends_on, props.pr), "
+                     "<BRAIN_HOME>/forecast/<project>/latest.json, the lots of brain.lots and the sessions' reports "
+                     "(brain.planviews)",
+             "read": "when a graph file or the forecast changes; the sessions when they are read",
+             "detail": "brain tui --once --tab milestones --view tree [--axis waves]; brain wave plan; "
+                       "brain forecast --items"},
     "traj": {"what": "Trajectories, the Gantt as bands: one row per milestone, era and wave the forecast dates, sorted "
                      "by its median; ▒ p10 to p80, ░ p80 to p90, █ the median, ▸ the band goes on beyond the 6-week "
                      "horizon (no date there: the order only); then the gates (◆ go/no-go, ⧗ calendar, ⚙ hardware, ⇢ "
@@ -2114,7 +2122,8 @@ def render(snap: dict, width: int = WIDTH, views: dict[str, dict] | None = None,
                         ("exec", exec_lines(p.get("health"), width)),
                         ("digest", digest_lines(p.get("digest"), width)),
                         ("impact", impact_lines(p.get("health"), width)),
-                        ("plan", planviews.lines(p.get("plan"), axis_of("plan", axis), width)),
+                        ("plan", planviews.lines(p.get("plan"), axis_of("plan", axis), width,
+                                                 working=planviews.sessions_of(p.get("sessions")))),
                         ("traj", planbands.lines(p.get("plan"), width))):
         if name in _printed(tab, view):
             out += ["", *lines, *(_line("  ", s, width) for s in states(name, snap, v(name), search, tz))]

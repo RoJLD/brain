@@ -78,6 +78,7 @@ class PaletteAndColumns:
         self.views = {n: cockpit.view_of(n) for n in cockpit.SORTS}
         self.chosen, self.entered, self.tab_views = {}, {}, {}
         self.plan_axis, self.plan_open = cockpit.MODES["plan"]["default"], None   # the Tree's axis and folds too
+        self.plan_urgent = False   # and its P0/P1 filter
         self._save()
         for name in cockpit.COLUMNS:
             self._rebuild_columns(name)

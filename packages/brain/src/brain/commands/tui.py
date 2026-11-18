@@ -48,7 +48,9 @@ USAGE = """\
                  WBS from the graph and the last brain forecast's latest.json, never recomputed, trajectories: the
                  Gantt as p10-p90 bands of the same forecast, with the median and the 6-week horizon; [ ] its scale
                  and left/right its pan in the app), --axis the tree's
-                 (milestones: era > milestone > item, waves: era > wave > item; g in the app). The project selector
+                 (milestones: era > milestone > item, waves: era > wave > lot > item, a pending wave's lots by round
+                 as brain wave plan cuts them, each item's PR and live session; g in the app, f its P0 and P1 items
+                 alone). The project selector
                  (p: global or one project), the sessions', queue's and frontier's filters and sorts (f, s, o), a
                  table's columns (C: shown or hidden, their order, the longest a title may be; the sessions also
                  offer Cost, App id, Id and Branch), the palette (ctrl+p: every tab, view, project, sort, filter
@@ -247,8 +249,9 @@ def register(sub, ctx) -> None:
                          "--plain, "
                          "print that view's panels alone")
     tu.add_argument("--axis", choices=("milestones", "waves"),
-                    help="the milestones tab's tree: era > milestone > item (default) or era > wave > item; alone, "
-                         "it means --tab milestones --view tree")
+                    help="the milestones tab's tree: era > milestone > item (default) or era > wave > lot > item (a "
+                         "pending wave's lots by round as brain wave plan cuts them, each item's PR and live session; "
+                         "f in the app: its P0 and P1 items alone); alone, it means --tab milestones --view tree")
     tu.add_argument("--tz", choices=cockpit.TZS,
                     help="the times shown: this machine's timezone (local, the interactive default) or UTC; --once "
                          "and --json keep the recorded UTC times unless it is given")
