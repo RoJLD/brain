@@ -583,7 +583,8 @@ class Merger:
             what = f" the merge driver left on {', '.join(files[:8])}" if files else f": {m.why()}"
             raise StepFailed(f"merging {base_ref} into the PR: a conflict{what}; merge it by hand, push, queue again")
         if (scratch / "notes" / "graph" / "schema.yaml").is_file():
-            r = self.runner(self._brain("--root", str(scratch), "refresh", "--offline"), scratch, CHECK_TIMEOUT)
+            r = self.runner(self._brain("--root", str(scratch), "refresh", "--offline", "--no-tidy"), scratch,
+                            CHECK_TIMEOUT)   # a scratch tree's views only: tidy.auto is the owner's refresh's
             if not r.ok:
                 pin = " (the merged tree pins another engine: config.json engine.pin; run the merger with that " \
                       "engine)" if "engine.pin" in (r.err + r.out) else ""

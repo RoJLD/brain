@@ -231,7 +231,8 @@ class Gate:
         if not (self.top / GRAPH).is_file():
             return Step("views", None, "no graph store")
         before = set(self._dirty())
-        r, log = self._run("views", self._brain("--root", str(self.top), "refresh", "--offline"), CHECK_TIMEOUT)
+        r, log = self._run("views", self._brain("--root", str(self.top), "refresh", "--offline", "--no-tidy"),
+                           CHECK_TIMEOUT)   # a gate checks: tidy.auto's removals are refresh's own, not the gate's
         if not r.ok:
             return Step("views", False, f"brain refresh: {verdict.last_line(r.err, r.out) or f'exit {r.rc}'}",
                         "brain refresh (read its log), fix, then brain gate", log)

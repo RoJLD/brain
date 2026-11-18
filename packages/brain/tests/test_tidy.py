@@ -252,6 +252,7 @@ def test_junctions_into_production_are_unlinked_before_the_worktree_goes(repo, t
     if not _link(prod / "data", wt / "data"):
         pytest.skip("no junction or symbolic link here")
     app(tmp_path, sessions={"local_a": (wt, True)})
+    assert tidy.lost_ignored(str(wt)) == ([], "")   # an ignored junction is unlinked, never followed: nothing lost
     (s,) = one().of("worktree")
     assert s.remove and s.links == [str(wt / "data")] and s.into_production == [str(wt / "data")]
     assert "a junction into production" in "\n".join(tidy.render(one()))
@@ -353,3 +354,189 @@ def test_a_repo_without_a_default_branch_is_reported(tmp_path, monkeypatch):
     git_init(bare, "trunk")
     rp = tidy.plan_repo("x", "r", bare, False)
     assert rp.error.startswith("no default branch") and tidy.render(rp)[0].endswith(rp.error)
+
+
+# --- applied where work ends (wi-brain-tidy-at-close) ------------------------------------------------------------
+
+def _ends(repo, tmp_path):
+    """A merged branch's worktree whose session is archived, one detached on main's tip, one detached on an unmerged
+    branch's tip (its session archived too), a dirty one, one an open session leases, and an unmerged branch."""
+    merged(repo, "claude/done")
+    done = add_worktree(repo, tmp_path, "done", base="claude/done")
+    run_git(done, "checkout", "-q", "claude/done")
+    det = add_worktree(repo, tmp_path, "det")
+    unmerged(repo, "feat/wip")
+    wip = add_worktree(repo, tmp_path, "wipdet", base="feat/wip")
+    dirty = add_worktree(repo, tmp_path, "dirty")
+    (dirty / "new.txt").write_text("work\n", encoding="utf-8")
+    leased = add_worktree(repo, tmp_path, "leased")
+    app(tmp_path, leases={leased: "local_l"},
+        sessions={"local_d": (done, True), "local_t": (det, True), "local_w": (wip, True), "local_x": (dirty, True),
+                  "local_l": (leased, False)})
+    return {"done": done, "det": det, "wipdet": wip, "dirty": dirty, "leased": leased}
+
+
+def test_the_merged_part_leaves_out_a_worktree_detached_on_an_unmerged_commit(repo, tmp_path):
+    wts = _ends(repo, tmp_path)
+    rp = one()
+    assert {os.path.basename(s.target) for s in rp.of("worktree", True)} == {"done", "det", "wipdet"}
+    part = tidy.merged_part(rp)
+    assert {os.path.basename(s.target) for s in part.of("worktree")} == {"done", "det"}
+    assert [s.target for s in part.of("branch")] == ["claude/done"] and part.remote is None
+    assert all(s.remove for s in part.steps) and str(wts["wipdet"]) not in {s.target for s in part.steps}
+
+
+def test_refresh_applies_the_merged_and_clean_part_first(repo, tmp_path, monkeypatch, capsys):
+    wts = _ends(repo, tmp_path)
+    monkeypatch.chdir(tmp_path)
+    assert tidy.auto_on() is True   # the default
+    assert cli.main(["--root", str(repo), "refresh", "--offline"]) == 0
+    out = capsys.readouterr().out
+    assert f"tidy: main: removed worktree {wts['done']}" in out and "tidy: main: deleted branch claude/done" in out
+    assert not wts["done"].exists() and not wts["det"].exists()
+    for kept in ("wipdet", "dirty", "leased"):   # unmerged, dirty, leased: never
+        assert wts[kept].is_dir()
+    assert branches(repo) == {"main", "feat/wip"}
+
+
+def test_refresh_leaves_them_under_tidy_auto_false_or_no_tidy(repo, tmp_path, monkeypatch, capsys):
+    from conftest import BRAIN
+    wts = _ends(repo, tmp_path)
+    monkeypatch.chdir(tmp_path)
+    assert cli.main(["--root", str(repo), "refresh", "--offline", "--no-tidy"]) == 0
+    assert "tidy: main:" not in capsys.readouterr().out and wts["done"].is_dir()
+    cfg = tmp_path / "off" / "config.json"
+    cfg.parent.mkdir()
+    cfg.write_text(json.dumps({**json.loads(BRAIN.read_text(encoding="utf-8")), "tidy": {"auto": False}}),
+                   encoding="utf-8")
+    monkeypatch.setenv("BRAIN_CONFIG", str(cfg))
+    assert tidy.auto_on() is False
+    assert cli.main(["--root", str(repo), "refresh", "--offline"]) == 0
+    assert "tidy: main:" not in capsys.readouterr().out and wts["done"].is_dir() and "claude/done" in branches(repo)
+
+
+def test_refresh_keeps_the_worktree_the_shell_stands_in(repo, tmp_path, monkeypatch, capsys):
+    wts = _ends(repo, tmp_path)
+    monkeypatch.chdir(wts["done"])
+    assert cli.main(["--root", str(repo), "refresh", "--offline"]) == 0
+    assert wts["done"].is_dir() and "claude/done" in branches(repo) and not wts["det"].exists()
+
+
+def test_a_tidy_that_fails_never_fails_the_refresh(repo, tmp_path, monkeypatch, capsys):
+    def boom(*a, **k):
+        raise OSError("git vanished")
+    monkeypatch.setattr(tidy, "plan", boom)
+    monkeypatch.chdir(tmp_path)
+    assert tidy.auto(demo()) == ["warning: tidy (tidy.auto) stopped: git vanished"]
+    assert cli.main(["--root", str(repo), "refresh", "--offline"]) == 0
+    assert "warning: tidy (tidy.auto) stopped: git vanished" in capsys.readouterr().out
+
+
+def test_the_idle_rule_off_removes_a_fresh_worktree_no_session_holds(repo, tmp_path):
+    merged(repo, "feat/x")
+    wt = add_worktree(repo, tmp_path, "x", base="feat/x")
+    run_git(wt, "checkout", "-q", "feat/x")
+    (s,) = one().of("worktree")
+    assert not s.remove and "active" in s.why   # brain tidy and refresh: live for 24 h
+    (s,) = tidy.plan_repo("demo", "main", repo, False, recent=False).of("worktree")
+    assert s.remove and s.merged and s.why == "on feat/x (merged), clean, no session known, its PR merged"
+
+
+def _ignoring(repo, tmp_path):
+    """A merged branch's worktree whose session is archived, holding a hand-placed .env and a cache git ignores."""
+    commit(repo, ".gitignore", ".env\n__pycache__/\n")
+    run_git(repo, "push", "-q", "origin", "main")
+    merged(repo, "claude/env")
+    wt = add_worktree(repo, tmp_path, "env", base="claude/env")
+    run_git(wt, "checkout", "-q", "claude/env")
+    (wt / ".env").write_text("KEY=local\n", encoding="utf-8")
+    (wt / "__pycache__").mkdir()
+    (wt / "__pycache__" / "a.pyc").write_bytes(b"x")
+    app(tmp_path, sessions={"local_e": (wt, True)})
+    return wt
+
+
+def test_git_status_misses_ignored_files_lost_ignored_names_them(repo, tmp_path):
+    wt = _ignoring(repo, tmp_path)
+    assert tidy.clean(str(wt)) == (True, "")   # what git worktree remove checks too: it would delete the .env
+    assert tidy.lost_ignored(str(wt)) == ([".env"], "")   # the cache aside
+    (wt / ".env").unlink()
+    assert tidy.lost_ignored(str(wt)) == ([], "") and tidy.ignored_refusal(str(wt)) == ""
+
+
+def test_refresh_keeps_a_merged_worktree_holding_ignored_files(repo, tmp_path, monkeypatch):
+    """wi-brain-tidy-at-close: a removal no one asked for never deletes what git ignores (a .env, data, outputs).
+    tidy.auto is what brain refresh runs first (the refresh tests above; a refresh takes minutes here)."""
+    wt = _ignoring(repo, tmp_path)
+    monkeypatch.chdir(tmp_path)
+    (s,) = tidy.plan([demo()], keep_ignored=True)[0].of("worktree")
+    assert not s.remove and s.why == "it holds 1 ignored path(s) git would delete with it: .env"
+    assert tidy.auto(demo()) == []
+    assert (wt / ".env").is_file() and "claude/env" in branches(repo)
+    (wt / ".env").unlink()   # the cache alone: it goes
+    assert f"main: removed worktree {wt}" in tidy.auto(demo()) and not wt.exists()
+    assert "claude/env" not in branches(repo)
+
+
+def test_brain_tidy_names_the_ignored_files_its_apply_deletes(repo, tmp_path):
+    wt = _ignoring(repo, tmp_path)
+    rp = one(keep_ignored=False)   # brain tidy --include-ignored's plan
+    (s,) = rp.of("worktree", True)
+    assert s.ignored == [".env"] and not s.for_ignored
+    assert "         and with it what git ignores there: .env" in tidy.render(rp)
+    (wt / "data.csv").write_text("1\n", encoding="utf-8")   # untracked, not ignored: dirty for both
+    assert not one(keep_ignored=False).of("worktree")[0].remove
+
+
+def test_brain_tidy_apply_keeps_a_worktree_holding_ignored_files_unless_include_ignored(repo, tmp_path, capsys):
+    """wi-brain-tidy-at-close: the explicit --apply (the coordinator's scripted step after an archive) keeps it too;
+    --include-ignored removes it with its .env, named in the plan."""
+    wt = _ignoring(repo, tmp_path)
+    (s,) = one().of("worktree")   # the plan's default
+    assert not s.remove and s.for_ignored and s.why == "it holds 1 ignored path(s) git would delete with it: .env"
+    assert tidy.hygiene(demo()) is None   # what --apply would remove: nothing
+    assert cli.main(["--project", "demo", "tidy", "--apply"]) == 0
+    out = capsys.readouterr().out
+    assert f"keep   {wt.as_posix()}: it holds 1 ignored path(s) git would delete with it: .env" in out
+    assert ("tidy: 1 stale worktree(s) kept for the files git ignores in them (named above): brain tidy --apply "
+            "--include-ignored removes them with those files") in out
+    assert (wt / ".env").is_file() and "claude/env" in branches(repo)
+    assert cli.main(["--project", "demo", "tidy", "--include-ignored"]) == 0   # the dry run names what goes
+    out = capsys.readouterr().out
+    assert "and with it what git ignores there: .env" in out and (wt / ".env").is_file()
+    assert cli.main(["--project", "demo", "tidy", "--apply", "--include-ignored"]) == 0
+    out = capsys.readouterr().out
+    assert f"removed worktree {wt}" in out and "deleted branch claude/env" in out and not wt.exists()
+    assert "kept for the files git ignores" not in out
+
+
+def test_a_plan_minutes_old_rechecks_the_ignored_files_before_removing(repo, tmp_path):
+    wt = _ignoring(repo, tmp_path)
+    (wt / ".env").unlink()
+    part = tidy.merged_part(tidy.plan([demo()], keep_ignored=True)[0])
+    assert part.keep_ignored and [s.target for s in part.of("worktree", True)] == [str(wt)]
+    (wt / ".env").write_text("KEY=late\n", encoding="utf-8")
+    lines = tidy.apply_repo(part)
+    assert f"kept {wt}: it holds 1 ignored path(s) git would delete with it: .env" in lines
+    assert (wt / ".env").is_file() and "kept claude/env: its worktree stays" in lines
+
+
+def test_a_branch_squash_merged_by_its_pr_counts_merged_by_the_prs_head(repo, tmp_path):
+    unmerged(repo, "feat/sq")
+    head = run_git(repo, "rev-parse", "feat/sq").strip()
+    assert not tidy.plan_repo("demo", "main", repo, False).of("branch")   # no ancestry: brain tidy never sees it merged
+    rp = tidy.plan_repo("demo", "main", repo, False, pr_heads={"feat/sq": head})
+    assert [(s.target, s.remove) for s in rp.of("branch")] == [("feat/sq", True)]
+    assert tidy.apply_repo(rp) == ["deleted branch feat/sq"] and "feat/sq" not in branches(repo)
+
+
+def test_a_tip_with_commits_its_pr_did_not_merge_is_kept(repo, tmp_path):
+    unmerged(repo, "feat/more")
+    head = run_git(repo, "rev-parse", "feat/more").strip()
+    wt = add_worktree(repo, tmp_path, "more", base="feat/more")
+    run_git(wt, "checkout", "-q", "feat/more")
+    commit(wt, "after.txt")   # pushed after the merge, or never pushed
+    rp = tidy.plan_repo("demo", "main", repo, False, recent=False, pr_heads={"feat/more": head})
+    (s,) = rp.of("worktree")
+    assert not s.remove and s.why.startswith("feat/more holds commits its PR did not merge (its tip ")
+    assert not rp.of("branch") and "feat/more" in branches(repo)

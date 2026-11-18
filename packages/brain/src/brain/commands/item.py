@@ -26,7 +26,8 @@ USAGE = """\
                  is required for an item that takes a clause whose evidence is a PR (a software item: its
                  props.typology, else its project's lifecycle.typologies, else no typology declared); any other closes
                  with --evidence (a render id, a document's version, a DDR...) (wi-brain-done-by-typology);
-                 it prints the journal's line for brain journal add, its PR or its evidence
+                 it prints the journal's line for brain journal add, its PR or its evidence; with --pr, the brain
+                 close line that removes the PR's merged worktree and branch (it closes the rest in one command)
   brain item clauses ID [--json]   the item's definition of done: the generic sentence, then the clauses of its
                  typologies (the software pack's: a PR, a test, the docs in the same PR, the scout, the worktree)
   brain item link FROM TYPE TO [--prop k=v]...   an edge (with props: enforced_by's scope); one end may be another
@@ -70,6 +71,10 @@ def cmd_item(args, root: Path) -> int:
     print(f"{args.item_cmd}: {node['id']} [{node['status']}]; then brain sync and brain check")
     if args.item_cmd == "close":   # the journal's line, its proof a PR or the evidence (wi-brain-evidence-views)
         print(f"journal line (brain journal add): {graph.close_line(node)}")
+        if args.pr and args.status == "done":   # the worktree clause (wi-brain-tidy-at-close): brain close removes it
+            last = args.pr.split(",")[-1].strip()
+            print(f"worktree: brain close {node['id']} --pr \"{last}\" --write removes the PR's merged worktree and "
+                  "branch once it is merged (the item stays closed; cd out of the worktree first)")
     if args.item_cmd == "add" and args.type == "WorkItem":
         _after_add(args, store, node)
     return 0

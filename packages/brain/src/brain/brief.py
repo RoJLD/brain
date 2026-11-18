@@ -68,7 +68,9 @@ AFTER_MERGE = (
     "report sent, archive this session (close-item step 5). The owner's standing authorization stands for their yes: "
     "ask no one. The archive is your last act.",
     "- The coordinator merges it: it archives you as soon as your report says merged and verified, without asking "
-    "again; write those words only when both are true.",
+    "again, then runs `brain tidy --apply` on your repos (your worktrees and merged branches go); write those words "
+    "only when both are true. Never remove a worktree by hand: `brain close ID --pr \"repo #N\" --write`, from the "
+    "main checkout, removes the PR's once it is merged.",
     "- Never archived: a session with uncommitted changes or unmerged or unverified work (yours included), or another "
     "session that is running (mid-turn). Your own archive is the one mid-turn archive allowed: make it the final tool "
     "call of your turn. Finish, or report what is left.",

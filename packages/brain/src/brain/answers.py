@@ -330,8 +330,9 @@ def gh(args: list[str], cwd: Path) -> subprocess.CompletedProcess:
 
 
 def refresh(worktree: Path) -> int:
-    """``brain refresh --offline`` in the worktree (a test replaces it); its exit code."""
-    p = subprocess.run([sys.executable, "-m", "brain", "--root", str(worktree), "refresh", "--offline"],
+    """``brain refresh --offline --no-tidy`` in the worktree (a test replaces it); its exit code. The answers'
+    worktree regenerates its views only: tidy.auto's removals are left to the owner's own refresh."""
+    p = subprocess.run([sys.executable, "-m", "brain", "--root", str(worktree), "refresh", "--offline", "--no-tidy"],
                        cwd=str(worktree), capture_output=True, text=True, encoding="utf-8", errors="replace")
     if p.returncode:
         sys.stderr.write((p.stdout or "")[-2000:] + (p.stderr or "")[-2000:])

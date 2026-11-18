@@ -28,6 +28,17 @@ For each repo of the project (its ``repos:``, root and production checkouts, eac
 
 Never an unmerged branch, a dirty or locked worktree, the main worktree, --force or -D. :func:`hygiene` is the line
 brain check and brain refresh print (local only, no network).
+
+Where work ends, tidy is applied, not only reported (wi-brain-tidy-at-close): brain close removes the PR's head branch
+and its worktrees (brain.closing; the PR's merge stands for the idle rule, every other refusal stays), and brain
+refresh applies the merged-and-clean part of the plan (:func:`auto`, :func:`merged_part`) while config.json
+``tidy.auto`` is on (the default; ``brain refresh --no-tidy`` skips it once). Each keeps a worktree that holds what git
+ignores and ``git worktree remove`` would delete with it (a ``.env``, local data, outputs: :func:`lost_ignored`,
+caches and virtual environments aside), with the paths named; ``brain tidy --apply`` too, the coordinator's scripted
+step after an archive, unless ``--include-ignored``, whose plan names them under the worktree it removes. brain close
+also counts the PR's head branch merged when its tip is on the head commit
+the PR merged (``headRefOid``): a squash or rebase merge leaves no ancestry, and a tip with commits the PR did not
+merge is kept.
 """
 
 from __future__ import annotations
@@ -39,15 +50,20 @@ import stat
 import subprocess
 import textwrap
 import time
-from dataclasses import asdict, dataclass, field
+from dataclasses import asdict, dataclass, field, replace
 from pathlib import Path
 
 from . import config, detail, guards, net, paths, projects
 
 RECENT_HOURS = 24
+CURRENT = "the current folder"   # why a worktree the shell stands in stays
 KEEP = ("main", "master")
 PUSH_CHUNK = 50
 JUNCTION = getattr(stat, "IO_REPARSE_TAG_MOUNT_POINT", 0xA0000003)
+# what git ignores and a worktree may lose without asking: caches and environments a command rebuilds
+REGENERABLE = frozenset({"__pycache__", ".pytest_cache", ".mypy_cache", ".ruff_cache", ".hypothesis", ".tox", ".nox",
+                         ".venv", "venv", "node_modules", "htmlcov", ".ipynb_checkpoints", ".DS_Store", "Thumbs.db"})
+REGENERABLE_ENDS = (".pyc", ".pyo", ".egg-info")
 
 
 def _git(repo, *args: str, timeout: float = 60) -> subprocess.CompletedProcess:
@@ -144,6 +160,52 @@ def clean(path: str) -> tuple[bool, str]:
         return False, f"git status failed ({r.stderr.strip().splitlines()[-1] if r.stderr.strip() else r.returncode})"
     n = len(r.stdout.splitlines())
     return (True, "") if not n else (False, f"{n} change(s) not committed")
+
+
+def _regenerable(rel: str) -> bool:
+    parts = [x for x in rel.replace("\\", "/").split("/") if x]
+    return any(x in REGENERABLE or x.endswith(REGENERABLE_ENDS) or x.startswith(".coverage") for x in parts)
+
+
+def lost_ignored(path: str) -> tuple[list[str], str]:
+    """(the paths git ignores in the worktree ``path`` that ``git worktree remove`` would delete with it, caches and
+    virtual environments aside (REGENERABLE); why they could not be listed). ``git status --porcelain`` and git's own
+    check before a removal both skip ignored files: a hand-placed ``.env``, local data or outputs go without a word."""
+    try:
+        r = _git(path, "ls-files", "-z", "--others", "--ignored", "--exclude-standard", "--directory",
+                 "--no-empty-directory")
+    except (OSError, subprocess.SubprocessError) as exc:
+        return [], f"git ls-files failed ({exc})"
+    if r.returncode:
+        return [], f"git ls-files failed ({r.stderr.strip().splitlines()[-1] if r.stderr.strip() else r.returncode})"
+    return sorted(x for x in r.stdout.split("\0")
+                  if x and not _regenerable(x) and not _folder_link(os.path.join(path, x.rstrip("/")))), ""
+
+
+def _folder_link(path: str) -> bool:
+    """A junction, or a symbolic link to a folder: tidy unlinks it before the removal, never following it, so what it
+    points to is not lost (a node_modules junction into a production checkout)."""
+    try:
+        if os.path.islink(path):
+            return os.path.isdir(path)
+        return getattr(os.lstat(path), "st_reparse_tag", 0) == JUNCTION
+    except OSError:
+        return False
+
+
+def _few(names: list[str], n: int = 3) -> str:
+    return ", ".join(names[:n]) + (f" and {len(names) - n} more" if len(names) > n else "")
+
+
+def _ignored_why(lost: list[str], err: str) -> str:
+    if err:
+        return err
+    return f"it holds {len(lost)} ignored path(s) git would delete with it: {_few(lost)}" if lost else ""
+
+
+def ignored_refusal(path: str) -> str:
+    """Why a removal no one asked for keeps the worktree ``path`` for what git ignores in it; '' when nothing."""
+    return _ignored_why(*lost_ignored(path))
 
 
 def last_activity(path: str) -> float:
@@ -275,6 +337,9 @@ class Step:
     links: list[str] = field(default_factory=list)   # a worktree's folder links to remove first
     into_production: list[str] = field(default_factory=list)
     after: str = ""   # a branch's worktree, removed first
+    merged: bool = False   # a stale worktree on a merged branch, or detached on a commit the default branch holds
+    ignored: list[str] = field(default_factory=list)   # what git ignores in a worktree and deletes with it
+    for_ignored: bool = False   # a stale worktree kept only for what git ignores in it (--include-ignored removes it)
 
 
 @dataclass
@@ -288,6 +353,8 @@ class RepoPlan:
     steps: list[Step] = field(default_factory=list)
     remote: list[str] | None = None    # merged remote branches (--remote), None when not asked
     remote_note: str = ""
+    keep_ignored: bool = False   # a removal no one asked for (close, refresh): a worktree with ignored files stays
+    pr_heads: dict[str, str] = field(default_factory=dict)   # branch -> the head commit its merged PR had
 
     def of(self, kind: str, remove: bool | None = None) -> list[Step]:
         return [s for s in self.steps if s.kind == kind and (remove is None or s.remove == remove)]
@@ -317,17 +384,32 @@ def _ago(ts: float, now: float) -> str:
 
 def plan_repo(project: str, name: str, repo: Path, production: bool, *, remote: bool = False,
               state: list | None = None, now: float | None = None, cwd: str | None = None,
-              prod_roots: list[str] | None = None) -> RepoPlan:
+              prod_roots: list[str] | None = None, recent: bool = True, keep_ignored: bool = False,
+              pr_heads: dict[str, str] | None = None) -> RepoPlan:
     """What tidy would do in one repo. ``state`` is a one-slot cache of the app's state, read when a linked worktree
-    needs it."""
+    needs it. ``recent`` False drops the idle rule for a worktree no session is known to hold (brain close: the PR's
+    merge says its work ended); every other refusal stays. ``keep_ignored`` keeps a worktree holding ignored files
+    git would delete with it (a removal no one asked for). ``pr_heads`` maps a branch to the head commit its merged PR
+    had: the branch counts as merged when that commit holds its tip (a squash or rebase merge leaves no ancestry)."""
     now = time.time() if now is None else now
     cwd = cwd or os.getcwd()
-    rp = RepoPlan(project, name, str(paths.main_checkout(repo) or repo), production)
+    rp = RepoPlan(project, name, str(paths.main_checkout(repo) or repo), production, keep_ignored=keep_ignored)
     rp.default, refs = default_branch(repo)
     if not refs:
         rp.error = "no default branch (origin/HEAD, main or master)"
         return rp
     merged = merged_branches(repo, refs)
+    beyond: dict[str, str] = {}   # a PR's head branch with commits its PR did not merge -> why it stays
+    for b, sha in (pr_heads or {}).items():
+        tip = _out(repo, "rev-parse", "--verify", "--quiet", f"refs/heads/{b}").strip()
+        if not tip or not sha or b in merged:
+            continue
+        if _git_ok(repo, "merge-base", "--is-ancestor", tip, sha):
+            merged.add(b)
+            rp.pr_heads[b] = sha
+        else:
+            here = "" if _exists(repo, sha + "^{commit}") else ", not fetched here"
+            beyond[b] = f"{b} holds commits its PR did not merge (its tip {tip[:8]} is not on its head {sha[:8]}{here})"
     staying: dict[str, str] = {}   # branch -> the worktree that keeps it checked out
     leaving: dict[str, str] = {}   # branch -> its stale worktree
     for wt in worktrees(repo):
@@ -340,9 +422,18 @@ def plan_repo(project: str, name: str, repo: Path, production: bool, *, remote: 
                                  "its folder is gone" + ("; a production checkout's: git worktree prune is the "
                                                          "owner's" if production else "")))
             continue
-        why, remove = _stale(wt, repo, merged, state, now, cwd)
-        step = Step("worktree", wt.path, remove, why)
+        why, remove = _stale(wt, repo, merged, state, now, cwd, recent)
+        if not remove and wt.branch in beyond and why.endswith("is not merged"):
+            why = beyond[wt.branch]
+        lost: list[str] = []
+        for_ignored = False
         if remove:
+            lost, err = lost_ignored(wt.path)
+            if keep_ignored and (err or lost):
+                why, remove, for_ignored = _ignored_why(lost, err), False, True
+        step = Step("worktree", wt.path, remove, why, ignored=lost if remove else [], for_ignored=for_ignored)
+        if remove:
+            step.merged = bool(wt.branch) or any(_git_ok(repo, "merge-base", "--is-ancestor", wt.head, r) for r in refs)
             step.links = untracked_links(wt.path)
             roots = guards.production_roots() if prod_roots is None else prod_roots
             step.into_production = [lk for lk in step.links
@@ -366,12 +457,12 @@ def plan_repo(project: str, name: str, repo: Path, production: bool, *, remote: 
 
 
 def _stale(wt: Worktree, repo: Path, merged: set[str], state: list | None, now: float,
-           cwd: str) -> tuple[str, bool]:
+           cwd: str, recent: bool = True) -> tuple[str, bool]:
     """(why, stale) for a linked worktree."""
     if wt.locked:
         return "locked", False
     if _inside(cwd, wt.path):
-        return "the current folder", False
+        return CURRENT, False
     if wt.branch and wt.branch not in merged:
         return f"{wt.branch} is not merged", False
     if not wt.branch and not held(repo, wt.head):
@@ -383,6 +474,8 @@ def _stale(wt: Worktree, repo: Path, merged: set[str], state: list | None, now: 
         return f"session {sid} is open", False
     if known in ("archived", "gone"):
         idle = f"session {sid} {known}"
+    elif not recent:
+        idle = "no session known, its PR merged"
     else:
         last = last_activity(wt.path)
         if last and now - last < RECENT_HOURS * 3600:
@@ -436,7 +529,9 @@ def _open_pr_heads(repo: Path) -> tuple[set[str], str]:
     return set(), "gh did not list the open PRs: their heads are not told apart"
 
 
-def plan(scope: list[projects.Project], *, remote: bool = False) -> list[RepoPlan]:
+def plan(scope: list[projects.Project], *, remote: bool = False, keep_ignored: bool = True) -> list[RepoPlan]:
+    """tidy's plan of each repo of ``scope``. ``keep_ignored`` (the default) keeps a worktree holding files git
+    ignores and would delete with it (a .env, local data, outputs); brain tidy --include-ignored plans without it."""
     state: list = []
     roots = guards.production_roots()
     out = []
@@ -445,7 +540,8 @@ def plan(scope: list[projects.Project], *, remote: bool = False) -> list[RepoPla
             out.append(RepoPlan(p.name, p.name, str(p.root), False, error="its root is not on this machine"))
             continue
         for name, path, prod in _repos(p):
-            out.append(plan_repo(p.name, name, path, prod, remote=remote, state=state, prod_roots=roots))
+            out.append(plan_repo(p.name, name, path, prod, remote=remote, state=state, prod_roots=roots,
+                                 keep_ignored=keep_ignored))
     return out
 
 
@@ -504,6 +600,9 @@ def apply_repo(rp: RepoPlan, *, remote: bool = False, env: dict | None = None) -
     gone: set[str] = set()
     for s in rp.of("worktree", True):
         ok, why = clean(s.target)   # the plan may be minutes old
+        if ok and rp.keep_ignored:
+            why = ignored_refusal(s.target)
+            ok = not why
         if not ok:
             lines.append(f"kept {s.target}: {why}")
             continue
@@ -525,7 +624,8 @@ def apply_repo(rp: RepoPlan, *, remote: bool = False, env: dict | None = None) -
         if s.after and s.after not in gone:
             lines.append(f"kept {s.target}: its worktree stays")
             continue
-        ok, msg = delete_merged(rp.path, s.target, holders)
+        ok, msg = delete_merged(rp.path, s.target, holders + ([rp.pr_heads[s.target]] if s.target in rp.pr_heads
+                                                              else []))
         lines.append(f"deleted branch {s.target}" if ok else f"failed: delete {s.target}: {msg}")
     if remote and rp.remote:
         lines += apply_remote(rp, env)
@@ -576,6 +676,8 @@ def render(rp: RepoPlan, *, remote: bool = False) -> list[str]:
     for s in wts + gone:
         verb = "remove" if s.remove else "keep  "
         out.append(f"  {verb} {Path(s.target).as_posix()}: {s.why}")
+        if s.ignored:
+            out += _wrap("         and with it what git ignores there: ", s.ignored)
         for lk in s.links:
             out.append(f"         then unlink {Path(lk).as_posix()}" +
                        (" (a junction into production)" if lk in s.into_production else ""))
@@ -598,12 +700,16 @@ def counts(plans: list[RepoPlan]) -> dict:
     return {"worktrees": sum(len(rp.of("worktree", True)) for rp in plans),
             "pruned": sum(len(rp.of("prune", True)) for rp in plans),
             "branches": sum(len(rp.of("branch", True)) for rp in plans),
-            "remote": sum(len(rp.remote or []) for rp in plans)}
+            "remote": sum(len(rp.remote or []) for rp in plans),
+            "for_ignored": sum(1 for rp in plans for s in rp.of("worktree", False) if s.for_ignored)}
 
 
 def main(scope: list[projects.Project], *, remote: bool = False, apply: bool = False, as_json: bool = False,
-         env: dict | None = None) -> int:
-    plans = plan(scope, remote=remote)
+         env: dict | None = None, include_ignored: bool = False) -> int:
+    """brain tidy: the plan, then --apply. A worktree holding files git ignores (and ``git worktree remove`` would
+    delete without asking) stays unless ``include_ignored`` (--include-ignored), which removes it with them, named in
+    the plan."""
+    plans = plan(scope, remote=remote, keep_ignored=not include_ignored)
     if as_json and not apply:
         print(json.dumps([asdict(rp) for rp in plans], ensure_ascii=False, indent=1))
         return 0
@@ -624,7 +730,43 @@ def main(scope: list[projects.Project], *, remote: bool = False, apply: bool = F
         more = " --remote" if remote else ""
         print(f"tidy: dry run, nothing removed: {total}; brain tidy{more} --apply removes them"
               + (f" (the remote ones: {config.owner_of()}'s, from their terminal or the queue)" if remote else ""))
+    if n["for_ignored"]:
+        print(f"tidy: {n['for_ignored']} stale worktree(s) kept for the files git ignores in them (named above): "
+              "brain tidy --apply --include-ignored removes them with those files")
     return 1 if failed else 0
+
+
+def auto_on(root: Path | None = None) -> bool:
+    """config.json ``tidy.auto``: brain refresh applies the merged-and-clean part of the plan (:func:`auto`); default
+    on, false turns it off."""
+    opts = config.load(root).data.get("tidy")
+    return not (isinstance(opts, dict) and opts.get("auto") is False)
+
+
+def merged_part(rp: RepoPlan) -> RepoPlan:
+    """The part of ``rp`` brain refresh applies on its own: the stale worktrees on a merged branch or detached on a
+    commit the default branch holds, the worktrees whose folder is gone, the merged branches (one whose worktree is
+    not in that part left out); never origin's."""
+    part = [s for s in rp.steps if s.remove and (s.kind != "worktree" or s.merged)]
+    going = {s.target for s in part if s.kind == "worktree"}
+    part = [s for s in part if s.kind != "branch" or not s.after or s.after in going]
+    return replace(rp, steps=part, remote=None)
+
+
+def auto(p: projects.Project) -> list[str]:
+    """brain refresh's tidy (config.json tidy.auto, wi-brain-tidy-at-close): the merged-and-clean part of the plan of
+    ``p``'s repos applied, one line per step; never an unmerged branch, a dirty, locked or leased worktree, one
+    holding ignored files git would delete with it (:func:`lost_ignored`), the current folder, nor origin's branches.
+    A failure is a line: it never fails the refresh."""
+    lines: list[str] = []
+    try:
+        for rp in plan([p], keep_ignored=True) if p.root.is_dir() else []:
+            part = merged_part(rp)
+            if not rp.error and part.steps:
+                lines += [f"{rp.name}: {ln}" for ln in apply_repo(part)]
+    except Exception as exc:  # an optional step never stops the refresh
+        lines.append(f"warning: tidy (tidy.auto) stopped: {exc}")
+    return lines
 
 
 def hygiene(p: projects.Project) -> str | None:

@@ -16,8 +16,13 @@ USAGE = """\
                  [--json]   an item's definition of done from its merged PR, at zero token: the item closed with the
                  PR and its merge's date (the PR's title as the outcome), the journal's line, the features its title
                  or body names (feat-x: have) set, its changelog fragment checked, the milestones it leaves with no
-                 open item listed with their trigger, its worktree and branch removed by brain tidy's plan; the plan,
-                 then --write (refused while the PR is not merged); --pr N alone reads the repo of the current folder
+                 open item listed with their trigger, its worktree and branch removed by brain tidy's plan, where the
+                 PR's merge stands for the 24 h idle rule: a worktree no desktop-app session knows goes at once, the
+                 head branch counts as merged when its tip is on the PR's head commit (squash or rebase merges);
+                 kept, with why: an unmerged branch, a dirty, locked or leased worktree, one holding files git ignores
+                 and would delete (.env, data: named), the one the shell stands in (the cd out of it is printed, then
+                 the same command removes it); the plan, then --write (refused while the PR is not merged); --pr N
+                 alone reads the repo of the current folder
 """
 
 

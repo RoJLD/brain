@@ -15,7 +15,11 @@ From the merged PR (``gh pr view``: its title, body, merge date, head branch and
 - the milestones it moves checked: each milestone the item is ``part_of`` with no open member left is listed with its
   trigger, for a judgement (a trigger is prose: reaching it stays a ``brain item set``);
 - its worktree and branch removed by brain tidy's own plan, narrowed to the PR's head branch (never an unmerged branch,
-  a dirty worktree or one an open session holds).
+  a dirty or locked worktree, one an open session holds or the shell stands in: the plan says to cd out of it); the
+  PR's merge stands for tidy's idle rule (wi-brain-tidy-at-close), so a worktree no session is known to hold goes at
+  once, not 24 hours later, unless it holds what git ignores and would delete with it (a ``.env``, data, outputs:
+  named, kept). The head branch counts as merged when its tip is on the head commit the PR merged (``headRefOid``):
+  a squash or rebase merge leaves no ancestry; a tip with commits the PR did not merge is kept.
 
 The plan first; ``--write`` applies it, refused while the PR is not merged or the item is unknown.
 """
@@ -33,7 +37,7 @@ from . import closemerged, features, graph, milestones, notes, tidy
 
 REF = re.compile(r"^\s*(?:(?P<repo>[\w.-]+)\s+)?#?(?P<n>\d+)\s*$")
 OPEN = ("todo", "doing", "blocked", "pending")   # an open member keeps its milestone from being reached
-FIELDS = "number,title,body,state,mergedAt,headRefName,files"
+FIELDS = "number,title,body,state,mergedAt,headRefName,headRefOid,files"
 
 
 class CloseError(RuntimeError):
@@ -50,6 +54,7 @@ class PR:
     merged_at: str = ""      # ISO timestamp, '' when not merged
     head: str = ""           # its head branch
     files: list[str] = field(default_factory=list)
+    head_oid: str = ""       # the head commit it merged ('' when gh did not say)
 
     @property
     def ref(self) -> str:
@@ -137,7 +142,7 @@ def read_pr(repo: str, repo_dir: Path, number: int, fetch=None) -> PR:
     files = [str(f.get("path") if isinstance(f, dict) else f) for f in data.get("files") or []]
     return PR(repo, int(data.get("number") or number), str(data.get("title") or ""), str(data.get("body") or ""),
               str(data.get("state") or "").upper(), str(data.get("mergedAt") or ""), str(data.get("headRefName") or ""),
-              [f for f in files if f])
+              [f for f in files if f], str(data.get("headRefOid") or ""))
 
 
 def plan(store: Path, item: str, pr: PR, repo_dir: Path | None, *, outcome: str = "",
@@ -222,7 +227,9 @@ def _tidy(p: Plan, repo_dir: Path) -> None:
         p.tidy_note = "the PR names no head branch: nothing to tidy"
         return
     try:
-        rp = tidy.plan_repo("", p.pr.repo, repo_dir, False, state=[])
+        # its merge ended the work; no one is asked, so ignored files keep a worktree; a squash merge leaves no ancestry
+        rp = tidy.plan_repo("", p.pr.repo, repo_dir, False, state=[], recent=False, keep_ignored=True,
+                            pr_heads={p.pr.head: p.pr.head_oid} if p.pr.head_oid else None)
         holders = {tidy._norm(w.path) for w in tidy.worktrees(repo_dir) if w.branch == p.pr.head and not w.main}
     except (OSError, subprocess.SubprocessError) as exc:
         p.tidy_note = f"tidy: {exc}"
@@ -234,17 +241,20 @@ def _tidy(p: Plan, repo_dir: Path) -> None:
                 or (s.kind == "worktree" and tidy._norm(s.target) in holders)]
     p.tidy = rp
     if not rp.steps:
-        p.tidy_note = _nothing_to_tidy(p.pr.head, rp.default, repo_dir, bool(holders))
+        p.tidy_note = _nothing_to_tidy(p.pr.head, rp.default, repo_dir, bool(holders), p.pr.head_oid)
 
 
-def _nothing_to_tidy(head: str, default: str, repo_dir: Path, held: bool) -> str:
+def _nothing_to_tidy(head: str, default: str, repo_dir: Path, held: bool, oid: str = "") -> str:
     """Why tidy's narrowed plan is empty: no such branch, or one git does not see merged, or worktrees that stay."""
     if not tidy._git_ok(repo_dir, "rev-parse", "--verify", "--quiet", f"refs/heads/{head}"):
         return f"no local branch {head} nor worktree on it: nothing to tidy"
     if held:
         return f"the worktrees on {head} stay (see brain tidy): nothing removed"
-    return (f"{head} is not merged into {default} as git sees it here (a squash or rebase merge, or the default "
-            "branch not fetched): kept, brain tidy decides later")
+    if oid:
+        return (f"{head} holds commits its PR did not merge (its tip is not on the PR's head {oid[:8]}, or that commit "
+                "is not fetched here): kept, brain tidy keeps it too")
+    return (f"{head} is not merged into {default} as git sees it here, and gh gave no head commit to compare its tip "
+            "with (a squash or rebase merge, or the default branch not fetched): kept, brain tidy keeps it too")
 
 
 def write(store: Path, journal: Path, p: Plan, today: str | None = None, title: str = "") -> list[str]:
@@ -267,6 +277,18 @@ def write(store: Path, journal: Path, p: Plan, today: str | None = None, title: 
         out.append(f"journal: {p.line}")
     if p.tidy is not None and p.tidy.steps:
         out += [f"tidy: {x}" for x in tidy.apply_repo(p.tidy)]
+        out += _kept(p.tidy)
+    return out
+
+
+def _kept(rp: tidy.RepoPlan) -> list[str]:
+    """The PR's worktrees tidy keeps, with why; the one the shell stands in names the way out."""
+    out = []
+    for s in rp.of("worktree", False):
+        out.append(f"tidy: kept worktree {s.target} ({s.why})")
+        if s.why == tidy.CURRENT:
+            out.append(f"tidy: the shell stands in it: cd {Path(rp.path).as_posix()} (out of it), then brain close "
+                       "again removes it")
     return out
 
 
@@ -280,7 +302,9 @@ def _plan_lines(p: Plan) -> list[str]:
         lines.append(f"already {p.status}: {p.item} (left as it is; no journal line)")
     lines += [f"feature: {f} {old} -> {new}" for f, old, new in p.features]
     if p.tidy is not None:
-        lines += [f"tidy: {'remove' if s.remove else 'keep'} {s.kind} {s.target} ({s.why})" for s in p.tidy.steps]
+        lines += [f"tidy: remove {s.kind} {s.target} ({s.why})" for s in p.tidy.steps if s.remove]
+        lines += [f"tidy: keep branch {s.target} ({s.why})" for s in p.tidy.of("branch", False)]
+        lines += _kept(p.tidy)
     return lines
 
 
