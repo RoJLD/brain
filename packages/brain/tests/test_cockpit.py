@@ -592,7 +592,7 @@ def test_the_project_selector_switches_the_scope_and_keeps_each_probe(tmp_path, 
 def test_brain_tui_starts_from_the_remembered_scope_and_views(tmp_path, monkeypatch, store, capsys):
     root = _cockpit(tmp_path, monkeypatch, store).projs[0].root
     seen = {}
-    monkeypatch.setattr(cockpit, "watch", lambda cp, refresh_s, probe_s, views=None, search="", tz=None, tab=None: seen.update(
+    monkeypatch.setattr(cockpit, "watch", lambda cp, refresh_s, probe_s, views=None, search="", tz=None, tab=None, **_: seen.update(
         scope=cp.scope, views=views, search=search, tz=tz) or 0)
     assert cli.main(["tui", "--project", "demo", "--plain", "--sort", "frontier:-unblocks", "--filter",
                      "queue:kind=decision", "--search", "pick"]) == 0
@@ -649,7 +649,7 @@ def test_the_settings_are_remembered(tmp_path, monkeypatch, store, capsys):
     assert cockpit.load_state()["settings"] == {"theme": "nord"}  # an unknown timezone or key is left out
     _cockpit(tmp_path, monkeypatch, store)
     seen = {}
-    monkeypatch.setattr(cockpit, "watch", lambda cp, refresh_s, probe_s, views=None, search="", tz=None, tab=None:
+    monkeypatch.setattr(cockpit, "watch", lambda cp, refresh_s, probe_s, views=None, search="", tz=None, tab=None, **_:
                         seen.update(tz=tz, tab=tab) or 0)
     assert cli.main(["tui", "--project", "demo", "--plain", "--tz", "utc"]) == 0
     assert seen["tz"] == "utc" and cockpit.load_state()["settings"] == {"theme": "nord", "tz": "utc"}
@@ -961,7 +961,7 @@ def test_brain_tui_tab_starts_there_and_prints_it(tmp_path, monkeypatch, store, 
     out = capsys.readouterr().out
     assert "Frontier (" in out and "Milestones (" not in out
     seen = {}
-    monkeypatch.setattr(cockpit, "watch", lambda cp, refresh_s, probe_s, views=None, search="", tz=None, tab=None:
+    monkeypatch.setattr(cockpit, "watch", lambda cp, refresh_s, probe_s, views=None, search="", tz=None, tab=None, **_:
                         seen.update(tab=tab) or 0)
     assert cli.main(["tui", "--project", "demo", "--plain", "--tab", "health"]) == 0
     assert seen["tab"] == "health" and cockpit.load_state()["tab"] == "health"
@@ -993,7 +993,7 @@ def test_a_newer_brains_tui_json_is_shown_never_written(tmp_path, monkeypatch, s
     cockpit.state_path().parent.mkdir(parents=True, exist_ok=True)
     cockpit.state_path().write_text(text, encoding="utf-8")
     _cockpit(tmp_path, monkeypatch, store)
-    monkeypatch.setattr(cockpit, "watch", lambda cp, refresh_s, probe_s, views=None, search="", tz=None, tab=None: 0)
+    monkeypatch.setattr(cockpit, "watch", lambda cp, refresh_s, probe_s, views=None, search="", tz=None, tab=None, **_: 0)
     assert cli.main(["tui", "--project", "demo", "--plain"]) == 0
     err = capsys.readouterr().err
     assert "newer brain" in err and "views are not remembered" in err

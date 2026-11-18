@@ -2,6 +2,7 @@
 VIZ-2): era > milestone > item and era > wave > item from the graph and the forecast's latest.json, never recomputed;
 its text twin (brain tui --once --tab milestones --view tree [--axis waves]) and the cockpit's plan panel."""
 
+import io
 import json
 import re
 
@@ -18,6 +19,8 @@ NODES = """
 - {id: wave-s1, type: Milestone, status: reached, title: "Wave 1",
    props: {kind: wave, release: "0.1.0", reached: "2026-11-10"}}
 - {id: wave-s2, type: Milestone, status: pending, title: "Wave 2", props: {kind: wave, release: "0.2.0"}}
+- {id: wave-s3, type: Milestone, status: pending, title: "Wave 3, its release not written", props: {kind: wave}}
+- {id: wi-cdone, type: WorkItem, status: done, title: "Carried, then done", props: {carried_to: wave-s2}}
 - {id: wi-a, type: WorkItem, status: doing, title: "A", props: {priority: P2}}
 - {id: wi-b, type: WorkItem, status: todo, title: "B", props: {priority: P1}}
 - {id: wi-c, type: WorkItem, status: done, title: "C", props: {priority: P1, done: "2026-11-09 ok"}}
@@ -32,6 +35,8 @@ EDGES = """
 - {from: ms-demo-sub, to: ms-demo-core, type: part_of}
 - {from: wave-s1, to: era-demo-one, type: part_of}
 - {from: wave-s2, to: era-demo-one, type: part_of}
+- {from: wave-s3, to: era-demo-one, type: part_of}
+- {from: wi-cdone, to: wave-s1, type: part_of}
 - {from: wi-a, to: ms-demo-core, type: part_of}
 - {from: wi-b, to: ms-demo-sub, type: part_of}
 - {from: wi-c, to: ms-demo-core, type: part_of}
@@ -111,10 +116,13 @@ def test_the_thematic_axis_is_era_milestone_item_with_counts_bars_and_the_foreca
 def test_the_wave_axis_puts_a_carried_item_in_the_wave_it_is_in_now(st):
     roots = planviews.tree(st, FC, "waves", "demo")
     era = roots[0]
-    assert _ids(era) == ["wave-s1", "wave-s2"]   # in their release's order
-    s1, s2 = era["children"]
+    assert _ids(era) == ["wave-s1", "wave-s2", "wave-s3"]   # brain.waves' order: their sequence
+    s1, s2, s3 = era["children"]
     assert s1["name"] == "0.1.0 (wave-s1)" and s1["when"] == "reached Nov 10" and (s1["done"], s1["items"]) == (1, 1)
-    assert sorted(c["id"] for c in s2["children"]) == ["wi-a", "wi-carry", "wi-w"] and s2["items"] == 3
+    assert s3["name"] == "0.2.1 (wave-s3)"   # its release computed by brain.waves, not written
+    # the carried items, open or done, count and show in the wave they went to
+    assert sorted(c["id"] for c in s2["children"][:-1]) == ["wi-a", "wi-carry", "wi-w"]
+    assert (s2["done"], s2["items"]) == (1, 4) and [c["id"] for c in s2["children"][-1]["children"]] == ["wi-cdone"]
     assert roots[-1]["key"] == "demo:(no wave)" and sorted(c["id"] for c in roots[-1]["children"]) == [
         "wi-b", "wi-e", "wi-ext", "wi-one", "wi-two"]
     with pytest.raises(ValueError):
@@ -164,6 +172,8 @@ def test_brain_tui_once_prints_the_tree_and_refuses_a_bad_view(st, store, capsys
     assert cli.main(["--root", str(root), "tui", "--once", "--quick", "--tab", "milestones"]) == 0
     out = capsys.readouterr().out   # without --view: the tab's list, the tree only when asked
     assert "Milestones (" in out and "· Tree ·" not in out
+    assert cli.main(["--root", str(root), "tui", "--once", "--quick", "--axis", "waves"]) == 0
+    assert "Milestones · Tree · axis: waves" in capsys.readouterr().out   # --axis alone: the milestones' tree
     for bad in (["--view", "tree"], ["--tab", "queue", "--view", "tree"], ["--tab", "milestones", "--view", "nope"]):
         with pytest.raises(SystemExit):
             cli.main(["--root", str(root), "tui", "--once", "--quick", *bad])
@@ -181,6 +191,9 @@ def test_the_cockpit_reads_the_plan_again_when_the_forecast_changes(st, store):
     (forecast.folder("demo") / "latest.json").write_text(json.dumps(FC), encoding="utf-8")
     assert "plan" in cp.refresh() and cp.snapshot()["panels"]["plan"]["projects"][0]["as_of"] == FC["as_of"]
     assert "plan" not in cp.refresh()   # nothing changed
+    out = io.StringIO()   # --plain: the same view and axis as --once
+    cockpit.watch(cp, out=out, ticks=1, tab="milestones", view="tree", axis="waves")
+    assert "Milestones · Tree · axis: waves" in out.getvalue() and "Milestones (" not in out.getvalue()
 
 
 def test_the_axis_is_data_and_kept_with_the_tabs_view():

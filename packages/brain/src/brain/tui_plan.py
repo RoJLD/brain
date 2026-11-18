@@ -89,9 +89,9 @@ class PlanTreeApp:
         tree.clear()
         groups = (panel or {}).get("projects") or []
         roots = [(g, (g.get("trees") or {}).get(self.plan_axis) or []) for g in groups]
-        if self.plan_open is None:
+        if self.plan_open is None and roots:   # the defaults once there is a tree: an empty first read keeps them
             self.plan_open = {g["project"] for g, _ in roots} | {k for _, ns in roots for k in opened(ns)}
-        _fill(tree, roots, max(40, tree.size.width or cockpit.NARROW_COLUMNS), self.plan_open)
+        _fill(tree, roots, max(40, tree.size.width or cockpit.NARROW_COLUMNS), self.plan_open or set())
         dates = groups[0]["forecast"] if len(groups) == 1 else "ranges p10–p90"
         tree.border_subtitle = f"axis: {self.plan_axis} · g axis · ←/→ fold · Enter detail · {dates}"
         target = _node_of(tree, at)

@@ -115,6 +115,21 @@ def _all(tree):
     return out
 
 
+def test_started_on_the_tree_before_a_read_keeps_the_first_open_nodes(store):
+    """The app started on the Tree draws it empty first: the default open nodes still apply once the plan is read."""
+    plan = _plan(store)
+    fake = PlanCockpit(None)
+
+    async def check(app, pilot, fake):
+        tree = app.query_one("#plan", PlanTree)
+        assert app._view() == "tree" and app.plan_open is None
+        fake.plan = plan
+        app.draw({"plan"})
+        await pilot.pause(0.1)
+        assert any(x.startswith("core") for x in _labels(tree))   # the era open, as at first
+    _run(check, fake, tab="milestones", tabs={"milestones": {"view": "tree"}})
+
+
 def test_the_first_open_nodes_are_the_roots_and_their_groups(store):
     plan = _plan(store)
     nodes = plan["projects"][0]["trees"]["milestones"]

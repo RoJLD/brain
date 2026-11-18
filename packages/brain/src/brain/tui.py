@@ -626,7 +626,7 @@ class CockpitApp(DetailBeside, PaletteAndColumns, SettingsTab, PlanTreeApp, App)
                 self.notify(f"{text} ({', '.join(names)}: the last content kept)", title="brain tui",
                             severity="error")
         if self._columns():
-            updated = set(cockpit.PANELS)
+            updated = {*updated, *cockpit.PANELS}   # the plan and the plugged panels read with them too
         self.draw(updated)
         self._waits()
         if self.pending is not None:

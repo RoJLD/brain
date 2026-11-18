@@ -83,11 +83,7 @@ def cmd_tui(args, root: Path) -> int:
     notes = cockpit.plug_registry(root)   # the plugged projects' panels and tabs, before their views are read
     if args.tab and args.tab not in cockpit.built_tabs():
         raise SystemExit(f"brain tui: --tab {args.tab}: one of {', '.join(cockpit.built_tabs())}")
-    if args.view and (not args.tab or args.view not in cockpit.TABS[args.tab]["views"]):
-        raise SystemExit(f"brain tui: --view {args.view}: needs --tab, and one of its views "
-                         f"({', '.join(cockpit.TABS[args.tab]['views']) if args.tab else 'none without --tab'})")
-    if args.axis and args.axis not in cockpit.tab_axes(args.tab or "milestones"):
-        raise SystemExit(f"brain tui: --axis {args.axis}: the milestones tab's tree only")
+    _check_view(args)
     try:
         flags = cockpit.parse_view(args.sort, args.filter)
     except ValueError as exc:
@@ -154,7 +150,20 @@ def _interactive(args, cp, saved: dict, views: dict, settings: dict) -> int:
         else:
             return tui.run(cp, refresh=args.refresh, probe=args.probe, views=views, search=args.search,
                            settings=settings, tab=tab, tabs=tabs, columns=columns)
-    return cockpit.watch(cp, args.refresh, args.probe, views=views, search=args.search, tz=settings["tz"], tab=args.tab)
+    return cockpit.watch(cp, args.refresh, args.probe, views=views, search=args.search, tz=settings["tz"], tab=args.tab,
+                         view=args.view, axis=args.axis)
+
+
+def _check_view(args) -> None:
+    """--view names a view of --tab; --axis is the milestones tab's tree's, and alone it asks for that tree (--tab
+    milestones --view tree). Refused otherwise (exit 2)."""
+    if args.axis:
+        if args.axis not in cockpit.tab_axes(args.tab or "milestones"):
+            raise SystemExit(f"brain tui: --axis {args.axis}: the milestones tab's tree only")
+        args.tab, args.view = args.tab or "milestones", args.view or "tree"
+    if args.view and (not args.tab or args.view not in cockpit.TABS[args.tab]["views"]):
+        raise SystemExit(f"brain tui: --view {args.view}: needs --tab, and one of its views "
+                         f"({', '.join(cockpit.TABS[args.tab]['views']) if args.tab else 'none without --tab'})")
 
 
 def _asked_view(args, saved: dict | None) -> dict:
@@ -235,7 +244,8 @@ def register(sub, ctx) -> None:
                     help="with --tab, that view of it (the milestones tab: list, tree); with --once or --plain, "
                          "print that view's panels alone")
     tu.add_argument("--axis", choices=("milestones", "waves"),
-                    help="the milestones tab's tree: era > milestone > item (default) or era > wave > item")
+                    help="the milestones tab's tree: era > milestone > item (default) or era > wave > item; alone, "
+                         "it means --tab milestones --view tree")
     tu.add_argument("--tz", choices=cockpit.TZS,
                     help="the times shown: this machine's timezone (local, the interactive default) or UTC; --once "
                          "and --json keep the recorded UTC times unless it is given")

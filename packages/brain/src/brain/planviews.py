@@ -24,7 +24,6 @@ tree [--axis waves]``), from the same function.
 from __future__ import annotations
 
 import os
-import re
 from datetime import date
 
 from . import forecast, resume, waves
@@ -40,7 +39,6 @@ PRIORITY = {"P0": 0, "P1": 1, "P2": 2, "P3": 3}
 STATE_ORDER = {"doing": 0, "todo": 1, "blocked": 2, "deferred": 3}
 GATES = {"ddr": ("⧗", "DDR"), "action": ("⚑", "action"), "outside": ("⇢", "other project"),
          "undated": ("⊘", "undated")}
-_RELEASE = re.compile(r"^(\d+)\.(\d+)\.(\d+)$")
 
 
 def words() -> bool:
@@ -148,15 +146,15 @@ def _links(st: resume.Store, axis: str) -> tuple[dict[str, set[str]], dict[str, 
             plan.parents[src].append(dst)
         elif kind == "Milestone":
             subs.setdefault(dst, set()).add(src)
-    if axis == "waves":
+    if axis == "waves":   # done or open: a carried item is in the wave it went to (brain.waves' items_of)
         for n in st.of_type("WorkItem"):
-            if (n.get("props") or {}).get("carried_to") and n.get("status") in (*resume.WORK_OPEN, "deferred"):
+            if (n.get("props") or {}).get("carried_to"):
                 now = plan.wave_of(n["id"])
                 for w in plan.planned(n["id"]):
                     items.get(w, set()).discard(n["id"])
                 if now:
                     items.setdefault(now, set()).add(n["id"])
-    return items, subs
+    return items, subs, plan
 
 
 class _Ctx:
@@ -166,7 +164,8 @@ class _Ctx:
         self.st, self.fc, self.axis, self.project = st, fc, axis, project
         self.items, self.undated = _item_forecast(fc)
         self.cal = _calibrated(fc)
-        self.members, self.subs = _links(st, axis)
+        self.members, self.subs, self.plan = _links(st, axis)
+        self.order = {w: k for k, w in enumerate(self.plan.waves)}   # brain.waves' order: its sequence, else release
         self.seen: set[str] = set()
 
     def keep(self, n: dict) -> bool:
@@ -179,11 +178,6 @@ class _Ctx:
 
     def item(self, nid: str) -> dict:
         return _item(self.st, nid, self.items, self.undated, self.cal, self.project)
-
-
-def _release(n: dict) -> tuple:
-    m = _RELEASE.match(str((n.get("props") or {}).get("release") or ""))
-    return tuple(int(x) for x in m.groups()) if m else (9999,)
 
 
 def _short(mid: str, project: str) -> str:
@@ -200,27 +194,28 @@ def _milestone(c: _Ctx, mid: str) -> dict:
     of = c.members.get(mid, ()) if _kind(n) == WAVE and c.axis == "waves" else st.milestone_items(mid)
     live = [i for i in of if st.status(i) != "dropped"]
     kind = _kind(n) or "milestone"
-    node = {"key": f"{project}:{mid}", "kind": kind, "id": mid, "project": project, "name": _name(n, kind, project),
+    node = {"key": f"{project}:{mid}", "kind": kind, "id": mid, "project": project, "name": _name(c, n, kind),
             "title": str(n.get("title") or ""), "state": str(n.get("status") or ""),
             "done": sum(1 for i in live if st.status(i) == "done"), "items": len(live),
             "when": _when_milestone(n, fc), "gates": _milestone_gates(mid, fc), "p10": _p10(mid, fc), "children": []}
     c.seen.add(mid)
     subs = [_milestone(c, s) for s in c.sub_milestones(mid) if s not in c.seen]
-    node["children"] += sorted(subs, key=lambda x: _milestone_order(x, st))
+    node["children"] += sorted(subs, key=lambda x: _milestone_order(x, c))
     own = [c.item(i) for i in sorted(c.members.get(mid, ())) if st.status(i) != "dropped"]
     node["children"] += _items_folded(own, project, mid)
     return node
 
 
-def _name(n: dict, kind: str, project: str) -> str:
-    """An era by its id, a wave by its release and id (« 0.6.0 (wave-s7) »), a milestone by its short id."""
+def _name(c: _Ctx, n: dict, kind: str) -> str:
+    """An era by its id, a wave by its release (written or computed, brain.waves) and id (« 0.6.0 (wave-s7) »), a
+    milestone by its short id."""
     mid = n["id"]
     if kind == ERA:
         return mid
     if kind == WAVE:
-        release = str((n.get("props") or {}).get("release") or "")
+        release = c.plan.label(mid)
         return f"{release} ({mid})" if release and release != mid else mid
-    return _short(mid, project)
+    return _short(mid, c.project)
 
 
 def _forecast_of(mid: str, fc: dict | None) -> dict:
@@ -235,11 +230,12 @@ def _p10(mid: str, fc: dict | None) -> str:
     return str((_forecast_of(mid, fc).get("dates") or {}).get("p10") or "")
 
 
-def _milestone_order(x: dict, st: resume.Store) -> tuple:
-    """Waves in their release's order; else the pending ones by the forecast's p10 (undated after), the reached last."""
+def _milestone_order(x: dict, c: _Ctx) -> tuple:
+    """Waves in brain.waves' order (their sequence, else their release); else the pending ones by the forecast's p10
+    (undated after), the reached last."""
     if x["kind"] == WAVE:
-        return (0, _release(st.nodes[x["id"]]), "", x["id"])
-    return (1 + (x["state"] == "reached"), (), x.get("p10") or "9999", x["id"])
+        return (0, c.order.get(x["id"], len(c.order)), "", x["id"])
+    return (1 + (x["state"] == "reached"), 0, x.get("p10") or "9999", x["id"])
 
 
 def _items_folded(rows: list[dict], project: str, parent: str) -> list[dict]:
@@ -276,7 +272,7 @@ def _no_era(c: _Ctx, ms: dict[str, dict]) -> list[dict]:
     held = {s for m, ss in c.subs.items() if m in ms and c.keep(ms[m]) for s in ss}
     rows = [_milestone(c, m["id"]) for m in sorted(ms.values(), key=lambda m: m["id"])
             if m["id"] not in c.seen and _kind(m) != ERA and c.keep(m) and m["id"] not in held]
-    return sorted(rows, key=lambda x: _milestone_order(x, c.st))
+    return sorted(rows, key=lambda x: _milestone_order(x, c))
 
 
 def _stray(c: _Ctx, ms: dict[str, dict]) -> list[dict]:

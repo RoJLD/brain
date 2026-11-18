@@ -2202,9 +2202,10 @@ def states(name: str, snap: dict, view: dict | None = None, search: str = "", tz
 
 def watch(cp: Cockpit, refresh_s: float = REFRESH_S, probe_s: float = PROBE_S, out=None, ticks: int = 0,
           views: dict[str, dict] | None = None, search: str = "", tz: str | None = None,
-          tab: str | None = None) -> int:
+          tab: str | None = None, view: str | None = None, axis: str | None = None) -> int:
     """The text view redrawn in place when a panel changed (``brain tui --plain``, or no tui extra); Ctrl-C quits.
-    ``views``, ``search``, ``tz`` and ``tab`` as ``render``'s. ``ticks``: stop after that many (tests)."""
+    ``views``, ``search``, ``tz``, ``tab``, ``view`` and ``axis`` as ``render``'s. ``ticks``: stop after that many
+    (tests)."""
     out = out or sys.stdout
     next_probe, n = 0.0, 0
     try:
@@ -2216,7 +2217,7 @@ def watch(cp: Cockpit, refresh_s: float = REFRESH_S, probe_s: float = PROBE_S, o
                 width = max(min(os.get_terminal_size(out.fileno()).columns, 160), 60) if out.isatty() else WIDTH
                 out.write(("\x1b[2J\x1b[H" if out.isatty() else "")
                           + "\n".join(render(cp.snapshot(), width, views, search, tz, tab,
-                                              getattr(cp, "root", None))) + "\n")
+                                              getattr(cp, "root", None), view, axis)) + "\n")
                 out.flush()
             n += 1
             if ticks and n >= ticks:
