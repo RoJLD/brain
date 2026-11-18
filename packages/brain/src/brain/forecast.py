@@ -321,16 +321,22 @@ def settings() -> dict:
             "calibrated_min": CALIBRATED_MIN, "coverage": COVERAGE, "coverage_tol": COVERAGE_TOL, "score": SCORE}
 
 
-def _parents(nodes: dict[str, dict], edges: list[dict], items) -> dict[str, dict]:
-    """{item: {milestone, wave, parents}}: the Milestones each of ``items`` is part of, its thematic one (the first by
-    id not of kind wave: an era counts) and its wave apart, so an item in both keeps both. Its wave is the one it is
-    in now (brain.waves: the wave its props.carried_to names once the planned one closed without it, else the one it
-    is part of), added to its parents when it is not part of it."""
+def _part_of_milestones(nodes: dict[str, dict], edges: list[dict], items) -> dict[str, set[str]]:
+    """{item: the Milestones it is part of}, for each of ``items`` that is part of one."""
     by: dict[str, set[str]] = {}
     for e in edges:
         if e.get("type") == "part_of" and e.get("from") in items and (nodes.get(e.get("to")) or {}).get(
                 "type") == "Milestone":
             by.setdefault(e["from"], set()).add(e["to"])
+    return by
+
+
+def _parents(nodes: dict[str, dict], edges: list[dict], items) -> dict[str, dict]:
+    """{item: {milestone, wave, parents}}: the Milestones each of ``items`` is part of, its thematic one (the first by
+    id not of kind wave: an era counts) and its wave apart, so an item in both keeps both. Its wave is the one it is
+    in now (brain.waves: the wave its props.carried_to names once the planned one closed without it, else the one it
+    is part of), added to its parents when it is not part of it."""
+    by = _part_of_milestones(nodes, edges, items)
     plan = waves.Plan(nodes)
     for nid, ms in by.items():
         plan.parents[nid] = sorted(ms)
