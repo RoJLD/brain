@@ -556,14 +556,6 @@ def _session_rows(rows: list[dict], dim: str) -> dict[str, list[dict]]:
     return groups
 
 
-def _off_map(expected: str | None, models: Counter) -> dict:
-    """A role's row against the agent-model map (brief.agent_models): the model expected and how many of its agents
-    ran on another (the alias read in the model id: sonnet in claude-sonnet-5-5); nothing for a role off the map."""
-    if not expected:
-        return {}
-    return {"expected": expected, "off": sum(n for m, n in models.items() if expected not in str(m))}
-
-
 def table_of(led: Ledger, rows: list[dict], dim: str, since: str, until: str) -> list[dict]:
     """The rows of one ``--by``: each group's total, share and distribution (per session, or per item)."""
     total = sum(r.get("cost") or 0 for r in rows) or 1e-9
@@ -638,30 +630,7 @@ def table_of(led: Ledger, rows: list[dict], dim: str, since: str, until: str) ->
                             "phases": [[k, v.get("count") or 0, round(v.get("cost") or 0.0, 4)] for k, v in phases],
                             "output": w.get("output") or 0})
     elif dim in ("agent", "role"):   # by label, or by role with each model's count (wi-brain-review-model-routing)
-        per: dict[str, dict] = {}
-
-        def add(label: str, v: dict, kind: str, run: str = "") -> None:
-            a = per.setdefault(label if dim == "agent" else v.get("role") or "-",
-                               {"total": 0.0, "n": 0, "kinds": set(), "runs": set(), "models": Counter()})
-            a["total"] += v.get("cost") or 0.0
-            a["n"] += v.get("count") or 0
-            a["kinds"].add(kind)
-            a["models"].update(v.get("models") or {})
-            if run:
-                a["runs"].add(run)
-
-        for r in rows:
-            ag = r.get("agents") or {}
-            for label, v in (ag.get("subagents") or {}).items():
-                add(label, v, "subagent")
-            for run, w in (ag.get("workflows") or {}).items():
-                if usage.in_window(w, since, until):
-                    for label, v in (w.get("labels") or {}).items():
-                        add(label, v, "workflow", run)
-        for k, a in per.items():
-            out.append({"key": k, "total": round(a["total"], 4), "share": a["total"] / total, "n": a["n"],
-                        "kind": "+".join(sorted(a["kinds"])), "runs": len(a["runs"]), "models": dict(a["models"]),
-                        **(_off_map(led.agent_models.get(k), a["models"]) if dim == "role" else {})})
+        out += spend.agents_table(rows, dim, since, until, total, led.agent_models)
     elif dim in TIME_DIMS:
         buckets: dict[str, dict] = {}
         for r in rows:

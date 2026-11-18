@@ -19,6 +19,8 @@ A row scanned by an older scanner, whose transcript is gone, has no ``spend``: t
 
 from __future__ import annotations
 
+from collections import Counter
+
 from . import cost, usage  # both import this module: nothing of theirs is read at import time
 
 CTX_STEP = 100_000  # the context buckets of ``spend`` (brain usage --by context)
@@ -385,3 +387,40 @@ def render_output(v: dict, top: int = 10) -> list[str]:
         if not rows:
             lines.append("  none")
     return lines
+
+
+def _off_map(expected: str | None, models: Counter) -> dict:
+    """A role's row against the agent-model map (brief.agent_models): the model expected and how many of its agents
+    ran on another (the alias read in the model id: sonnet in claude-sonnet-5-5); nothing for a role off the map."""
+    if not expected:
+        return {}
+    return {"expected": expected, "off": sum(n for m, n in models.items() if expected not in str(m))}
+
+
+def agents_table(rows: list[dict], dim: str, since: str, until: str, total: float,
+                 agent_models: dict[str, str]) -> list[dict]:
+    """brain usage --by agent (each label) or --by role (wi-brain-review-model-routing: each role, its models' counts
+    and, for a role of ``agent_models``, how many ran off it): the subagents and the workflow runs in the window."""
+    per: dict[str, dict] = {}
+
+    def add(label: str, v: dict, kind: str, run: str = "") -> None:
+        a = per.setdefault(label if dim == "agent" else v.get("role") or "-",
+                           {"total": 0.0, "n": 0, "kinds": set(), "runs": set(), "models": Counter()})
+        a["total"] += v.get("cost") or 0.0
+        a["n"] += v.get("count") or 0
+        a["kinds"].add(kind)
+        a["models"].update(v.get("models") or {})
+        if run:
+            a["runs"].add(run)
+
+    for r in rows:
+        ag = r.get("agents") or {}
+        for label, v in (ag.get("subagents") or {}).items():
+            add(label, v, "subagent")
+        for run, w in (ag.get("workflows") or {}).items():
+            if usage.in_window(w, since, until):
+                for label, v in (w.get("labels") or {}).items():
+                    add(label, v, "workflow", run)
+    return [{"key": k, "total": round(a["total"], 4), "share": a["total"] / total, "n": a["n"],
+             "kind": "+".join(sorted(a["kinds"])), "runs": len(a["runs"]), "models": dict(a["models"]),
+             **(_off_map(agent_models.get(k), a["models"]) if dim == "role" else {})} for k, a in per.items()]

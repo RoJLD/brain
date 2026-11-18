@@ -382,12 +382,13 @@ def _section(title: str, lines: list[str]) -> list[str]:
     return ["", f"## {title}", ""] + lines if lines else []
 
 
-def agent_line(models: dict[str, str]) -> str:
-    """The brief's line on the agents' models (brief.agent_models): the ``model`` each role's Agent call passes."""
+def agent_lines(models: dict[str, str]) -> list[str]:
+    """The brief's line on the agents' models (brief.agent_models): the ``model`` each role's Agent call passes; none
+    for an empty map."""
     roles = ", ".join(f"{r} on {m} (`model: '{m}'`)" for r, m in sorted(models.items()))
-    return (f"- **Agent models:** {roles}; every other role (review lenses, fix) on the session's model. A workflow "
+    return [] if not models else [(f"- **Agent models:** {roles}; every other role (review lenses, fix) on the session's model. A workflow "
             "agent's role is its label before its colon (`verify:<finding>#0`), else its phase; `brain usage --by "
-            "role` counts the agents off this map.")
+            "role` counts the agents off this map.")]
 
 
 def render(b: Brief) -> str:
@@ -405,7 +406,7 @@ def render(b: Brief) -> str:
              f"{who(b.effort, 'the coordinator’s')}. **Context budget:** {b.budget}; at ~80 %, commit, write a "
              "hand-over note in the shared notes folder and report.",
              f"- **Cost estimate:** {b.estimate}",
-             *([agent_line(b.agent_models)] if b.agent_models else []),
+             *agent_lines(b.agent_models),
              *([f"- **Streams that fit now:** {b.streams}"] if b.streams else []),
              f"- **Coordinator:** {who(b.coordinator, 'unknown (--coordinator)')}: report to it by SendMessage, "
              "signed with your own `local_` id (`brain sessions self` prints it; or the app's get_session with the id "
