@@ -1018,6 +1018,19 @@ The session that asks the owner records the answers, in one PR per batch (wi-bra
    refused, so the commit holds the answers alone; a failure before that commit puts the checkout back exactly as it
    was (nothing recorded there, the captures left for a rerun); a failed push keeps the commit, prints git's message
    and exits non-zero.
+4. `brain decision apply [ID]... [--spec S] [--title T] [--date D] [--write] [--json]` applies the answered decisions
+   (the ids given, else every answered one, `--spec` keeping those that name a spec) at zero token but the prose
+   (brain.answerapply): the ADR appended to the decision log, titled `<who>'s answers of <day> to <CODE-1> to
+   <CODE-n>` (the codes the DDRs' titles start with, `VIZ-1`), its Context the questions with their DDR ids and
+   specs, its Decision each answer with its option's consequences and the owner's own text, its Why and Revisit if
+   left TODO for the session to write; a `decided_by` edge from each item a DDR names to that ADR and the item's
+   `props.decided_<date>[_<code>]` (who, the ADR, the code, the answer); the answers table (Question, Answer, Applied)
+   inserted into each spec the DDRs name, at the end of the section that first mentions the first code (outside a code
+   fence), else of the last section whose heading says « question », else at the end of the spec's file; then each
+   DDR acknowledged (`brain decision ack`: applied in the ADR, its items and the spec's section) and archived. The
+   plan first, `--write` applies it in that order; a DDR not answered is refused, an item or a spec the store does not
+   have is said and left out. A brainstorm's asks, captured answers and applied ADR thus travel in its own branch's
+   PR.
 
 `--batch` is strict: a value is an option's exact label (any case, `(Recommandé)` ignored) or its number; a shortened
 label is refused with the label it shortens, and the owner's own text is marked as such, `{"other": "..."}`. Its file

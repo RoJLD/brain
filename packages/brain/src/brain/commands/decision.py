@@ -6,7 +6,7 @@ import json
 import sys
 from pathlib import Path
 
-from .. import answers, batch, config, decisions, defaults, notify, records, skew
+from .. import answerapply, answers, batch, config, decisions, defaults, graph, notes, notify, records, skew
 from ._common import _notify_project, _now, _on_main, _project, _queue_changed, _scope, _store, _text, _whole
 
 ORDER = 90   # its place in brain --help's list of commands (brain.commands)
@@ -42,6 +42,11 @@ USAGE = """\
                  together, else one item's or one spec's; --json: each batch's questions, the tool's input as is, and
                  its DDR ids; --zen: the morning digest, the batches that fit in --minutes (0: all), then the rest
   brain decision ack ID --applied WHERE...    read and applied (ADR, item, spec), then archived (--keep: not yet)
+  brain decision apply [ID]... [--spec S] [--title T] [--date D] [--write] [--json]   the answered decisions applied
+                 at zero token but the prose: the ADR's skeleton (Context from the questions, Decision from the answers;
+                 Why and Revisit if left TODO for the session), decided_by edges from the items each DDR names, their
+                 props.decided_<date>[_<code>], the answers table in each spec they name (the end of the section that
+                 first mentions the first code), then each acknowledged and archived; the plan, then --write
   brain decision archive [ID]... | view [--all] [--write [--force]] | announce
                  a --blocking ask is also sent through the notification channels (brain notify; --no-notify: not)
 """
@@ -55,6 +60,8 @@ def cmd_decision(args, root: Path) -> int:
             return cmd_pending(args, root)
         if sub == "batch":
             return cmd_batch(args, root)
+        if sub == "apply":
+            return cmd_apply(args, root)
         if sub == "view":
             if args.all:
                 if args.write:
@@ -130,6 +137,34 @@ def cmd_decision(args, root: Path) -> int:
     except (decisions.QueueError, batch.BatchError) as exc:
         print(f"brain: {exc}", file=sys.stderr)
         return 1
+    _queue_changed(root, args)
+    return 0
+
+
+def cmd_apply(args, root: Path) -> int:
+    """``brain decision apply``: the answered DDRs applied, but their Why and Revisit if (brain.answerapply)."""
+    here = _project(args, root)
+    mine = (here.shares_root_with or here.name) if here.registered else ""   # the root's records: its owner's
+    store = _store(args, root)
+    try:
+        p = answerapply.plan(root, store, here.decisions, answerapply.select(root, args.ids, args.spec or "", mine),
+                             title=_text(args.title) or "", day=args.date)
+    except (answerapply.ApplyError, decisions.QueueError) as exc:
+        print(f"brain: {exc}", file=sys.stderr)
+        return 1
+    if args.json and not args.write:
+        print(json.dumps(p.as_dict(), indent=2, ensure_ascii=False, default=str))
+        return 0
+    if not args.write or p.problems:
+        print("\n".join(answerapply.render(p)))
+        return 2 if args.write else 0
+    try:
+        done = answerapply.write(root, store, here.decisions, p, at=args.at or _now(), session=args.session or "",
+                                 day=args.date)
+    except (answerapply.ApplyError, decisions.QueueError, notes.NotesError, graph.GraphError) as exc:
+        print(f"brain: {exc} (what was written before it stays)", file=sys.stderr)
+        return 1
+    print("\n".join(answerapply.render(p, done)))
     _queue_changed(root, args)
     return 0
 
@@ -435,6 +470,16 @@ def register(sub, ctx) -> None:
     dk.add_argument("--keep", action="store_true", help="leave it integrated, not archived yet")
     dk.add_argument("--session", help="the acknowledging session's id")
     dk.add_argument("--at")
+    dy = de.add_parser("apply", help="the answered decisions applied at zero token but the prose: the ADR's "
+                                     "skeleton, the items' edges and props, the spec's answers table, the acks")
+    dy.add_argument("ids", nargs="*", help="the DDRs (default: every answered one of the project)")
+    dy.add_argument("--spec", help="only the DDRs that name this spec")
+    dy.add_argument("--title", help="the ADR's title (default: <who>'s answers of <day> to <CODE-1> to <CODE-n>)")
+    dy.add_argument("--date", help="the ADR's date, YYYY-MM-DD (default: today)")
+    dy.add_argument("--session", help="the applying session's id (the acks')")
+    dy.add_argument("--at")
+    dy.add_argument("--write", action="store_true", help="apply the plan")
+    dy.add_argument("--json", action="store_true", help="the plan as JSON (no --write)")
     dr = de.add_parser("archive", help="archive integrated decisions (all of them when no id is given)")
     dr.add_argument("ids", nargs="*")
     dr.add_argument("--session")
