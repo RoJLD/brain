@@ -214,14 +214,17 @@ def _milestone(c: _Ctx, mid: str) -> dict:
             "done": sum(1 for i in live if st.status(i) == "done"), "items": len(live),
             "when": _when_milestone(n, fc), "gates": _milestone_gates(mid, fc), "p10": _p10(mid, fc), "children": []}
     c.seen.add(mid)
-    subs = [_milestone(c, s) for s in c.sub_milestones(mid) if s not in c.seen]
-    node["children"] += sorted(subs, key=lambda x: _milestone_order(x, c))
-    own = [c.item(i) for i in sorted(c.members.get(mid, ())) if st.status(i) != "dropped"]
-    if kind == WAVE and c.axis == "waves" and node["state"] == "pending":
-        node["children"] += _wave_children(c, mid, own)
-    else:
-        node["children"] += _items_folded(own, project, mid)
+    node["children"] = _children(c, mid, kind == WAVE and c.axis == "waves" and node["state"] == "pending")
     return node
+
+
+def _children(c: _Ctx, mid: str, lots_: bool) -> list[dict]:
+    """A milestone's sub-milestones in their order, then its own items: in its lots (``lots_``: a pending wave on the
+    waves axis), else in their order; the done ones folded."""
+    subs = [_milestone(c, s) for s in c.sub_milestones(mid) if s not in c.seen]
+    own = [c.item(i) for i in sorted(c.members.get(mid, ())) if c.st.status(i) != "dropped"]
+    return sorted(subs, key=lambda x: _milestone_order(x, c)) + (
+        _wave_children(c, mid, own) if lots_ else _items_folded(own, c.project, mid))
 
 
 def _wave_children(c: _Ctx, wid: str, rows: list[dict]) -> list[dict]:

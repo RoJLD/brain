@@ -185,9 +185,8 @@ class PlanTreeApp:
         from the sessions panel: the open nodes and the cursor's key kept."""
         tree = self._plan_tree()
         at = _cursor_key(tree)
-        if self.plan_open is not None:   # the nodes not drawn (f hid them) keep what was remembered of them
-            drawn = {n.data["key"] for n in _nodes(tree.root) if n.data}
-            self.plan_open = _open_keys(tree) | (self.plan_open - drawn)
+        if self.plan_open is not None:
+            self.plan_open = _remembered(tree, self.plan_open)
         tree.clear()
         groups = (panel or {}).get("projects") or []
         roots = [(g, _shown_nodes((g.get("trees") or {}).get(self.plan_axis) or [], self.plan_urgent)) for g in groups]
@@ -196,9 +195,7 @@ class PlanTreeApp:
         self.plan_working = planviews.sessions_of(self.cockpit.snapshot()["panels"].get("sessions"))
         _fill(tree, roots, max(40, tree.size.width or cockpit.NARROW_COLUMNS), self.plan_open or set(),
               self.plan_working)
-        dates = groups[0]["forecast"] if len(groups) == 1 else "ranges p10–p90"
-        only = "P0/P1 only · f all" if self.plan_urgent else "f P0/P1 only"
-        tree.border_subtitle = f"axis: {self.plan_axis} · g axis · {only} · ←/→ fold · Enter detail · {dates}"
+        tree.border_subtitle = _subtitle(self.plan_axis, self.plan_urgent, groups)
         target = _node_of(tree, at)
         if target is not None:   # once its lines are counted: a node's line is known after the rebuild's refresh
             self.call_after_refresh(tree.move_cursor, target)
@@ -278,6 +275,18 @@ def _node_of(tree: PlanTree, key: str | None):
 
 def _shown_nodes(nodes: list[dict], urgent: bool) -> list[dict]:
     return planviews.only(nodes) if urgent else nodes
+
+
+def _remembered(tree: PlanTree, before: set[str]) -> set[str]:
+    """The keys open now; the nodes not drawn (f hid them) keep what was remembered of them."""
+    drawn = {n.data["key"] for n in _nodes(tree.root) if n.data}
+    return _open_keys(tree) | (before - drawn)
+
+
+def _subtitle(axis: str, urgent: bool, groups: list[dict]) -> str:
+    dates = groups[0]["forecast"] if len(groups) == 1 else "ranges p10–p90"
+    only = "P0/P1 only · f all" if urgent else "f P0/P1 only"
+    return f"axis: {axis} · g axis · {only} · ←/→ fold · Enter detail · {dates}"
 
 
 def _fill(tree: PlanTree, roots: list[tuple[dict, list[dict]]], width: int, open_: set[str],
