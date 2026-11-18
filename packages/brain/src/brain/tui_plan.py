@@ -1,20 +1,29 @@
-"""The Milestones tab's Tree view in the Textual cockpit (wi-brain-tui-plan-tree; spec-brain-plan-views §3.1-§3.2,
-spec-brain-cockpit-ux2 §4.3, UX-11 to UX-13): the ``plan`` panel is a Textual ``Tree`` of brain.planviews' nodes,
-read from the graph and the forecast's latest.json by the cockpit's worker (brain.cockpit ``read_plan``).
+"""The Milestones tab's Tree and Trajectories views in the Textual cockpit (wi-brain-tui-plan-tree,
+wi-brain-tui-trajectories-bands; spec-brain-plan-views §3.1-§3.3, spec-brain-cockpit-ux2 §4.3, UX-11 to UX-13): the
+``plan`` panel is a Textual ``Tree`` of brain.planviews' nodes, and its ``traj`` frame an ``OptionList`` of
+brain.planbands' rows, both read from the graph and the forecast's latest.json by the cockpit's worker
+(brain.cockpit ``read_plan``).
 
-Keys: ``g`` the next axis (``cockpit.MODES``: milestones, waves), ``←`` folds (or goes to the parent), ``→`` unfolds (or
-goes to the first child), Enter opens a record's detail (an item's, a milestone's) and folds or unfolds a group,
-``space`` stays the cockpit's pause. A refresh rebuilds the tree with the same nodes open and the cursor on the same
-key; the axis is kept in tui.json with the tab's view. Under 120 columns a milestone's row drops its bar.
+Tree keys: ``g`` the next axis (``cockpit.MODES``: milestones, waves), ``←`` folds (or goes to the parent), ``→``
+unfolds (or goes to the first child), Enter opens an item's detail, a milestone's row in Trajectories (its detail when
+the forecast has no row for it) and folds or unfolds a group, ``space`` stays the cockpit's pause. A refresh rebuilds
+the tree with the same nodes open and the cursor on the same key; the axis is kept in tui.json with the tab's view.
+Under 120 columns a milestone's row drops its bar.
+
+Trajectories keys: ``[`` a finer scale, ``]`` a coarser one (days a cell, ``planbands.SCALES``), ``←``/``→`` pan a week,
+Enter a milestone's detail; a refresh keeps the scale, the pan and the cursor's row.
 """
 
 from __future__ import annotations
 
 from rich.text import Text
 from textual.binding import Binding
-from textual.widgets import Tree
+from textual.widgets import OptionList, Tree
+from textual.widgets.option_list import Option
 
-from . import cockpit, planviews
+from . import cockpit, planbands, planviews
+
+MILESTONE_KINDS = ("milestone", "era", "wave")
 
 
 class PlanTree(Tree):
@@ -50,6 +59,91 @@ class PlanTree(Tree):
             node.expand()
         else:
             self.move_cursor(node.children[0])
+
+
+class TrajView(OptionList):
+    """The traj frame: a row per milestone, era and wave as a band (brain.planbands), the dates' row and each project's
+    heading disabled; its scale, pan and cursor kept across refreshes."""
+
+    BINDINGS = [Binding("left_square_bracket", "scale(-1)", "Finer", key_display="["),
+                Binding("right_square_bracket", "scale(1)", "Coarser", key_display="]"),
+                Binding("left", "pan(-1)", "Earlier", show=False), Binding("right", "pan(1)", "Later", show=False)]
+
+    def __init__(self, **kw) -> None:
+        super().__init__(**kw)
+        self.scale: float | None = None   # None: planbands.default_scale at the frame's width
+        self.pan_at = 0
+        self.panel: dict | None = None
+        self.rows: dict[str, dict] = {}
+        self.at: str | None = None        # the row to put the cursor on at the next draw (Enter on a Tree milestone)
+
+    def _width(self) -> int:
+        return max(60, (self.scrollable_content_region.width or self.size.width or cockpit.NARROW_COLUMNS) - 1)
+
+    def show(self, panel: dict | None) -> None:
+        """The rows of ``panel`` at the frame's width, the cursor on the same row (or on ``at``)."""
+        self.panel = panel
+        key = self.at or _option_id(self)
+        options, self.rows = traj_options(panel, self._width(), self.scale, self.pan_at)
+        self.clear_options()
+        self.add_options(options)
+        index = next((k for k, o in enumerate(options) if key and o.id == key), None)
+        if index is None:
+            index = next((k for k, o in enumerate(options) if not o.disabled), None)
+        self.highlighted = index
+        self.at = None
+        self.border_subtitle = planbands.legend(planviews.words())
+
+    def action_scale(self, step: int) -> None:
+        old = self.scale or planbands.default_scale(planbands.cells(self._width()))
+        self.scale = planbands.zoom(old, step)
+        self.pan_at = planbands.rescaled(self.pan_at, old, self.scale)
+        self.show(self.panel)
+
+    def action_pan(self, step: int) -> None:
+        scale = self.scale or planbands.default_scale(planbands.cells(self._width()))
+        self.pan_at = planbands.pan(self.pan_at, scale, step)
+        self.show(self.panel)
+
+    def on_option_list_option_selected(self, event: OptionList.OptionSelected) -> None:
+        """Enter on a milestone's, an era's or a wave's row: its detail."""
+        event.stop()
+        r = self.rows.get(event.option.id or "")
+        if r and r["kind"] in MILESTONE_KINDS:
+            self.app.open_detail("milestones", {"id": r["id"], "project": r["project"], "done": r.get("done", 0),
+                                                "items": r.get("items", 0), "title": r.get("title", "")})
+
+
+def _option_id(view: OptionList) -> str | None:
+    if view.highlighted is None or view.highlighted >= view.option_count:
+        return None
+    return view.get_option_at_index(view.highlighted).id
+
+
+def traj_options(panel: dict | None, width: int, scale: float | None, offset: int) -> tuple[list[Option], dict]:
+    """The frame's options: per project its heading (with several), its dates' row, then its rows; {key: row}."""
+    groups = (panel or {}).get("projects") or []
+    options, rows = [], {}
+    for g in groups:
+        b = g.get("bands") or {}
+        if len(groups) > 1 or "error" in g or not b.get("rows"):
+            text = f"error: {g['error']}" if "error" in g else b.get("heading", "")
+            options.append(Option(Text(f"{g['project']}: {text}" if len(groups) > 1 else text), disabled=True))
+        if not b.get("rows") and not b.get("tail"):
+            continue
+        head, drawn = planbands.chart(b, width, scale, offset)
+        options.append(Option(Text(head), disabled=True))
+        for r, text in drawn:
+            options.append(Option(Text(text), id=r["key"]))
+            rows[r["key"]] = r
+    if not groups:
+        options.append(Option(Text("not read yet"), disabled=True))
+    return options, rows
+
+
+def band_keys(panel: dict | None) -> set[str]:
+    """The keys of the rows the Trajectories show: a Tree milestone with one opens there."""
+    return {r["key"] for g in (panel or {}).get("projects") or [] for r in (g.get("bands") or {}).get("rows") or []}
 
 
 def opened(nodes: list[dict]) -> set[str]:
@@ -106,8 +200,12 @@ class PlanTreeApp:
         self._save()
         self._draw_plan(self.cockpit.snapshot()["panels"].get("plan"))
 
+    def _draw_traj(self, panel: dict | None) -> None:
+        self._q("#traj", TrajView).show(panel)
+
     def on_tree_node_selected(self, event: Tree.NodeSelected) -> None:
-        """Enter on a record: its detail; on a group, it folds or unfolds."""
+        """Enter on an item: its detail; on a milestone, its row in Trajectories (its detail when the forecast has no
+        row for it); on a group, it folds or unfolds."""
         if not isinstance(event.control, PlanTree):
             return
         event.stop()
@@ -116,11 +214,18 @@ class PlanTreeApp:
         kind = data.get("kind")
         if kind == "item":
             self.open_detail("frontier", {"id": data["id"], "project": data["project"]})
-        elif kind in ("milestone", "era", "wave") and data.get("id"):
-            self.open_detail("milestones", {"id": data["id"], "project": data["project"], "done": data.get("done", 0),
-                                            "items": data.get("items", 0), "title": data.get("title", "")})
+        elif kind in MILESTONE_KINDS and data.get("id"):
+            self._open_milestone(data)
         elif node.children:
             node.toggle()
+
+    def _open_milestone(self, data: dict) -> None:
+        if data.get("key") in band_keys(self.cockpit.snapshot()["panels"].get("plan")):
+            self._q("#traj", TrajView).at = data["key"]
+            self.action_set_view("trajectories")
+            return
+        self.open_detail("milestones", {"id": data["id"], "project": data["project"], "done": data.get("done", 0),
+                                        "items": data.get("items", 0), "title": data.get("title", "")})
 
 
 def _nodes(root) -> list:

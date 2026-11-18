@@ -156,9 +156,16 @@ p10–p90; each item's state (`●` doing, `○` todo, `⊘` blocked, `◌` defe
 action, `⇢` another project) and band; the done items folded under « ✓ N done », the items of no milestone (no wave)
 last. The dates are the last `brain forecast`'s (`<BRAIN_HOME>/forecast/<project>/latest.json`, re-read when it
 changes), never recomputed and UNCALIBRATED until judged; without one, « no forecast yet: brain forecast ». `←`/`→`
-fold, Enter opens a record's detail, and the axis is kept with the tab's view. `--tab NAME` starts on a tab, and with
-`--once` or `--plain` prints its panels alone (the overview: its cards); `--view NAME` one view of it and `--axis` the
-tree's: `brain tui --once --tab milestones --view tree --axis waves`.
+fold, Enter opens an item's detail or a milestone's row in Trajectories, and the axis is kept with the tab's view. Its
+third view, Trajectories, is the Gantt as bands (`brain.planbands`): one row per milestone, era and wave the same
+forecast dates, sorted by its median, `▒` from p10 to p80, `░` from p80 to p90 and `█` at the median, the band stopped
+at the 6-week horizon with `▸` where it goes on (no date beyond it: the order only); after it the gates (`◆` go/no-go,
+`⧗` calendar, `⚙` hardware, `⇢` another project), why a milestone is not dated (its dated part's band alone), then « (no
+milestone) » and the backlog's flow (no band while it grows faster than it empties). `[` `]` change the days a cell,
+`←`/`→` pan a week, Enter opens a milestone's detail; the legacy console gets ASCII and words. `--tab NAME` starts on a
+tab, and with `--once` or `--plain` prints its panels alone (the overview: its cards); `--view NAME` one view of it and
+`--axis` the tree's: `brain tui --once --tab milestones --view tree --axis waves`, `brain tui --once --tab milestones
+--view trajectories`.
 Under 120 columns or 30 rows the bar is reduced to its numbers (`0 1 Ada's queue 3 2 3 4 8`), the cards take
 one column, the grid is not offered and the health frames stack. The last tab and each tab's view are kept
 in `<BRAIN_HOME>/tui.json`.

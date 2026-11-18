@@ -24,10 +24,12 @@ Keys (the footer shows those of the focused panel, ? lists them all):
            command that changes it: nothing else is written from there; on a Setup wizard (brain.wizards) it asks its
            choice, shows its plan run, then applies on y, each command logged as the owner's
   ctrl+pageup, ctrl+pagedown    the previous and the next tab (a click on the bar too, its tooltips name each tab)
-  v        the tab's next view (the overview: its cards, its grid, its digest; 4 milestones: its list, its Tree); a click
-           on its word in the toolbar too
+  v        the tab's next view (the overview: its cards, its grid, its digest; 4 milestones: its list, its Tree, its
+           Trajectories); a click on its word in the toolbar too
   g        in the Milestones Tree (brain.tui_plan): the next axis, era > milestone > item or era > wave > item; there
-           ←/→ fold and unfold, Enter opens an item's or a milestone's detail
+           ←/→ fold and unfold, Enter opens an item's detail or a milestone's row in Trajectories
+  [ ]      in the Milestones Trajectories (the Gantt as bands): a finer or a coarser scale; ←/→ pan a week, Enter a
+           milestone's detail
   Enter    on a card, its tab, already filtered as the card says (a click too); the arrows move between the cards
   p        the project selector: global (every registered project) or one project
   /        search every table (each word, case ignored); Enter keeps it, Escape clears it
@@ -98,7 +100,7 @@ from .tui_screens import (
     ResultScreen,
     ViewScreen,
 )
-from .tui_plan import PlanTree, PlanTreeApp
+from .tui_plan import PlanTree, PlanTreeApp, TrajView
 from .tui_settings import SETTING_ACTIONS, SettingsFrame, SettingsTab
 from .tui_side import DetailBeside, DetailPane
 
@@ -111,7 +113,7 @@ PANEL_ACTIONS = ("tab", "next_tab", "prev_tab", "next_view", "set_view", "back",
                  "columns", "plan_axis")  # the panels' keys, off while a dialog or a detail is on top of them
 # every panel and frame, as the grid places them (open alerts: a whole row, L11); the plugged projects' panels after them
 EVERY_FRAME = ("sessions", "alerts", "queue", "milestones", "frontier", "audit", "health", "digest", "exec", "impact",
-               "plan", "settings")
+               "plan", "traj", "settings")
 CARD_COLUMNS = 3
 STATUS_COLUMNS = 100  # narrower, the global bar keeps its width for the search: the subtitle has the times
 
@@ -298,6 +300,8 @@ class CockpitApp(DetailBeside, PaletteAndColumns, SettingsTab, PlanTreeApp, App)
                         yield SettingsFrame(id=name, classes="panel")
                     elif name == "plan":  # the Milestones tab's Tree (brain.tui_plan)
                         yield PlanTree(id=name, classes="panel")
+                    elif name == "traj":  # its Trajectories, the Gantt as bands (brain.tui_plan)
+                        yield TrajView(id=name, classes="panel")
                     elif name in cockpit.COLUMNS:
                         kind = ViewTable if name in cockpit.SORTS else DataTable
                         yield kind(id=name, classes="panel", zebra_stripes=True, cursor_type="row")
@@ -378,6 +382,8 @@ class CockpitApp(DetailBeside, PaletteAndColumns, SettingsTab, PlanTreeApp, App)
         self._draw_settings()
         if "plan" in shown:  # once laid out: its rows fit its width (under 120 columns, no bar)
             self.call_after_refresh(self._draw_plan, self.cockpit.snapshot()["panels"].get("plan"))
+        if "traj" in shown:  # the same: its chart fits its width
+            self.call_after_refresh(self._draw_traj, self.cockpit.snapshot()["panels"].get("plan"))
         self.refresh_bindings()
 
     def _alerts_row(self) -> None:
@@ -687,8 +693,8 @@ class CockpitApp(DetailBeside, PaletteAndColumns, SettingsTab, PlanTreeApp, App)
             panel = panels.get(source)
             widget = self._q(f"#{name}")
             widget.border_title = self._title(name, cockpit.heading(name, panel))
-            if name == "plan":
-                self._draw_plan(panel)
+            if name in ("plan", "traj"):
+                (self._draw_plan if name == "plan" else self._draw_traj)(panel)
                 continue
             if name in cockpit.COLUMNS:
                 self._fill(widget, name, panel, snap)
