@@ -83,18 +83,18 @@ class PlanTreeApp:
     def _draw_plan(self, panel: dict | None) -> None:
         """The tree rebuilt from ``panel`` on the axis: the open nodes and the cursor's key kept."""
         tree = self._plan_tree()
+        at = _cursor_key(tree)
         if self.plan_open is not None:
-            self.plan_open = {n.data["key"] for n in _nodes(tree.root) if n.is_expanded and n.data}
-        at = (tree.cursor_node.data or {}).get("key") if tree.cursor_node is not None else None
+            self.plan_open = _open_keys(tree)
         tree.clear()
         groups = (panel or {}).get("projects") or []
         roots = [(g, (g.get("trees") or {}).get(self.plan_axis) or []) for g in groups]
         if self.plan_open is None:
             self.plan_open = {g["project"] for g, _ in roots} | {k for _, ns in roots for k in opened(ns)}
         _fill(tree, roots, max(40, tree.size.width or cockpit.NARROW_COLUMNS), self.plan_open)
-        tree.border_subtitle = (f"axis: {self.plan_axis} · g axis · ←/→ fold · Enter detail · "
-                                f"{groups[0]['forecast'] if len(groups) == 1 else 'ranges p10–p90'}")
-        target = next((n for n in _nodes(tree.root) if (n.data or {}).get("key") == at), None) if at else None
+        dates = groups[0]["forecast"] if len(groups) == 1 else "ranges p10–p90"
+        tree.border_subtitle = f"axis: {self.plan_axis} · g axis · ←/→ fold · Enter detail · {dates}"
+        target = _node_of(tree, at)
         if target is not None:   # once its lines are counted: a node's line is known after the rebuild's refresh
             self.call_after_refresh(tree.move_cursor, target)
 
@@ -130,6 +130,19 @@ def _nodes(root) -> list:
         out.append(n)
         stack.extend(n.children)
     return out
+
+
+def _cursor_key(tree: PlanTree) -> str | None:
+    node = tree.cursor_node
+    return (node.data or {}).get("key") if node is not None else None
+
+
+def _open_keys(tree: PlanTree) -> set[str]:
+    return {n.data["key"] for n in _nodes(tree.root) if n.is_expanded and n.data}
+
+
+def _node_of(tree: PlanTree, key: str | None):
+    return next((n for n in _nodes(tree.root) if (n.data or {}).get("key") == key), None) if key else None
 
 
 def _fill(tree: PlanTree, roots: list[tuple[dict, list[dict]]], width: int, open_: set[str]) -> None:
