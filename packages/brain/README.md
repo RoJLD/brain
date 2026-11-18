@@ -690,6 +690,20 @@ beside the PR), the digest's closed items, the items a lesson led to, `research_
 `pr ...`, and in its `--json` when there is one), and the journal's line that `brain item close` prints for `brain
 journal add`: `- ID STATUS (PR; evidence TEXT): outcome`. `brain item show` prints it with the other props.
 
+Once its PR is merged, `brain close ID --pr "repo #N" [--write]` walks the rest of the definition of done at zero
+token (brain.closing): from the PR as `gh pr view` gives it, the item closed done with the PR (after the refs its
+`props.pr` holds) and its merge's date, the PR's title as the outcome unless `--outcome`; the journal's line at the
+end of today's entry (a new one titled `--journal-title`, default `<ID> closed`, when today has none); the features
+the PR's title or body names with a status (`feat-x: have`, or a feature's `public_id`) set as `brain features
+sync-prs` sets them, a feature whose `status_merged` is that merge or later left as it is; the changelog fragment
+checked (a fragment of the PR named after the item, `<ID>.md` or `<ID>-<section>.md`: none is said, never refused);
+each milestone the item is `part_of` that it leaves with no open member, listed with its trigger (reaching it stays a
+judgement: `brain item set MS status=reached`); then `brain tidy`'s plan of the PR's repo narrowed to its head branch
+and the worktrees on it (never an unmerged branch, a dirty worktree or one an open session holds; `--no-tidy` leaves
+them). The plan first, `--write` applies it, refused (exit 2) while the PR is not merged or the item is unknown; an
+item already closed is left as it is and gets no journal line, its features still set. `--pr N` alone reads the repo
+of the current folder (`--repo NAME` another; `--repo-dir D` a checkout outside the registry).
+
 `brain items --wave` takes a wave's release or id: the items whose wave it is now (carried in included), and those in
 no wave whose free-text `props.wave` names that release. `brain spec show --section` takes a heading's number (`2.1`),
 its key (the last part of a Doc id) or the start of its title, and prints it down to the next heading of its level.
