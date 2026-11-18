@@ -19,8 +19,6 @@ A row scanned by an older scanner, whose transcript is gone, has no ``spend``: t
 
 from __future__ import annotations
 
-import json
-
 from . import cost, usage  # both import this module: nothing of theirs is read at import time
 
 CTX_STEP = 100_000  # the context buckets of ``spend`` (brain usage --by context)
@@ -31,6 +29,7 @@ IMAGE_CHARS = 6_000  # an image in a tool result, counted as this many character
 OUTPUT_KEEP = 40  # output classes kept per row, the main thread's and the agents' each (the costliest downstream)
 BASES_KEEP = 200  # agents' first-message contexts kept per row
 SPEND_SKIP = {"prompt_snapshot"}  # attachments that are not sent to the model
+TEXT_FIELDS = ("content", "text", "prompt", "addedLines", "addedBlocks", "context", "snapshot", "files", "date")
 DIMS = ("context", "output")  # brain usage --by
 HANDOVER_USD = 3.0  # a hand-over's price in the simulation: the note, the restart, the cache written again
 ROLES = ("coordinator", "sub-session", "session")
@@ -71,11 +70,14 @@ class Spend:
             self.outs.append((cls, chars, len(self.msgs) + (1 if pending else 0), self.segment))
 
     def attachment(self, a: dict, kind: str, pending: bool = False) -> None:
-        """An attachment (``attachment:<type>``) or a hook's output (``hook:<event>``), by its JSON's length."""
-        if kind and kind not in SPEND_SKIP:
-            event = a.get("hookEvent") or str(a.get("hookName") or "?").split(":")[0]
-            self.output(f"hook:{event}" if kind.startswith("hook_") else f"attachment:{kind}",
-                        len(json.dumps(a, ensure_ascii=False)), pending)
+        """An attachment (``attachment:<type>``) by the length of its text fields (``TEXT_FIELDS``: its metadata is
+        not sent), or the context a hook injects (``hook:<event>``, its ``hook_additional_context``; a hook's run
+        record, success or error, is not sent apart from it)."""
+        if not kind or kind in SPEND_SKIP or (kind.startswith("hook_") and kind != "hook_additional_context"):
+            return
+        event = a.get("hookEvent") or str(a.get("hookName") or "?").split(":")[0]
+        self.output(f"hook:{event}" if kind.startswith("hook_") else f"attachment:{kind}",
+                    sum(_text_len(a.get(k)) for k in TEXT_FIELDS), pending)
 
     def result(self, name: str, keys: list[str], content, text: str) -> None:
         """A tool's result, classed by its tool, a shell command's by its first program and subcommand (``keys``):
@@ -128,9 +130,19 @@ class Spend:
             a = agg.setdefault(cls, [0, 0.0, 0.0])
             a[0] += 1
             a[1] += tok
-            a[2] += tok * (reads[idx] + self.msgs[idx][3]) if sent else 0.0
+            # written by message idx, then read by the later messages of its segment
+            a[2] += tok * (reads[idx] - self.msgs[idx][2] + self.msgs[idx][3]) if sent else 0.0
         top = sorted(agg.items(), key=lambda kv: (-kv[1][2], kv[0]))[:OUTPUT_KEEP]
         return {k: [n, int(round(t)), round(d, 4)] for k, (n, t, d) in top}
+
+
+def _text_len(v) -> int:
+    """The characters of the strings in a value (a string, a list or a dict of them)."""
+    if isinstance(v, str):
+        return len(v)
+    if isinstance(v, dict):
+        return sum(_text_len(x) for x in v.values())
+    return sum(_text_len(x) for x in v) if isinstance(v, list) else 0
 
 
 def merge_outputs(many: list[dict]) -> dict[str, list]:

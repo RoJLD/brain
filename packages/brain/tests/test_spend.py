@@ -51,6 +51,9 @@ def _session(projects_dir):
         _asst(f"{t}05Z", "m1", [_tool("t1", "Read", file_path="a.py")], read=50_000),
         _result(f"{t}06Z", "t1", "x" * 3600),                                   # 1,000 tokens
         {"type": "attachment", "timestamp": f"{t}06Z", "attachment": hook},
+        {"type": "attachment", "timestamp": f"{t}06Z", "attachment": {      # a hook's run record: not sent apart
+            "type": "hook_success", "hookEvent": "PostToolUse", "hookName": "PostToolUse:Read", "stdout": "y" * 100}},
+        {"type": "attachment", "timestamp": f"{t}06Z", "attachment": {"type": "credential_org", "organizationUuid": "u"}},
         {"type": "attachment", "timestamp": f"{t}06Z", "attachment": {"type": "prompt_snapshot", "tools": ["z" * 999]}},
         {"type": "user", "timestamp": f"{t}07Z", "sessionId": "s", "isMeta": True,
          "message": {"content": "r" * 36}},
@@ -72,8 +75,9 @@ def test_the_scan_keeps_buckets_split_base_and_outputs(projects_dir):
     assert sp["split"]["read"] == pytest.approx(220_000 * READ, abs=1e-4)
     assert sp["split"]["write"] == pytest.approx(3_600 * W1, abs=1e-4)
     outs = sp["outputs"]
-    # the Read result: written by m2 (a 1 h write), read by m2; m3 is past the compaction
-    assert outs["Read"] == [1, 1000, pytest.approx(1000 * (READ + W1), abs=1e-4)]
+    # the Read result: written by m2 (a 1 h write), never read again: m3 is past the compaction
+    assert outs["Read"] == [1, 1000, pytest.approx(1000 * W1, abs=1e-4)]
+    assert outs["hook:PostToolUse"][:2] == [1, round(100 / spend.CHARS_PER_TOKEN)]   # its context only, once
     # a shell result by its program and subcommand, an image counted; sent after the compaction only: no cost
     assert outs["git diff"][:2] == [1, round((360 + spend.IMAGE_CHARS) / spend.CHARS_PER_TOKEN)]
     assert outs["git diff"][2] == 0
@@ -99,7 +103,8 @@ def test_an_output_after_an_uncounted_message_is_read_from_the_next_one():
     s.message({"cache_read": 10}, 0.0, None, (1e-6, 2e-6))
     s.message({"cache_read": 10}, 0.0, None, (1e-6, 2e-6))
     s.output("attachment:x", 3600)                 # after the last message: never sent
-    assert s.outputs() == {"attachment:x": [2, 2000, pytest.approx(1000 * 1e-6 + 1000 * 2e-6)]}
+    # sent after the pending message: written by the second (2e-6 a token), read by no later one
+    assert s.outputs() == {"attachment:x": [2, 2000, pytest.approx(1000 * 2e-6)]}
 
 
 def _row(sid, buckets, sim, base=80_000, messages=100, spawned=(), side=False, read_tokens=1_000_000, **kw):
