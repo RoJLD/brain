@@ -75,6 +75,10 @@ its numbers, the active tab named (``tab_labels``), and the grid is not offered 
 ``--tab`` print one tab's panels (``render``). The overview's default view is one card per tab (``cards``, UX-19): what
 counts in that tab in a few lines, and the filters it opens with; the text view prints them with ``--tab overview``.
 From 140 columns, on a tab that is one list, a row's detail sits beside it (``detail_beside``, UX-20, brain.tui_side).
+The Milestones tab's Tree view (wi-brain-tui-plan-tree, spec-brain-plan-views §3.1-§3.2) is the ``plan`` panel: the
+backlog's WBS read from the graph and the forecast's latest.json (brain.planviews), re-read when either changes; its
+axes are data (``MODES``: era > milestone > item, ``g`` era > wave > item), the axis kept in tui.json with the tab's
+view, and ``--view tree [--axis waves]`` prints it (``render``).
 Each table's columns can be chosen (``columns``, ``cells``: shown or hidden, their order, the longest a title may be;
 ``EXTRA_COLUMNS``, hidden by default) and are kept in ``tui.json``; ``palette`` is the command palette's entries, in data.
 
@@ -108,13 +112,17 @@ import time
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
-from . import (__version__, alerts, audit, config, decisions, defaults, digest, paths, perf, plan, plugin_panels,
-               projects, queue, quiet, ranking, resume, review, sessions, stateio, status, transcript, usage)
+from . import (__version__, alerts, audit, config, decisions, defaults, digest, forecast, paths, perf, plan,
+               planviews, plugin_panels, projects, queue, quiet, ranking, resume, review, sessions, stateio, status,
+               transcript, usage)
 
 PANELS = ("sessions", "queue", "alerts", "milestones", "frontier", "audit", "health", "digest")
 # a frame drawn from another panel's data, not a read of its own: the health tab's fourth (exec) and its Impact view
 FRAMES = {"exec": "health", "impact": "health"}
-FILE_PANELS = {"graph": ("queue", "milestones", "frontier")}
+FILE_PANELS = {"graph": ("queue", "milestones", "frontier", "plan"), "forecast": ("plan",)}
+# a panel's modes beyond its list, its axes as data (spec-brain-cockpit-ux2 §5, UX-11 to UX-13): the plan panel's Tree
+# (brain.planviews); a new axis is a new entry (priority, project, person), a saved unknown one falls back to the default
+MODES = {"plan": {"modes": ("tree",), "axes": planviews.AXES, "default": "milestones", "key": "g"}}
 PROBE_PANELS = ("alerts", "audit", "health", "digest")
 HOURS = 24.0
 STALE_S = 15 * 60
@@ -602,7 +610,7 @@ class Cockpit:
         graph = [f for p in self.found for s in p.stores for sub in ("nodes", "edges") for f in _files(s / sub)]
         graph += [f for p in self.found for f in _files(p.root / "records" / "ddr", "*.yaml")]
         graph += [j for p in self.found for j in p.journals] + _files(paths.ledger_dir(), "queue-*.jsonl")
-        return {"graph": graph}
+        return {"graph": graph, "forecast": [forecast.folder(p.name) / "latest.json" for p in self.found]}
 
     def changed(self) -> set[str]:
         """The groups whose files changed since the last call (every group the first time)."""
@@ -640,6 +648,14 @@ class Cockpit:
         self._set(milestones={"projects": [{"project": n, **status.milestones(st)} for n, st in stores.items()]},
                   frontier={"projects": [{"project": n, "items": frontier_rows(st)} for n, st in stores.items()]},
                   queue=self._queue())
+        self.read_plan(stores)
+
+    def read_plan(self, stores: dict | None = None) -> None:
+        """The Milestones tab's Tree (brain.planviews): each project's graph and its forecast's latest.json, never
+        recomputed (no forecast: the tree without dates, its heading says how to get one)."""
+        names = {p.name for p in self.found}
+        stores = stores if stores is not None else {n: st for n, st in self.stores.items() if n in names}
+        self._set(plan={"projects": [planviews.collect(st, forecast.load_latest(n), n) for n, st in stores.items()]})
 
     def probe(self, now: datetime | None = None) -> None:
         """The slow panels: alerts, audit, health, digest, and the queue again with a new scan of the denied calls.
@@ -717,9 +733,12 @@ class Cockpit:
             groups = self.changed()
             if "graph" in groups:
                 self.read_graph()
+            elif "forecast" in groups:   # a new forecast alone: the tree's dates, the graph as it was read
+                self.read_plan()
             read |= self._read_ok({p for g in groups for p in FILE_PANELS[g]})
         except Exception as exc:  # shown in the panels, never fatal
             self.sigs.pop("graph", None)  # read again at the next tick
+            self.sigs.pop("forecast", None)
             failed |= self._failed(FILE_PANELS["graph"], exc)
         try:
             changed, had_error = self.read_sessions(), "sessions" in self.errors
@@ -1097,6 +1116,16 @@ HELP = {
                        "stacks, the code index, the audit, the alert events and files, the main checkouts)",
                "read": "at each probe (--probe, 5 min, and r)",
                "detail": "brain alerts --project <p>"},
+    "plan": {"what": "The Tree (the WBS): era > milestone > item, or with g era > wave > item; each milestone's items "
+                     "done out of its live items through its sub-milestones, its bar and its p10-p90; each item's "
+                     "state (● doing, ○ todo, ⊘ blocked, ◌ deferred, ✓ done), priority, gates (⧗ a DDR, ⚑ an owner's "
+                     "action, ⇢ another project, ⊘ undated) and band; the done items folded under « ✓ N done », the "
+                     "items of no milestone (of no wave) last. The dates are the last brain forecast's, never "
+                     "recomputed, UNCALIBRATED until judged. Keys: Enter the detail, ←/→ fold and unfold, g the axis.",
+             "from": "the graph (Milestone nodes of kind era and wave, part_of) and "
+                     "<BRAIN_HOME>/forecast/<project>/latest.json (brain.planviews)",
+             "read": "when a graph file or the forecast changes",
+             "detail": "brain tui --once --tab milestones --view tree [--axis waves]; brain forecast --items"},
     "milestones": {"what": "Each pending milestone: its items done out of its live items, and how many are reached.",
                    "from": "the graph: the Milestone nodes and the part_of edges (brain.status.milestones)",
                    "read": "when a graph file changes",
@@ -1260,10 +1289,22 @@ def _saved_tabs(data: dict) -> dict:
     """The last tab and each tab's view of a saved state, those this engine has."""
     out: dict = {"tab": data["tab"]} if data.get("tab") in built_tabs() else {}
     if isinstance(data.get("tabs"), dict):
-        out["tabs"] = {t: {"view": v["view"]} for t, v in data["tabs"].items()
+        out["tabs"] = {t: {"view": v["view"], **({"axis": v["axis"]} if v.get("axis") in tab_axes(t) else {})}
+                       for t, v in data["tabs"].items()
                        if t in TABS and isinstance(v, dict) and isinstance(v.get("view"), str)
                        and v["view"] in TABS[t]["views"]}
     return out
+
+
+def tab_axes(tab: str) -> tuple[str, ...]:
+    """The axes a tab's tree offers (``MODES``), none for a tab without one."""
+    return tuple(a for p in tab_panels(tab) if p in MODES for a in MODES[p]["axes"]) if tab in TABS else ()
+
+
+def axis_of(panel: str, saved: str | None = None) -> str:
+    """The axis a tree panel shows: ``saved`` when it offers it, else its default."""
+    m = MODES[panel]
+    return saved if saved in m["axes"] else m["default"]
 
 
 # --- the panels' titles: the owner's display name, the language, a free title per panel (wi-brain-owner-label) ---
@@ -1271,7 +1312,7 @@ def _saved_tabs(data: dict) -> dict:
 LANGS = ("en", "fr")
 TITLES = {"sessions": "Sessions", "alerts": "Alerts", "milestones": "Milestones", "frontier": "Frontier",
           "audit": "Audit debt", "health": "Stacks and index", "digest": "Digest", "exec": "Exec times",
-          "impact": "This branch's impact"}
+          "impact": "This branch's impact", "plan": "Milestones"}
 QUEUE_TITLES = {"en": ("{name}'s queue", "My queue"), "fr": ("File de {name}", "Ma file")}  # (named, unnamed)
 _VOWELS = "aeiouyàâäéèêëîïôöûùü"
 _settings_cache: dict = {}
@@ -1725,6 +1766,9 @@ def heading(name: str, panel: dict | None) -> str:
     lines = {"sessions": session_lines, "queue": queue_lines, "alerts": alert_lines, "milestones": milestone_lines,
              "frontier": frontier_lines, "audit": audit_lines, "health": health_lines, "exec": exec_lines,
              "impact": impact_lines}
+    if name == "plan":
+        groups = (panel or {}).get("projects") or []
+        return f"{title('plan')} · Tree" + (f" · {groups[0]['forecast']}" if len(groups) == 1 else "")
     if name == "digest":
         return title("digest") if panel else f"{title('digest')}: not probed yet"
     if name in PLUGGED:
@@ -1744,7 +1788,8 @@ CARD_ORDER = ("queue", "sessions", "milestones", "frontier", "health", "resource
 VIEW_LABELS = {"cards": {"en": "Cards", "fr": "Cartes"}, "grid": {"en": "Grid", "fr": "Grille"},
                "digest": {"en": "Digest", "fr": "Digest"},
                "list": {"en": "List", "fr": "Liste"}, "frames": {"en": "Frames", "fr": "Cadres"},
-               "pages": {"en": "Pages", "fr": "Pages"}, "impact": {"en": "Impact", "fr": "Impact"}}
+               "pages": {"en": "Pages", "fr": "Pages"}, "impact": {"en": "Impact", "fr": "Impact"},
+               "tree": {"en": "Tree", "fr": "Arbre"}}
 
 
 def _alerts_open(panels: dict) -> str:
@@ -1855,7 +1900,7 @@ TABS = {
                  "views": {"list": ("frontier",)}, "card": _frontier_card},
     "milestones": {"key": "4", "label": {"en": "Milestones", "fr": "Jalons"},
                    "question": {"en": "Where are we going, and when?", "fr": "Où va-t-on, et quand ?"},
-                   "views": {"list": ("milestones",)}, "card": _milestones_card},
+                   "views": {"list": ("milestones",), "tree": ("plan",)}, "card": _milestones_card},
     "ideas": {"key": "5", "label": {"en": "Ideas", "fr": "Idées"},
               "question": {"en": "What waits upstream?", "fr": "Qu'est-ce qui attend en amont ?"},
               "views": {}, "arrives": "the ideas board"},
@@ -1899,7 +1944,8 @@ def tab_title(name: str) -> str:
     free title (tui.json settings.titles.<panel>); else its label in the cockpit's language."""
     if name == "queue":
         return title("queue")
-    free = (settings().get("titles") or {}).get(name) if tab_panels(name) == (name,) else None
+    lists = tuple(p for p in tab_panels(name) if p not in MODES)   # a tree is a view of the tab's own list
+    free = (settings().get("titles") or {}).get(name) if lists == (name,) else None
     return free or TABS[name]["label"][lang()]
 
 
@@ -2005,12 +2051,14 @@ def bar_status(changed: str | None, probe_in: float | None, probing: bool = Fals
 
 
 def render(snap: dict, width: int = WIDTH, views: dict[str, dict] | None = None, search: str = "",
-           tz: str | None = None, tab: str | None = None, root: Path | None = None) -> list[str]:
+           tz: str | None = None, tab: str | None = None, root: Path | None = None, view: str | None = None,
+           axis: str | None = None) -> list[str]:
     """The text view: every panel, one after the other; ``views`` (each table panel's view, {} its defaults) and
     ``search`` narrow the sessions, the queue and the frontier (None: everything, in the panels' order); ``tz``
     shows the header's times in that timezone (None: as recorded, UTC); ``tab`` prints that tab's panels and frames
-    alone, the overview's cards for the overview, the settings' pages for the settings (those of the brain at ``root``).
-    The header names the installed version."""
+    alone (``view``: that view's alone), the overview's cards for the overview, the settings' pages for the settings
+    (those of the brain at ``root``); ``axis`` the Tree's (``MODES``, its default when None). The header names the
+    installed version."""
     p = snap["panels"]
 
     def stamp(iso):
@@ -2036,10 +2084,18 @@ def render(snap: dict, width: int = WIDTH, views: dict[str, dict] | None = None,
                         ("audit", audit_lines(p.get("audit"), width)), ("health", health_lines(p.get("health"), width)),
                         ("exec", exec_lines(p.get("health"), width)),
                         ("digest", digest_lines(p.get("digest"), width)),
-                        ("impact", impact_lines(p.get("health"), width))):
-        if name in (tab_panels(tab) if tab else PANELS):
+                        ("impact", impact_lines(p.get("health"), width)),
+                        ("plan", planviews.lines(p.get("plan"), axis_of("plan", axis), width))):
+        if name in _printed(tab, view):
             out += ["", *lines, *(_line("  ", s, width) for s in states(name, snap, v(name), search, tz))]
     return out + _plugged_text(snap, width, views, search, tz, tab)
+
+
+def _printed(tab: str | None, view: str | None) -> tuple[str, ...]:
+    """The panels the text view prints: a tab's view's, a tab's (a tree only when its view is asked), else the grid's."""
+    if tab and view:
+        return tab_panels(tab, view)
+    return tuple(x for x in tab_panels(tab) if x not in MODES) if tab else PANELS
 
 
 def _plugged_text(snap: dict, width: int, views: dict | None, search: str, tz: str | None, tab: str | None) -> list:
@@ -2146,9 +2202,10 @@ def states(name: str, snap: dict, view: dict | None = None, search: str = "", tz
 
 def watch(cp: Cockpit, refresh_s: float = REFRESH_S, probe_s: float = PROBE_S, out=None, ticks: int = 0,
           views: dict[str, dict] | None = None, search: str = "", tz: str | None = None,
-          tab: str | None = None) -> int:
+          tab: str | None = None, view: str | None = None, axis: str | None = None) -> int:
     """The text view redrawn in place when a panel changed (``brain tui --plain``, or no tui extra); Ctrl-C quits.
-    ``views``, ``search``, ``tz`` and ``tab`` as ``render``'s. ``ticks``: stop after that many (tests)."""
+    ``views``, ``search``, ``tz``, ``tab``, ``view`` and ``axis`` as ``render``'s. ``ticks``: stop after that many
+    (tests)."""
     out = out or sys.stdout
     next_probe, n = 0.0, 0
     try:
@@ -2160,7 +2217,7 @@ def watch(cp: Cockpit, refresh_s: float = REFRESH_S, probe_s: float = PROBE_S, o
                 width = max(min(os.get_terminal_size(out.fileno()).columns, 160), 60) if out.isatty() else WIDTH
                 out.write(("\x1b[2J\x1b[H" if out.isatty() else "")
                           + "\n".join(render(cp.snapshot(), width, views, search, tz, tab,
-                                              getattr(cp, "root", None))) + "\n")
+                                              getattr(cp, "root", None), view, axis)) + "\n")
                 out.flush()
             n += 1
             if ticks and n >= ticks:
