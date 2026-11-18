@@ -275,6 +275,24 @@ def test_context_counts_the_sessions_past_their_budget_and_above_the_ceiling():
     assert said in auditrecord.context_line(c)
 
 
+def test_series_keeps_one_v1_line_per_window_the_last_winning(project):
+    def rec(at, since, until="", v=1, usd=1.0):
+        return {"v": v, "at": at, "project": "p", "since": since, "until": until, "cost": usd}
+    lines = [rec("2026-11-09T07:00:00Z", "2026-11-02", usd=1.0),               # the Monday task
+             rec("2026-11-09T15:00:00Z", "2026-11-02", usd=2.0),               # rerun the same day: replaces it
+             rec("2026-11-10T07:00:00Z", "2026-11-03", usd=3.0),               # another day: another window
+             rec("2026-11-11T07:00:00Z", "2026-11-01", "2026-11-08", 1, 4.0),
+             rec("2026-11-12T07:00:00Z", "2026-11-01", "2026-11-08", 1, 5.0),  # a closed window rerun: replaces it
+             rec("2026-11-12T08:00:00Z", "2026-11-01", "2026-11-08", 2, 6.0)]  # a newer engine's line: skipped
+    for r in lines:
+        auditrecord.append_record("p", r)
+    assert [r["cost"] for r in auditrecord.series("p")] == [2.0, 3.0, 5.0]
+    assert len(auditrecord.audit_records("p")) == 6 and auditrecord.latest_audit("p")["v"] == 2
+    assert auditrecord.window_of(lines[0]) == ("p", "2026-11-02", "2026-11-09")
+    assert auditrecord.window_of(lines[3]) == ("p", "2026-11-01", "2026-11-08")
+    assert auditrecord.series("none") == []
+
+
 def test_audit_write_appends_its_record_and_the_digest_names_the_latest(project, capsys):
     name = "root"   # what the CLI calls the project of the fixture's root
     assert auditrecord.latest_audit(name) is None and auditrecord.latest_audit_line(None) == ""
@@ -294,10 +312,14 @@ def test_audit_write_appends_its_record_and_the_digest_names_the_latest(project,
     assert rec["path"].endswith("audit-2026-10-01_now.md") and rec["sessions"] == 5
     assert rec["estimates"]["items"] == 4 and rec["estimates"]["backtests"] >= rec["estimates"]["within"]
     assert rec["context"]["briefed"] == 5 and rec["context"]["past_100"] == 0
-    # a torn or foreign line is skipped, never fatal
-    with auditrecord.audits_path(name).open("a", encoding="utf-8") as f:
-        f.write("{torn\n[1, 2]\n")
-    assert auditrecord.audit_records(name) == recs
+    assert auditrecord.series(name) == [recs[-1]]   # one line per window: the last one
+    # a torn or foreign line, or a byte that is not UTF-8, is skipped, never fatal
+    with auditrecord.audits_path(name).open("ab") as f:
+        f.write(b'{torn\n[1, 2]\n\xff\xfe\n{"v": 1, "note": "caf\xe9"}\n')
+    assert auditrecord.audit_records(name) == recs and auditrecord.latest_audit(name) == recs[-1]
+    assert auditrecord.series(name) == [recs[-1]]
+    here = projects.Project(name=name, root=project.root, stores=project.stores)
+    assert digest.tokens(here, digest.Window("2026-11-02", "2026-11-02"))["audit"].startswith("Latest cost audit (")
     line = auditrecord.latest_audit_line(rec)
     assert line.startswith("Latest cost audit (2026-10-01 to now, written ")
     assert "0 of 5 briefed session(s) past their budget, 0 above 400k" in line

@@ -22,10 +22,11 @@ USAGE = """\
                  --record writes props.cost_review (not for an item no session of the token ledger served)
   brain cost audit [--since WHEN] [--until WHEN] [--top N] [--write] [--json]   the window's estimates off by more
                  than x1.5 and why, the calibration per class, the sizes against the actuals (misses per size and
-                 class, thresholds proposed, the size key kept or not), the costliest sessions, the script candidates;
-                 --write: <BRAIN_HOME>/usage/<project>/audit-<since>_<until>.md, its record appended to
-                 <BRAIN_HOME>/usage/<project>/audits.jsonl (the estimates' error and the context counts, week by
-                 week), and the week's forecast snapshot <BRAIN_HOME>/forecast/<project>/<day>.json (the Monday
+                 class, thresholds proposed, the size key kept or not), the context against the briefs' budgets
+                 (the sessions past 80 % and 100 % of it, those that peaked above 400k), the costliest sessions, the
+                 script candidates; --write: <BRAIN_HOME>/usage/<project>/audit-<since>_<until>.md, its record
+                 appended to <BRAIN_HOME>/usage/<project>/audits.jsonl (kept: the estimates' error and the context
+                 counts, week by week; the last line of a window wins), and the week's forecast snapshot <BRAIN_HOME>/forecast/<project>/<day>.json (the Monday
                  task's command)
   brain cost estimate|review|audit ... --scope REF   the items and sessions of the projects of a node's subtree in
                  the scope tree (brain scopes: an id, a path of ids, global = --all, . or ..)
@@ -110,12 +111,15 @@ def register(sub, ctx) -> None:
     cr.add_argument("--record", action="store_true", help="write each review on its item (props.cost_review)")
     cr.add_argument("--json", action="store_true")
     ca = co.add_parser("audit", help="the window's estimates off by more than x1.5 and why, the calibration per "
-                                     "class, the costliest sessions, the script candidates")
+                                     "class, the context against the briefs' budgets, the costliest sessions, the "
+                                     "script candidates")
     ca.add_argument("--since", default="last-week", help="the window's start (default last-week)")
     ca.add_argument("--until", help="the window's end, excluded (default: now)")
     ca.add_argument("--top", type=_whole, default=cost.TOP, help=f"rows per table (default {cost.TOP}; 0: all)")
-    ca.add_argument("--write", action="store_true", help="keep it in <BRAIN_HOME>/usage/<project>/audit-*.md, and the "
-                                                         "week's forecast snapshot in <BRAIN_HOME>/forecast/<project>")
+    ca.add_argument("--write", action="store_true", help="keep it in <BRAIN_HOME>/usage/<project>/audit-*.md, append "
+                                                         "its record to <BRAIN_HOME>/usage/<project>/audits.jsonl "
+                                                         "(kept), and the week's forecast snapshot in "
+                                                         "<BRAIN_HOME>/forecast/<project>")
     ca.add_argument("--json", action="store_true")
     for one in (ce, cr, ca):
         one.add_argument("--scope", help="the items and sessions of the projects of a node's subtree in the scope "

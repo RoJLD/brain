@@ -38,8 +38,9 @@ milestone the graph's, its kind the words of its title (spec, review, fix, build
                  brief's budget, those that peaked above the :data:`CEILING`); ``--write`` keeps it in
                  <BRAIN_HOME>/usage/<project>/audit-<since>_<until>.md and appends its record, one JSON line, to
                  <BRAIN_HOME>/usage/<project>/audits.jsonl (brain.auditrecord: the estimates' typical error and
-                 share within x1.5, the context counts, the cost): the week-by-week series a KPI reads, the last line
-                 of a window winning when the audit of one window is written twice. ``brain digest`` names the
+                 share within x1.5, the context counts, the cost): the week-by-week series a KPI reads
+                 (brain.auditrecord.series), the last line of a window winning when the audit of one window is
+                 written twice. ``brain digest`` names the
                  latest audit (brain.auditrecord.latest_audit).
 """
 

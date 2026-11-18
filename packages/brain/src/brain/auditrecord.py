@@ -11,8 +11,15 @@ zero token.
              window the audit ran, its sessions and cost, the estimates' error (the backtests, how many within x1.5,
              their share, the typical factor; the window's finished items and how many were off) and the context
              counts. The audit of one window written twice leaves two lines: the last one wins.
+  series     :func:`series`: the series a KPI reads, oldest first: the ``v: 1`` lines alone (a higher ``v`` is
+             skipped), one per window, the last line of a window winning (:func:`window_of`: its ``since`` and its
+             end, ``until`` or else the day of ``at``; a rerun the same day over an open window replaces the
+             earlier line, a rerun another day covers another window and is its own line). :func:`audit_records`
+             is the raw log: every line that is a JSON object, as written.
   latest     :func:`latest_audit`: the last record, else the newest ``audit-*.md`` alone (an audit written before the
              records); :func:`latest_audit_line` says it in one line (a record of a higher ``v``: its file alone).
+
+A torn line, a line that is not a JSON object or a byte that is not UTF-8 is skipped, never fatal.
 """
 
 from __future__ import annotations
@@ -79,20 +86,38 @@ def append_record(project: str, rec: dict) -> Path:
 
 
 def audit_records(project: str) -> list[dict]:
-    """The project's audit records, oldest first; a line that is not a JSON object is skipped."""
+    """The project's audit records as written, oldest first (the raw log: :func:`series` is what a KPI reads); a
+    line that is not a JSON object, or that holds a byte that is not UTF-8, is skipped."""
     try:
-        text = audits_path(project).read_text(encoding="utf-8")
+        data = audits_path(project).read_bytes()
     except OSError:
         return []
     out = []
-    for line in text.splitlines():
+    for raw in data.splitlines():
         try:
-            rec = json.loads(line)
-        except ValueError:
+            rec = json.loads(raw.decode("utf-8"))
+        except ValueError:   # a torn line, or a byte that is not UTF-8 (UnicodeDecodeError is a ValueError)
             continue
         if isinstance(rec, dict):
             out.append(rec)
     return out
+
+
+def window_of(rec: dict) -> tuple[str, str, str]:
+    """The window a record covers, its key in :func:`series`: its project, its ``since`` and its end (``until``,
+    else the day of ``at``: an open window ends the day the audit ran)."""
+    return (str(rec.get("project") or ""), str(rec.get("since") or ""),
+            str(rec.get("until") or str(rec.get("at") or "")[:10]))
+
+
+def series(project: str) -> list[dict]:
+    """The series a KPI reads, oldest first: the ``v: 1`` records alone (a line of a higher ``v`` is skipped), one
+    per window (:func:`window_of`), the last line of a window winning, in the place of its first line."""
+    last: dict[tuple[str, str, str], dict] = {}
+    for rec in audit_records(project):
+        if rec.get("v") == 1:
+            last[window_of(rec)] = rec   # a key written again keeps its first place, takes the last line
+    return list(last.values())
 
 
 def latest_audit(project: str) -> dict | None:
