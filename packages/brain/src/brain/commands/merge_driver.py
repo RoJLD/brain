@@ -7,6 +7,7 @@ from __future__ import annotations
 from pathlib import Path
 
 ORDER = 490   # its place in brain --help's list of commands (brain.commands)
+PHASE = "early"   # its handlers: early only, before any root is resolved (brain.commands)
 USAGE_ORDER = 150   # its usage lines' place in brain --help's epilog
 USAGE = """\
   brain merge-driver run BASE OURS THEIRS PATH [SIZE]   git's entry (merge.brain.driver ... %O %A %B %P %L) for the

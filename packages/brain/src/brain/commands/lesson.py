@@ -13,6 +13,7 @@ from .. import graph, lessons, projects
 from ._common import _project, _scope, _store, _whole
 
 ORDER = 410   # its place in brain --help's list of commands (brain.commands)
+ALIASES = ("lessons",)   # the other names of its command (brain.commands)
 USAGE_ORDER = 330   # its usage lines' place in brain --help's epilog
 USAGE = """\
   brain lesson [--follow] [--status S] [--signal S] [--json]   (also: brain lessons) the lessons of the graph
@@ -94,7 +95,7 @@ def _lesson_rules(args, root: Path) -> int:
 
 
 def register(sub, ctx) -> None:
-    le = sub.add_parser("lesson", aliases=["lessons"],
+    le = sub.add_parser("lesson", aliases=list(ALIASES),
                         help="the lessons of the graph: list (bare), --follow their lineage, add, seen, rules")
     le.add_argument("--project", default=argparse.SUPPRESS, help="a registered project (same as brain --project)")
     le.add_argument("--follow", action="store_true", help="each lesson's lineage and the friction per item by week")

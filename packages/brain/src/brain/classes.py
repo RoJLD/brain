@@ -132,7 +132,8 @@ ENGINE_STORES = {
                          "the agent's transcripts: prompts, tool inputs and outputs, sometimes a secret"),
     "usage": Known("$BRAIN_HOME/usage", "sealed", "log",
                    "the token ledger's views, quota.json, the quota readings (quota.jsonl, monthly files kept 12 "
-                   "months), the session starts (starts.jsonl, 2 months), the usage audits"),
+                   "months), the session starts (starts.jsonl, 2 months), the usage audits and their weekly records "
+                   "(<project>/audits.jsonl, kept)"),
     "budget": Known("$BRAIN_HOME/budget", "sealed", "truth-local", "the context budget watch's marks per session"),
     "forecast": Known("$BRAIN_HOME/forecast", "sealed", "derived", "the forecasts, one folder per project"),
     "announce": Known("$BRAIN_HOME/announce", "sealed", "truth-local",
@@ -182,6 +183,8 @@ ENGINE_STORES = {
                   "the local merge queue: the PRs queued per repo, their state and reason (brain ship, queue.json)"),
     "merge-ready": Known("$BRAIN_HOME/merge-ready", "sealed", "derived",
                          "the merge gate's stamps, per repo and head (brain merge-ready)"),
+    "release": Known("$BRAIN_HOME/release", "sealed", "derived",
+                     "this machine's last brain release verify (verified.json) and its checks' logs"),
     "formats": Known("$BRAIN_HOME/formats", "sealed", "derived",
                      "the projects' format checks' last pass or fail, keyed by the hashes of their command and files "
                      "(brain formats check)"),

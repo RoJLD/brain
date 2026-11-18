@@ -5,7 +5,7 @@ import json
 
 import pytest
 
-from brain import cli, cockpit, cost, digest, graph, projects, sizing, status, usage
+from brain import auditrecord, cli, cockpit, cost, digest, graph, projects, sizing, status, usage
 
 ITEMS = """
 - {id: wi-a, type: WorkItem, status: done, title: "Ledger A", props: {theme: "3.9", pr: "engine #7",
@@ -254,6 +254,87 @@ def test_status_and_digest_show_the_cost(project):
     part = digest._cost(s)
     assert part.key == "cost" and "costliest items" in part.levels[0][0]
     assert digest._cost({"sessions": 0}) is None
+
+
+# --- the weekly audit's record (the estimates' error and the context counts, week by week) ---
+
+def test_context_counts_the_sessions_past_their_budget_and_above_the_ceiling():
+    rows = [row("s1", context={"peak": 330_000}),                                  # 82 % of 400k
+            row("s2", usd=40.0, context={"peak": 450_000}),                        # past 100 %, above 400k
+            row("s3", usd=5.0, context={"peak": 500_000},
+                brief={"budget": 800_000}),                                        # 62 %, above 400k
+            row("s4", context={"peak": 100_000}, brief={}),                        # no budget: counts nowhere
+            row("s5", context=None, brief="garbage")]                              # a malformed row: nowhere
+    c = auditrecord.context_of(rows)
+    assert c == {"ceiling": 400_000, "briefed": 3, "past_80": 2, "past_100": 1, "over_ceiling": 2,
+                 "over_ceiling_cost": 45.0}
+    assert auditrecord.context_of([]) == {"ceiling": 400_000, "briefed": 0, "past_80": 0, "past_100": 0,
+                                   "over_ceiling": 0, "over_ceiling_cost": 0}
+    said = ("3 session(s) with a brief's context budget: 2 passed 80 % of it, 1 passed 100 %; 2 session(s) peaked "
+            "above 400k")
+    assert said in auditrecord.context_line(c)
+
+
+def test_series_keeps_one_v1_line_per_window_the_last_winning(project):
+    def rec(at, since, until="", v=1, usd=1.0):
+        return {"v": v, "at": at, "project": "p", "since": since, "until": until, "cost": usd}
+    lines = [rec("2026-11-09T07:00:00Z", "2026-11-02", usd=1.0),               # the Monday task
+             rec("2026-11-09T15:00:00Z", "2026-11-02", usd=2.0),               # rerun the same day: replaces it
+             rec("2026-11-10T07:00:00Z", "2026-11-03", usd=3.0),               # another day: another window
+             rec("2026-11-11T07:00:00Z", "2026-11-01", "2026-11-08", 1, 4.0),
+             rec("2026-11-12T07:00:00Z", "2026-11-01", "2026-11-08", 1, 5.0),  # a closed window rerun: replaces it
+             rec("2026-11-12T08:00:00Z", "2026-11-01", "2026-11-08", 2, 6.0)]  # a newer engine's line: skipped
+    for r in lines:
+        auditrecord.append_record("p", r)
+    assert [r["cost"] for r in auditrecord.series("p")] == [2.0, 3.0, 5.0]
+    assert len(auditrecord.audit_records("p")) == 6 and auditrecord.latest_audit("p")["v"] == 2
+    assert auditrecord.window_of(lines[0]) == ("p", "2026-11-02", "2026-11-09")
+    assert auditrecord.window_of(lines[3]) == ("p", "2026-11-01", "2026-11-08")
+    assert auditrecord.series("none") == []
+
+
+def test_audit_write_appends_its_record_and_the_digest_names_the_latest(project, capsys):
+    name = "root"   # what the CLI calls the project of the fixture's root
+    assert auditrecord.latest_audit(name) is None and auditrecord.latest_audit_line(None) == ""
+    rows = {f"p/{r['session_id']}.jsonl": r for r in _history(project).rows}
+    for r in rows.values():
+        r.pop("project"), r.pop("served")
+    usage.save(rows)
+    root = str(project.root)
+    for _ in range(2):   # the same window twice: two lines, the last one wins
+        assert cli.main(["--root", root, "cost", "audit", "--since", "2026-10-01", "--write"]) == 0
+    out = capsys.readouterr().out
+    assert "## Context against the budgets" in out and "record appended to" in out and "forecast snapshot:" in out
+    recs = auditrecord.audit_records(name)
+    assert len(recs) == 2 and recs[-1] == auditrecord.latest_audit(name)
+    rec = recs[-1]
+    assert (rec["v"], rec["project"], rec["since"], rec["until"]) == (1, name, "2026-10-01", "")
+    assert rec["path"].endswith("audit-2026-10-01_now.md") and rec["sessions"] == 5
+    assert rec["estimates"]["items"] == 4 and rec["estimates"]["backtests"] >= rec["estimates"]["within"]
+    assert rec["context"]["briefed"] == 5 and rec["context"]["past_100"] == 0
+    assert auditrecord.series(name) == [recs[-1]]   # one line per window: the last one
+    # a torn or foreign line, or a byte that is not UTF-8, is skipped, never fatal
+    with auditrecord.audits_path(name).open("ab") as f:
+        f.write(b'{torn\n[1, 2]\n\xff\xfe\n{"v": 1, "note": "caf\xe9"}\n')
+    assert auditrecord.audit_records(name) == recs and auditrecord.latest_audit(name) == recs[-1]
+    assert auditrecord.series(name) == [recs[-1]]
+    here = projects.Project(name=name, root=project.root, stores=project.stores)
+    assert digest.tokens(here, digest.Window("2026-11-02", "2026-11-02"))["audit"].startswith("Latest cost audit (")
+    line = auditrecord.latest_audit_line(rec)
+    assert line.startswith("Latest cost audit (2026-10-01 to now, written ")
+    assert "0 of 5 briefed session(s) past their budget, 0 above 400k" in line
+    assert line.endswith("audit-2026-10-01_now.md).")
+    s = cost.summary_of(cost.load([project]), project.name, "2026-11-02", "2026-11-03")
+    part = digest._cost({**s, "audit": line})
+    assert part.levels[0][-1] == line and part.levels[1] == [cost.summary_line(s), line]
+    # an audit written before the records existed: its file alone is named
+    auditrecord.audits_path(name).unlink()
+    assert auditrecord.latest_audit(name)["path"].endswith("audit-2026-10-01_now.md")
+    assert auditrecord.latest_audit_line(auditrecord.latest_audit(name)).startswith("Latest cost audit: ")
+    assert auditrecord.latest_audit_line({"v": 2, "path": "a.md", "estimates": {}}) == "Latest cost audit: a.md."
+    odd = {"v": 1, "estimates": {"share_within": "most", "typical_factor": 2}, "context": {"ceiling": "x"}}
+    said = auditrecord.latest_audit_line(odd)   # a hand-edited record: said as far as it goes, never a crash
+    assert "no backtest yet; 0 of 0 briefed session(s) past their budget, 0 above 400k" in said
 
 
 # --- wi-brain-size-calibration: sizes checked against actuals ---

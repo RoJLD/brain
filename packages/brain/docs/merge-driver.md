@@ -315,7 +315,9 @@ writes the brief a coordinator hands to a sub-session, so that it edits only wha
 
 - the item, its status and priority, every prop as recorded, its open questions;
 - the task class with its model and effort, and the context budget: config.json `brief.classes` (default: trivial on
-  `haiku` at `low` effort, 400k; standard on the coordinator's own model, 400k; strategic on `opus` at `high`, 800k);
+  `haiku` at `low` effort, 400k; standard on the coordinator's own model, 400k; strategic on `opus` at `high`, 400k);
+  a budget above `brief.ceiling` (default 400k: a message costs two to three times more above it) is warned about, as
+  the expansion step of an unfinished task rather than a start;
 - the model of each agent role: config.json `brief.agent_models` (`{role: model}`, default `verify` on `sonnet`: the
   verifiers and skeptics; every other role on the session's model; null drops a role), the `model` an Agent call or a
   workflow agent passes, and what `brain usage --by role` counts the agents against;
@@ -354,5 +356,8 @@ writes the brief a coordinator hands to a sub-session, so that it edits only wha
   decides » lines. The engine writes none of them itself.
 
 ```json
-"brief": {"classes": {"standard": {"model": "", "effort": "", "budget": "600k"}}, "never": "Never"}
+"brief": {"classes": {"standard": {"model": "", "effort": "", "budget": "600k"}}, "ceiling": "600k", "never": "Never"}
 ```
+
+A class budget above the ceiling is warned about in every brief of that class, so a project that starts its standard
+briefs at 600k raises `brief.ceiling` with it, as above.

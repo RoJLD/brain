@@ -107,6 +107,7 @@ name its code writes there that the list does not hold, so a new store comes wit
 | `reviews` | `$BRAIN_HOME/reviews` | sealed | truth-local | the reviews' findings and stamps |
 | `ship` | `$BRAIN_HOME/ship` | sealed | truth-local | the local merge queue: the PRs queued per repo, their state and reason (`brain ship`, `queue.json`) |
 | `merge-ready` | `$BRAIN_HOME/merge-ready` | sealed | derived | the merge gate's stamps, per repo and head (`brain merge-ready`) |
+| `release` | `$BRAIN_HOME/release` | sealed | derived | this machine's last `brain release verify` (`verified.json`) and its checks' logs |
 | `formats` | `$BRAIN_HOME/formats` | sealed | derived | the projects' format checks' last pass or fail, keyed by the hashes of their command and files (`brain formats check`) |
 | `backup` | `$BRAIN_HOME/backup` | sealed | truth-local | copies taken before a write-back: a work tree's settings files and a brain's `config.json` before `brain migrate --apply` (`<project>-<key>/<folder>`, the last 10 each) |
 | `migrate` | `$BRAIN_HOME/migrate` | sealed | log | the applied-steps log of `brain migrate --apply` (`applied.jsonl`: each step applied to a file, its versions and its backup) |

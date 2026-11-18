@@ -11,6 +11,7 @@ import sys
 from ._common import root_of
 
 ORDER = 472   # its place in brain --help's list of commands (brain.commands)
+PHASE = "early"   # its handlers: early only, before any root is resolved (brain.commands)
 USAGE_ORDER = 382   # its usage lines' place in brain --help's epilog
 USAGE = """\
   brain uninstall [--purge] [--confirm-recovery STORE...] [--apply] [--json]   every trace of the brain on this

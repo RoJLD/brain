@@ -188,12 +188,13 @@
       "properties": {
         "classes": {
           "type": "object",
-          "description": "{class: {model, effort, budget}}: the model and effort the coordinator starts a session of that class with (an empty string: the coordinator's own), and its default budget (400k, 600k, 800k or 1M); default the engine's (brain.brief.CLASSES: trivial a small model at low effort, strategic the strongest at high effort).",
+          "description": "{class: {model, effort, budget}}: the model and effort the coordinator starts a session of that class with (an empty string: the coordinator's own), and its default budget (400k, 600k, 800k or 1M); default the engine's (brain.brief.CLASSES: trivial a small model at low effort, strategic the strongest at high effort, each at 400k).",
           "additionalProperties": {
             "type": "object", "additionalProperties": false,
             "properties": {"model": {"type": "string"}, "effort": {"type": "string"}, "budget": {"type": "string"}}
           }
         },
+        "ceiling": {"enum": ["400k", "600k", "800k", "1M"], "description": "The context budget a brief starts a session under (default 400k, brain.brief.CEILING): a larger budget, a class's or --budget, is warned about as the expansion step of an unfinished task."},
         "agent_models": {
           "type": "object",
           "description": "{role: model}: the model each agent role runs on (wi-brain-review-model-routing): a workflow agent's role is its label before its colon (verify:<finding>#0: verify), else its phase; a plain subagent's, its type. Default {\"verify\": \"sonnet\"}: the verifiers and skeptics on the smaller model, every other role on the session's; null drops a role (it inherits). brain brief prints it, brain usage --by role counts the agents off it.",
@@ -337,12 +338,21 @@
         "read": {"type": "boolean", "description": "The read hint (readhint.sh, brain.readhint, PreToolUse on Read, Grep, Bash and PowerShell, about 0.2 s per call): true, brain render --target claude (brain sync) registers it in the core plugin's hooks.json; default false: not registered, no call pays its cost. BRAIN_READ_HINT=0 turns it off in a session while it is on."}
       }
     },
+    "projects": {
+      "type": "object", "additionalProperties": false,
+      "description": "The project registry's optional checks (brain.projects, brain project add): each off by default, so that the registry is read as 0.5.1 read it.",
+      "properties": {
+        "lifecycle_strict": {"type": "boolean", "description": "true: brain check reads each entry's lifecycle.stage against the typology catalog's stages, shape against living and finite, profile against the six profiles, an unknown value a note in read mode and an error in strict mode (CI), as an unknown typology. Optional; default false: an unknown stage, shape or profile is a note only, never an error, as 0.5.1 never refused one (a refusal 0.6.0 adds).", "default": false},
+        "ids_strict": {"type": "boolean", "description": "true: brain project add takes a name of 2 to 40 characters only, never an alias another project or a container of the scope tree holds (brain.projectids, the project ids' doctrine). Optional; default false: a kebab-case name from a letter of any length, as 0.5.1 (a name already registered, the tree's root or a container's id still refused; brain check's own rules on aliases unchanged); the refusals 0.6.0 adds.", "default": false}
+      }
+    },
     "guards": {
       "type": "object", "additionalProperties": false,
       "description": "The owner guard's options (brain.guards, brain.gestures: the owner's gestures, declared once).",
       "properties": {
-        "refuse_token_read": {"type": "boolean", "description": "true: the owner guard refuses a session's Read, Grep, edit or shell call that reaches the machine's IPC token file (<BRAIN_HOME>/ipc/token or $BRAIN_IPC_TOKEN_FILE; check owner:token, brain.tokenguard; docs/guards.md, the machine's token). The MCP server refuses it whatever this says. Default false: a refusal 0.5.2 adds."},
-        "gestures_wide": {"type": "boolean", "description": "true: the owner guard matches the owner's gestures (brain.gestures) through words it cannot resolve too (a variable, a command substitution, a PowerShell splat or array: brain schedule install $f, brain schedule $(echo install) --apply) and through Python's inline code that drives brain's modules (python -c \"main(['schedule', 'install', '--apply'])\"); docs/guards.md, the owner's gestures. The MCP server matches wide always. Default false: refusals 0.5.2 adds."},
+        "refuse_token_read": {"type": "boolean", "description": "true: the owner guard refuses a session's Read, Grep, edit or shell call that reaches the machine's IPC token file (<BRAIN_HOME>/ipc/token or $BRAIN_IPC_TOKEN_FILE; check owner:token, brain.tokenguard; docs/guards.md, the machine's token). The MCP server follows it too. Optional; default false: no check, as 0.5.1 (a refusal 0.6.0 adds, the MCP server's included)."},
+        "gestures_wide": {"type": "boolean", "description": "true: the owner guard matches the owner's gestures (brain.gestures) through words it cannot resolve too (a variable, a command substitution, a PowerShell splat or array: brain schedule install $f, brain schedule $(echo install) --apply) and through Python's inline code that drives brain's modules (python -c \"main(['schedule', 'install', '--apply'])\"); docs/guards.md, the owner's gestures. The MCP server follows it too. Optional; default false: matched as 0.5.1 (refusals 0.6.0 adds, the MCP server's included)."},
+        "gestures_session_markers": {"type": "boolean", "description": "true: an agent's session is read from every marker of brain.gestures.MARKER_NAMES (CLAUDECODE, CLAUDE_CODE_ENTRYPOINT, BRAIN_AGENT_SESSION and the variables Claude Code sets for each session: CLAUDE_CODE_SESSION_ID, CLAUDE_PID...), so that the acting gestures (schedule install --apply, update, uninstall --apply, queue apply, handover root, tidy --remote --apply, the cockpit's actions) refuse themselves while any is set and the command line's gate reads them too; docs/guards.md, the lock under the guard. Optional; default false: as 0.5.1, the acting gestures read CLAUDECODE alone and the gate CLAUDECODE, CLAUDE_CODE_ENTRYPOINT and BRAIN_AGENT_SESSION (refusals 0.6.0 adds).", "default": false},
         "owner_strict": {"type": "boolean", "description": "true: the owner's gestures brain.gestures marks strict are refused too (docs/guards.md, the owner's gestures): at the guard brain vault reseal --apply, and vault open, drill, device init and forget-previous, update, uninstall --apply and queue apply, which their commands refuse in an agent's session already; at the command line itself brain usage allow, brain schedule install --apply and brain vault reseal --apply in an agent's session (CLAUDECODE, CLAUDE_CODE_ENTRYPOINT or BRAIN_AGENT_SESSION set), past the hook. Default false: the guard refuses what 0.5.0 refused."}
       }
     },

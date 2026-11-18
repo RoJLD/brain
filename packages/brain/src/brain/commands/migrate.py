@@ -10,6 +10,7 @@ from .. import migrate, skew
 from ._common import root_of
 
 ORDER = 151   # its place in brain --help's list of commands (brain.commands): after update
+PHASE = "early"   # its handlers: early only, before any root is resolved (brain.commands)
 USAGE_ORDER = 151   # its usage lines' place in brain --help's epilog, after brain update's
 NO_PROJECT = {"migrate"}   # the brain's config.json and this machine's files: no project's
 USAGE = """\

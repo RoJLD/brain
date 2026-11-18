@@ -267,11 +267,22 @@ def test_the_marker_check_costs_its_length(owner):
     assert time.monotonic() - t0 < 2
 
 
-def test_the_lock_reads_the_session_variables_not_the_configuration_ones():
+def _session_markers(tmp_path, monkeypatch, on):
+    """config.json guards.gestures_session_markers: absent (None), false or true."""
+    data = {"v": 1, "identity": {"owner": "Ada", "kind": "person"}}
+    if on is not None:
+        data["guards"] = {"gestures_session_markers": on}
+    cfg = tmp_path / "markers-config.json"
+    cfg.write_text(json.dumps(data), encoding="utf-8")
+    monkeypatch.setenv("BRAIN_CONFIG", str(cfg))
+
+
+def test_the_lock_reads_the_session_variables_not_the_configuration_ones(tmp_path, monkeypatch):
     """A session carries its own variables (its id, its host's, its process); an owner's terminal may carry Claude
     Code's configuration ones (the review's round 3: CLAUDE_CODE_USE_BEDROCK, the IDE's CLAUDE_CODE_SSE_PORT), which
-    never make it an agent's session."""
+    never make it an agent's session. Under guards.gestures_session_markers."""
     from brain import detail, succession
+    _session_markers(tmp_path, monkeypatch, True)
     for var in gestures.MARKER_NAMES:
         assert gestures.agent_session({var: "x"}) == var
         assert var in detail.refused({var: "x"}) and var in succession._refused({var: "x"})
@@ -307,13 +318,49 @@ def test_usage_allow_refuses_itself_under_the_wide_guard(tmp_path, monkeypatch):
     assert gestures.cli_refusal(["usage", "allow"], env={}, data={"guards": {"gestures_wide": True}}) == ""
 
 
-def test_a_gesture_refuses_itself_whichever_agent_marker_is_set(monkeypatch):
+def test_a_gesture_refuses_itself_whichever_agent_marker_is_set(tmp_path, monkeypatch):
     """The command's own check (brain.detail.refused, schedule install --apply, update, uninstall, queue apply,
-    handover root): any of the agent markers, so that clearing one is not enough."""
+    handover root) under guards.gestures_session_markers: any of the agent markers, so that clearing one is not
+    enough."""
     from brain import detail
+    _session_markers(tmp_path, monkeypatch, True)
     for var in ("CLAUDECODE", "CLAUDE_CODE_ENTRYPOINT", "BRAIN_AGENT_SESSION"):
         assert var in detail.refused({var: "1"})
     assert detail.refused({}) == ""
+
+
+@pytest.mark.parametrize("on", [None, False])
+def test_the_lock_reads_claudecode_alone_without_the_key(tmp_path, monkeypatch, on):
+    """guards.gestures_session_markers absent or false: the lock as 0.5.1 read it. The acting gestures' own check
+    (brain.detail.refused, brain.succession's handover root) reads CLAUDECODE alone, the command line's gate
+    (brain.gestures.agent_session) CLAUDECODE, CLAUDE_CODE_ENTRYPOINT and BRAIN_AGENT_SESSION."""
+    from brain import detail, succession
+    _session_markers(tmp_path, monkeypatch, on)
+    assert not gestures.session_markers()
+    assert "CLAUDECODE" in detail.refused({"CLAUDECODE": "1"})
+    assert "CLAUDECODE" in succession._refused({"CLAUDECODE": ""})   # set, even empty, as 0.5.1
+    assert detail.refused({"CLAUDECODE": ""}) == ""   # set but empty: 0.5.1's detail read it as unset
+    for var in gestures.MARKER_NAMES[1:]:
+        assert detail.refused({var: "1"}) == "" and succession._refused({var: "1"}) == "", var
+        assert gestures.agent_session({var: "1"}) == (var if var in gestures.AGENT_ENV else ""), var
+    assert "BRAIN_AGENT_SESSION" in gestures.cli_refusal(["usage", "allow"], env={"BRAIN_AGENT_SESSION": "1"},
+                                                         data={"guards": {"owner_strict": True}})
+    assert gestures.cli_refusal(["usage", "allow"], env={"CLAUDE_PID": "1"},
+                                data={"guards": {"owner_strict": True}}) == ""
+
+
+def test_an_unreadable_config_leaves_the_session_markers_off(tmp_path, monkeypatch):
+    from brain import detail
+    cfg = tmp_path / "broken.json"
+    cfg.write_text("{not json", encoding="utf-8")
+    monkeypatch.setenv("BRAIN_CONFIG", str(cfg))
+    assert not gestures.session_markers()
+    assert detail.refused({"CLAUDE_PID": "1"}) == "" and "CLAUDECODE" in detail.refused({"CLAUDECODE": "1"})
+
+
+def test_the_session_markers_reach_the_command_line_gate(tmp_path, monkeypatch):
+    on = {"guards": {"owner_strict": True, "gestures_session_markers": True}}
+    assert "CLAUDE_PID" in gestures.cli_refusal(["usage", "allow"], env={"CLAUDE_PID": "1"}, data=on)
 
 
 @pytest.mark.parametrize("tool, command", WIDE_REFUSED)

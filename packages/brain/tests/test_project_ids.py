@@ -144,8 +144,18 @@ def test_an_id_that_is_not_kebab_case_is_a_warning_never_an_error(brain):
     assert any("project Orchard_1: its id is not kebab-case" in w and "frozen" in w for w in warnings)
 
 
+def _ids_strict(root, on):
+    """config.json projects.ids_strict: absent (None), false or true."""
+    data = {"v": 1, "identity": {"owner": "Ada"}}
+    if on is not None:
+        data["projects"] = {"ids_strict": on}
+    (root / config.FILE).write_text(json.dumps(data), encoding="utf-8")
+
+
 def test_brain_project_add_never_mints_a_name_in_use(brain, tmp_path):
+    """Under config.json projects.ids_strict."""
     (brain.root / scopes.FILE).write_text(TREE, encoding="utf-8")
+    _ids_strict(brain.root, True)
     cfg = config.load(brain.root)
     registry = brain.root / "projects.yaml"
     for name, why in (("grove", "is an alias of project orchard already"), ("work", "is an alias of scope pro"),
@@ -153,6 +163,30 @@ def test_brain_project_add_never_mints_a_name_in_use(brain, tmp_path):
         with pytest.raises(project_add.AddError, match=why):
             project_add._check_name(name, registry, cfg)
     project_add._check_name("fresh-one", registry, cfg)   # a name no node holds passes
+
+
+@pytest.mark.parametrize("on", [None, False])
+def test_brain_project_add_takes_0_5_1_s_names_without_the_key(brain, tmp_path, on):
+    """config.json projects.ids_strict absent or false: the name rule takes a kebab-case name from a letter of any
+    length, as 0.5.1; a registered name, a container's id, the tree's root and a name that is not kebab-case are still
+    refused. A name another node holds as an alias passes this rule but not the command: the entry would add an error
+    to brain check --all, which refuses the write (test_project_add)."""
+    (brain.root / scopes.FILE).write_text(TREE, encoding="utf-8")
+    _ids_strict(brain.root, on)
+    cfg = config.load(brain.root)
+    registry = brain.root / "projects.yaml"
+    for name in ("x", "a" * 41, "grove", "work"):
+        project_add._check_name(name, registry, cfg)
+    for name, why in (("alpha", "registered already"), ("acme", "a container of the scope tree"),
+                      ("global", "the tree's root"), ("Orchard_1", "kebab-case from a letter"),
+                      ("1abc", "kebab-case from a letter")):
+        with pytest.raises(project_add.AddError, match=why):
+            project_add._check_name(name, registry, cfg)
+
+
+def test_an_unreadable_config_leaves_the_ids_rule_off(brain, tmp_path):
+    (brain.root / config.FILE).write_text("{not json", encoding="utf-8")
+    project_add._check_name("a" * 41, brain.root / "projects.yaml", config.load(brain.root))
 
 
 # --- a tombstone: a project that ended ---

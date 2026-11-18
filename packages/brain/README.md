@@ -48,7 +48,7 @@ What it does, every command reading files and git, never a model:
 Python 3.10 or later. The command depends on PyYAML and on `research-graph` at the same tag.
 
 ```bash
-pip install "brain @ git+https://github.com/RoJLD/brain.git@v0.5.1#subdirectory=packages/brain"
+pip install "brain @ git+https://github.com/RoJLD/brain.git@v0.6.0#subdirectory=packages/brain"
 ```
 
 On Windows, `installer/install.ps1` does it in a venv of its own (`~/.brain/venv`, `BRAIN_HOME`), puts the `brain`
@@ -690,6 +690,20 @@ beside the PR), the digest's closed items, the items a lesson led to, `research_
 `pr ...`, and in its `--json` when there is one), and the journal's line that `brain item close` prints for `brain
 journal add`: `- ID STATUS (PR; evidence TEXT): outcome`. `brain item show` prints it with the other props.
 
+Once its PR is merged, `brain close ID --pr "repo #N" [--write]` walks the rest of the definition of done at zero
+token (brain.closing): from the PR as `gh pr view` gives it, the item closed done with the PR (after the refs its
+`props.pr` holds) and its merge's date, the PR's title as the outcome unless `--outcome`; the journal's line at the
+end of today's entry (a new one titled `--journal-title`, default `<ID> closed`, when today has none); the features
+the PR's title or body names with a status (`feat-x: have`, or a feature's `public_id`) set as `brain features
+sync-prs` sets them, a feature whose `status_merged` is that merge or later left as it is; the changelog fragment
+checked (a fragment of the PR named after the item, `<ID>.md` or `<ID>-<section>.md`: none is said, never refused);
+each milestone the item is `part_of` that it leaves with no open member, listed with its trigger (reaching it stays a
+judgement: `brain item set MS status=reached`); then `brain tidy`'s plan of the PR's repo narrowed to its head branch
+and the worktrees on it (never an unmerged branch, a dirty worktree or one an open session holds; `--no-tidy` leaves
+them). The plan first, `--write` applies it, refused (exit 2) while the PR is not merged or the item is unknown; an
+item already closed is left as it is and gets no journal line, its features still set. `--pr N` alone reads the repo
+of the current folder (`--repo NAME` another; `--repo-dir D` a checkout outside the registry).
+
 `brain items --wave` takes a wave's release or id: the items whose wave it is now (carried in included), and those in
 no wave whose free-text `props.wave` names that release. `brain spec show --section` takes a heading's number (`2.1`),
 its key (the last part of a Doc id) or the start of its title, and prints it down to the next heading of its level.
@@ -923,8 +937,8 @@ only; its own sessions answer the rest): another answer with `--read` is refused
 `launch`: `v1`, `grow`: `scale`, `explore`: `prototype`; another stage keeps its default, and the plan says so), so the
 standards and `lifecycle.stage` agree. `brain check` reads the entry's `lifecycle.stage` against the catalog's stages
 (a standards stage written there, `mvp`, is named with the stage it reads as), `shape` against `living` and `finite`,
-`profile` against the six profiles: an unknown value is a note, an error in strict mode (CI), as an unknown typology
-is.
+`profile` against the six profiles: an unknown value is a note; under config.json `projects.lifecycle_strict: true`
+(optional, off by default: a refusal 0.6.0 adds) an error in strict mode (CI), as an unknown typology is.
 
 It also writes `<BRAIN_HOME>/personal.json` when the machine has none, so that the hooks and commands run from any
 folder find this brain. The brain is the owner's private repo: push it to their own account, never to a public one.
@@ -1004,6 +1018,19 @@ The session that asks the owner records the answers, in one PR per batch (wi-bra
    refused, so the commit holds the answers alone; a failure before that commit puts the checkout back exactly as it
    was (nothing recorded there, the captures left for a rerun); a failed push keeps the commit, prints git's message
    and exits non-zero.
+4. `brain decision apply [ID]... [--spec S] [--title T] [--date D] [--write] [--json]` applies the answered decisions
+   (the ids given, else every answered one, `--spec` keeping those that name a spec) at zero token but the prose
+   (brain.answerapply): the ADR appended to the decision log, titled `<who>'s answers of <day> to <CODE-1> to
+   <CODE-n>` (the codes the DDRs' titles start with, `VIZ-1`), its Context the questions with their DDR ids and
+   specs, its Decision each answer with its option's consequences and the owner's own text, its Why and Revisit if
+   left TODO for the session to write; a `decided_by` edge from each item a DDR names to that ADR and the item's
+   `props.decided_<date>[_<code>]` (who, the ADR, the code, the answer); the answers table (Question, Answer, Applied)
+   inserted into each spec the DDRs name, at the end of the section that first mentions the first code (outside a code
+   fence), else of the last section whose heading says « question », else at the end of the spec's file; then each
+   DDR acknowledged (`brain decision ack`: applied in the ADR, its items and the spec's section) and archived. The
+   plan first, `--write` applies it in that order; a DDR not answered is refused, an item or a spec the store does not
+   have is said and left out. A brainstorm's asks, captured answers and applied ADR thus travel in its own branch's
+   PR.
 
 `--batch` is strict: a value is an option's exact label (any case, `(Recommandé)` ignored) or its number; a shortened
 label is refused with the label it shortens, and the owner's own text is marked as such, `{"other": "..."}`. Its file
@@ -1104,14 +1131,17 @@ Zero-token commands for many sessions on one brain ([`docs/merge-driver.md`](doc
   token-free net; config.json `brief.after_merge` replaces these lines), the invariants and failure modes to test
   (one line per surface kind the item touches, then its `props.invariants`; `brain review prep --item` hands the
   same section to the review), and the definition of done and the never-list read from the owner's rules.
-- **`brain review prep [PR | BASE..HEAD] [--item ID]`**, **`brain review stamp HEAD`**, **`brain review check HEAD`**,
+- **`brain review prep [PR | BASE..HEAD] [--item ID]`**, **`brain review stamp HEAD`**, **`brain review check HEAD`**, **`brain review rounds PR`**,
   **`brain review score [--wave W]`**: the review
   a session runs on its own PR before it reports ([`docs/review.md`](docs/review.md), `brain.review`). The packet
   (the diff, the touched files at the head, `brain audit --diff`'s output, the lenses its surfaces call for) is
   gathered at zero token; the lens agents and two skeptics per distinct finding read it; the stamp, keyed by the
   head's full sha, keeps the counts, the note's finding lines and the PR, item and wave, and answers the merge
   gate; the error score counts each PR's confirmed findings by severity, lens and root cause, per wave, and says
-  whether the reviews may lighten (the findings per PR fallen over two waves in a row).
+  whether the reviews may lighten (the findings per PR fallen over two waves in a row). **`brain review rounds PR`**
+  lists a PR's review rounds (one per head stamped with `--pr`, its high findings from `--high` or the note) and
+  says when they do not converge: the high findings not halved over the last three rounds, the next step a
+  structural decision put to the owner rather than another round (it says, never refuses).
 
 ### The session tree
 
@@ -1617,7 +1647,9 @@ Ids and aliases are one namespace across the registry and `scopes.yaml` (a conta
 to 40 characters), or `global`, and a tombstone that still holds a live key (a root, a store, a production checkout:
 its guards stay on while it is red); a status it does not know is a note (strict, CI: an error), and the entry is not
 loaded either. An id that is not kebab-case is a warning only: it stays as it is, and `brain project add` mints
-kebab-case ones only, never a name another node or alias holds. An alias two nodes declare resolves to neither. A
+kebab-case ones only, never a registered name or a container's id; under config.json `projects.ids_strict: true`
+(optional, off by default: the refusals 0.6.0 adds) also 2 to 40 characters only, never a name another node holds
+as an alias (off, such a name is still refused when it would add an error to `brain check --all`). An alias two nodes declare resolves to neither. A
 private project's aliases and label are as private as its id: they join the deny terms the registry derives
 (`public.derive` `projects`) and those of the tree (`public.deny_from_tree`), and so do a tombstone's names; an entry
 the walk skips (a status or an access typo, a tombstone that still names its repos) keeps its repos' names there,
@@ -1922,7 +1954,9 @@ command or flag only the owner runs (`brain usage allow`, `brain schedule instal
 `brain ipc otel-headers`, `install.ps1 -Apply`) is declared once; the owner guard and the command line read that list,
 and a test checks that each one is refused to an agent's session. config.json `guards.owner_strict: true` adds the
 refusals 0.5.1 brings (off by default). `guards.gestures_wide: true` (off by default) matches them through words the guard
-cannot resolve (`brain schedule install $FLAG`) and Python's inline code that drives brain's modules.
+cannot resolve (`brain schedule install $FLAG`) and Python's inline code that drives brain's modules, the MCP server's
+too. `guards.gestures_session_markers: true` (optional, off by default) makes the acting gestures refuse themselves
+while any agent marker is set (the variables Claude Code sets for each session too), not only `CLAUDECODE`.
 
 **The machine's token** (`brain.tokenguard`, [docs/guards.md](docs/guards.md#the-machines-token)): under config.json
 `guards.refuse_token_read: true` (off by default), the owner guard (check `token`) refuses a session's `Read`, `Grep`,
@@ -1930,7 +1964,7 @@ tool edit or shell call that reaches `<BRAIN_HOME>/ipc/token` (or `$BRAIN_IPC_TO
 otel-headers`: `cat`, `Get-Content`, a copy of the file, its folder or `<BRAIN_HOME>`, a redirection, a glob, a pipe,
 inline code or a heredoc that names it, a link to it; `ls`, `stat`, `Test-Path` and `brain ipc token` pass. Read and
 Grep go through the opt-in hook `tokenguard.sh`, registered only when the key is on. The MCP server runs the check
-whatever the key, and redacts the token from every answer.
+under the same key (optional, off by default), and redacts the token from every answer whatever the key.
 
 **The read hint** (`readhint.sh`, `brain.readhint`, PreToolUse on Read, Grep, Bash and PowerShell) never refuses: when
 a call reads a registered brain's graph YAML (a store's `nodes/` or `edges/`, or the store), its decision log, its
@@ -2264,6 +2298,13 @@ def run(args, root: Path) -> int:
 - `run(args, root)` gets the project's root: `--root`, else `--project`'s, else the nearest folder above with a graph
   store. A command that must run before any root is resolved (a hook, a machine-wide command, a repo that may hold
   no graph store) defines `early(args)`: its exit code, or `None` to go on to `run`.
+- `PHASE = "early"` (early and no run) or `PHASE = "both"` (early, then run) declares it in the module itself; a
+  module with `run` only declares nothing (`"run"`, the default). The handlers decide, the declaration is checked:
+  `brain.commands._registry.undeclared()` lists a module whose `PHASE` is not the phase of its handlers, whose
+  parsers are not its file name then its `ALIASES` (`ALIASES = ("hi",)`, passed as `aliases=list(ALIASES)`), or
+  whose `NO_PROJECT` names a parser it does not register or sits on a run-only command, and
+  `tests/test_cli_registry.py` fails on any. A new command touches no shared list: two command PRs no longer
+  conflict in the test.
 - Every command runs under `brain.shutdown.graceful()`: SIGINT (Ctrl+C), SIGTERM, SIGHUP and SIGBREAK (Ctrl+Break
   on Windows) stop it with `Stopped` (a `KeyboardInterrupt`), so its `finally` and `with` blocks run and its locks
   are released; one that arrives inside `brain.shutdown.critical()` (each ledger line, each atomic state write)
@@ -2273,7 +2314,8 @@ def run(args, root: Path) -> int:
   from Python returns that code instead. `brain timed` passes a signal sent to brain alone to its command (POSIX),
   and the text cockpit quits with 0 on Ctrl+C. A long command's own write that must not be cut goes in `critical()`, or through
   `stateio.write_atomic`; `taskkill /F` and SIGKILL cannot be trapped.
-- `NO_PROJECT = {"hello"}`: no `--project` is added after its subcommand (the hooks', machine-wide commands).
+- `NO_PROJECT = {"hello"}`: no `--project` is added after its subcommand (the hooks', machine-wide commands); on a
+  module with `early` only.
 - `RUNS_VIA = {"hello wave": "wired: the session-start hook runs brain.hello"}`: a subcommand that may never run
   from the CLI and is no gap, with how it is reached: `wired: ...` (a hook, another command or a schedule runs its
   code) or `on demand: ...` (run by hand when its occasion comes, an owner's gesture); `brain perf --usage` lists it
@@ -2281,8 +2323,9 @@ def run(args, root: Path) -> int:
 - What several commands share is in `_common.py` (the text options, the project, its store and scope) and
   `_stores.py` (the passes of sync, check and refresh); a module whose name starts with `_` is not a command.
 - `brain audit` flags a parser added in `cli.py` and a module of `commands/` without `register` (the check
-  `cmd.registry`). `tests/test_cli_registry.py` checks every module's contract; `python tests/help_dump.py` prints
-  every command's and subcommand's help and arguments: run it before and after a change of the parsers, and diff.
+  `cmd.registry`). `tests/test_cli_registry.py` checks every module's contract and its declarations; `python
+  tests/help_dump.py` prints every command's and subcommand's help and arguments: run it before and after a change
+  of the parsers, and diff.
 
 ### A project's command plugin
 

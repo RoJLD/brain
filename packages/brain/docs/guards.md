@@ -56,7 +56,7 @@ install --ap\ply`, `ins''tall`, PowerShell's backtick, cmd's caret), and so are 
 one word (`x=install; brain schedule $x --apply`, `$a = '--apply'; brain schedule install $a`), through the launchers
 the guards read (brain's `.exe` or `.cmd`, a venv's, `python -m brain`, `-mbrain`, `py -3.12 -X utf8 -m brain.cli`,
 `uv run`, `uvx`, `pipx run`, `env`, `sudo`, `nohup`, `timeout`, `Start-Process`, `bash -c`, `cmd /c`, `iex`).
-**Wide** (config.json `guards.gestures_wide: true`, off by default: refusals 0.5.2 adds): a word the guard cannot
+**Wide** (config.json `guards.gestures_wide: true`, off by default: refusals 0.6.0 adds): a word the guard cannot
 resolve where a gesture's word or flag would stand may hold them (`brain schedule install $FLAG`, `brain schedule
 $x`, `brain schedule $(echo install) --apply`, `brain $opts schedule install --apply`, `& $brain schedule install
 --apply`, PowerShell's `@a` and `@('--apply')`; a word that may hold any gesture, `brain $x` or `brain "$@"`, is
@@ -70,19 +70,23 @@ of `${!CLAUDE*}` or of a word the guard cannot resolve in a call that names CLAU
 | grep ^CLAUDE)`), `env -i`, PowerShell's removal of `Env:` items (`Remove-Item Env:CLAUDE*`, `Get-ChildItem
 Env:CLAUDE* | Remove-Item`), .NET's `SetEnvironmentVariable` of a marker or a variable, `-UseNewEnvironment`,
 `.Environment.Clear()`, inline code's `environ.pop`. Reading them passes (`$env:CLAUDECODE`, `CLAUDECODE=1 pytest`),
-and so does a message or a search that only names the forms (`git commit -m "unset ..."`). The MCP server matches
-wide always.
+and so does a message or a search that only names the forms (`git commit -m "unset ..."`). The MCP server follows
+the key too (off: it matches as 0.5.1 did).
 
 **The lock under the guard.** The gestures that act check the session themselves: `brain schedule install --apply`,
-`brain update`, `brain uninstall --apply`, `brain queue apply`, `brain handover root` refuse to run while any agent
-marker is set (`brain.detail.refused`, `brain.gestures.agent_session`: `CLAUDECODE`, `CLAUDE_CODE_ENTRYPOINT`,
-`BRAIN_AGENT_SESSION`, and the variables Claude Code sets for each session, `CLAUDE_CODE_SESSION_ID`,
-`CLAUDE_CODE_HOST_SESSION_ID`, `CLAUDE_CODE_CHILD_SESSION`, `CLAUDE_CODE_EXECPATH`, `CLAUDE_CODE_MESSAGING_SOCKET`,
-`CLAUDE_PID`; never a configuration variable an owner may export, `CLAUDE_CODE_USE_BEDROCK` or the IDE's
-`CLAUDE_CODE_SSE_PORT`), and so do `brain usage allow` and `brain vault
-reseal --apply` under `guards.owner_strict` or `guards.gestures_wide` (the command line's gate), whatever launched them (a script, `python -m runpy`, `xargs`, `find
--exec`, inline code calling `schedule.install`); the guard's reading of the command line is the earlier, advisory
-layer that queues the action for the owner. `brain ipc otel-headers` has no such lock (Claude Code runs it as its
+`brain update`, `brain uninstall --apply`, `brain queue apply`, `brain handover root` (and `brain tidy --remote
+--apply`, the cockpit's actions) refuse to run while `CLAUDECODE` is set (`brain.detail.refused`,
+`brain.gestures.lock_marker`), as 0.5.1 did, and so do `brain usage allow` and `brain vault reseal --apply` under
+`guards.owner_strict` or `guards.gestures_wide` (the command line's gate, `brain.gestures.agent_session`: while
+`CLAUDECODE`, `CLAUDE_CODE_ENTRYPOINT` or `BRAIN_AGENT_SESSION` is set), whatever launched them (a script, `python -m
+runpy`, `xargs`, `find -exec`, inline code calling `schedule.install`); the guard's reading of the command line is the
+earlier, advisory layer that queues the action for the owner. **Session markers** (config.json
+`guards.gestures_session_markers: true`, optional, off by default: refusals 0.6.0 adds): both refuse while any agent
+marker is set (`brain.gestures.MARKER_NAMES`: `CLAUDECODE`, `CLAUDE_CODE_ENTRYPOINT`, `BRAIN_AGENT_SESSION`, and the
+variables Claude Code sets for each session, `CLAUDE_CODE_SESSION_ID`, `CLAUDE_CODE_HOST_SESSION_ID`,
+`CLAUDE_CODE_CHILD_SESSION`, `CLAUDE_CODE_EXECPATH`, `CLAUDE_CODE_MESSAGING_SOCKET`, `CLAUDE_PID`; never a
+configuration variable an owner may export, `CLAUDE_CODE_USE_BEDROCK` or the IDE's `CLAUDE_CODE_SSE_PORT`), so that
+clearing one is not enough. `brain ipc otel-headers` has no such lock (Claude Code runs it as its
 `otelHeadersHelper`, from a session's environment): the guard alone keeps it from a session, and
 `guards.refuse_token_read` the token's file. What neither sees: a session that clears every marker by a means the
 guard does not read (a script that rewrites its own environment; `sudo`, whose `env_reset` drops them, asks for
@@ -989,7 +993,7 @@ scale study's) is Claude Code's own setting: the owner sets it through their ins
 the Brain's local services. Claude Code's `otelHeadersHelper` runs `brain ipc otel-headers`, the one command that
 prints it, which the owner guard refuses to a session (the gestures above); the file itself is the other door.
 
-Under config.json `"guards": {"refuse_token_read": true}` (off by default: a refusal 0.5.2 adds), the owner guard's
+Under config.json `"guards": {"refuse_token_read": true}` (off by default: a refusal 0.6.0 adds), the owner guard's
 check `token` (`brain.tokenguard`) refuses a session's call that reaches the file:
 
 | Door | Refused | Passes |
@@ -1012,9 +1016,9 @@ folder's name, `$BRAIN_IPC_TOKEN_FILE` and the token file's name, in any case. A
 `tokenguard.sh` out, so a locked machine judges a Read or Grep for nothing; its shell calls and edits keep the check.
 The locked floor never turns the check on (the key does) nor off (a floor-only machine keeps it).
 
-The MCP server (below) runs the check whatever the key, on its tools' effects: every effect is a `brain` command, so
-it refuses a reference that resolves to the file (a link named as a spec); its real protection is that every answer
-has the token's value redacted.
+The MCP server (below) runs the check under the same key (optional, off by default: as 0.5.1, no check), on its
+tools' effects: every effect is a `brain` command, so it refuses a reference that resolves to the file (a link named
+as a spec); its real protection is that every answer has the token's value redacted, whatever the key.
 
 **What it does not see** (the token is readable by the owner's account, which a session shares: this guard is the
 lock, and it is advisory): a script file that reads the token (`python leak.py`), a path built at run time from

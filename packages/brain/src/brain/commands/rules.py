@@ -10,6 +10,7 @@ from pathlib import Path
 from .. import config, projects, rulesdiff
 
 ORDER = 401   # its place in brain --help's list of commands (brain.commands), after brain lint
+PHASE = "early"   # its handlers: early only, before any root is resolved (brain.commands)
 USAGE_ORDER = 321   # its usage lines' place in brain --help's epilog, after brain lint's
 USAGE = """\
   brain rules diff [--project P] [--json] [--subjects FILE] [--machine-rules FILE] [--global FILE]...

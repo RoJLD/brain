@@ -1,5 +1,6 @@
 """``brain review``: the review before the report, its zero-token part (brain.review, docs/review.md): the packet a
-session's lens agents read, the stamp of a head once reviewed, and the check the merge gate asks.
+session's lens agents read, the stamp of a head once reviewed, the rounds of a PR and whether they converge, and the
+check the merge gate asks.
 """
 
 from __future__ import annotations
@@ -13,6 +14,7 @@ from .. import review
 from ..inventory import AuditError
 
 ORDER = 57   # its place in brain --help's list of commands (brain.commands)
+PHASE = "early"   # its handlers: early only, before any root is resolved (brain.commands)
 USAGE_ORDER = 57   # its usage lines' place in brain --help's epilog
 USAGE = """\
   brain review prep [PR | BASE..HEAD] [--item ID] [--out DIR] [--no-scout] [--json]   the review packet at zero
@@ -20,7 +22,12 @@ USAGE = """\
                  surfaces call for, the invariants and failure modes to test (the item's brief section with --item)
                  and how to run them (default origin/main..HEAD, into <BRAIN_HOME>/reviews/<head>)
   brain review stamp HEAD --findings N --fixed M [--contested K] [--note FILE] [--pr N] [--item ID] [--wave W]
-                 [--stream S]   the review of that head ran: its counts, the note's finding lines, its place
+                 [--stream S] [--high H]   the review of that head ran: its counts, the note's finding lines, its
+                 place, its high findings (--high, else the note's high lines)
+  brain review rounds PR [--rounds N] [--json]   the review rounds of a PR from its stamps (one per head: findings,
+                 high, fixed, contested, open) and the stop rule: not converging when the high findings have not halved
+                 over the last N rounds (default 3): ask the owner a structural decision instead of another round; it
+                 says, never refuses (exit 0)
   brain review check HEAD [--pr N | --body FILE] [--base REF]   exit 0 when that head was reviewed, 1 when not (the
                  merge gate's question); with the PR body, 1 also while a pinned decision the change touches (brain
                  adr pin, docs/pins.md) has no Keeps <ID or alias> line in it (a decision in force) or Overrides <ID
@@ -86,7 +93,7 @@ def _stamp(args, repo: Path) -> int:
                               else ("", "", ""))
     f = review.stamp(args.head, args.findings, args.fixed, args.contested, note, repo, pr=args.pr or "",
                      item=args.item or "", stream=args.stream or "", wave=wave, wave_id=wave_id, project=project,
-                     repo_slug=_slug(repo) if args.pr else "")
+                     repo_slug=_slug(repo) if args.pr else "", high=args.high)
     rows = review.confirmed(review.parse_note(note))
     print(f"review: {f.stem[:12]} stamped ({args.findings} finding(s), {args.fixed} fixed, {args.contested} "
           f"contested{f', wave {wave}' if wave else ''}): {f}")
@@ -97,6 +104,15 @@ def _stamp(args, repo: Path) -> int:
         print(f"review: the note describes {len(rows)} confirmed finding line(s), --findings says {args.findings} "
               "(docs/review.md, « The note's finding lines »: the score's lens and cause counts read the lines)",
               file=sys.stderr)
+    return 0
+
+
+def _rounds(args, repo: Path) -> int:
+    """brain review rounds: the PR's rounds from its stamps and the stop rule's verdict; it says, never refuses."""
+    if args.rounds < 2:
+        raise review.ReviewError("--rounds is 2 or more")
+    rep = review.rounds(args.pr, _slug(repo), n=args.rounds)
+    print(json.dumps(rep, indent=2) if args.json else "\n".join(review.rounds_lines(rep)))
     return 0
 
 
@@ -142,8 +158,9 @@ def cmd_review(args, root: Path | None = None) -> int:
                       f"{', '.join(p.lenses)}" + (f", scout exit {p.scout_rc}" if p.scout_rc is not None else "")
                       + f"\n  {p.folder}/README.md (docs/review.md: the agents, the skeptics, then brain review stamp)")
             return 0
-        if args.review_cmd == "stamp":
-            return _stamp(args, repo)
+        own = {"stamp": _stamp, "rounds": _rounds}.get(args.review_cmd)   # the subcommands with their own helper
+        if own is not None:
+            return own(args, repo)
         if args.review_cmd == "score":
             sc = review.score(labels=review.labels_now())
             wave = _wave_of(repo, "", args.wave)[0] if args.wave else ""   # a wave id read as its release now
@@ -220,6 +237,14 @@ def register(sub, ctx) -> None:
     st.add_argument("--item", help="the item the PR delivers: its wave (brain.waves) places the stamp")
     st.add_argument("--wave", help="the wave, when no item says it (X.Y.Z)")
     st.add_argument("--stream", help="the stream or lot the PR belongs to")
+    st.add_argument("--high", type=int, help="the round's confirmed high findings (else its note's high lines): what "
+                                             "brain review rounds reads")
+    rd = rv.add_parser("rounds", help="the review rounds of a PR from its stamps, and whether their high findings "
+                                      "converge (it says, never refuses)")
+    rd.add_argument("pr", help="the PR's number")
+    rd.add_argument("--rounds", type=int, default=review.CONVERGE,
+                    help=f"the rounds whose high findings must halve (default {review.CONVERGE})")
+    rd.add_argument("--json", action="store_true")
     ck = rv.add_parser("check", help="exit 0 when HEAD was reviewed")
     ck.add_argument("head")
     ck.add_argument("--pr", type=int, help="the PR whose body must keep or override each pinned decision touched")
@@ -229,7 +254,7 @@ def register(sub, ctx) -> None:
                                      "may lighten")
     sc.add_argument("--wave", help="one wave's score (with the trend)")
     sc.add_argument("--json", action="store_true")
-    for p in (pr, st, ck):
+    for p in (pr, st, ck, rd):
         p.add_argument("--repo", help="the repo (default: here)")
 
 

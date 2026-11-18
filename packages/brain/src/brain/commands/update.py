@@ -12,6 +12,7 @@ from .. import detail, update
 from ._common import root_of
 
 ORDER = 150   # its place in brain --help's list of commands (brain.commands)
+PHASE = "early"   # its handlers: early only, before any root is resolved (brain.commands)
 
 
 def cmd_update(args, root: Path | None) -> int:

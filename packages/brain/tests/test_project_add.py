@@ -110,6 +110,21 @@ def test_an_answer_it_cannot_take_writes_nothing(home, capsys, extra, needle):
     assert (home / "projects.yaml").read_text(encoding="utf-8") == HEADER and ledger_rows() == []
 
 
+@pytest.mark.parametrize("strict", [None, False, True])
+def test_a_name_held_as_an_alias_is_refused_with_or_without_the_ids_key(home, capsys, strict):
+    """config.json projects.ids_strict on, the name rule refuses it; off or absent, the check the entry would fail."""
+    if strict is not None:
+        cfg = json.loads((home / "config.json").read_text(encoding="utf-8"))
+        cfg["projects"] = {"ids_strict": strict}
+        (home / "config.json").write_text(json.dumps(cfg), encoding="utf-8")
+    text = HEADER + "orchard:\n  access: read\n  aliases: [grove]\n"
+    (home / "projects.yaml").write_text(text, encoding="utf-8")
+    assert cli.main(["--root", str(home), "project", "add", "grove", "--read", "--apply"]) == 2
+    out = capsys.readouterr().out
+    assert ("grove is an alias of project orchard already" if strict else "the entry would add to brain check") in out
+    assert (home / "projects.yaml").read_text(encoding="utf-8") == text and ledger_rows() == []
+
+
 def test_one_way_in_is_required(home, capsys):
     with pytest.raises(SystemExit):
         cli.main(["--root", str(home), "project", "add", "orchard"])

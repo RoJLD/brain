@@ -7,6 +7,7 @@ from __future__ import annotations
 from ._common import root_of
 
 ORDER = 470   # its place in brain --help's list of commands (brain.commands)
+PHASE = "early"   # its handlers: early only, before any root is resolved (brain.commands)
 USAGE_ORDER = 380   # its usage lines' place in brain --help's epilog
 USAGE = """\
   brain schedule install [--apply] [--json]   the brain commands the registry's schedules: declare for this machine

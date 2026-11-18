@@ -12,6 +12,7 @@ from ._common import _project, _scope, _store, root_of
 from ._stores import _check_store, _each_store, _merge_marks, _registry_scope, _registry_too, check_registry
 
 ORDER = 120   # its place in brain --help's list of commands (brain.commands)
+PHASE = "both"   # its handlers: early first, then run with the root (brain.commands)
 USAGE_ORDER = 120   # its usage lines' place in brain --help's epilog
 USAGE = """\
   brain check [--all]   the records (schema, ids, secret scan), the open items attached to no milestone (a warning),

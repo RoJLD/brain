@@ -17,7 +17,8 @@ Each gesture says where it is refused:
   (brain.cli refuses it before it runs, under ``guards.owner_strict``), or ``none`` (a helper Claude Code itself
   runs: ``brain ipc otel-headers``, which the guard alone keeps from a session's tool calls).
 
-An agent's session is one of :data:`AGENT_ENV` set (brain.vault's and brain.answers' markers). Standard library only:
+An agent's session is one of :data:`AGENT_ENV` set (brain.vault's and brain.answers' markers), or under config.json
+``guards.gestures_session_markers: true`` (off by default) one of :data:`MARKER_NAMES`. Standard library only:
 the guard hook imports it on every refusal check.
 """
 
@@ -81,13 +82,28 @@ GESTURES: tuple[Gesture, ...] = (
 )
 
 
-def agent_session(env=None) -> str:
-    """The variable that marks an agent's session ('' in the owner's own terminal): one of :data:`MARKER_NAMES`, the
-    variables Claude Code sets for each session (its id, its host's, its child flag, its executable, its messaging
-    socket, its process) besides :data:`AGENT_ENV`; never a configuration variable an owner may export in their own
-    terminal (``CLAUDE_CODE_USE_BEDROCK``, the IDE's ``CLAUDE_CODE_SSE_PORT``)."""
+def agent_session(env=None, data: dict | None = None) -> str:
+    """The variable that marks an agent's session ('' in the owner's own terminal): one of :data:`AGENT_ENV`; under
+    config.json ``guards.gestures_session_markers`` (:func:`session_markers`, off by default), one of
+    :data:`MARKER_NAMES`, the variables Claude Code sets for each session (its id, its host's, its child flag, its
+    executable, its messaging socket, its process) besides :data:`AGENT_ENV`; never a configuration variable an owner
+    may export in their own terminal (``CLAUDE_CODE_USE_BEDROCK``, the IDE's ``CLAUDE_CODE_SSE_PORT``)."""
     env = os.environ if env is None else env
-    return next((v for v in MARKER_NAMES if env.get(v)), "")
+    names = MARKER_NAMES if session_markers(data) else AGENT_ENV
+    return next((v for v in names if env.get(v)), "")
+
+
+def lock_marker(env=None, data: dict | None = None, present: bool = False) -> str:
+    """The marker the acting gestures' own lock reads (brain.detail.refused: schedule install --apply, update,
+    uninstall --apply, queue apply, tidy's remote apply, the cockpit's actions; brain.succession: handover root), ''
+    when there is none: ``CLAUDECODE`` alone, set and not empty (``present``: set, even empty), as 0.5.1 read it;
+    under config.json ``guards.gestures_session_markers``, any of :data:`MARKER_NAMES` (:func:`agent_session`), so
+    that clearing one is not enough."""
+    env = os.environ if env is None else env
+    if session_markers(data):
+        var = agent_session(env, data)
+        return var or ("CLAUDECODE" if present and "CLAUDECODE" in env else "")
+    return "CLAUDECODE" if ("CLAUDECODE" in env if present else env.get("CLAUDECODE")) else ""
 
 
 def runs_brain(low: list[str]) -> int:
@@ -307,6 +323,17 @@ def strict(data: dict | None = None) -> bool:
     return isinstance(section, dict) and section.get("owner_strict") is True
 
 
+def session_markers(data: dict | None = None) -> bool:
+    """config.json's ``guards.gestures_session_markers``: an agent's session is read from every name of
+    :data:`MARKER_NAMES` (off by default: :data:`AGENT_ENV`, and ``CLAUDECODE`` alone for the acting gestures' own
+    lock, as 0.5.1 read them); an unreadable config.json loads as no data, so it stays off."""
+    if data is None:
+        from . import config
+        data = config.load().data
+    section = data.get("guards") if isinstance(data, dict) else None
+    return isinstance(section, dict) and section.get("gestures_session_markers") is True
+
+
 # What marks a session: the variables Claude Code sets for each session it runs (and the brain's own agents'), never
 # the configuration ones an owner may export in their own terminal (CLAUDE_CODE_USE_BEDROCK, CLAUDE_CODE_SSE_PORT...)
 SESSION_ENV = ("CLAUDE_CODE_SESSION_ID", "CLAUDE_CODE_HOST_SESSION_ID", "CLAUDE_CODE_CHILD_SESSION",
@@ -415,7 +442,7 @@ def clears_marker(command: str) -> str:
 
 def wide_matching(data: dict | None = None) -> bool:
     """config.json's ``guards.gestures_wide``: a gesture is matched through words the guard cannot resolve and
-    Python's inline code too (off by default: refusals 0.5.2 adds; the MCP server matches wide always)."""
+    Python's inline code too (off by default: refusals 0.6.0 adds; the MCP server follows it too)."""
     if data is None:
         from . import config
         data = config.load().data
@@ -429,7 +456,7 @@ def cli_refusal(argv: list[str], env=None, data: dict | None = None) -> str:
     g = match(["brain", *argv])
     if g is None or g.cli != "gate":
         return ""
-    var = agent_session(env)
+    var = agent_session(env, data)
     if not var or not (strict(data) or wide_matching(data)):
         return ""
     from . import config

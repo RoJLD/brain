@@ -9,6 +9,7 @@ import sys
 from .. import succession
 
 ORDER = 545   # its place in brain --help's list of commands (brain.commands): after sessions
+PHASE = "early"   # its handlers: early only, before any root is resolved (brain.commands)
 USAGE_ORDER = 545   # its usage lines' place in brain --help's epilog
 USAGE = """\
   brain handover write [--from FILE|-] [--successor NAME] [--id ID]   the coordinator's hand-over note in

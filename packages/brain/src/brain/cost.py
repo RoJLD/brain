@@ -34,8 +34,14 @@ milestone the graph's, its kind the words of its title (spec, review, fix, build
                  calibration per class (median actual / backtest estimate: what the next estimates are multiplied
                  by), the sizes against the actuals (the window's misses per size and class, the thresholds the
                  history proposes, whether the size key is kept: wi-brain-size-calibration), the costliest sessions
-                 and the script candidates; ``--write`` keeps it in
-                 <BRAIN_HOME>/usage/<project>/audit-<since>_<until>.md.
+                 and the script candidates, the sessions against their context (those past 80 % and 100 % of their
+                 brief's budget, those that peaked above the :data:`CEILING`); ``--write`` keeps it in
+                 <BRAIN_HOME>/usage/<project>/audit-<since>_<until>.md and appends its record, one JSON line, to
+                 <BRAIN_HOME>/usage/<project>/audits.jsonl (brain.auditrecord: the estimates' typical error and
+                 share within x1.5, the context counts, the cost): the week-by-week series a KPI reads
+                 (brain.auditrecord.series), the last line of a window winning when the audit of one window is
+                 written twice. ``brain digest`` names the
+                 latest audit (brain.auditrecord.latest_audit).
 """
 
 from __future__ import annotations
@@ -49,7 +55,7 @@ from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from pathlib import Path
 
-from . import config, graph, paths, projects, provenance, queue, resume, sizing, spend, usage
+from . import auditrecord, config, graph, paths, projects, provenance, queue, resume, sizing, spend, usage
 
 MIN_SIMILAR = 3
 OFF = 1.5  # an actual above OFF x its estimate, or below estimate / OFF, is off
@@ -868,7 +874,7 @@ def audit(led: Ledger, since: str, until: str, top: int = TOP) -> dict:
             "costliest": table_of(led, rows, "session", since, until)[:top],
             "phases": table_of(led, rows, "phase", since, until),
             "sequences": sequences(rows)[:top], "cost": round(sum(r.get("cost") or 0 for r in rows), 4),
-            "sessions": len(rows)}
+            "sessions": len(rows), "context": auditrecord.context_of(rows)}
 
 
 def render_audit(au: dict, project: str, generated: str) -> str:
@@ -894,6 +900,8 @@ def render_audit(au: dict, project: str, generated: str) -> str:
     if not au["calibration"]:
         lines.append(f"- not enough finished items yet ({MIN_SIMILAR} per class)")
     lines += sizing.render_sizes(au.get("sizes"), au.get("size_key"))
+    ctx = au.get("context") or auditrecord.context_of([])
+    lines += ["", "## Context against the budgets", "", auditrecord.context_line(ctx)]
     lines += ["", "## Where the cost went", ""]
     lines += [f"- {r['key']}: {usage.usd(r['total'])} ({_pct(r['share'])})" for r in au["phases"]]
     lines += ["", "## Costliest sessions", ""]

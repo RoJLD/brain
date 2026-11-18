@@ -9,6 +9,7 @@ from pathlib import Path
 from .. import knowledge
 
 ORDER = 435   # its place in brain --help's list of commands (brain.commands), after brain memory
+PHASE = "early"   # its handlers: early only, before any root is resolved (brain.commands)
 USAGE_ORDER = 435   # its usage lines' place in brain --help's epilog, after brain memory's
 RUNS_VIA = {   # brain perf --usage: how a subcommand that may never run from the CLI is reached (brain.adoption)
     "notes init": "on demand: the owner lays out a notes home once, by plan",

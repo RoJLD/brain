@@ -188,6 +188,27 @@ def test_brief_classes_from_config(project, tmp_path, monkeypatch):
         brief.build(project, "wi-nope")
 
 
+def test_every_class_starts_at_the_ceiling_and_a_larger_budget_is_warned(project, tmp_path, monkeypatch):
+    # every class starts at 400k; a larger budget, from --budget or a class, is the expansion step of an unfinished task
+    for cls in brief.CLASSES:
+        b = brief.build(project, "wi-c", task_class=cls, coordinator="local_x")
+        assert b.budget == "400k" and not [w for w in b.warnings if "ceiling" in w], cls
+    b = brief.build(project, "wi-c", coordinator="local_x", budget="600k")
+    warned = ("budget 600k is above the ceiling 400k (brief.ceiling): give it only to an unfinished task expanded "
+              "one step")
+    assert warned in b.warnings and "600k" in brief.render(b)
+    cfg = tmp_path / "brain3"
+    cfg.mkdir()
+    (cfg / "config.json").write_text('{"v": 1, "identity": {"owner": "Ada"}, "brief": {"ceiling": "600k", '
+                                     '"classes": {"strategic": {"budget": "800k"}}}}', encoding="utf-8")
+    monkeypatch.setenv("BRAIN_CONFIG", str(cfg / "config.json"))
+    assert config.check() == []   # the schema knows brief.ceiling
+    assert not [w for w in brief.build(project, "wi-c", coordinator="local_x", budget="600k").warnings
+                if "ceiling" in w]
+    b = brief.build(project, "wi-c", task_class="strategic", coordinator="local_x")
+    assert b.budget == "800k" and any("above the ceiling 600k" in w for w in b.warnings)
+
+
 def test_brief_says_what_to_do_after_the_merge(project):
     """wi-brain-archive-after-merge: the brief carries close-item step 5, between the coordinator's section and the
     owner's definition of done."""

@@ -7,6 +7,7 @@ import argparse
 from .. import timing
 
 ORDER = 440   # its place in brain --help's list of commands (brain.commands)
+PHASE = "early"   # its handlers: early only, before any root is resolved (brain.commands)
 USAGE_ORDER = 490   # its usage lines' place in brain --help's epilog
 USAGE = """\
   brain timed [--task T] [--project P] [--version V] [--shell] [--quiet] -- COMMAND...

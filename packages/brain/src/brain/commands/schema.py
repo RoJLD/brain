@@ -14,6 +14,7 @@ from ..inventory import AuditError, git, git_tree, work_tree
 from ._common import root_of
 
 ORDER = 535   # its place in brain --help's list of commands (brain.commands)
+PHASE = "early"   # its handlers: early only, before any root is resolved (brain.commands)
 USAGE_ORDER = 535   # its usage lines' place in brain --help's epilog
 USAGE = """\
   brain schema diff --against TAG [--repo-dir D] [--pr-body FILE|-] [--strict] [--json]   what the schemas a

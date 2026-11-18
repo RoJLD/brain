@@ -1,5 +1,6 @@
 """The registry's functions (brain.commands): the command modules loaded in ORDER, their parsers added, the module of
-a command, the usage lines and the NO_PROJECT names, for build_parser and the dispatch (brain.cli)."""
+a command, the usage lines and the NO_PROJECT names, for build_parser and the dispatch (brain.cli); the check that
+each module's declarations (PHASE, ALIASES, NO_PROJECT) match what it does."""
 
 from __future__ import annotations
 
@@ -59,3 +60,50 @@ def usage() -> list[str]:
 def no_project() -> set[str]:
     """The parsers no --project is added after (brain.cli): every command module's NO_PROJECT."""
     return {name for m in load() for name in getattr(m, "NO_PROJECT", ())}
+
+
+PHASES = ("run", "early", "both")   # a command module's PHASE: run (the default), early or both
+
+
+def phase(mod: ModuleType) -> str:
+    """The phase a command module declares (its PHASE, ``run`` when it gives none)."""
+    return getattr(mod, "PHASE", "run")
+
+
+def handled(mod: ModuleType) -> str:
+    """The phase a command module's handlers give: ``both`` (early, then run), ``early`` (no run) or ``run``."""
+    early, run = callable(getattr(mod, "early", None)), callable(getattr(mod, "run", None))
+    return "both" if early and run else "early" if early else "run"
+
+
+def undeclared() -> list[str]:
+    """The command modules whose declarations disagree with what they do, one line each: a PHASE that is not the
+    phase of its handlers, parsers other than its file name then its ALIASES, a NO_PROJECT name it does not register
+    or on a run-only command. Each module declares its own (wi-brain-cli-registry-declared): adding a command edits
+    no shared list."""
+    wrong = []
+    for mod in load():
+        name = mod.__name__.rsplit(".", 1)[1]
+        if phase(mod) != handled(mod):
+            wrong.append(f"{name}: PHASE {phase(mod)!r}, its handlers give {handled(mod)!r}")
+        sub = argparse.ArgumentParser().add_subparsers()
+        mod.register(sub, Context("", ""))
+        names = [name.replace("_", "-"), *getattr(mod, "ALIASES", ())]
+        if list(sub.choices) != names:
+            wrong.append(f"{name}: registers {list(sub.choices)}, declares {names} (its file name, then ALIASES)")
+        no_project = set(getattr(mod, "NO_PROJECT", ()))
+        if no_project - _parsers(sub):
+            wrong.append(f"{name}: NO_PROJECT names {sorted(no_project - _parsers(sub))}, parsers it does not register")
+        elif no_project and phase(mod) == "run":
+            wrong.append(f"{name}: NO_PROJECT on a run-only command (it needs the project's root: declare early)")
+    return wrong
+
+
+def _parsers(sub: argparse._SubParsersAction) -> set[str]:
+    """Every parser name under ``sub``, its nested subcommands' included."""
+    names = set(sub.choices)
+    for parser in sub.choices.values():
+        for action in parser._actions:
+            if isinstance(action, argparse._SubParsersAction):
+                names |= _parsers(action)
+    return names
