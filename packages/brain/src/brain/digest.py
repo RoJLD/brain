@@ -13,7 +13,8 @@ session reads one page instead of the journals. Newest first in each section:
   6. the merged PRs (gh; --offline skips them), less those already on a closed item's line;
   7. the session records (SR) started in the window;
   8. the token cost of the window's sessions, from the token ledger (brain.usage, brain.cost): the total at API
-     prices, its distribution, the costliest items and phases, the script candidates;
+     prices, its distribution, the costliest items and phases, the script candidates, and the latest cost audit
+     (brain cost audit --write: its window, the estimates' typical error, the sessions past their budget);
   9. the journal's entries.
 
 WHEN is a day (YYYY-MM-DD), today, yesterday, last-week (seven days before today), last-month (the same day a month
@@ -45,7 +46,7 @@ from dataclasses import dataclass, field
 from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 
-from . import actions, cost, decisions, diffs, graph, notes, paths, projects, resume
+from . import actions, auditrecord, cost, decisions, diffs, graph, notes, paths, projects, resume
 
 BUDGET = 4000  # tokens; 0: no limit
 WIDTH = resume.WIDTH
@@ -330,7 +331,8 @@ def tokens(project: projects.Project, w: Window) -> dict:
     except (OSError, ValueError) as exc:
         return {"error": str(exc), "sessions": 0}
     until = str(date.fromisoformat(w.until) + timedelta(days=1)) if w.until else ""
-    return cost.summary_of(led, project.name, w.since, until)
+    return {**cost.summary_of(led, project.name, w.since, until),
+            "audit": auditrecord.latest_audit_line(auditrecord.latest_audit(project.name))}
 
 
 # --- the text, by levels ---
@@ -512,9 +514,10 @@ def _cost(c: dict | None) -> Part | None:
     if not c or not c.get("sessions"):
         return None
     line = cost.summary_line(c)
+    audit = [c["audit"]] if c.get("audit") else []
     full = [line] + [f"- script candidate: {k} ({n} sessions, ${usd:,.2f})" for k, n, usd in c.get("candidates") or []]
     total = [f"${c['cost']:,.2f} at API prices over {c['sessions']} session(s) (brain usage)."]
-    return Part("cost", "Token cost", [full, [line], total], ["full", "one line", "total"])
+    return Part("cost", "Token cost", [full + audit, [line, *audit], total], ["full", "one line", "total"])
 
 
 def _first_bullet_sentence(bullet: str) -> str:

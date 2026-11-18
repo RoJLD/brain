@@ -6,7 +6,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from .. import cost, forecast, usage
+from .. import auditrecord, cost, forecast, usage
 from ._common import _scope, _text, _when, _whole
 
 ORDER = 170   # its place in brain --help's list of commands (brain.commands)
@@ -22,9 +22,12 @@ USAGE = """\
                  --record writes props.cost_review (not for an item no session of the token ledger served)
   brain cost audit [--since WHEN] [--until WHEN] [--top N] [--write] [--json]   the window's estimates off by more
                  than x1.5 and why, the calibration per class, the sizes against the actuals (misses per size and
-                 class, thresholds proposed, the size key kept or not), the costliest sessions, the script candidates;
-                 --write: <BRAIN_HOME>/usage/<project>/audit-<since>_<until>.md, and the week's forecast snapshot
-                 <BRAIN_HOME>/forecast/<project>/<day>.json (the Monday task's command)
+                 class, thresholds proposed, the size key kept or not), the context against the briefs' budgets
+                 (the sessions past 80 % and 100 % of it, those that peaked above 400k), the costliest sessions, the
+                 script candidates; --write: <BRAIN_HOME>/usage/<project>/audit-<since>_<until>.md, its record
+                 appended to <BRAIN_HOME>/usage/<project>/audits.jsonl (kept: the estimates' error and the context
+                 counts, week by week; the last line of a window wins), and the week's forecast snapshot <BRAIN_HOME>/forecast/<project>/<day>.json (the Monday
+                 task's command)
   brain cost estimate|review|audit ... --scope REF   the items and sessions of the projects of a node's subtree in
                  the scope tree (brain scopes: an id, a path of ids, global = --all, . or ..)
 """
@@ -69,19 +72,24 @@ def cmd_cost(args, root: Path) -> int:
         return 0
     au = cost.audit(led, since, until, args.top)
     name = projs[0].name if len(projs) == 1 else (getattr(args, "scope_node", "") or "all")
-    text = cost.render_audit(au, name, usage.now_utc().strftime("%Y-%m-%d %H:%M UTC"))
+    now = usage.now_utc()
+    text = cost.render_audit(au, name, now.strftime("%Y-%m-%d %H:%M UTC"))
     out = cost.audit_path(name, since, until)
-    snaps = []
+    written = []
     if args.write:
         out.parent.mkdir(parents=True, exist_ok=True)
         out.write_text(text, encoding="utf-8")
+        written.append(f"written to {out}")
+        # the week's line of the series a KPI reads: the estimates' error and the context counts
+        rec = auditrecord.append_record(name, auditrecord.audit_record(au, name, now.strftime("%Y-%m-%dT%H:%M:%SZ"), out))
+        written.append(f"record appended to {rec}")
         for p in projs:  # the week's forecast snapshot, what the calibration judges (spec-brain-psychohistory 6)
             try:
-                snaps.append(str(forecast.save(forecast.forecast(p, led, usage.now_utc()), snapshot=True)))
+                written.append("forecast snapshot: "
+                               + str(forecast.save(forecast.forecast(p, led, usage.now_utc()), snapshot=True)))
             except (forecast.ForecastError, OSError, ValueError) as exc:
-                snaps.append(f"{p.name}: no forecast snapshot ({exc})")
-    print(cost.as_json(au) if args.json else text + (f"\nwritten to {out}" if args.write else "")
-          + "".join(f"\nforecast snapshot: {s}" for s in snaps))
+                written.append(f"forecast snapshot: {p.name}: no forecast snapshot ({exc})")
+    print(cost.as_json(au) if args.json else "\n".join([text, *written]) if written else text)
     return 0
 
 
@@ -103,12 +111,15 @@ def register(sub, ctx) -> None:
     cr.add_argument("--record", action="store_true", help="write each review on its item (props.cost_review)")
     cr.add_argument("--json", action="store_true")
     ca = co.add_parser("audit", help="the window's estimates off by more than x1.5 and why, the calibration per "
-                                     "class, the costliest sessions, the script candidates")
+                                     "class, the context against the briefs' budgets, the costliest sessions, the "
+                                     "script candidates")
     ca.add_argument("--since", default="last-week", help="the window's start (default last-week)")
     ca.add_argument("--until", help="the window's end, excluded (default: now)")
     ca.add_argument("--top", type=_whole, default=cost.TOP, help=f"rows per table (default {cost.TOP}; 0: all)")
-    ca.add_argument("--write", action="store_true", help="keep it in <BRAIN_HOME>/usage/<project>/audit-*.md, and the "
-                                                         "week's forecast snapshot in <BRAIN_HOME>/forecast/<project>")
+    ca.add_argument("--write", action="store_true", help="keep it in <BRAIN_HOME>/usage/<project>/audit-*.md, append "
+                                                         "its record to <BRAIN_HOME>/usage/<project>/audits.jsonl "
+                                                         "(kept), and the week's forecast snapshot in "
+                                                         "<BRAIN_HOME>/forecast/<project>")
     ca.add_argument("--json", action="store_true")
     for one in (ce, cr, ca):
         one.add_argument("--scope", help="the items and sessions of the projects of a node's subtree in the scope "
