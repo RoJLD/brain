@@ -6,8 +6,9 @@ The brief holds, in this order:
 - the item: its id, title, status, priority, milestones, then every prop as recorded (what was decided, validated,
   extended, found) and its open questions (``props.open``);
 - the task class, its model and effort, and the context budget: config.json ``brief.classes`` (default
-  :data:`CLASSES`: a trivial task on a small model at low effort, a strategic one on the strongest at high effort);
-  ``--budget`` else the class's;
+  :data:`CLASSES`: a trivial task on a small model at low effort, a strategic one on the strongest at high effort,
+  each at 400k); ``--budget`` else the class's; a budget above config.json ``brief.ceiling`` (default :data:`CEILING`,
+  400k) is warned about: it is the expansion step of an unfinished task, not a start;
 - the cost estimate of brain cost (wi-brain-brief-estimate) when the token ledger has a basis;
 - while config.json ``usage.guard.wave_quota`` is set (wi-brain-wave-quota-gate), how many streams fit now: the
   coordinator's live streams under ``max_streams``, and the streams at this item's estimate that keep the week's
@@ -51,8 +52,11 @@ from . import config, failuremodes, projects, resume, standards, tidy
 
 CLASSES = {"trivial": {"model": "haiku", "effort": "low", "budget": "400k"},
            "standard": {"model": "", "effort": "", "budget": "400k"},
-           "strategic": {"model": "opus", "effort": "high", "budget": "800k"}}
+           "strategic": {"model": "opus", "effort": "high", "budget": "400k"}}
 BUDGETS = ("400k", "600k", "800k", "1M")
+# The context ceiling a brief starts a session under (config.json brief.ceiling): a message costs two to three times
+# more above it, so every class starts at 400k and a larger budget is an expansion step of an unfinished task.
+CEILING = "400k"
 DONE = "Definition of done"
 # What a session does once its PR is merged (close-item step 5, wi-brain-archive-after-merge); brief.after_merge
 # replaces it.
@@ -322,6 +326,18 @@ def after_merge(opts: dict) -> list[str]:
     return [str(x) for x in lines] if isinstance(lines, list) else list(AFTER_MERGE)
 
 
+def budget_warnings(budget: str, opts: dict) -> list[str]:
+    """What a brief's budget is warned about: not one of :data:`BUDGETS`, or above the ceiling (config.json
+    ``brief.ceiling``, else :data:`CEILING`): the expansion step of an unfinished task, not a start."""
+    if budget not in BUDGETS:
+        return [f"budget {budget}: the steps are {', '.join(BUDGETS)}"]
+    ceiling = opts.get("ceiling") if opts.get("ceiling") in BUDGETS else CEILING
+    if BUDGETS.index(budget) > BUDGETS.index(ceiling):
+        return [f"budget {budget} is above the ceiling {ceiling} (brief.ceiling): give it only to an unfinished "
+                "task expanded one step"]
+    return []
+
+
 def build(p: projects.Project, nid: str, *, task_class: str = "standard", budget: str = "", coordinator: str = "",
           notes: str = "", collisions_report=None) -> Brief:
     """The brief of item ``nid`` of project ``p``."""
@@ -341,9 +357,8 @@ def build(p: projects.Project, nid: str, *, task_class: str = "standard", budget
     if blockers:
         warnings.append(f"it depends on open item(s): {', '.join(blockers)}")
     cls = classes[task_class]
-    budget = budget or cls.get("budget") or "400k"
-    if budget not in BUDGETS:
-        warnings.append(f"budget {budget}: the steps are {', '.join(BUDGETS)}")
+    budget = budget or cls.get("budget") or CEILING
+    warnings += budget_warnings(budget, opts)
     coordinator = coordinator or os.environ.get("CLAUDE_CODE_HOST_SESSION_ID", "")
     if not coordinator:
         warnings.append("no coordinator id: pass --coordinator (the app's local_ id of the session that reviews)")
