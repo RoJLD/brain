@@ -32,10 +32,11 @@ brain check and brain refresh print (local only, no network).
 Where work ends, tidy is applied, not only reported (wi-brain-tidy-at-close): brain close removes the PR's head branch
 and its worktrees (brain.closing; the PR's merge stands for the idle rule, every other refusal stays), and brain
 refresh applies the merged-and-clean part of the plan (:func:`auto`, :func:`merged_part`) while config.json
-``tidy.auto`` is on (the default; ``brain refresh --no-tidy`` skips it once). Neither asks first, so both keep a
-worktree that holds what git ignores and ``git worktree remove`` would delete with it (a ``.env``, local data, outputs:
-:func:`lost_ignored`, caches and virtual environments aside), with the paths named; ``brain tidy``'s plan names them
-under the worktree it removes. brain close also counts the PR's head branch merged when its tip is on the head commit
+``tidy.auto`` is on (the default; ``brain refresh --no-tidy`` skips it once). Each keeps a worktree that holds what git
+ignores and ``git worktree remove`` would delete with it (a ``.env``, local data, outputs: :func:`lost_ignored`,
+caches and virtual environments aside), with the paths named; ``brain tidy --apply`` too, the coordinator's scripted
+step after an archive, unless ``--include-ignored``, whose plan names them under the worktree it removes. brain close
+also counts the PR's head branch merged when its tip is on the head commit
 the PR merged (``headRefOid``): a squash or rebase merge leaves no ancestry, and a tip with commits the PR did not
 merge is kept.
 """
@@ -177,7 +178,19 @@ def lost_ignored(path: str) -> tuple[list[str], str]:
         return [], f"git ls-files failed ({exc})"
     if r.returncode:
         return [], f"git ls-files failed ({r.stderr.strip().splitlines()[-1] if r.stderr.strip() else r.returncode})"
-    return sorted(x for x in r.stdout.split("\0") if x and not _regenerable(x)), ""
+    return sorted(x for x in r.stdout.split("\0")
+                  if x and not _regenerable(x) and not _folder_link(os.path.join(path, x.rstrip("/")))), ""
+
+
+def _folder_link(path: str) -> bool:
+    """A junction, or a symbolic link to a folder: tidy unlinks it before the removal, never following it, so what it
+    points to is not lost (a node_modules junction into a production checkout)."""
+    try:
+        if os.path.islink(path):
+            return os.path.isdir(path)
+        return getattr(os.lstat(path), "st_reparse_tag", 0) == JUNCTION
+    except OSError:
+        return False
 
 
 def _few(names: list[str], n: int = 3) -> str:
@@ -326,6 +339,7 @@ class Step:
     after: str = ""   # a branch's worktree, removed first
     merged: bool = False   # a stale worktree on a merged branch, or detached on a commit the default branch holds
     ignored: list[str] = field(default_factory=list)   # what git ignores in a worktree and deletes with it
+    for_ignored: bool = False   # a stale worktree kept only for what git ignores in it (--include-ignored removes it)
 
 
 @dataclass
@@ -412,11 +426,12 @@ def plan_repo(project: str, name: str, repo: Path, production: bool, *, remote: 
         if not remove and wt.branch in beyond and why.endswith("is not merged"):
             why = beyond[wt.branch]
         lost: list[str] = []
+        for_ignored = False
         if remove:
             lost, err = lost_ignored(wt.path)
             if keep_ignored and (err or lost):
-                why, remove = _ignored_why(lost, err), False
-        step = Step("worktree", wt.path, remove, why, ignored=lost if remove else [])
+                why, remove, for_ignored = _ignored_why(lost, err), False, True
+        step = Step("worktree", wt.path, remove, why, ignored=lost if remove else [], for_ignored=for_ignored)
         if remove:
             step.merged = bool(wt.branch) or any(_git_ok(repo, "merge-base", "--is-ancestor", wt.head, r) for r in refs)
             step.links = untracked_links(wt.path)
@@ -514,7 +529,9 @@ def _open_pr_heads(repo: Path) -> tuple[set[str], str]:
     return set(), "gh did not list the open PRs: their heads are not told apart"
 
 
-def plan(scope: list[projects.Project], *, remote: bool = False, keep_ignored: bool = False) -> list[RepoPlan]:
+def plan(scope: list[projects.Project], *, remote: bool = False, keep_ignored: bool = True) -> list[RepoPlan]:
+    """tidy's plan of each repo of ``scope``. ``keep_ignored`` (the default) keeps a worktree holding files git
+    ignores and would delete with it (a .env, local data, outputs); brain tidy --include-ignored plans without it."""
     state: list = []
     roots = guards.production_roots()
     out = []
@@ -683,12 +700,16 @@ def counts(plans: list[RepoPlan]) -> dict:
     return {"worktrees": sum(len(rp.of("worktree", True)) for rp in plans),
             "pruned": sum(len(rp.of("prune", True)) for rp in plans),
             "branches": sum(len(rp.of("branch", True)) for rp in plans),
-            "remote": sum(len(rp.remote or []) for rp in plans)}
+            "remote": sum(len(rp.remote or []) for rp in plans),
+            "for_ignored": sum(1 for rp in plans for s in rp.of("worktree", False) if s.for_ignored)}
 
 
 def main(scope: list[projects.Project], *, remote: bool = False, apply: bool = False, as_json: bool = False,
-         env: dict | None = None) -> int:
-    plans = plan(scope, remote=remote)
+         env: dict | None = None, include_ignored: bool = False) -> int:
+    """brain tidy: the plan, then --apply. A worktree holding files git ignores (and ``git worktree remove`` would
+    delete without asking) stays unless ``include_ignored`` (--include-ignored), which removes it with them, named in
+    the plan."""
+    plans = plan(scope, remote=remote, keep_ignored=not include_ignored)
     if as_json and not apply:
         print(json.dumps([asdict(rp) for rp in plans], ensure_ascii=False, indent=1))
         return 0
@@ -709,6 +730,9 @@ def main(scope: list[projects.Project], *, remote: bool = False, apply: bool = F
         more = " --remote" if remote else ""
         print(f"tidy: dry run, nothing removed: {total}; brain tidy{more} --apply removes them"
               + (f" (the remote ones: {config.owner_of()}'s, from their terminal or the queue)" if remote else ""))
+    if n["for_ignored"]:
+        print(f"tidy: {n['for_ignored']} stale worktree(s) kept for the files git ignores in them (named above): "
+              "brain tidy --apply --include-ignored removes them with those files")
     return 1 if failed else 0
 
 

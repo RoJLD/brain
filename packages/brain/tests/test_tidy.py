@@ -252,6 +252,7 @@ def test_junctions_into_production_are_unlinked_before_the_worktree_goes(repo, t
     if not _link(prod / "data", wt / "data"):
         pytest.skip("no junction or symbolic link here")
     app(tmp_path, sessions={"local_a": (wt, True)})
+    assert tidy.lost_ignored(str(wt)) == ([], "")   # an ignored junction is unlinked, never followed: nothing lost
     (s,) = one().of("worktree")
     assert s.remove and s.links == [str(wt / "data")] and s.into_production == [str(wt / "data")]
     assert "a junction into production" in "\n".join(tidy.render(one()))
@@ -479,12 +480,34 @@ def test_refresh_keeps_a_merged_worktree_holding_ignored_files(repo, tmp_path, m
 
 def test_brain_tidy_names_the_ignored_files_its_apply_deletes(repo, tmp_path):
     wt = _ignoring(repo, tmp_path)
-    rp = one()
+    rp = one(keep_ignored=False)   # brain tidy --include-ignored's plan
     (s,) = rp.of("worktree", True)
-    assert s.ignored == [".env"]
+    assert s.ignored == [".env"] and not s.for_ignored
     assert "         and with it what git ignores there: .env" in tidy.render(rp)
     (wt / "data.csv").write_text("1\n", encoding="utf-8")   # untracked, not ignored: dirty for both
-    assert not one().of("worktree")[0].remove
+    assert not one(keep_ignored=False).of("worktree")[0].remove
+
+
+def test_brain_tidy_apply_keeps_a_worktree_holding_ignored_files_unless_include_ignored(repo, tmp_path, capsys):
+    """wi-brain-tidy-at-close: the explicit --apply (the coordinator's scripted step after an archive) keeps it too;
+    --include-ignored removes it with its .env, named in the plan."""
+    wt = _ignoring(repo, tmp_path)
+    (s,) = one().of("worktree")   # the plan's default
+    assert not s.remove and s.for_ignored and s.why == "it holds 1 ignored path(s) git would delete with it: .env"
+    assert tidy.hygiene(demo()) is None   # what --apply would remove: nothing
+    assert cli.main(["--project", "demo", "tidy", "--apply"]) == 0
+    out = capsys.readouterr().out
+    assert f"keep   {wt.as_posix()}: it holds 1 ignored path(s) git would delete with it: .env" in out
+    assert ("tidy: 1 stale worktree(s) kept for the files git ignores in them (named above): brain tidy --apply "
+            "--include-ignored removes them with those files") in out
+    assert (wt / ".env").is_file() and "claude/env" in branches(repo)
+    assert cli.main(["--project", "demo", "tidy", "--include-ignored"]) == 0   # the dry run names what goes
+    out = capsys.readouterr().out
+    assert "and with it what git ignores there: .env" in out and (wt / ".env").is_file()
+    assert cli.main(["--project", "demo", "tidy", "--apply", "--include-ignored"]) == 0
+    out = capsys.readouterr().out
+    assert f"removed worktree {wt}" in out and "deleted branch claude/env" in out and not wt.exists()
+    assert "kept for the files git ignores" not in out
 
 
 def test_a_plan_minutes_old_rechecks_the_ignored_files_before_removing(repo, tmp_path):

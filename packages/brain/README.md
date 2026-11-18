@@ -18,7 +18,8 @@ What it does, every command reading files and git, never a model:
   registered project; first, while `config.json` `tidy.auto` is on, the default, refresh applies the merged-and-clean
   part of `brain tidy`'s plan: the stale worktrees on a merged branch, the merged local branches, never origin's, an
   unmerged branch, a dirty, locked or leased worktree, one holding files git ignores and would delete with it (a
-  `.env`, data: named) or the current folder; `--no-tidy` skips it once), and written
+  `.env`, data: named; `brain tidy --apply` keeps it too, `--include-ignored` removes it with them) or the current
+  folder; `--no-tidy` skips it once), and written
   once on the default branch after each merge by one writer (`brain views --write`;
   a branch need not commit them, the default branch's check warns of a stale one, fails under `config.json`
   `views.strict`: [`docs/views.md`](docs/views.md));

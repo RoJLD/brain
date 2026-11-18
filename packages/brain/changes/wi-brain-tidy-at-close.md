@@ -15,7 +15,9 @@ section: Changed
   `brain ship` and the answers' worktree run pass `--no-tidy`: a check never deletes.
 - Neither `brain close` nor `brain refresh` removes a worktree holding files git ignores, which `git worktree remove`
   deletes without asking (a hand-placed `.env`, local data, outputs; caches and virtual environments such as
-  `__pycache__` or `.venv` aside): it is kept and the paths are named. `brain tidy`'s plan names them under a worktree
-  it removes with `--apply`.
+  `__pycache__` or `.venv` aside): it is kept and the paths are named. `brain tidy --apply` keeps it too (the
+  coordinator's scripted step after an archive) and says so; the new `--include-ignored` removes it with those files,
+  which its plan names under the worktree. An ignored junction or folder link is not counted: tidy unlinks it first,
+  never following it.
 - The close-item procedure's step 5 removes the worktree with `brain close`, never by hand, and the coordinator runs
   `brain tidy --apply` on a child's repos right after archiving it; the brief's after-merge lines say so.

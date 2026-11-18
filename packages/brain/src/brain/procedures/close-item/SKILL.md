@@ -157,8 +157,10 @@ nobody asks it again.
   <path>` without `--force`, then `git branch -d <branch>`.
 - **The coordinator's archive step**: right after archiving a child, the coordinator runs `brain [--project P] tidy
   --apply` on each repo the child worked in (its `--all` when they span projects): the child's own worktree, leased
-  until its archive, goes then; `brain refresh` applies the same merged-and-clean part on its own while `config.json`
-  `tidy.auto` is on (the default), so a coordinator that forgot leaves it to the next refresh, never to the owner.
+  until its archive, goes then; it keeps a worktree holding files git ignores (a `.env`, local data), names them and
+  says `--include-ignored` would remove them with it: that flag is the owner's call or follows a look at the files,
+  never a default. `brain refresh` applies the same merged-and-clean part on its own while `config.json` `tidy.auto`
+  is on (the default), so a coordinator that forgot leaves it to the next refresh, never to the owner.
 
 ## 6. Memory
 
