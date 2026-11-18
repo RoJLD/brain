@@ -147,11 +147,17 @@ nobody asks it again.
 - **The token-free net**: the owner's app setting `auto_archive_inactive_days = 7` (Claude desktop app, Settings,
   Claude Code) archives a session inactive for 7 days, never a running one or one with uncommitted changes. The owner
   sets it; no session changes the app's settings. It catches what this step forgets; it is no reason to skip it.
-- Remove the item's git worktree and local branch: `git worktree list`, then `git worktree remove <path>` without
-  `--force` (first remove links such as junctions that point into a production checkout), then
-  `git branch -d <branch>` once it is merged. If git refuses, report why instead of forcing. A session cannot remove
-  the worktree it runs in: the coordinator removes it after archiving the child, or `brain tidy` once its sessions are
-  archived.
+- Remove the item's git worktree and local branch with the `brain` command, never by hand:
+  `brain [--project P] close <id> --pr "<repo> #<n>" --write` once the PR is merged removes the PR's head branch and
+  the worktrees on it (the PR's merge stands for tidy's idle rule; links into a production checkout unlinked first;
+  never `--force`, `-D`, an unmerged branch, a dirty, locked or leased worktree). It keeps the worktree the shell
+  stands in and names the `cd` out of it: run it from the main checkout. Its output says why anything stays; report
+  that line instead of forcing. Without the `brain` command: `git worktree remove <path>` without `--force`, then
+  `git branch -d <branch>`.
+- **The coordinator's archive step**: right after archiving a child, the coordinator runs `brain [--project P] tidy
+  --apply` on each repo the child worked in (its `--all` when they span projects): the child's own worktree, leased
+  until its archive, goes then; `brain refresh` applies the same merged-and-clean part on its own while `config.json`
+  `tidy.auto` is on (the default), so a coordinator that forgot leaves it to the next refresh, never to the owner.
 
 ## 6. Memory
 

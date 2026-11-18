@@ -79,3 +79,16 @@ def test_the_generic_rules_template_counts_the_archive_in_done():
     assert "the session that merges its own PR archives itself" in done
     assert "a coordinator archives a child whose report says merged and verified" in done
     assert "never another running session or one with uncommitted or unmerged work" in done
+
+
+def test_the_worktree_is_removed_by_brain_close_and_the_coordinators_tidy():
+    """wi-brain-tidy-at-close: step 5 removes the worktree with brain close, never by hand, and the coordinator runs
+    brain tidy --apply right after archiving a child; the brief says both."""
+    text = (Path(brief.__file__).parent / "procedures" / "close-item" / "SKILL.md").read_text(encoding="utf-8")
+    step5 = _flat(text.split("## 5.", 1)[1].split("## 6.", 1)[0])
+    assert 'close <id> --pr "<repo> #<n>" --write` once the PR is merged removes' in step5
+    assert "run it from the main checkout" in step5
+    assert "right after archiving a child, the coordinator runs `brain [--project P] tidy --apply`" in step5
+    assert "`tidy.auto` is on (the default)" in step5
+    after = _flat(" ".join(brief.AFTER_MERGE))
+    assert "then runs `brain tidy --apply` on your repos" in after and "Never remove a worktree by hand" in after

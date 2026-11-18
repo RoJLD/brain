@@ -244,3 +244,96 @@ def test_a_repo_named_in_another_case_takes_the_projects_spelling(root, gh, caps
     # the project at a bare root has one repo, named after its folder
     assert cli.main(["--root", str(root), "close", "wi-close", "--pr", "BRAIN #7", "--no-tidy"]) == 0
     assert 'to close: wi-close --pr "engine #3, brain #7"' in capsys.readouterr().out
+
+
+def _engine_with_worktree(tmp_path, monkeypatch):
+    """The engine's repo on main and a worktree on the PR's head branch feat/close (merged: it adds no commit), made a
+    minute ago with git worktree add: no session of the desktop app knows it."""
+    for k, v in GIT_ENV.items():
+        monkeypatch.setenv(k, v)
+    repo = git_init(tmp_path / "engine")
+    (repo / "a.txt").write_text("a\n", encoding="utf-8")
+    run_git(repo, "add", "-A")
+    run_git(repo, "commit", "-q", "-m", "base")
+    wt = tmp_path / "wts" / "close"
+    run_git(repo, "worktree", "add", "-q", "-b", "feat/close", str(wt), "main")
+    monkeypatch.setattr(closing.tidy, "_open_pr_heads", lambda r: (set(), ""), raising=False)
+    return repo, wt
+
+
+@pytest.mark.skipif(not shutil.which("git"), reason="git not available")
+def test_close_removes_the_prs_fresh_worktree_then_its_branch(root, gh, tmp_path, monkeypatch, capsys):
+    """wi-brain-tidy-at-close: the PR's merge stands for tidy's idle rule; brain tidy alone keeps it for 24 hours."""
+    repo, wt = _engine_with_worktree(tmp_path, monkeypatch)
+    monkeypatch.chdir(tmp_path)
+    args = ["--root", str(root), "close", "wi-close", "--pr", "engine #7", "--repo-dir", str(repo)]
+    assert cli.main(args) == 0
+    out = capsys.readouterr().out
+    assert f"tidy: remove worktree {wt} (on feat/close (merged), clean, no session known, its PR merged)" in out
+    assert "tidy: remove branch feat/close (after its worktree)" in out
+    assert cli.main(args + ["--write"]) == 0
+    out = capsys.readouterr().out
+    assert f"tidy: removed worktree {wt}" in out and "tidy: deleted branch feat/close" in out
+    assert not wt.exists() and "feat/close" not in run_git(repo, "branch", "--format=%(refname:short)").split()
+
+
+@pytest.mark.skipif(not shutil.which("git"), reason="git not available")
+def test_close_keeps_the_worktree_the_shell_stands_in_and_says_how_out(root, gh, tmp_path, monkeypatch, capsys):
+    repo, wt = _engine_with_worktree(tmp_path, monkeypatch)
+    monkeypatch.chdir(wt)
+    args = ["--root", str(root), "close", "wi-close", "--pr", "engine #7", "--repo-dir", str(repo), "--write"]
+    assert cli.main(args) == 0
+    out = capsys.readouterr().out
+    assert f"tidy: kept worktree {wt} (the current folder)" in out
+    assert f"tidy: the shell stands in it: cd {repo.as_posix()} (out of it), then brain close again removes it" in out
+    assert wt.is_dir() and "feat/close" in run_git(repo, "branch", "--format=%(refname:short)").split()
+    monkeypatch.chdir(repo)   # out of it: the same command removes it now (the item stays closed)
+    assert cli.main(args) == 0
+    assert f"tidy: removed worktree {wt}" in capsys.readouterr().out and not wt.exists()
+
+
+@pytest.mark.skipif(not shutil.which("git"), reason="git not available")
+@pytest.mark.parametrize("why", ["dirty", "leased", "locked"])
+def test_close_never_removes_a_dirty_leased_or_locked_worktree(root, gh, tmp_path, monkeypatch, capsys, why):
+    repo, wt = _engine_with_worktree(tmp_path, monkeypatch)
+    if why == "dirty":
+        (wt / "new.txt").write_text("work\n", encoding="utf-8")
+    elif why == "locked":
+        run_git(repo, "worktree", "lock", str(wt))
+    else:
+        base = tmp_path / "appdata" / "Claude-Data" / "claude_x"
+        (base / "claude-code-sessions" / "a" / "o").mkdir(parents=True)
+        (base / "git-worktrees.json").write_text(json.dumps({"worktrees": {"close": {
+            "path": str(wt), "leasedBy": "local_open"}}}), encoding="utf-8")
+        (base / "claude-code-sessions" / "a" / "o" / "local_open.json").write_text(json.dumps(
+            {"sessionId": "local_open", "cwd": str(wt), "isArchived": False}), encoding="utf-8")
+    monkeypatch.chdir(tmp_path)
+    assert cli.main(["--root", str(root), "close", "wi-close", "--pr", "engine #7", "--repo-dir", str(repo),
+                     "--write"]) == 0
+    out = capsys.readouterr().out
+    expected = {"dirty": "1 change(s) not committed", "leased": "session local_open is open", "locked": "locked"}[why]
+    assert f"tidy: kept worktree {wt} ({expected})" in out and wt.is_dir()
+    assert "feat/close" in run_git(repo, "branch", "--format=%(refname:short)").split()
+
+
+@pytest.mark.skipif(not shutil.which("git"), reason="git not available")
+def test_close_never_removes_an_unmerged_head_nor_its_worktree(root, gh, tmp_path, monkeypatch, capsys):
+    repo, wt = _engine_with_worktree(tmp_path, monkeypatch)
+    (wt / "b.txt").write_text("b\n", encoding="utf-8")
+    run_git(wt, "add", "-A")
+    run_git(wt, "commit", "-q", "-m", "not in main")
+    monkeypatch.chdir(tmp_path)
+    assert cli.main(["--root", str(root), "close", "wi-close", "--pr", "engine #7", "--repo-dir", str(repo),
+                     "--write"]) == 0
+    out = capsys.readouterr().out
+    assert f"tidy: kept worktree {wt} (feat/close is not merged)" in out and wt.is_dir()
+
+
+def test_item_close_with_a_pr_names_the_brain_close_that_removes_its_worktree(root, capsys):
+    assert cli.main(["--root", str(root), "item", "close", "wi-other", "--pr", "engine #3, engine #9"]) == 0
+    out = capsys.readouterr().out
+    assert ('worktree: brain close wi-other --pr "engine #9" --write removes the PR\'s merged worktree and branch'
+            in out)
+    assert cli.main(["--root", str(root), "item", "close", "wi-close", "--evidence", "a memo",
+                     "--status", "dropped"]) == 0
+    assert "worktree:" not in capsys.readouterr().out

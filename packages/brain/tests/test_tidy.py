@@ -353,3 +353,89 @@ def test_a_repo_without_a_default_branch_is_reported(tmp_path, monkeypatch):
     git_init(bare, "trunk")
     rp = tidy.plan_repo("x", "r", bare, False)
     assert rp.error.startswith("no default branch") and tidy.render(rp)[0].endswith(rp.error)
+
+
+# --- applied where work ends (wi-brain-tidy-at-close) ------------------------------------------------------------
+
+def _ends(repo, tmp_path):
+    """A merged branch's worktree whose session is archived, one detached on main's tip, one detached on an unmerged
+    branch's tip (its session archived too), a dirty one, one an open session leases, and an unmerged branch."""
+    merged(repo, "claude/done")
+    done = add_worktree(repo, tmp_path, "done", base="claude/done")
+    run_git(done, "checkout", "-q", "claude/done")
+    det = add_worktree(repo, tmp_path, "det")
+    unmerged(repo, "feat/wip")
+    wip = add_worktree(repo, tmp_path, "wipdet", base="feat/wip")
+    dirty = add_worktree(repo, tmp_path, "dirty")
+    (dirty / "new.txt").write_text("work\n", encoding="utf-8")
+    leased = add_worktree(repo, tmp_path, "leased")
+    app(tmp_path, leases={leased: "local_l"},
+        sessions={"local_d": (done, True), "local_t": (det, True), "local_w": (wip, True), "local_x": (dirty, True),
+                  "local_l": (leased, False)})
+    return {"done": done, "det": det, "wipdet": wip, "dirty": dirty, "leased": leased}
+
+
+def test_the_merged_part_leaves_out_a_worktree_detached_on_an_unmerged_commit(repo, tmp_path):
+    wts = _ends(repo, tmp_path)
+    rp = one()
+    assert {os.path.basename(s.target) for s in rp.of("worktree", True)} == {"done", "det", "wipdet"}
+    part = tidy.merged_part(rp)
+    assert {os.path.basename(s.target) for s in part.of("worktree")} == {"done", "det"}
+    assert [s.target for s in part.of("branch")] == ["claude/done"] and part.remote is None
+    assert all(s.remove for s in part.steps) and str(wts["wipdet"]) not in {s.target for s in part.steps}
+
+
+def test_refresh_applies_the_merged_and_clean_part_first(repo, tmp_path, monkeypatch, capsys):
+    wts = _ends(repo, tmp_path)
+    monkeypatch.chdir(tmp_path)
+    assert tidy.auto_on() is True   # the default
+    assert cli.main(["--root", str(repo), "refresh", "--offline"]) == 0
+    out = capsys.readouterr().out
+    assert f"tidy: main: removed worktree {wts['done']}" in out and "tidy: main: deleted branch claude/done" in out
+    assert not wts["done"].exists() and not wts["det"].exists()
+    for kept in ("wipdet", "dirty", "leased"):   # unmerged, dirty, leased: never
+        assert wts[kept].is_dir()
+    assert branches(repo) == {"main", "feat/wip"}
+
+
+def test_refresh_leaves_them_under_tidy_auto_false_or_no_tidy(repo, tmp_path, monkeypatch, capsys):
+    from conftest import BRAIN
+    wts = _ends(repo, tmp_path)
+    monkeypatch.chdir(tmp_path)
+    assert cli.main(["--root", str(repo), "refresh", "--offline", "--no-tidy"]) == 0
+    assert "tidy: main:" not in capsys.readouterr().out and wts["done"].is_dir()
+    cfg = tmp_path / "off" / "config.json"
+    cfg.parent.mkdir()
+    cfg.write_text(json.dumps({**json.loads(BRAIN.read_text(encoding="utf-8")), "tidy": {"auto": False}}),
+                   encoding="utf-8")
+    monkeypatch.setenv("BRAIN_CONFIG", str(cfg))
+    assert tidy.auto_on() is False
+    assert cli.main(["--root", str(repo), "refresh", "--offline"]) == 0
+    assert "tidy: main:" not in capsys.readouterr().out and wts["done"].is_dir() and "claude/done" in branches(repo)
+
+
+def test_refresh_keeps_the_worktree_the_shell_stands_in(repo, tmp_path, monkeypatch, capsys):
+    wts = _ends(repo, tmp_path)
+    monkeypatch.chdir(wts["done"])
+    assert cli.main(["--root", str(repo), "refresh", "--offline"]) == 0
+    assert wts["done"].is_dir() and "claude/done" in branches(repo) and not wts["det"].exists()
+
+
+def test_a_tidy_that_fails_never_fails_the_refresh(repo, tmp_path, monkeypatch, capsys):
+    def boom(*a, **k):
+        raise OSError("git vanished")
+    monkeypatch.setattr(tidy, "plan", boom)
+    monkeypatch.chdir(tmp_path)
+    assert tidy.auto(demo()) == ["warning: tidy (tidy.auto) stopped: git vanished"]
+    assert cli.main(["--root", str(repo), "refresh", "--offline"]) == 0
+    assert "warning: tidy (tidy.auto) stopped: git vanished" in capsys.readouterr().out
+
+
+def test_the_idle_rule_off_removes_a_fresh_worktree_no_session_holds(repo, tmp_path):
+    merged(repo, "feat/x")
+    wt = add_worktree(repo, tmp_path, "x", base="feat/x")
+    run_git(wt, "checkout", "-q", "feat/x")
+    (s,) = one().of("worktree")
+    assert not s.remove and "active" in s.why   # brain tidy and refresh: live for 24 h
+    (s,) = tidy.plan_repo("demo", "main", repo, False, recent=False).of("worktree")
+    assert s.remove and s.merged and s.why == "on feat/x (merged), clean, no session known, its PR merged"

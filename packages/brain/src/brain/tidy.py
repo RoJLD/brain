@@ -28,6 +28,11 @@ For each repo of the project (its ``repos:``, root and production checkouts, eac
 
 Never an unmerged branch, a dirty or locked worktree, the main worktree, --force or -D. :func:`hygiene` is the line
 brain check and brain refresh print (local only, no network).
+
+Where work ends, tidy is applied, not only reported (wi-brain-tidy-at-close): brain close removes the PR's head branch
+and its worktrees (brain.closing; the PR's merge stands for the idle rule, every other refusal stays), and brain
+refresh applies the merged-and-clean part of the plan (:func:`auto`, :func:`merged_part`) while config.json
+``tidy.auto`` is on (the default; ``brain refresh --no-tidy`` skips it once).
 """
 
 from __future__ import annotations
@@ -39,12 +44,13 @@ import stat
 import subprocess
 import textwrap
 import time
-from dataclasses import asdict, dataclass, field
+from dataclasses import asdict, dataclass, field, replace
 from pathlib import Path
 
 from . import config, detail, guards, net, paths, projects
 
 RECENT_HOURS = 24
+CURRENT = "the current folder"   # why a worktree the shell stands in stays
 KEEP = ("main", "master")
 PUSH_CHUNK = 50
 JUNCTION = getattr(stat, "IO_REPARSE_TAG_MOUNT_POINT", 0xA0000003)
@@ -275,6 +281,7 @@ class Step:
     links: list[str] = field(default_factory=list)   # a worktree's folder links to remove first
     into_production: list[str] = field(default_factory=list)
     after: str = ""   # a branch's worktree, removed first
+    merged: bool = False   # a stale worktree on a merged branch, or detached on a commit the default branch holds
 
 
 @dataclass
@@ -317,9 +324,10 @@ def _ago(ts: float, now: float) -> str:
 
 def plan_repo(project: str, name: str, repo: Path, production: bool, *, remote: bool = False,
               state: list | None = None, now: float | None = None, cwd: str | None = None,
-              prod_roots: list[str] | None = None) -> RepoPlan:
+              prod_roots: list[str] | None = None, recent: bool = True) -> RepoPlan:
     """What tidy would do in one repo. ``state`` is a one-slot cache of the app's state, read when a linked worktree
-    needs it."""
+    needs it. ``recent`` False drops the idle rule for a worktree no session is known to hold (brain close: the PR's
+    merge says its work ended); every other refusal stays."""
     now = time.time() if now is None else now
     cwd = cwd or os.getcwd()
     rp = RepoPlan(project, name, str(paths.main_checkout(repo) or repo), production)
@@ -340,9 +348,10 @@ def plan_repo(project: str, name: str, repo: Path, production: bool, *, remote: 
                                  "its folder is gone" + ("; a production checkout's: git worktree prune is the "
                                                          "owner's" if production else "")))
             continue
-        why, remove = _stale(wt, repo, merged, state, now, cwd)
+        why, remove = _stale(wt, repo, merged, state, now, cwd, recent)
         step = Step("worktree", wt.path, remove, why)
         if remove:
+            step.merged = bool(wt.branch) or any(_git_ok(repo, "merge-base", "--is-ancestor", wt.head, r) for r in refs)
             step.links = untracked_links(wt.path)
             roots = guards.production_roots() if prod_roots is None else prod_roots
             step.into_production = [lk for lk in step.links
@@ -366,12 +375,12 @@ def plan_repo(project: str, name: str, repo: Path, production: bool, *, remote: 
 
 
 def _stale(wt: Worktree, repo: Path, merged: set[str], state: list | None, now: float,
-           cwd: str) -> tuple[str, bool]:
+           cwd: str, recent: bool = True) -> tuple[str, bool]:
     """(why, stale) for a linked worktree."""
     if wt.locked:
         return "locked", False
     if _inside(cwd, wt.path):
-        return "the current folder", False
+        return CURRENT, False
     if wt.branch and wt.branch not in merged:
         return f"{wt.branch} is not merged", False
     if not wt.branch and not held(repo, wt.head):
@@ -383,6 +392,8 @@ def _stale(wt: Worktree, repo: Path, merged: set[str], state: list | None, now: 
         return f"session {sid} is open", False
     if known in ("archived", "gone"):
         idle = f"session {sid} {known}"
+    elif not recent:
+        idle = "no session known, its PR merged"
     else:
         last = last_activity(wt.path)
         if last and now - last < RECENT_HOURS * 3600:
@@ -625,6 +636,38 @@ def main(scope: list[projects.Project], *, remote: bool = False, apply: bool = F
         print(f"tidy: dry run, nothing removed: {total}; brain tidy{more} --apply removes them"
               + (f" (the remote ones: {config.owner_of()}'s, from their terminal or the queue)" if remote else ""))
     return 1 if failed else 0
+
+
+def auto_on(root: Path | None = None) -> bool:
+    """config.json ``tidy.auto``: brain refresh applies the merged-and-clean part of the plan (:func:`auto`); default
+    on, false turns it off."""
+    opts = config.load(root).data.get("tidy")
+    return not (isinstance(opts, dict) and opts.get("auto") is False)
+
+
+def merged_part(rp: RepoPlan) -> RepoPlan:
+    """The part of ``rp`` brain refresh applies on its own: the stale worktrees on a merged branch or detached on a
+    commit the default branch holds, the worktrees whose folder is gone, the merged branches (one whose worktree is
+    not in that part left out); never origin's."""
+    part = [s for s in rp.steps if s.remove and (s.kind != "worktree" or s.merged)]
+    going = {s.target for s in part if s.kind == "worktree"}
+    part = [s for s in part if s.kind != "branch" or not s.after or s.after in going]
+    return replace(rp, steps=part, remote=None)
+
+
+def auto(p: projects.Project) -> list[str]:
+    """brain refresh's tidy (config.json tidy.auto, wi-brain-tidy-at-close): the merged-and-clean part of the plan of
+    ``p``'s repos applied, one line per step; never an unmerged branch, a dirty, locked or leased worktree, the current
+    folder, nor origin's branches. A failure is a line: it never fails the refresh."""
+    lines: list[str] = []
+    try:
+        for rp in plan([p]) if p.root.is_dir() else []:
+            part = merged_part(rp)
+            if not rp.error and part.steps:
+                lines += [f"{rp.name}: {ln}" for ln in apply_repo(part)]
+    except Exception as exc:  # an optional step never stops the refresh
+        lines.append(f"warning: tidy (tidy.auto) stopped: {exc}")
+    return lines
 
 
 def hygiene(p: projects.Project) -> str | None:

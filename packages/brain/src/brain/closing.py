@@ -15,7 +15,9 @@ From the merged PR (``gh pr view``: its title, body, merge date, head branch and
 - the milestones it moves checked: each milestone the item is ``part_of`` with no open member left is listed with its
   trigger, for a judgement (a trigger is prose: reaching it stays a ``brain item set``);
 - its worktree and branch removed by brain tidy's own plan, narrowed to the PR's head branch (never an unmerged branch,
-  a dirty worktree or one an open session holds).
+  a dirty or locked worktree, one an open session holds or the shell stands in: the plan says to cd out of it); the
+  PR's merge stands for tidy's idle rule (wi-brain-tidy-at-close), so a worktree no session is known to hold goes at
+  once, not 24 hours later.
 
 The plan first; ``--write`` applies it, refused while the PR is not merged or the item is unknown.
 """
@@ -222,7 +224,7 @@ def _tidy(p: Plan, repo_dir: Path) -> None:
         p.tidy_note = "the PR names no head branch: nothing to tidy"
         return
     try:
-        rp = tidy.plan_repo("", p.pr.repo, repo_dir, False, state=[])
+        rp = tidy.plan_repo("", p.pr.repo, repo_dir, False, state=[], recent=False)   # its merge ended the work
         holders = {tidy._norm(w.path) for w in tidy.worktrees(repo_dir) if w.branch == p.pr.head and not w.main}
     except (OSError, subprocess.SubprocessError) as exc:
         p.tidy_note = f"tidy: {exc}"
@@ -267,6 +269,18 @@ def write(store: Path, journal: Path, p: Plan, today: str | None = None, title: 
         out.append(f"journal: {p.line}")
     if p.tidy is not None and p.tidy.steps:
         out += [f"tidy: {x}" for x in tidy.apply_repo(p.tidy)]
+        out += _kept(p.tidy)
+    return out
+
+
+def _kept(rp: tidy.RepoPlan) -> list[str]:
+    """The PR's worktrees tidy keeps, with why; the one the shell stands in names the way out."""
+    out = []
+    for s in rp.of("worktree", False):
+        out.append(f"tidy: kept worktree {s.target} ({s.why})")
+        if s.why == tidy.CURRENT:
+            out.append(f"tidy: the shell stands in it: cd {Path(rp.path).as_posix()} (out of it), then brain close "
+                       "again removes it")
     return out
 
 
@@ -280,7 +294,9 @@ def _plan_lines(p: Plan) -> list[str]:
         lines.append(f"already {p.status}: {p.item} (left as it is; no journal line)")
     lines += [f"feature: {f} {old} -> {new}" for f, old, new in p.features]
     if p.tidy is not None:
-        lines += [f"tidy: {'remove' if s.remove else 'keep'} {s.kind} {s.target} ({s.why})" for s in p.tidy.steps]
+        lines += [f"tidy: remove {s.kind} {s.target} ({s.why})" for s in p.tidy.steps if s.remove]
+        lines += [f"tidy: keep branch {s.target} ({s.why})" for s in p.tidy.of("branch", False)]
+        lines += _kept(p.tidy)
     return lines
 
 
