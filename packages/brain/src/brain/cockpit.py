@@ -114,7 +114,7 @@ import time
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
-from . import (__version__, alerts, audit, config, decisions, defaults, digest, forecast, lots, paths, perf, plan,
+from . import (__version__, alerts, audit, config, decisions, defaults, digest, forecast, paths, perf, plan,
                planbands, planviews, plugin_panels, projects, queue, quiet, ranking, resume, review, sessions, stateio,
                status, transcript, usage)
 
@@ -539,6 +539,7 @@ def signature(files: list[Path]) -> tuple:
 def _plan_of(st: resume.Store, fc: dict | None, project: str, root: Path | None = None) -> dict:
     """One project's part of the plan panel: its Tree (brain.planviews; its waves' rounds at the size ``brain wave
     plan`` gives them, brain.lots.caps_in_force) and its bands (brain.planbands)."""
+    from . import lots   # here: brain.lots reaches brain.detail, which imports this module
     at_once = lots.caps_in_force(root, project)["at_once"]
     return {**planviews.collect(st, fc, project, at_once), "bands": planbands.collect(st, fc, project)}
 
