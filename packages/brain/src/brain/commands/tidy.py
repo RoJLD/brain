@@ -18,9 +18,13 @@ USAGE = """\
                         merged branches (git ls-remote, read only); listed, then removed with --apply (git worktree
                         remove after the untracked junctions they hold, a branch's compare-and-delete against origin's
                         default; never --force, -D, an unmerged
-                        branch or a dirty worktree; a production checkout: those two only); --remote --apply deletes
-                        the remote ones (git push origin --delete) only outside a Claude Code session, where it prints
-                        the brain queue add that puts the exact command to {owner}; --json: the plan
+                        branch or a dirty worktree; a production checkout: those two only; the plan names what git
+                        ignores in a worktree and deletes with it); --remote --apply deletes the remote ones (git push
+                        origin --delete) only outside a Claude Code session, where it prints the brain queue add that
+                        puts the exact command to {owner}; --json: the plan. Without --apply, two commands apply part of
+                        it on their own: brain refresh, the merged-and-clean part, while config.json tidy.auto is on
+                        (the default; --no-tidy skips it once), and brain close --write, the PR's head branch and its
+                        worktrees with no idle rule; both keep a worktree holding ignored files (a .env, data), named
 """
 
 

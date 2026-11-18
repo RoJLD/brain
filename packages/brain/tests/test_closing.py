@@ -337,3 +337,50 @@ def test_item_close_with_a_pr_names_the_brain_close_that_removes_its_worktree(ro
     assert cli.main(["--root", str(root), "item", "close", "wi-close", "--evidence", "a memo",
                      "--status", "dropped"]) == 0
     assert "worktree:" not in capsys.readouterr().out
+
+
+@pytest.mark.skipif(not shutil.which("git"), reason="git not available")
+def test_close_removes_a_squash_merged_head_by_the_prs_head_commit(root, gh, tmp_path, monkeypatch, capsys):
+    """A squash or rebase merge leaves the head branch unmerged in git's eyes: its tip on the PR's head commit
+    (gh's headRefOid) says it was merged; brain tidy alone never removes it."""
+    repo, wt = _engine_with_worktree(tmp_path, monkeypatch)
+    (wt / "b.txt").write_text("b\n", encoding="utf-8")
+    run_git(wt, "add", "-A")
+    run_git(wt, "commit", "-q", "-m", "squashed into main")
+    gh["pr"] = _pr(headRefOid=run_git(wt, "rev-parse", "HEAD").strip())
+    monkeypatch.chdir(tmp_path)
+    assert cli.main(["--root", str(root), "close", "wi-close", "--pr", "engine #7", "--repo-dir", str(repo),
+                     "--write"]) == 0
+    out = capsys.readouterr().out
+    assert f"tidy: removed worktree {wt}" in out and "tidy: deleted branch feat/close" in out
+    assert not wt.exists() and "feat/close" not in run_git(repo, "branch", "--format=%(refname:short)").split()
+
+
+@pytest.mark.skipif(not shutil.which("git"), reason="git not available")
+def test_close_keeps_a_head_with_commits_its_pr_did_not_merge(root, gh, tmp_path, monkeypatch, capsys):
+    repo, wt = _engine_with_worktree(tmp_path, monkeypatch)
+    gh["pr"] = _pr(headRefOid=run_git(wt, "rev-parse", "HEAD").strip())
+    (wt / "b.txt").write_text("b\n", encoding="utf-8")
+    run_git(wt, "add", "-A")
+    run_git(wt, "commit", "-q", "-m", "after the merge")
+    monkeypatch.chdir(tmp_path)
+    assert cli.main(["--root", str(root), "close", "wi-close", "--pr", "engine #7", "--repo-dir", str(repo),
+                     "--write"]) == 0
+    out = capsys.readouterr().out
+    assert f"tidy: kept worktree {wt} (feat/close holds commits its PR did not merge" in out and wt.is_dir()
+    assert "feat/close" in run_git(repo, "branch", "--format=%(refname:short)").split()
+
+
+@pytest.mark.skipif(not shutil.which("git"), reason="git not available")
+def test_close_keeps_a_worktree_holding_what_git_ignores(root, gh, tmp_path, monkeypatch, capsys):
+    """git status and git worktree remove both skip ignored files: a hand-placed .env would go without a word."""
+    repo, wt = _engine_with_worktree(tmp_path, monkeypatch)
+    (repo / ".git" / "info").mkdir(exist_ok=True)
+    (repo / ".git" / "info" / "exclude").write_text(".env\n", encoding="utf-8")   # every worktree's
+    (wt / ".env").write_text("KEY=local\n", encoding="utf-8")
+    monkeypatch.chdir(tmp_path)
+    args = ["--root", str(root), "close", "wi-close", "--pr", "engine #7", "--repo-dir", str(repo), "--write"]
+    assert cli.main(args) == 0
+    out = capsys.readouterr().out
+    assert f"tidy: kept worktree {wt} (it holds 1 ignored path(s) git would delete with it: .env)" in out
+    assert (wt / ".env").is_file() and "feat/close" in run_git(repo, "branch", "--format=%(refname:short)").split()

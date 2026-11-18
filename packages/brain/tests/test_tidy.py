@@ -439,3 +439,81 @@ def test_the_idle_rule_off_removes_a_fresh_worktree_no_session_holds(repo, tmp_p
     assert not s.remove and "active" in s.why   # brain tidy and refresh: live for 24 h
     (s,) = tidy.plan_repo("demo", "main", repo, False, recent=False).of("worktree")
     assert s.remove and s.merged and s.why == "on feat/x (merged), clean, no session known, its PR merged"
+
+
+def _ignoring(repo, tmp_path):
+    """A merged branch's worktree whose session is archived, holding a hand-placed .env and a cache git ignores."""
+    commit(repo, ".gitignore", ".env\n__pycache__/\n")
+    run_git(repo, "push", "-q", "origin", "main")
+    merged(repo, "claude/env")
+    wt = add_worktree(repo, tmp_path, "env", base="claude/env")
+    run_git(wt, "checkout", "-q", "claude/env")
+    (wt / ".env").write_text("KEY=local\n", encoding="utf-8")
+    (wt / "__pycache__").mkdir()
+    (wt / "__pycache__" / "a.pyc").write_bytes(b"x")
+    app(tmp_path, sessions={"local_e": (wt, True)})
+    return wt
+
+
+def test_git_status_misses_ignored_files_lost_ignored_names_them(repo, tmp_path):
+    wt = _ignoring(repo, tmp_path)
+    assert tidy.clean(str(wt)) == (True, "")   # what git worktree remove checks too: it would delete the .env
+    assert tidy.lost_ignored(str(wt)) == ([".env"], "")   # the cache aside
+    (wt / ".env").unlink()
+    assert tidy.lost_ignored(str(wt)) == ([], "") and tidy.ignored_refusal(str(wt)) == ""
+
+
+def test_refresh_keeps_a_merged_worktree_holding_ignored_files(repo, tmp_path, monkeypatch):
+    """wi-brain-tidy-at-close: a removal no one asked for never deletes what git ignores (a .env, data, outputs).
+    tidy.auto is what brain refresh runs first (the refresh tests above; a refresh takes minutes here)."""
+    wt = _ignoring(repo, tmp_path)
+    monkeypatch.chdir(tmp_path)
+    (s,) = tidy.plan([demo()], keep_ignored=True)[0].of("worktree")
+    assert not s.remove and s.why == "it holds 1 ignored path(s) git would delete with it: .env"
+    assert tidy.auto(demo()) == []
+    assert (wt / ".env").is_file() and "claude/env" in branches(repo)
+    (wt / ".env").unlink()   # the cache alone: it goes
+    assert f"main: removed worktree {wt}" in tidy.auto(demo()) and not wt.exists()
+    assert "claude/env" not in branches(repo)
+
+
+def test_brain_tidy_names_the_ignored_files_its_apply_deletes(repo, tmp_path):
+    wt = _ignoring(repo, tmp_path)
+    rp = one()
+    (s,) = rp.of("worktree", True)
+    assert s.ignored == [".env"]
+    assert "         and with it what git ignores there: .env" in tidy.render(rp)
+    (wt / "data.csv").write_text("1\n", encoding="utf-8")   # untracked, not ignored: dirty for both
+    assert not one().of("worktree")[0].remove
+
+
+def test_a_plan_minutes_old_rechecks_the_ignored_files_before_removing(repo, tmp_path):
+    wt = _ignoring(repo, tmp_path)
+    (wt / ".env").unlink()
+    part = tidy.merged_part(tidy.plan([demo()], keep_ignored=True)[0])
+    assert part.keep_ignored and [s.target for s in part.of("worktree", True)] == [str(wt)]
+    (wt / ".env").write_text("KEY=late\n", encoding="utf-8")
+    lines = tidy.apply_repo(part)
+    assert f"kept {wt}: it holds 1 ignored path(s) git would delete with it: .env" in lines
+    assert (wt / ".env").is_file() and "kept claude/env: its worktree stays" in lines
+
+
+def test_a_branch_squash_merged_by_its_pr_counts_merged_by_the_prs_head(repo, tmp_path):
+    unmerged(repo, "feat/sq")
+    head = run_git(repo, "rev-parse", "feat/sq").strip()
+    assert not tidy.plan_repo("demo", "main", repo, False).of("branch")   # no ancestry: brain tidy never sees it merged
+    rp = tidy.plan_repo("demo", "main", repo, False, pr_heads={"feat/sq": head})
+    assert [(s.target, s.remove) for s in rp.of("branch")] == [("feat/sq", True)]
+    assert tidy.apply_repo(rp) == ["deleted branch feat/sq"] and "feat/sq" not in branches(repo)
+
+
+def test_a_tip_with_commits_its_pr_did_not_merge_is_kept(repo, tmp_path):
+    unmerged(repo, "feat/more")
+    head = run_git(repo, "rev-parse", "feat/more").strip()
+    wt = add_worktree(repo, tmp_path, "more", base="feat/more")
+    run_git(wt, "checkout", "-q", "feat/more")
+    commit(wt, "after.txt")   # pushed after the merge, or never pushed
+    rp = tidy.plan_repo("demo", "main", repo, False, recent=False, pr_heads={"feat/more": head})
+    (s,) = rp.of("worktree")
+    assert not s.remove and s.why.startswith("feat/more holds commits its PR did not merge (its tip ")
+    assert not rp.of("branch") and "feat/more" in branches(repo)

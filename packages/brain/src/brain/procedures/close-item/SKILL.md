@@ -150,10 +150,11 @@ nobody asks it again.
 - Remove the item's git worktree and local branch with the `brain` command, never by hand:
   `brain [--project P] close <id> --pr "<repo> #<n>" --write` once the PR is merged removes the PR's head branch and
   the worktrees on it (the PR's merge stands for tidy's idle rule; links into a production checkout unlinked first;
-  never `--force`, `-D`, an unmerged branch, a dirty, locked or leased worktree). It keeps the worktree the shell
-  stands in and names the `cd` out of it: run it from the main checkout. Its output says why anything stays; report
-  that line instead of forcing. Without the `brain` command: `git worktree remove <path>` without `--force`, then
-  `git branch -d <branch>`.
+  never `--force`, `-D`, an unmerged branch, a dirty, locked or leased worktree, nor one holding files git ignores
+  and would delete with it, such as a `.env`: named; a squash or rebase merge is judged by the PR's head commit). It
+  keeps the worktree the shell stands in and names the `cd` out of it: run it from the main checkout. Its output
+  says why anything stays; report that line instead of forcing. Without the `brain` command: `git worktree remove
+  <path>` without `--force`, then `git branch -d <branch>`.
 - **The coordinator's archive step**: right after archiving a child, the coordinator runs `brain [--project P] tidy
   --apply` on each repo the child worked in (its `--all` when they span projects): the child's own worktree, leased
   until its archive, goes then; `brain refresh` applies the same merged-and-clean part on its own while `config.json`

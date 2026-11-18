@@ -17,7 +17,8 @@ What it does, every command reading files and git, never a model:
   registry, `config.json`, the classes, the permissions, the stacks and the bundles they declare, the ids of every
   registered project; first, while `config.json` `tidy.auto` is on, the default, refresh applies the merged-and-clean
   part of `brain tidy`'s plan: the stale worktrees on a merged branch, the merged local branches, never origin's, an
-  unmerged branch, a dirty, locked or leased worktree or the current folder; `--no-tidy` skips it once), and written
+  unmerged branch, a dirty, locked or leased worktree, one holding files git ignores and would delete with it (a
+  `.env`, data: named) or the current folder; `--no-tidy` skips it once), and written
   once on the default branch after each merge by one writer (`brain views --write`;
   a branch need not commit them, the default branch's check warns of a stale one, fails under `config.json`
   `views.strict`: [`docs/views.md`](docs/views.md));
@@ -705,11 +706,14 @@ checked (a fragment of the PR named after the item, `<ID>.md` or `<ID>-<section>
 each milestone the item is `part_of` that it leaves with no open member, listed with its trigger (reaching it stays a
 judgement: `brain item set MS status=reached`); then `brain tidy`'s plan of the PR's repo narrowed to its head branch
 and the worktrees on it, where the PR's merge stands for tidy's 24-hour idle rule: a worktree made with `git worktree
-add` that no session of the desktop app knows goes at once (never an unmerged branch, a dirty or locked worktree, one
-an open session holds, or the one the shell stands in: the plan names the `cd` out of it, then the same command
-removes it; `--no-tidy` leaves them). `brain item close --pr` prints that `brain close` line. The plan first,
-`--write` applies it, refused (exit 2) while the PR is not merged or the item is unknown; an item already closed is
-left as it is and gets no journal line, its features still set. `--pr N` alone reads the repo of the current folder
+add` that no session of the desktop app knows goes at once, and the head branch counts as merged when its tip is on
+the head commit the PR merged (`headRefOid`: a squash or rebase merge leaves no ancestry). Never an unmerged branch or
+a tip with commits the PR did not merge, a dirty or locked worktree, one an open session holds, one holding files git
+ignores and `git worktree remove` would delete with them (a `.env`, local data, outputs; caches and virtual
+environments aside: the paths are named), or the one the shell stands in: the plan names the `cd` out of it, then the
+same command removes it; `--no-tidy` leaves them. `brain item close --pr` prints that `brain close` line. The plan
+first, `--write` applies it, refused (exit 2) while the PR is not merged or the item is unknown; an item already closed
+is left as it is and gets no journal line, its features still set. `--pr N` alone reads the repo of the current folder
 (`--repo NAME` another; `--repo-dir D` a checkout outside the registry).
 
 `brain items --wave` takes a wave's release or id: the items whose wave it is now (carried in included), and those in
