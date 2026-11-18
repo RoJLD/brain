@@ -138,11 +138,11 @@ def _cockpit(tmp_path, monkeypatch, store):
 
 def test_file_panels_are_read_again_only_when_their_files_change(tmp_path, monkeypatch, store):
     cp = _cockpit(tmp_path, monkeypatch, store)
-    assert cp.refresh() == {"sessions", "queue", "milestones", "frontier"}
+    assert cp.refresh() == {"sessions", "queue", "milestones", "frontier", "plan"}
     assert cp.refresh() == set()
     with (store / "nodes" / "work.yaml").open("a", encoding="utf-8") as f:
         f.write("- {id: wi-six, type: WorkItem, status: todo, title: \"Sixth\", props: {priority_proposed: P1}}\n")
-    assert cp.refresh() == {"queue", "milestones", "frontier"}
+    assert cp.refresh() == {"queue", "milestones", "frontier", "plan"}
     p = cp.snapshot()["panels"]
     assert [(i["priority"], i["id"]) for i in p["frontier"]["projects"][0]["items"]] == [
         ("P0", "wi-one"), ("P1", "wi-three"), ("P1?", "wi-six")]  # wi-five waits on wi-two
@@ -169,7 +169,7 @@ def test_probe_fills_audit_health_and_digest(tmp_path, monkeypatch, store, brain
     written = brain_home / "digest" / "demo" / "2026-10-26_2026-11-02.md"
     written.parent.mkdir(parents=True)
     written.write_text("# Digest of demo\n\n## Items closed\n- wi-four\n", encoding="utf-8")
-    assert cp.refresh(probe=True) == set(cockpit.PANELS)
+    assert cp.refresh(probe=True) == {*cockpit.PANELS, "plan"}
     snap = cp.snapshot()
     assert seen["m"]["audit"]["counts"]["P0"] == 1 and seen["m"]["stacks"] == []  # what the probe measured, once
     assert cockpit.table("alerts", snap["panels"]["alerts"]) == [("error", "demo", "task:cycle:missed",
@@ -238,7 +238,7 @@ def test_brain_tui_once_and_json(tmp_path, monkeypatch, store, capsys):
     assert cli.main(["tui", "--project", "demo", "--json", "--quick"]) == 0
     data = json.loads(capsys.readouterr().out)
     assert data["cockpit"] == 1 and data["scope"] == "demo" and set(data["panels"]) == {
-        "sessions", "queue", "milestones", "frontier"}
+        "sessions", "queue", "milestones", "frontier", "plan"}   # plan: the Milestones Tree (brain.planviews)
     with pytest.raises(SystemExit):
         cli.main(["tui", "--refresh", "100ms"])
 
@@ -484,7 +484,7 @@ def test_a_failed_read_keeps_the_last_content_and_is_read_again(tmp_path, monkey
     monkeypatch.setattr(status, "_store", gone)
     with (store / "nodes" / "work.yaml").open("a", encoding="utf-8") as f:
         f.write("\n")  # a change: the graph is read again
-    assert cp.refresh() == {"queue", "milestones", "frontier"}  # never raised; to draw again with the error
+    assert cp.refresh() == {"queue", "milestones", "frontier", "plan"}  # never raised; to draw again with the error
     snap = cp.snapshot()
     error = snap["errors"]["frontier"]
     assert error["error"] == "OSError: disk gone" and snap["panels"]["frontier"] == before  # the last content
@@ -496,12 +496,12 @@ def test_a_failed_read_keeps_the_last_content_and_is_read_again(tmp_path, monkey
     assert cp.refresh() == set() and len(calls) > n  # read again, though no file changed; the same error: no redraw
     assert cp.snapshot()["errors"]["frontier"]["at"] == error["at"]  # its first time kept
     assert cli.main(["tui", "--project", "demo", "--once", "--quick"]) == 1  # a one-shot read says it failed
-    assert "brain tui: reading queue, milestones, frontier failed: OSError: disk gone" in capsys.readouterr().err
+    assert "brain tui: reading queue, milestones, frontier, plan failed: OSError: disk gone" in capsys.readouterr().err
     assert cli.main(["tui", "--project", "demo", "--detail", "wi-nope", "--quick"]) == 1
     err = capsys.readouterr().err  # no row: and why it may be missing
-    assert "wi-nope: no row" in err and "reading queue, milestones, frontier failed: OSError: disk gone" in err
+    assert "wi-nope: no row" in err and "reading queue, milestones, frontier, plan failed: OSError: disk gone" in err
     monkeypatch.setattr(status, "_store", real)
-    assert cp.refresh() == {"queue", "milestones", "frontier"} and cp.snapshot()["errors"] == {}
+    assert cp.refresh() == {"queue", "milestones", "frontier", "plan"} and cp.snapshot()["errors"] == {}
     assert cp.refresh() == set()  # back to reading on a change only
 
 
@@ -578,13 +578,13 @@ def test_the_project_selector_switches_the_scope_and_keeps_each_probe(tmp_path, 
     assert calls == ["demo"] and not cp.needs_probe() and cp.snapshot()["probed_at"]
     cp.select("all")
     assert (cp.scope, cp.every, cp.multi) == ("all", True, True)
-    assert cp.refresh() == set(cockpit.PANELS)  # everything drawn again for the new scope
+    assert cp.refresh() == {*cockpit.PANELS, "plan"}  # everything drawn again for the new scope
     snap = cp.snapshot()
     assert [g["project"] for g in snap["panels"]["audit"]["projects"]] == ["demo"]  # its last probe, kept
     assert not cp.needs_probe() and calls == ["demo"]  # far is not on this machine: nothing to probe
     assert [g["project"] for g in snap["panels"]["frontier"]["projects"]] == ["demo"]
     cp.select("demo")
-    assert cp.scope == "demo" and cp.refresh() == set(cockpit.PANELS) and calls == ["demo"]
+    assert cp.scope == "demo" and cp.refresh() == {*cockpit.PANELS, "plan"} and calls == ["demo"]
     with pytest.raises(KeyError):
         cp.select("nowhere")
 
@@ -635,7 +635,7 @@ def test_times_follow_the_timezone_and_every_panel_has_its_help(monkeypatch):
         2026, 10, 31, tzinfo=timezone.utc).astimezone().strftime("%Y-%m-%d %H:%M")
     head = cockpit.render({"scope": "x", "read_at": "2026-11-02T18:29:04Z", "panels": {}}, tz="utc")[0]
     assert head == f"brain {brain.__version__} cockpit: x; files read 2026-11-02 18:29:04 (utc), probes not run"
-    assert set(cockpit.HELP) == {*cockpit.PANELS, *cockpit.FRAMES, "overview", "settings"}
+    assert set(cockpit.HELP) == {*cockpit.PANELS, *cockpit.FRAMES, *cockpit.MODES, "overview", "settings"}
     assert "the arrows" in cockpit.help_lines("overview")[-1] and "m full view" not in cockpit.help_lines("overview")[-1]
     assert cockpit.heading("overview", None) == "Overview"
     for name in cockpit.HELP:
@@ -670,7 +670,8 @@ def test_the_tabs_are_the_eleven_of_ux18_with_their_keys():
         assert set(t["label"]) == set(cockpit.LANGS) and set(t["question"]) == set(cockpit.LANGS)
         assert t["views"] or t["arrives"], name  # a tab not built says what brings it
     # every panel and frame has a tab, and each view its words
-    assert {p for t in cockpit.built_tabs() for p in cockpit.tab_panels(t)} == {*cockpit.PANELS, *cockpit.FRAMES, "settings"}
+    assert {p for t in cockpit.built_tabs() for p in cockpit.tab_panels(t)} == {*cockpit.PANELS, *cockpit.FRAMES,
+                                                                              *cockpit.MODES, "settings"}
     assert {v for t in cockpit.TABS.values() for v in t["views"]} <= set(cockpit.VIEW_LABELS)
     assert [cockpit.panel_tab(p) for p in ("queue", "alerts", "exec", "digest")] == ["queue", "health", "health",
                                                                                       "overview"]

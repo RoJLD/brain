@@ -24,7 +24,10 @@ Keys (the footer shows those of the focused panel, ? lists them all):
            command that changes it: nothing else is written from there; on a Setup wizard (brain.wizards) it asks its
            choice, shows its plan run, then applies on y, each command logged as the owner's
   ctrl+pageup, ctrl+pagedown    the previous and the next tab (a click on the bar too, its tooltips name each tab)
-  v        the tab's next view (the overview: its cards, its grid, its digest); a click on its word in the toolbar too
+  v        the tab's next view (the overview: its cards, its grid, its digest; 4 milestones: its list, its Tree); a click
+           on its word in the toolbar too
+  g        in the Milestones Tree (brain.tui_plan): the next axis, era > milestone > item or era > wave > item; there
+           ←/→ fold and unfold, Enter opens an item's or a milestone's detail
   Enter    on a card, its tab, already filtered as the card says (a click too); the arrows move between the cards
   p        the project selector: global (every registered project) or one project
   /        search every table (each word, case ignored); Enter keeps it, Escape clears it
@@ -95,6 +98,7 @@ from .tui_screens import (
     ResultScreen,
     ViewScreen,
 )
+from .tui_plan import PlanTree, PlanTreeApp
 from .tui_settings import SETTING_ACTIONS, SettingsFrame, SettingsTab
 from .tui_side import DetailBeside, DetailPane
 
@@ -104,10 +108,10 @@ TEXTS = {"audit": cockpit.audit_lines, "health": cockpit.health_lines, "exec": c
          "digest": lambda panel: cockpit.digest_lines(panel, width=1000, lines_max=0, titled=False)}  # it scrolls: all of it
 PANEL_ACTIONS = ("tab", "next_tab", "prev_tab", "next_view", "set_view", "back", "toggle_max", "pick_scope", "search",
                  "next_sort", "reverse", "filters", "panel_help", "toggle_tz", "update", "side_act", "side_open",
-                 "columns")  # the panels' keys, off while a dialog or a detail is on top of them
+                 "columns", "plan_axis")  # the panels' keys, off while a dialog or a detail is on top of them
 # every panel and frame, as the grid places them (open alerts: a whole row, L11); the plugged projects' panels after them
 EVERY_FRAME = ("sessions", "alerts", "queue", "milestones", "frontier", "audit", "health", "digest", "exec", "impact",
-               "settings")
+               "plan", "settings")
 CARD_COLUMNS = 3
 STATUS_COLUMNS = 100  # narrower, the global bar keeps its width for the search: the subtitle has the times
 
@@ -166,7 +170,7 @@ class SearchInput(Input):
     BINDINGS = [Binding("escape", "app.clear_search", "Clear")]
 
 
-class CockpitApp(DetailBeside, PaletteAndColumns, SettingsTab, App):
+class CockpitApp(DetailBeside, PaletteAndColumns, SettingsTab, PlanTreeApp, App):
     TITLE = update.title(None)  # the installed version; the newer one once the background check answers
     ESCAPE_TO_MINIMIZE = False  # Escape's steps are action_back's: the search before a full view
     CSS = """
@@ -268,6 +272,7 @@ class CockpitApp(DetailBeside, PaletteAndColumns, SettingsTab, App):
         self.update_info: dict | None = None  # brain.update.check's answer, once the background check has one
         self.handover: dict | None = None  # an install handed over (brain.handover.prepare): brain.tui.run starts it
         self._settings_init()
+        self._plan_init(tabs)
 
     def compose(self) -> ComposeResult:
         yield BandHeader()
@@ -291,6 +296,8 @@ class CockpitApp(DetailBeside, PaletteAndColumns, SettingsTab, App):
                 for name in (*EVERY_FRAME, *cockpit.PLUGGED):
                     if name == "settings":  # its pages on the left, the page's settings on the right
                         yield SettingsFrame(id=name, classes="panel")
+                    elif name == "plan":  # the Milestones tab's Tree (brain.tui_plan)
+                        yield PlanTree(id=name, classes="panel")
                     elif name in cockpit.COLUMNS:
                         kind = ViewTable if name in cockpit.SORTS else DataTable
                         yield kind(id=name, classes="panel", zebra_stripes=True, cursor_type="row")
@@ -369,6 +376,8 @@ class CockpitApp(DetailBeside, PaletteAndColumns, SettingsTab, App):
         self._titles()
         self._draw_cards()
         self._draw_settings()
+        if "plan" in shown:  # once laid out: its rows fit its width (under 120 columns, no bar)
+            self.call_after_refresh(self._draw_plan, self.cockpit.snapshot()["panels"].get("plan"))
         self.refresh_bindings()
 
     def _alerts_row(self) -> None:
@@ -678,6 +687,9 @@ class CockpitApp(DetailBeside, PaletteAndColumns, SettingsTab, App):
             panel = panels.get(source)
             widget = self._q(f"#{name}")
             widget.border_title = self._title(name, cockpit.heading(name, panel))
+            if name == "plan":
+                self._draw_plan(panel)
+                continue
             if name in cockpit.COLUMNS:
                 self._fill(widget, name, panel, snap)
                 continue
@@ -785,8 +797,11 @@ class CockpitApp(DetailBeside, PaletteAndColumns, SettingsTab, App):
     # --- the view: scope, search, sort, filters ---
 
     def _save(self) -> bool:
+        tabs = {t: {"view": v} for t, v in self.tab_views.items()}
+        if self.plan_axis != cockpit.MODES["plan"]["default"] or "milestones" in tabs:   # the Tree's axis (g)
+            tabs.setdefault("milestones", {"view": cockpit.tab_view("milestones")})["axis"] = self.plan_axis
         return cockpit.save_state({"scope": self.scope, "panels": self.views, "settings": self.settings, "tab": self.tab,
-                            "tabs": {t: {"view": v} for t, v in self.tab_views.items()}, "columns": self.chosen})
+                                   "tabs": tabs, "columns": self.chosen})
 
     def watch_theme(self, theme: str) -> None:
         """The theme picked in the command palette becomes the default one (saved with the settings)."""
@@ -987,6 +1002,7 @@ class CockpitApp(DetailBeside, PaletteAndColumns, SettingsTab, App):
             "back": lambda: bool(self.search) or self.screen.maximized is not None or self.tab != "overview",
             # a panel's table focused; the palette calls action_columns with its own
             "columns": lambda: isinstance(self.focused, DataTable) and self.focused.id in cockpit.COLUMNS,
+            "plan_axis": lambda: isinstance(self.focused, PlanTree),
             "next_view": lambda: len(cockpit.tab_views(self.tab, self._narrow())) > 1,  # a tab with several views
             "toggle_max": lambda: len(cockpit.tab_panels(self.tab, self._view())) > 1,  # one panel: full already
             # hidden until a newer one is out, or the installed one lags the pin

@@ -17,7 +17,7 @@ USAGE_ORDER = 540   # its usage lines' place in brain --help's epilog
 USAGE = """\
   brain tui [--project P | --all | --scope REF] [--refresh 2s] [--probe 5m] [--hours 24] [--plain]
             [--sort PANEL:KEY]... [--filter PANEL:FIELD=VALUE]... [--search TEXT] [--tab NAME] [--tz local|utc]
-            [--reset]
+            [--view NAME] [--axis milestones|waves] [--reset]
             [--once [--quick]] [--json]
                  the cockpit, read-only and at zero token: sessions (project, task, step n/m of its plan, state,
                  model, effort, context and tokens), {owner}'s queue, alerts, milestones, the frontier by priority,
@@ -44,10 +44,12 @@ USAGE = """\
                  sessions asking and the open alerts, and is reduced to its
                  numbers under 120 columns or 30 rows, where the cards take one column and the grid is not offered;
                  --tab NAME starts there, and with --once or --plain prints that tab's panels alone (the overview:
-                 its cards; the settings: its pages). The project selector (p: global or one
-                 project), the sessions', queue's and frontier's filters and sorts (f, s, o), a table's columns (C:
-                 shown or hidden, their order, the longest a title may be; the sessions also offer Cost, App id, Id and
-                 Branch), the palette (ctrl+p: every tab, view, project, sort, filter and table's columns, and reset
+                 its cards; the settings: its pages); --view NAME that view of it (4 milestones: list, tree: the
+                 WBS from the graph and the last brain forecast's latest.json, never recomputed), --axis the tree's
+                 (milestones: era > milestone > item, waves: era > wave > item; g in the app). The project selector
+                 (p: global or one project), the sessions', queue's and frontier's filters and sorts (f, s, o), a
+                 table's columns (C: shown or hidden, their order, the longest a title may be; the sessions also
+                 offer Cost, App id, Id and Branch), the palette (ctrl+p: every tab, view, project, sort, filter and table's columns, and reset
                  the views), the search (/), a panel's
                  help (i), a full view where a tab shows several panels (m, Escape back), the pause (space) and ? for
                  every key; a refresh keeps the scroll and the cursor; an empty
@@ -81,6 +83,11 @@ def cmd_tui(args, root: Path) -> int:
     notes = cockpit.plug_registry(root)   # the plugged projects' panels and tabs, before their views are read
     if args.tab and args.tab not in cockpit.built_tabs():
         raise SystemExit(f"brain tui: --tab {args.tab}: one of {', '.join(cockpit.built_tabs())}")
+    if args.view and (not args.tab or args.view not in cockpit.TABS[args.tab]["views"]):
+        raise SystemExit(f"brain tui: --view {args.view}: needs --tab, and one of its views "
+                         f"({', '.join(cockpit.TABS[args.tab]['views']) if args.tab else 'none without --tab'})")
+    if args.axis and args.axis not in cockpit.tab_axes(args.tab or "milestones"):
+        raise SystemExit(f"brain tui: --axis {args.axis}: the milestones tab's tree only")
     try:
         flags = cockpit.parse_view(args.sort, args.filter)
     except ValueError as exc:
@@ -118,7 +125,7 @@ def cmd_tui(args, root: Path) -> int:
         snap = cp.snapshot()
         print(json.dumps(snap, ensure_ascii=False, indent=1, sort_keys=True) if args.json
               else "\n".join(cockpit.render(snap, views=views, search=args.search, tz=args.tz, tab=args.tab,
-                                                 root=root)))
+                                                 root=root, view=args.view, axis=args.axis)))
         return 1 if _failed_reads(snap) else 0
     try:   # one interactive cockpit per machine (brain.shutdown); --once, --json and --detail read beside it
         with shutdown.single_instance("cockpit", "brain tui"):
@@ -129,7 +136,12 @@ def cmd_tui(args, root: Path) -> int:
 
 
 def _interactive(args, cp, saved: dict, views: dict, settings: dict) -> int:
-    tab, tabs, columns = args.tab or saved.get("tab"), saved.get("tabs") or {}, saved.get("columns") or {}
+    tab, tabs, columns = args.tab or saved.get("tab"), dict(saved.get("tabs") or {}), saved.get("columns") or {}
+    if args.view or args.axis:   # --view and --axis win, as --tab does
+        t = args.tab or "milestones"
+        tabs[t] = {**(tabs.get(t) or {}), **({"view": args.view} if args.view else {}),
+                   **({"axis": args.axis} if args.axis else {})}
+        tabs[t].setdefault("view", "tree")
     kept = (saved.get("scope") or cp.scope) if args.scope else cp.scope   # --scope keeps the one remembered
     if not cockpit.save_state({"scope": kept, "panels": views, "settings": settings, "tab": tab, "tabs": tabs,
                                "columns": columns}):
@@ -213,6 +225,11 @@ def register(sub, ctx) -> None:
                     help="start on that tab: " + ", ".join(cockpit.built_tabs()) + ", or a plugged project's tab "
                          "(default: the last one shown, else the overview); with --once or --plain, print its panels "
                          "alone (the overview: its cards)")
+    tu.add_argument("--view", metavar="NAME",
+                    help="with --tab, that view of it (the milestones tab: list, tree); with --once or --plain, "
+                         "print that view's panels alone")
+    tu.add_argument("--axis", choices=("milestones", "waves"),
+                    help="the milestones tab's tree: era > milestone > item (default) or era > wave > item")
     tu.add_argument("--tz", choices=cockpit.TZS,
                     help="the times shown: this machine's timezone (local, the interactive default) or UTC; --once "
                          "and --json keep the recorded UTC times unless it is given")
