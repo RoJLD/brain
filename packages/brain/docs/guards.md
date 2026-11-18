@@ -684,7 +684,9 @@ guard checks one hop of lineage, not the whole chain back to the owner. While it
 coordinator may turn Remote Control on for any coordinator it started, not only one. After a new root coordinator
 (started by the owner, so unnamed), the first two handovers stay the owner's gesture unless the root is marked: by its
 first prompt when it asks for a coordinator (the hook), else by `brain handover root <id>`, once per chain: the root has no name, and its first successor's parent is no
-coordinator by name. `brain handover check` reads the same conditions before the calls and names the one that fails;
+coordinator by name. `brain handover check` reads the same conditions before the calls and names the one that fails,
+then the session's children and its predecessor's (archived, detached or blocking: the guard reads neither, and only
+the session that started a child may detach it, so the predecessor is archived once none of its children blocks);
 `brain handover wait --successor <id>` waits, bounded, for the successor's first turn before `on` (a successor with
 no transcript yet passes only as starting, from 0.4.0, within ten minutes of its creation).
 

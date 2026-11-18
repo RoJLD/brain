@@ -22,9 +22,11 @@ USAGE = """\
                  not a coordinator), 2 when the app's files cannot be read or an id is malformed
   brain handover check [--id ID] [--successor ID] [--json]   the guard's conditions before Remote Control: a
                  coordinator by name (or a chain root), started by one (or by a root), its note under 6 h old, its
-                 successors live and detached; and its predecessor, which the incoming coordinator archives first;
-                 exit 1 when this session may not hand over (with --successor: or Remote Control on for it would be
-                 refused), 2 when the app's files cannot be read
+                 successors live and detached; its children (each session it started: archived, detached or
+                 blocking, which it detaches before its archive: only it can); and its predecessor, which the
+                 incoming coordinator archives first, once none of the predecessor's children blocks; exit 1 when this
+                 session may not hand over (with --successor: or Remote Control on for it would be refused; a
+                 blocking child changes no exit code), 2 when the app's files cannot be read
   brain handover root [ID] [--reason TEXT] [--clear]   {owner}'s, in their own terminal: mark the session they started
                  as a coordinators' chain root (it hands over without a name; the coordinators it starts pass the
                  parent condition), until --clear; no ID: the marked roots
