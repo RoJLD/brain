@@ -402,3 +402,32 @@ def test_stamp_high_then_rounds_through_the_cli(pr, brain_home, capsys):
     assert cli.main(["review", "rounds", "4", "--json", "--repo", str(repo)]) == 0
     assert json.loads(capsys.readouterr().out)["verdict"]["state"] == "early"
     assert cli.main(["review", "rounds", "4", "--rounds", "1", "--repo", str(repo)]) == 1
+
+
+def test_rounds_of_one_second_keep_the_stamping_order(brain_home):
+    # two stamps in one second: the sha order (b before a here) is not the stamping order (a then b)
+    recs = [{**_round("b" * 40, 1, high=1), "seq": 2}, {**_round("a" * 40, 9, high=9), "seq": 1},
+            _round("c" * 40, 9, high=9, at="2026-11-17T09:00:00+00:00")]   # an older stamp, written before seq
+    rep = review.rounds("7", "acme/eng", recs=recs)
+    assert [r["head"][0] for r in rep["rounds"]] == ["c", "a", "b"]
+    assert rep["verdict"]["state"] == "converging"   # 9 > 9 > 1, not 9 > 1 > 9
+    # the stamps themselves: each one's seq follows the last, whatever the shas' order
+    review.stamp("e" * 40, 9, 9, high=9, pr="7")
+    review.stamp("d" * 40, 1, 1, high=1, pr="7")
+    got = {r["head"][0]: r["seq"] for r in review.stamps()}
+    assert got["d"] == got["e"] + 1
+    assert [r["head"][0] for r in review.rounds("7")["rounds"]] == ["e", "d"]
+
+
+def test_a_clean_round_and_an_all_refuted_note_have_no_high():
+    assert review.high_of(_round("a" * 40, 0)) == 0   # --findings 0, no --high, no note: no high finding
+    refuted = review.parse_note("- high correctness refuted: a claim nobody upheld\n")
+    assert review.high_of(_round("a" * 40, 1, rows=refuted)) == 0   # the note says it: none confirmed
+    assert review.high_of(_round("a" * 40, 2)) is None   # findings, and nothing says their severity
+    recs = [_round("a" * 40, 6, high=6, at="2026-11-17T10:00:00+00:00"),
+            _round("b" * 40, 2, high=2, at="2026-11-17T11:00:00+00:00"),
+            _round("c" * 40, 0, at="2026-11-17T12:00:00+00:00")]   # the loop ends in a clean round
+    rep = review.rounds("7", "acme/eng", recs=recs)
+    assert rep["verdict"] == {"state": "converging", "why": "high findings 6 > 2 > 0: halved over 3 rounds"}
+    assert "findings 0 (high 0)" in "\n".join(review.rounds_lines(rep))
+    assert "does not say its high findings" in review.converging([6, None, 0])["why"]

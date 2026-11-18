@@ -111,8 +111,10 @@ brain review rounds 123            # the rounds of PR 123 and whether they conve
 brain review rounds 123 --rounds 4 --json
 ```
 
-Each head stamped with `--pr` is one round of that PR's review, in the order stamped: its findings, its **high**
-findings (`--high`, else the note's confirmed `high` lines), fixed, contested and open. The stop rule (the owner's,
+Each head stamped with `--pr` is one round of that PR's review, in the order stamped (the stamp's `at`, then its
+`seq` for the stamps of one second; a head stamped again moves to the last round): its findings, its **high**
+findings (`--high`, else the note's confirmed `high` lines, 0 when its finding lines hold no confirmed high; a round
+of 0 findings has 0), fixed, contested and open. The stop rule (the owner's,
 2026-11-17): over the last three rounds (`--rounds N`), the latest round's high findings are at most half the
 first's, else the rounds **do not converge**: the next step is a structural decision put to the owner (a DDR: split
 the change, change its design, accept a known limit), not another round. `brain review rounds` says it and exits 0

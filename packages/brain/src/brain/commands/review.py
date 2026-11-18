@@ -106,6 +106,15 @@ def _stamp(args, repo: Path) -> int:
     return 0
 
 
+def _rounds(args, repo: Path) -> int:
+    """brain review rounds: the PR's rounds from its stamps and the stop rule's verdict; it says, never refuses."""
+    if args.rounds < 2:
+        raise review.ReviewError("--rounds is 2 or more")
+    rep = review.rounds(args.pr, _slug(repo), n=args.rounds)
+    print(json.dumps(rep, indent=2) if args.json else "\n".join(review.rounds_lines(rep)))
+    return 0
+
+
 def _modes(repo: Path, proj, item: str | None):
     """(the failure modes' builder, whether the repo is public) for brain review prep: with ``--item``, the brief's
     section of that item of the repo's project (brain.brief.failure_modes) plus the diff's; without, the diff's alone
@@ -151,11 +160,7 @@ def cmd_review(args, root: Path | None = None) -> int:
         if args.review_cmd == "stamp":
             return _stamp(args, repo)
         if args.review_cmd == "rounds":
-            if args.rounds < 2:
-                raise review.ReviewError("--rounds is 2 or more")
-            rep = review.rounds(args.pr, _slug(repo), n=args.rounds)
-            print(json.dumps(rep, indent=2) if args.json else "\n".join(review.rounds_lines(rep)))
-            return 0
+            return _rounds(args, repo)
         if args.review_cmd == "score":
             sc = review.score(labels=review.labels_now())
             wave = _wave_of(repo, "", args.wave)[0] if args.wave else ""   # a wave id read as its release now
