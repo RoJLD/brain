@@ -45,7 +45,9 @@ USAGE = """\
                  numbers under 120 columns or 30 rows, where the cards take one column and the grid is not offered;
                  --tab NAME starts there, and with --once or --plain prints that tab's panels alone (the overview:
                  its cards; the settings: its pages); --view NAME that view of it (4 milestones: list, tree: the
-                 WBS from the graph and the last brain forecast's latest.json, never recomputed), --axis the tree's
+                 WBS from the graph and the last brain forecast's latest.json, never recomputed, trajectories: the
+                 Gantt as p10-p90 bands of the same forecast, with the median and the 6-week horizon; [ ] its scale
+                 and left/right its pan in the app), --axis the tree's
                  (milestones: era > milestone > item, waves: era > wave > item; g in the app). The project selector
                  (p: global or one project), the sessions', queue's and frontier's filters and sorts (f, s, o), a
                  table's columns (C: shown or hidden, their order, the longest a title may be; the sessions also
@@ -241,7 +243,8 @@ def register(sub, ctx) -> None:
                          "(default: the last one shown, else the overview); with --once or --plain, print its panels "
                          "alone (the overview: its cards)")
     tu.add_argument("--view", metavar="NAME",
-                    help="with --tab, that view of it (the milestones tab: list, tree); with --once or --plain, "
+                    help="with --tab, that view of it (the milestones tab: list, tree, trajectories); with --once or "
+                         "--plain, "
                          "print that view's panels alone")
     tu.add_argument("--axis", choices=("milestones", "waves"),
                     help="the milestones tab's tree: era > milestone > item (default) or era > wave > item; alone, "
