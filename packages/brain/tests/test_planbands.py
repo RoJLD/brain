@@ -115,6 +115,40 @@ def test_the_scale_and_the_pan_stay_within_their_steps():
     assert planbands.zoom(planbands.SCALES[-1], 1) == planbands.SCALES[-1]
     assert planbands.pan(0, 1, 1) == 7 and planbands.pan(7, 1, -1) == 0 and planbands.pan(0, 1, -1) == 0
     assert planbands.pan(0, 7, 1) == 1 and planbands.rescaled(14, 1, 2) == 7
+    # never past the horizon's cell, the last one the chart draws: one ← undoes one → there
+    h = forecast.HORIZON_DAYS
+    assert planbands.pan(h - 2, 1, 1) == h and planbands.pan(h, 1, 1) == h and planbands.pan(h, 1, -1) == h - 7
+    assert planbands.pan(6, 7, 5) == 6 and planbands.rescaled(h, 1, 0.5) == 2 * h
+    assert planbands.rescaled(6, 7, 1) == h   # 42 days on, at a day a cell: the horizon's cell still
+
+
+def test_the_notes_are_never_cut_at_the_cockpits_width(st):
+    """The backlog's flow follows its open items (no band, no cells); a long note wraps under itself."""
+    fc = {**FCB, "milestones": [{**FCB["milestones"][0], "gates": [
+        "go/no-go ddr-go", "calendar 28 days", "hardware gpu-box", "external acme:wi-z", "count 3 of 5 users"]}]}
+    panel = {"projects": [{"project": "demo", "bands": planbands.collect(st, fc, "demo")}]}
+    out = planbands.lines(panel, cockpit.WIDTH, plain=False)
+    assert all(len(x) <= cockpit.WIDTH for x in out)
+    back = next(x for x in out if x.startswith("  backlog"))
+    assert back.endswith("9  in 3.5/day · out 1.25/day: does not empty at this rate")
+    era = out.index(next(x for x in out if x.startswith("  era-demo-one")))
+    col = out[era].index("◆")
+    assert out[era + 1][:col].strip() == "" and out[era + 1][col:].strip()   # the rest under the first note
+    assert " ".join(x.strip() for x in out[era:era + 3]).count("# count 3 of 5 users") == 1
+    assert [x[2:24].rstrip() for x in out[3:-1] if x[2:24].strip()] == ["era-demo-one", "(no milestone)", "backlog"]
+    # little room right of the cells: the notes go under the cells
+    _, rows = planbands.chart(panel["projects"][0]["bands"], 60, plain=False)
+    era_text = rows[0][1].split("\n")
+    assert era_text[0].rstrip().endswith("▸") and all(x.startswith(" " * 29) for x in era_text[1:])
+    assert len(era_text) > 1 and all(len(x) <= 60 for x in era_text)
+
+
+def test_panned_to_the_horizon_the_chart_keeps_its_last_cell(st):
+    b = planbands.collect(st, FCB, "demo")
+    h = forecast.HORIZON_DAYS
+    _, rows = planbands.chart(b, 118, 1, planbands.pan(h - 1, 1, 30), plain=False)
+    era = next(t for r, t in rows if r["id"] == "era-demo-one")
+    assert era.startswith("era-demo-one") and "▸  ◆ go/no-go ddr-go" in era
 
 
 def test_the_dates_row_names_each_monday_where_it_fits():
