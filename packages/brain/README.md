@@ -1242,8 +1242,14 @@ those conditions before the calls, at zero token, from the files the guard reads
   another's, not a coordinator), 2 when the app's files cannot be read.
 - **`brain handover check [--id ID] [--successor ID] [--json]`**: each condition (a coordinator by name or a chain
   root, started by one, its note under 6 hours old, its successors live and detached), whether `on` and `off` would
-  pass, and the predecessor, which an incoming coordinator archives first (a session's own archive is refused); exit
-  1 when the hand-over would be refused, 2 when the app's files cannot be read.
+  pass, its children and the predecessor, which an incoming coordinator archives first (a session's own archive is
+  refused); exit 1 when the hand-over would be refused, 2 when the app's files cannot be read. The `children` line
+  lists each session it started as archived, detached or blocking (any other: the app archives a parent's side
+  sessions with it and refuses while one works), with what a blocking one needs (detach a live one; archive a
+  finished one once its work is merged, else detach it); only the session that started a child may detach it, so
+  the outgoing coordinator detaches them before its archive. The `predecessor` line says to archive it only once none
+  of its children blocks, and lists those that do (wi-brain-handover-detach-children). A blocking child changes no
+  exit code; `--json` gives `children`, `blocking`, `parent_children`, `parent_blocking` and `parent_archived`.
 - **`brain handover root [ID] [--reason TEXT] [--clear]`**: the owner's, in their own terminal (refused in a Claude
   Code session's shell, and by the guard to every session, like `brain usage allow`): a session the owner started
   (no parent in the app's files) marked a chain root, `<BRAIN_HOME>/handover/roots.json`. A root hands over without a
