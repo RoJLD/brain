@@ -39,9 +39,9 @@ _TO_EN = ("run|install|answer|decide|approve|sign|tag|push|merge|confirm|choose|
 
 # {N} and {N_FR}: the owner's names as one alternation, with « the owner » or « le propriétaire ».
 PATTERNS = (
-    r"(?<![Aa] )(?<![Tt]he )(?<!-)\b(?:waits?|waiting|awaits?|awaiting)\s+(?:on|for)\s+{N}\b(?!-)",
+    r"(?<!\ba )(?<!\bthe )(?<!-)\b(?:waits?|waiting|awaits?|awaiting)\s+(?:on|for)\s+{N}\b(?!-)",
     r"\bblocked\s+(?:on|by)\s+{N}\b",
-    r"\b(?:pending|awaiting|until|till)\s+{N}'s\s+\w+",
+    r"\b(?:pending|awaiting|until|till)\s+{N}['’]s\s+\w+",
     r"\b(?:until|till|once)\s+{N}\s+(?:" + _VERBS_EN + r")\b",
     r"\b{N}\s+(?:still\s+)?(?:has|needs)\s+to\s+(?:" + _TO_EN + r")\b",
     r"\bsession\s+{N}\s+runs\b",
@@ -49,7 +49,7 @@ PATTERNS = (
     r"\b(?:left|next|remaining)\s*:\s*{N}\b",
     r"\b(?:attend(?:ent)?|en\s+attente)\b[^.;\n]{0,40}?\b{N_FR}\b",
     r"\bbloqu\w*\s+(?:par|sur)\b[^.;\n]{0,30}?\b{N_FR}\b",
-    r"\b(?:jusqu'à\s+ce\s+que|dès\s+que)\s+{N_FR}\b",
+    r"\b(?:jusqu['’]à\s+ce\s+que|dès\s+que)\s+{N_FR}\b",
     r"\b{N_FR}\s+(?:doit|devra)\b",
 )
 

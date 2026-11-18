@@ -29,6 +29,9 @@ WAITS = [
     ("waiting", "STEP-1 to STEP-5 wait on Ada"),
     ("left", "blocked on the owner: the lock is applied elevated"),
     ("left", "pending Ada's answer on the contract"),
+    ("progress", "the data waits on Ada's install"),                    # a subject ending in « a »
+    ("progress", "the schema waits for the owner"),
+    ("left", "pending Ada’s answer on the contract"),                  # a typographic apostrophe
     ("left", "the release ships until Ada signs the tag"),
     ("engine", "installable from the public repo once Ada pushes v0.2.0"),
     ("brief", "the session prompt (Ada runs it on the laptop after the tag)"),
@@ -38,6 +41,7 @@ WAITS = [
     ("note", "en attente de la réponse du propriétaire"),
     ("note", "bloqué par Ada tant que la clé manque"),
     ("note", "dès que Ada aura signé, la PR part"),
+    ("note", "jusqu’à ce que Ada signe le contrat"),
     ("note", "Ada doit signer le contrat"),
 ]
 
@@ -64,6 +68,7 @@ NOT_WAITS = [
     ("scope", "each « waits on the owner » line names an item"),          # quoted: named, not said
     ("scope", 'the hand-over\'s "waiting on Ada" lines'),
     ("scope", "a wait on the owner said only in prose"),                  # a noun
+    ("scope", "The wait on Ada is the longest one"),                      # a noun, capitalised
     ("scope", "the waiting-on-Ada time per item"),                        # a compound
     ("scope", "publishes the signed entries with Ada's go"),              # who decides, in general
     ("scope", "Ada decides the model, the budget and the trigger"),

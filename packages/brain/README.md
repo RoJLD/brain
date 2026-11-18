@@ -971,7 +971,8 @@ What waits on the owner reaches the queue only as a field: an item's `props.open
 fails, of an open item whose title or text props say it waits on the owner while none of those carries it
 (`brain.ownerwaits`): « waits on Ada's install », « blocked on the owner », « pending Ada's answer », « until Ada
 signs », « once Ada pushes », « a session Ada runs », « Ada still has to confirm », « left: Ada », and in French
-« attend … Ada », « en attente de … du propriétaire », « bloqué par Ada », « dès que Ada », « Ada doit ». The owner's
+« attend … Ada », « en attente de … du propriétaire », « bloqué par Ada », « dès que Ada », « Ada doit » (a straight
+or a typographic apostrophe alike). The owner's
 names are `identity.owner` and `identity.display_name`; « the owner » always counts. The line gives the `brain item
 set ID external_blocker=...` (or `open=...`) that records the wait. Left alone: a closed item, the props that record
 a past call (`idea`, `validated`, `priority_reason`, `size_reason`, `created`, `decided*`, `answered*`, `split*`,
