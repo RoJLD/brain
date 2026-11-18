@@ -19,7 +19,8 @@ A row scanned by an older scanner, whose transcript is gone, has no ``spend``: t
 
 from __future__ import annotations
 
-from . import cost, usage  # both import this module: nothing of theirs is read at import time
+from . import usage  # it imports this module: nothing of it is read at import time; brain.cost is read lazily (it
+#                       imports this module, and importing it here closes a cycle through sizing and ranking)
 
 CTX_STEP = 100_000  # the context buckets of ``spend`` (brain usage --by context)
 SIM_CEILINGS = (300_000, 400_000, 500_000)  # the hand-over simulation's ceilings
@@ -182,7 +183,8 @@ def row_of(sp: Spend, agents: list[Spend]) -> dict:
 
 def role_of(row: dict) -> str:
     """A session's role from its row, at zero token: coordinator, sub-session or session."""
-    if len(row.get("spawned") or []) >= cost.ORCHESTRATOR:
+    from .cost import ORCHESTRATOR
+    if len(row.get("spawned") or []) >= ORCHESTRATOR:
         return "coordinator"
     return "sub-session" if (row.get("brief") or {}).get("side") else "session"
 
