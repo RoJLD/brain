@@ -15,8 +15,8 @@ import sys
 from pathlib import Path
 
 from .. import (alerts, bundles, classes, codeindex, config, crossstore, decisions, defaults, docsgraph, features,
-                gates, graph, links, lint, markers, milestones, modulemap, modules, neutral, permissions, pins,
-                projects, public, readme, records, reference, render, scopes, sizing, skew, specs, stacks, tidy,
+                gates, graph, links, lint, markers, milestones, modulemap, modules, neutral, ownerwaits, permissions,
+                pins, projects, public, readme, records, reference, render, scopes, sizing, skew, specs, stacks, tidy,
                 tiers, vault, views, waves)
 from ..inventory import AuditError
 from ._common import _now, _on_main, _project, _queue_changed, _repos, _scope, _store_label
@@ -160,14 +160,16 @@ def _docs_checks(project: projects.Project, root: Path, store: Path, stale: view
 
 
 def _store_checks(project: projects.Project, root: Path, store: Path, stale: views.Stale) -> int:
-    """The checks of the store itself, whichever project at the root it belongs to: milestones, the waves and eras
-    (1 on an error), the module map, the specs ready to turn active, the hard-rule ratio; its stale views join
-    ``stale``."""
+    """The checks of the store itself, whichever project at the root it belongs to: milestones, the waits on the owner
+    said in prose only, the waves and eras (1 on an error), the module map, the specs ready to turn active, the
+    hard-rule ratio; its stale views join ``stale``."""
     for line in milestones.orphan_lines(store, root):
         print(line)
     for line in sizing.check_lines(store):   # every item written since the rule has a size (wi-brain-item-size)
         print(line)
     for line in gates.check_lines(store, project.registry_dir):   # gates as data (wi-brain-forecast-gates)
+        print(line)
+    for line in ownerwaits.check_lines(store, root):   # a wait said in prose only (wi-brain-owner-waits-check)
         print(line)
     rc = _plan_checks(project, root, store, stale)
     for line in _module_warnings(project, root, store, stale):   # every open item has its module (wi-brain-module-map)
