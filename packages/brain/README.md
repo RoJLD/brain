@@ -1083,6 +1083,16 @@ Zero-token commands for many sessions on one brain ([`docs/merge-driver.md`](doc
   when the branch is behind or lost something. The push guard `merges:stale` runs it on each pushed branch whose merge
   of main is not on the remote yet, against a fresh main, and refuses a file the merge resolved against a main that
   has moved on it since (docs/merge-driver.md).
+- **`brain gate`** (brain.gate): the pre-push checks of a branch in one call, before `git push`: clean (nothing left
+  out of HEAD, untracked files included), `brain merge-check` against the base (`--base`, origin's default branch
+  by default; a remote one fetched again), the review's stamp for HEAD with no finding open, a graph store's views regenerated and checked (`brain refresh --offline`; a view it
+  rewrote fails: commit it), `brain audit --diff` (0 NEW, 0 LEFT), the public check's stamp for a public repo's HEAD
+  (`brain check --public --history` when it has none) and the targeted tests (`brain test --changed`, `--strict`).
+  Each step runs even when one before it failed (`--fail-fast` stops; `--skip STEP` skips one: INCOMPLETE, exit 1);
+  its log goes to `<temp>/brain-gate/<run>/<n>-<step>.log` (or `--logs DIR`; the newest 20 runs kept) and three lines
+  answer: what passed (and the logs' folder), what failed and why, the next command. Exit 0 only when every step that
+  applies passes; `--python` runs the tests and `-n N` gives them xdist workers (the brain steps run with the engine
+  running the gate); `--json` for the report.
 - **`brain merge-ready PR`**: the merge gate, before `gh pr merge`: the PR open and not a draft, main not moved under
   a file it touches since their merge base, `brain merge-check` on a head that merged main, every CI check green on
   the head, the review's stamp for the head with no finding open, the public check's stamp for a public repo, nothing

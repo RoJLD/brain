@@ -352,7 +352,8 @@ def _handle(stream):
 
 def run(top: Path, tests: list[str], python: str = "", workers: str = "", extra: list[str] | None = None,
         echo=print, quiet_stdout: bool = False) -> int:
-    """pytest on ``tests``; the worst exit code (5, nothing collected, counts as 0). ``quiet_stdout``: pytest's report
+    """pytest on ``tests``; the worst exit code (5, nothing collected, counts as 0; a signal, 128 + it:
+    :func:`exit_code`). ``quiet_stdout``: pytest's report
     on stderr (stdout is JSON)."""
     worst = 0
     out = sys.stderr if quiet_stdout else sys.stdout
@@ -369,8 +370,14 @@ def run(top: Path, tests: list[str], python: str = "", workers: str = "", extra:
         say(line)
         rc = subprocess.run(cmd, cwd=cwd, env=dict(os.environ), stdout=_handle(out),
                             stderr=_handle(sys.stderr)).returncode
-        worst = max(worst, 0 if rc == 5 else rc)
+        worst = max(worst, exit_code(rc))
     return worst
+
+
+def exit_code(rc: int) -> int:
+    """pytest's exit code as brain test's: 5 (nothing collected) is 0; a run killed by a signal (a negative code on
+    POSIX) is 128 + the signal, never a pass."""
+    return 0 if rc in (0, 5) else rc if rc > 0 else 128 - rc
 
 
 def record(sel: Selection, mode: str, ran: int, rc: int | None) -> Path:
