@@ -87,13 +87,18 @@ async def _folds_and_detail(app, pilot, tree, opened_details):
     tree.move_cursor(s2)
     await pilot.press("right")   # unfolds it
     assert s2.is_expanded and any("wi-carry" in x for x in _labels(tree))
-    await pilot.press("right")   # then goes to its first child
-    assert tree.cursor_node is s2.children[0]
+    await pilot.press("right")   # then goes to its first child: a lot (wi-brain-tui-waves), open
+    lot = s2.children[0]
+    assert tree.cursor_node is lot and lot.data["kind"] == "lot" and lot.is_expanded
+    await pilot.press("right")   # its first item
+    assert tree.cursor_node is lot.children[0]
     app.open_detail = lambda name, r: opened_details.append((name, r["id"]))
     await pilot.press("enter")
-    assert opened_details == [("frontier", s2.children[0].data["id"])]
+    assert opened_details == [("frontier", lot.children[0].data["id"])]
     await pilot.press("left")    # an item: to its parent
-    assert tree.cursor_node is s2
+    assert tree.cursor_node is lot
+    await pilot.press("left", "left")    # the lot folds, then to the wave
+    assert not lot.is_expanded and tree.cursor_node is s2
     await pilot.press("left")    # folds it
     assert not s2.is_expanded
     await pilot.press("enter")   # a wave: its detail

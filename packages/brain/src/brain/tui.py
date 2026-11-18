@@ -26,8 +26,9 @@ Keys (the footer shows those of the focused panel, ? lists them all):
   ctrl+pageup, ctrl+pagedown    the previous and the next tab (a click on the bar too, its tooltips name each tab)
   v        the tab's next view (the overview: its cards, its grid, its digest; 4 milestones: its list, its Tree, its
            Trajectories); a click on its word in the toolbar too
-  g        in the Milestones Tree (brain.tui_plan): the next axis, era > milestone > item or era > wave > item; there
-           ←/→ fold and unfold, Enter opens an item's detail or a milestone's row in Trajectories
+  g        in the Milestones Tree (brain.tui_plan): the next axis, era > milestone > item or era > wave > lot > item;
+           there f the P0 and P1 items alone, ←/→ fold and unfold, Enter opens an item's detail or a milestone's row in
+           Trajectories
   [ ]      in the Milestones Trajectories (the Gantt as bands): a finer or a coarser scale; ←/→ pan a week, Enter a
            milestone's detail
   Enter    on a card, its tab, already filtered as the card says (a click too); the arrows move between the cards
@@ -110,7 +111,7 @@ TEXTS = {"audit": cockpit.audit_lines, "health": cockpit.health_lines, "exec": c
          "digest": lambda panel: cockpit.digest_lines(panel, width=1000, lines_max=0, titled=False)}  # it scrolls: all of it
 PANEL_ACTIONS = ("tab", "next_tab", "prev_tab", "next_view", "set_view", "back", "toggle_max", "pick_scope", "search",
                  "next_sort", "reverse", "filters", "panel_help", "toggle_tz", "update", "side_act", "side_open",
-                 "columns", "plan_axis")  # the panels' keys, off while a dialog or a detail is on top of them
+                 "columns", "plan_axis", "plan_urgent")  # the panels' keys, off while a dialog or a detail is on top
 # every panel and frame, as the grid places them (open alerts: a whole row, L11); the plugged projects' panels after them
 EVERY_FRAME = ("sessions", "alerts", "queue", "milestones", "frontier", "audit", "health", "digest", "exec", "impact",
                "plan", "traj", "settings")
@@ -712,6 +713,8 @@ class CockpitApp(DetailBeside, PaletteAndColumns, SettingsTab, PlanTreeApp, App)
             self._side_changed(updated)
         if "alerts" in updated:
             self._alerts_row()
+        if "sessions" in updated and "plan" not in updated:   # the session on each item of the Tree
+            self._plan_sessions(panels)
 
     def _failed_note(self, name: str, snap: dict) -> str:
         """A panel whose last read failed and that still shows its last content: the error and the data's time."""
@@ -1009,6 +1012,7 @@ class CockpitApp(DetailBeside, PaletteAndColumns, SettingsTab, PlanTreeApp, App)
             # a panel's table focused; the palette calls action_columns with its own
             "columns": lambda: isinstance(self.focused, DataTable) and self.focused.id in cockpit.COLUMNS,
             "plan_axis": lambda: isinstance(self.focused, PlanTree),
+            "plan_urgent": lambda: isinstance(self.focused, PlanTree),
             "next_view": lambda: len(cockpit.tab_views(self.tab, self._narrow())) > 1,  # a tab with several views
             "toggle_max": lambda: len(cockpit.tab_panels(self.tab, self._view())) > 1,  # one panel: full already
             # hidden until a newer one is out, or the installed one lags the pin

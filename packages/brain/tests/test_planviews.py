@@ -121,7 +121,8 @@ def test_the_wave_axis_puts_a_carried_item_in_the_wave_it_is_in_now(st):
     assert s1["name"] == "0.1.0 (wave-s1)" and s1["when"] == "reached Nov 10" and (s1["done"], s1["items"]) == (1, 1)
     assert s3["name"] == "0.2.1 (wave-s3)"   # its release computed by brain.waves, not written
     # the carried items, open or done, count and show in the wave they went to
-    assert sorted(c["id"] for c in s2["children"][:-1]) == ["wi-a", "wi-carry", "wi-w"]
+    # (a pending wave's open items in its lots, wi-brain-tui-waves)
+    assert sorted(k["id"] for c in s2["children"][:-1] for k in c["children"]) == ["wi-a", "wi-carry", "wi-w"]
     assert (s2["done"], s2["items"]) == (1, 4) and [c["id"] for c in s2["children"][-1]["children"]] == ["wi-cdone"]
     assert roots[-1]["key"] == "demo:(no wave)" and sorted(c["id"] for c in roots[-1]["children"]) == [
         "wi-b", "wi-e", "wi-ext", "wi-one", "wi-two"]
