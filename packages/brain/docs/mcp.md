@@ -82,7 +82,8 @@ and goes to the guards ledger (`<BRAIN_HOME>/ledger/guards-<month>.jsonl`, when 
 `mcp:<name>` and the client's name as its session. Then every answer passes the secret scan (above), and the
 machine's token, which has no key's shape, is redacted wherever it appears (`brain.tokenguard.redact`). The owner
 guard's check `token` (a call that reaches the token's file, docs/guards.md « The machine's token ») is on here
-whatever config.json `guards.refuse_token_read` says.
+under config.json `guards.refuse_token_read: true` (optional, off by default), as at the hook, and the owner's gestures
+are matched wide under `guards.gestures_wide: true` (optional, off by default).
 
 | Claude Code hook | For an MCP client |
 |---|---|

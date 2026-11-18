@@ -108,6 +108,21 @@ def test_every_gesture_of_the_engine_s_list_is_refused_whatever_the_tool():
     assert mcpguards.owner_gesture(["handover", "check"]) == "" and mcpguards.owner_gesture(["usage", "guard"]) == ""
 
 
+@pytest.mark.parametrize("value", [None, False, True])
+def test_the_gestures_are_matched_wide_under_the_key_only(tmp_path, monkeypatch, value):
+    """config.json guards.gestures_wide: absent or false, a word the server cannot resolve is no gesture's (as 0.5.1);
+    true, it may hold one (brain uninstall $F, brain queue $x, brain $x)."""
+    data = {"v": 1, "identity": {"owner": "Ada", "kind": "person"}}
+    if value is not None:
+        data["guards"] = {"gestures_wide": value}
+    cfg = tmp_path / "wide-config.json"
+    cfg.write_text(json.dumps(data), encoding="utf-8")
+    monkeypatch.setenv("BRAIN_CONFIG", str(cfg))
+    for argv in (["uninstall", "$F"], ["queue", "$x"], ["$x"]):
+        assert bool(mcpguards.owner_gesture(argv)) is (value is True), argv
+    assert mcpguards.owner_gesture(["uninstall", "--apply"]) == "brain uninstall --apply"   # spelled out: always
+
+
 def test_a_write_tool_that_declares_no_effect_is_refused(tmp_path, ran):
     hook_only = mcpserver.Tool("h", "h", "", {}, kind="write", func=lambda s, a: (ran.append(1), ("x", False))[1])
     failed, text = client_with(tmp_path, hook_only).tool("h")

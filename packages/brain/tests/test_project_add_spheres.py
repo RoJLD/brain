@@ -224,13 +224,26 @@ def test_lifecycle_of_maps_a_standards_stage_and_dates_it(monkeypatch):
 
 # --- brain check: lifecycle's stage, shape and profile ----------------------------------------------------------
 
-@pytest.mark.parametrize("line, what", [
+UNKNOWN_LIFECYCLE = [
     ("stage: someday", "stage 'someday' is not one of explore"),
     ("shape: round", "shape 'round' is not one of living, finite"),
     ("profile: hobby", "profile 'hobby' is not one of maker"),
-])
+]
+
+
+def _lifecycle_strict(home, on):
+    """config.json projects.lifecycle_strict: absent (None), false or true."""
+    data = {"v": 1, "identity": {"owner": "Ada"}}
+    if on is not None:
+        data["projects"] = {"lifecycle_strict": on}
+    (home / "config.json").write_text(json.dumps(data), encoding="utf-8")
+
+
+@pytest.mark.parametrize("line, what", UNKNOWN_LIFECYCLE)
 def test_an_unknown_lifecycle_value_is_an_error_in_strict_mode_a_note_in_read_mode(home, monkeypatch, capsys, line,
                                                                                     what):
+    """Under config.json projects.lifecycle_strict."""
+    _lifecycle_strict(home, True)
     (home / "projects.yaml").write_text(HEADER + f"  lifecycle: {{{line}}}\n", encoding="utf-8")
     errors = projects.check(home)
     assert any(what in e for e in errors), errors
@@ -249,7 +262,40 @@ def test_known_lifecycle_values_pass(home):
     assert projects.check(home) == []
 
 
+@pytest.mark.parametrize("on", [None, False])
+@pytest.mark.parametrize("line, what", UNKNOWN_LIFECYCLE)
+def test_an_unknown_lifecycle_value_is_a_note_only_without_the_key(home, monkeypatch, capsys, line, what, on):
+    """config.json projects.lifecycle_strict absent or false: no error even in strict mode (CI), as 0.5.1, which
+    never refused one; the note says it."""
+    _lifecycle_strict(home, on)
+    (home / "projects.yaml").write_text(HEADER + f"  lifecycle: {{{line}}}\n", encoding="utf-8")
+    monkeypatch.setattr(schema, "_NOTED", set())
+    capsys.readouterr()
+    assert projects.check(home) == []
+    assert any(what in ln for ln in capsys.readouterr().err.splitlines() if ln.startswith("brain: note: "))
+
+
+def test_an_unreadable_catalog_leaves_the_stage_unread_without_the_key(home, monkeypatch):
+    from brain import typologies
+
+    def broken(*a, **k):
+        raise typologies.CatalogError("x")
+    (home / "projects.yaml").write_text(HEADER + "  lifecycle: {stage: someday}\n", encoding="utf-8")
+    monkeypatch.setattr(typologies, "load", broken)
+    assert projects.check(home) == []
+    _lifecycle_strict(home, True)
+    with pytest.raises(typologies.CatalogError):
+        projects.check(home)
+
+
+def test_an_unreadable_config_leaves_the_lifecycle_check_a_note(home):
+    (home / "config.json").write_text("{not json", encoding="utf-8")
+    (home / "projects.yaml").write_text(HEADER + "  lifecycle: {profile: hobby}\n", encoding="utf-8")
+    assert not any("profile 'hobby'" in e for e in projects.check(home))
+
+
 def test_a_standards_stage_written_as_the_lifecycle_s_names_the_stage_it_reads_as(home):
+    _lifecycle_strict(home, True)
     (home / "projects.yaml").write_text(HEADER + "  lifecycle: {stage: mvp}\n", encoding="utf-8")
     errors = projects.check(home)
     assert any("stage 'mvp' is not one of" in e and "a standards stage: write build" in e for e in errors), errors

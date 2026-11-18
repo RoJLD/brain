@@ -1,7 +1,7 @@
 """The machine's IPC token kept from a session's tool calls (brain.tokenguard, wi-brain-ipc-token-read-guard): every
 door to the file (Read, Grep, a tool edit, a shell call in Bash and PowerShell, nested or wrapped, over ssh) is refused
-under config.json guards.refuse_token_read, passes without it, and the MCP server refuses it and redacts the token
-whatever the key says. The tests run as owner Ada, in a temporary BRAIN_HOME."""
+under config.json guards.refuse_token_read, passes without it; the MCP server refuses it under the same key (off by
+default, as 0.5.1) and redacts the token whatever the key says. The tests run as owner Ada, in a temporary BRAIN_HOME."""
 
 import json
 import os
@@ -258,8 +258,27 @@ def test_an_error_lets_a_hook_through_and_refuses_strictly(machine, monkeypatch)
 
 # --- the MCP server -----------------------------------------------------------------------------------------------
 
-def test_the_mcp_server_refuses_it_whatever_the_key(machine, tmp_path, monkeypatch):
-    _off(tmp_path, monkeypatch, False)
+@pytest.mark.parametrize("value", [None, False])
+def test_the_mcp_server_follows_the_key(machine, tmp_path, monkeypatch, value):
+    """guards.refuse_token_read absent or false: the MCP server runs no token check, as 0.5.1 (its answers are still
+    redacted); true: it refuses an effect that reaches the token's file."""
+    effect = mcpguards.bash_payload(machine, ["spec", "show", tok()])
+    assert ("owner", "token") in [(g, c) for g, c, _, _ in guards.refusals(effect, strict=True)]
+    _off(tmp_path, monkeypatch, value)
+    assert not any(c == "token" for _, c, _, _ in guards.refusals(effect, strict=True))
+    read = payload("Read", machine, file_path=tok())
+    assert not any(c == "token" for _, c, _, _ in guards.refusals(read, strict=True))
+
+
+def test_an_unreadable_config_leaves_the_mcp_token_check_off(machine, tmp_path, monkeypatch):
+    cfg = tmp_path / "broken.json"
+    cfg.write_text("{not json", encoding="utf-8")
+    monkeypatch.setenv("BRAIN_CONFIG", str(cfg))
+    effect = mcpguards.bash_payload(machine, ["spec", "show", tok()])
+    assert not any(c == "token" for _, c, _, _ in guards.refusals(effect, strict=True))
+
+
+def test_the_mcp_server_refuses_a_link_under_the_key(machine, tmp_path, monkeypatch):
     link = machine / "spec.md"
     try:
         os.symlink(tok(), link)

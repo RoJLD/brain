@@ -25,8 +25,9 @@ refuses, as its check ``token``:
 
 ``brain ipc ...`` is the gestures' (brain.gestures): ``brain ipc token`` reports the file and never prints it.
 ``BRAIN_GUARD_ALLOW=owner`` (or ``owner:token``) lifts the check for the owner. The MCP server (brain.mcpguards)
-judges its effects strictly: the check is on there whatever the key; its real protection is that every answer has the
-token's value redacted (brain.mcpserver).
+judges its effects strictly: the check is on there under the same key (off by default, as 0.5.1), and a check that
+fails to judge a call refuses it; its real protection is that every answer has the token's value redacted
+(brain.mcpserver), whatever the key.
 
 What it does not see (docs/guards.md, « The machine's token »): a script file that reads the token, a path built at
 run time from pieces the guard cannot read (base64, character codes, ``os.sep`` joins, a variable set by an earlier
@@ -362,7 +363,8 @@ def _shell(cmds, command: str, powershell: bool, cwd: str, prot: Protected) -> s
 def check(tool: str, inp: dict, cwd: str, cmds=None, command: str = "", powershell: bool = False,
           strict: bool = False) -> str | None:
     """The owner guard's refusal of a call that reads, copies or replaces the machine's token, else None; on only
-    under config.json guards.refuse_token_read, or ``strict`` (the MCP server)."""
+    under config.json guards.refuse_token_read (the hook's and the MCP server's alike), or ``strict`` (a caller that
+    wants it on whatever the key; none of the engine's)."""
     if not (strict or enabled()):
         return None
     prot = Protected()

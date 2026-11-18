@@ -690,11 +690,13 @@ def open_link(x: dict) -> str:
 
 
 def refused(env: dict | None = None) -> str:
-    """Why the actions do not run here ('' when they do): an agent's session (brain.gestures.AGENT_ENV: a Claude Code
-    session's shell sets CLAUDECODE and CLAUDE_CODE_ENTRYPOINT, the brain's own agents BRAIN_AGENT_SESSION; a
-    session that clears one still has another, and the owner guard refuses clearing them under guards.gestures_wide)."""
+    """Why the actions do not run here ('' when they do): a Claude Code session's shell sets CLAUDECODE
+    (brain.gestures.lock_marker). Under config.json guards.gestures_session_markers (off by default), any agent marker
+    (brain.gestures.MARKER_NAMES: CLAUDECODE, CLAUDE_CODE_ENTRYPOINT, the brain's own agents' BRAIN_AGENT_SESSION, the
+    variables Claude Code sets for each session), so that a session that clears one still has another; the owner
+    guard refuses clearing them under guards.gestures_wide."""
     from . import gestures
-    var = gestures.agent_session(os.environ if env is None else env)
+    var = gestures.lock_marker(os.environ if env is None else env)
     return (f"the actions are {config.name_of()}'s: not from a Claude Code session's shell ({var} is set)"
             if var else "")
 
