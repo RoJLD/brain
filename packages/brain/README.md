@@ -161,8 +161,9 @@ third view, Trajectories, is the Gantt as bands (`brain.planbands`): one row per
 forecast dates, sorted by its median, `▒` from p10 to p80, `░` from p80 to p90 and `█` at the median, the band stopped
 at the 6-week horizon with `▸` where it goes on (no date beyond it: the order only); after it the gates (`◆` go/no-go,
 `⧗` calendar, `⚙` hardware, `⇢` another project), why a milestone is not dated (its dated part's band alone), then « (no
-milestone) » and the backlog's flow (no band while it grows faster than it empties). `[` `]` change the days a cell,
-`←`/`→` pan a week, Enter opens a milestone's detail; the legacy console gets ASCII and words. `--tab NAME` starts on a
+milestone) » and the backlog's flow (no band while it grows faster than it empties), the notes wrapped rather than
+cut. `[` `]` change the days a cell, `←`/`→` pan a week up to the horizon, Enter opens a milestone's detail; the legacy
+console gets ASCII and words. `--tab NAME` starts on a
 tab, and with `--once` or `--plain` prints its panels alone (the overview: its cards); `--view NAME` one view of it and
 `--axis` the tree's: `brain tui --once --tab milestones --view tree --axis waves`, `brain tui --once --tab milestones
 --view trajectories`.

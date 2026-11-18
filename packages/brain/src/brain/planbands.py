@@ -12,8 +12,9 @@ A row's cells, at ``scale`` days a cell from the forecast's day, ``offset`` cell
 A milestone the forecast cannot date shows its dated part's band, if any, and why (its own gate, its items not dated,
 by kind); its gates follow the band (``◆`` go/no-go, ``⧗`` calendar, ``⚙`` hardware, ``⇢`` another project, ``#`` a
 count), and a trigger that names a duration with no gate is said not modelled. The backlog's row is its flow
-(``fc["flow"]``): while it grows faster than it empties, no band. The heading says UNCALIBRATED until the calibration
-judges enough milestones. The shapes carry the meaning without colour (NO_COLOR); the legacy console (``TERM=linux``)
+(``fc["flow"]``): while it grows faster than it empties, no band. A row's notes start after its band's last mark (a
+row of no band: after its open items), and wrap under themselves rather than pass the width. The heading says
+UNCALIBRATED until the calibration judges enough milestones. The shapes carry the meaning without colour (NO_COLOR); the legacy console (``TERM=linux``)
 gets ASCII and words (UX-13).
 
 ``collect(st, fc, project)`` gives the rows the Textual view (brain.tui_plan ``TrajView``) and the text twin
@@ -23,13 +24,15 @@ gets ASCII and words (UX-13).
 from __future__ import annotations
 
 import math
+import textwrap
 from datetime import datetime, timedelta
 
 from . import forecast, planviews, waves
 
 NAME_W = 22          # a row's name column
 OPEN_W = 4           # its open items
-NOTE_W = 34          # the notes kept right of the chart
+NOTE_W = 34          # the room kept right of the chart for the notes of a band that reaches its end
+WRAP_MIN = 16        # less room than this right of a row's cells: its notes wrap under the cells
 MIN_CELLS = 20
 SCALES = (0.25, 0.5, 1, 2, 3, 7)   # days a cell: [ finer, ] coarser
 PAN_DAYS = 7         # ←/→ pan a week
@@ -168,14 +171,20 @@ def zoom(scale: float, step: int) -> float:
     return SCALES[max(0, min(len(SCALES) - 1, k + step))]
 
 
+def last(scale: float) -> int:
+    """The horizon's cell: the furthest offset ``chart`` still draws (its ``▸``)."""
+    return math.ceil(_horizon() / scale)
+
+
 def pan(offset: int, scale: float, step: int) -> int:
-    """The offset ``step`` weeks later (+1, →) or earlier (-1, ←), never before the forecast's day."""
-    return max(0, offset + step * max(1, round(PAN_DAYS / scale)))
+    """The offset ``step`` weeks later (+1, →) or earlier (-1, ←), never before the forecast's day nor past the
+    horizon's cell."""
+    return max(0, min(last(scale), offset + step * max(1, round(PAN_DAYS / scale))))
 
 
 def rescaled(offset: int, old: float, new: float) -> int:
-    """The offset that keeps the same first day at the new scale."""
-    return max(0, round(offset * old / new))
+    """The offset that keeps the same first day at the new scale, never past the horizon's cell."""
+    return max(0, min(last(new), round(offset * old / new)))
 
 
 def _cell(a: float, b: float, d: dict) -> str:
@@ -234,10 +243,23 @@ def note_text(notes: list[dict], plain: bool = False) -> str:
     return " · ".join((n["text"] if plain or not n["glyph"] else f"{n['glyph']} {n['text']}") for n in notes)
 
 
-def row_text(r: dict, n: int, scale: float, offset: int = 0, plain: bool = False) -> str:
-    """One row: its name, its open items, its cells and its notes."""
-    return (f"{r['name'][:NAME_W]:<{NAME_W}} {r['open']:>{OPEN_W}}  {band(r['days'], n, scale, offset, plain)}  "
-            f"{note_text(r['notes'], plain)}").rstrip()
+def row_text(r: dict, n: int, scale: float, offset: int = 0, plain: bool = False, width: int | None = None) -> str:
+    """One row: its name, its open items, its cells up to its band's last mark, then its notes (a row of no band in
+    view, the backlog's flow: its notes right after its open items). Within ``width`` columns, notes too long for the
+    room left wrap on lines under themselves (under the cells when that room is under ``WRAP_MIN``), never cut."""
+    lead = "  ".join(x for x in (f"{r['name'][:NAME_W]:<{NAME_W}} {r['open']:>{OPEN_W}}",
+                                 band(r["days"], n, scale, offset, plain).rstrip()) if x)
+    notes = note_text(r["notes"], plain)
+    if not notes:
+        return lead
+    if width is None or len(lead) + 2 + len(notes) <= width:
+        return f"{lead}  {notes}"
+    col = len(lead) + 2
+    if width - col >= WRAP_MIN:
+        first, *rest = textwrap.wrap(notes, width - col, break_on_hyphens=False)
+        return "\n".join([f"{lead}  {first}", *(" " * col + x for x in rest)])
+    col = NAME_W + 1 + OPEN_W + 2
+    return "\n".join([lead, *(" " * col + x for x in textwrap.wrap(notes, width - col, break_on_hyphens=False))])
 
 
 def legend(plain: bool = False) -> str:
@@ -248,14 +270,15 @@ def legend(plain: bool = False) -> str:
 
 def chart(group: dict, width: int, scale: float | None = None, offset: int = 0,
           plain: bool | None = None) -> tuple[str, list[tuple[dict, str]]]:
-    """(the dates' row, [(row, its text)]) of one project's bands at ``width`` columns."""
+    """(the dates' row, [(row, its text: its notes wrapped on more lines)]) of one project's bands at ``width``
+    columns."""
     plain = planviews.words() if plain is None else plain
     n = cells(width)
     scale = scale or default_scale(n)
-    n = min(n, max(1, math.ceil(_horizon() / scale) + 1 - offset))   # nothing is drawn past the horizon's cell
+    n = min(n, max(1, last(scale) + 1 - offset))   # nothing is drawn past the horizon's cell
     head = f"{'Milestone':<{NAME_W}} {'open':>{OPEN_W}}  {ticks(group.get('as_of'), n, scale, offset)}".rstrip()
     rows = [*(group.get("rows") or []), *(group.get("tail") or [])]
-    return head, [(r, row_text(r, n, scale, offset, plain)[:width]) for r in rows]
+    return head, [(r, row_text(r, n, scale, offset, plain, width)) for r in rows]
 
 
 def lines(panel: dict | None, width: int = planviews.WIDE, scale: float | None = None, offset: int = 0,
@@ -273,7 +296,7 @@ def lines(panel: dict | None, width: int = planviews.WIDE, scale: float | None =
         if not b.get("rows") and not b.get("tail"):
             continue
         head, rows = chart(b, width - 2, scale, offset, plain)
-        out += [f"  {head}", *(f"  {t}" for _, t in rows)]
+        out += [f"  {head}", *(f"  {x}" for _, t in rows for x in t.split("\n"))]
         drawn = True
     if not groups:
         out.append("  no project read yet")
