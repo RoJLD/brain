@@ -10,8 +10,11 @@ zero token, from the same files the guard reads:
   UTC``: the guard reads the first app id in the note's opening as whose note it is;
 - :func:`check` says, for a session (this one by default), whether each condition holds: a coordinator by name (or a
   chain root), started by a coordinator by name or by a chain root, its note written in the last 6 hours, its
-  successors (the coordinators it started, live, detached), and its predecessor (the session that started it), which
-  the incoming coordinator archives first (a session's own archive is refused);
+  successors (the coordinators it started, live, detached), its children (each session it started: archived, detached
+  or blocking, wi-brain-handover-detach-children) and its predecessor (the session that started it), which the
+  incoming coordinator archives first (a session's own archive is refused), only once none of the predecessor's
+  children blocks: the app archives a parent's side sessions with it and refuses while one works, and only the
+  session that started a child may detach it (:func:`children`);
 - :func:`write_brief` writes, beside the note, the successor's brief (``<note>.brief.txt``, read by no guard: its
   first line carries the word ``ultracode``, the owner's decision of 2026-11-12, so that ultracode is on at every
   hand-over: the keyword in a session's first message turns it on there), to paste as start_session's prompt;
@@ -116,8 +119,10 @@ def brief_text(host: str, name: str, successor: str, note: Path, body: str = "")
     steps = [head, "",
              f"1. Read the hand-over note {note.as_posix()} first; brain handover check --id <your id> reads the "
              "guard's conditions.",
-             f"2. Archive your predecessor before anything else: archive_session {host} (the desktop app adds a "
-             "session field: resend the same call once; refused while its Remote Control is on or it still works).",
+             f"2. Archive your predecessor before anything else, once brain handover check's predecessor line says "
+             f"none of its children blocks (else ask {host} to detach them: only it can): archive_session {host} "
+             "(the desktop app adds a session field: resend the same call once; refused while its Remote Control is "
+             "on or it still works).",
              "3. Then the note's next steps: the open PRs, the running sessions and what waits on the owner."]
     tail = "\n" + body.rstrip() + "\n" if body.strip() else ""
     return "\n".join(steps) + "\n" + tail
@@ -175,6 +180,38 @@ def _app(host: str) -> tuple[dict, object, dict]:
     return index, meta, me
 
 
+def _child_advice(state: str) -> str:
+    """What a blocking child needs before its parent's archive."""
+    if state in ("idle", "ended"):
+        return "archive it once its work is merged and verified, else detach it"
+    if state == "unknown":
+        return ("unknown on this machine (no transcript here, or its app file cannot be read): check it, then archive "
+                "or detach it")
+    return "detach it"   # running, asking, stale, starting: it works, or may
+
+
+def children(host: str, index: dict, meta, now: float | None = None) -> list[dict]:
+    """Each session ``host`` started (the app's files' parent), as {id, name, state, verdict, advice}: ``verdict``
+    ``archived``, ``detached`` (its own top level: the parent's archive leaves it) or ``blocking`` (any other: the
+    app would archive it with its parent, or refuse the parent's archive while it works), ``advice`` what a blocking
+    one needs ('' otherwise). Only the session that started a child may detach it (detach_session), so the outgoing
+    coordinator detaches its live children before its successor archives it. An app file that cannot be read again
+    (two folders, another id) is blocking and unknown: what cannot be read is never a guess."""
+    out = []
+    for h, m in sorted(index.items()):
+        if m.get("parent") != host:
+            continue
+        mm = meta(h)
+        if not mm or mm.get("parent") != host:
+            st, verdict = "unknown", "blocking"
+        else:
+            st = guards.successor_state_of(mm, now)[0]
+            verdict = "archived" if st == "archived" else "detached" if mm.get("detached") is True else "blocking"
+        out.append({"id": h, "name": str((mm or m).get("name") or ""), "state": st, "verdict": verdict,
+                    "advice": _child_advice(st) if verdict == "blocking" else ""})
+    return out
+
+
 def _target_why(host: str, target: str, tm: dict, now: float) -> str:
     """'' when Remote Control on for ``target`` (its app file ``tm``) passes the target's conditions, else why not."""
     if not target:
@@ -187,11 +224,23 @@ def _target_why(host: str, target: str, tm: dict, now: float) -> str:
     return "" if st in guards.RC_LIVE + ("starting",) else f"{target} is {st}" + (f": {how}" if how else "")
 
 
+def _children_fields(host: str, parent: str, index: dict, meta, now: float) -> dict:
+    """The children, blocking, parent_children and parent_blocking keys of :func:`check`."""
+    kids = children(host, index, meta, now)
+    pkids = children(parent, index, meta, now) if parent else []
+    return {"children": kids, "blocking": [c["id"] for c in kids if c["verdict"] == "blocking"],
+            "parent_children": pkids, "parent_blocking": [c["id"] for c in pkids if c["verdict"] == "blocking"]}
+
+
 def check(host: str | None = None, *, successor: str = "", now: float | None = None, env=None) -> dict:
     """Each condition of the hand-over for session ``host`` (this one by default), as the guard reads them:
-    {id, name, root, coordinator, parent, parent_name, parent_ok, note, note_age_min, successors, successor, why, ok,
-    on, on_why, off, off_why}. ``ok``: the session may hand over (``why`` is '' then); ``on``: Remote Control on for
-    ``successor`` (else the first successor found) would pass; ``off``: off on itself would pass."""
+    {id, name, root, coordinator, parent, parent_name, parent_ok, parent_archived, note, note_age_min, successors,
+    successor, children, blocking, parent_children, parent_blocking, why, ok, on, on_why, off, off_why}. ``ok``: the
+    session may hand over (``why`` is '' then); ``on``: Remote Control on for ``successor`` (else the first successor
+    found) would pass; ``off``: off on itself would pass. ``children`` and ``parent_children`` are :func:`children`
+    of the session and of its predecessor, ``blocking`` and ``parent_blocking`` the ids of the blocking ones: the
+    predecessor is archived only once ``parent_blocking`` is empty. They inform the procedure and change neither
+    ``ok`` nor the exit code (the guard does not read them)."""
     now = time.time() if now is None else now
     host = _own_id(host, env)
     index, meta, me = _app(host)
@@ -207,8 +256,9 @@ def check(host: str | None = None, *, successor: str = "", now: float | None = N
     off_why = why or ("it has started no live coordinator to succeed it, detached" * (not succ))
     return {"id": host, "name": me.get("name") or "", "root": guards.chain_root(host, me),
             "coordinator": guards._coordinator(me), "parent": parent, "parent_name": pm.get("name") or "",
-            "parent_ok": parent_ok, "note": str(note or ""), "note_age_min": age,
-            "successors": succ, "successor": target, "why": why, "ok": not why,
+            "parent_ok": parent_ok, "parent_archived": bool(pm.get("archived")), "note": str(note or ""),
+            "note_age_min": age, "successors": succ, "successor": target,
+            **_children_fields(host, parent, index, meta, now), "why": why, "ok": not why,
             "on": not on_why, "on_why": on_why, "off": not off_why, "off_why": off_why}
 
 
@@ -260,8 +310,41 @@ def _call_line(r: dict, case: str, call: str) -> str:
     return f"{case:<13}" + (f"ok ({call})" if r[case] else "refused: " + r[case + "_why"])
 
 
+PAD = " " * 13   # under a line's value
+
+
+def _child_rows(kids: list[dict], me: str = "") -> list[str]:
+    return [f"{PAD}- {c['id']} ({c['name'] or 'no name'}{', this session' * (c['id'] == me)}): {c['verdict']}"
+            + (f" ({c['state']}): {c['advice']}" if c["verdict"] == "blocking" else "") for c in kids]
+
+
+def _children_line(r: dict) -> list[str]:
+    kids = r["children"]
+    if not kids:
+        return ["children     none (no session it started)"]
+    n = len(r["blocking"])
+    head = (f"children     {n} of {len(kids)} blocking: detach each live one before your successor archives you "
+            "(detach_session; only the session that started it may)" if n else
+            f"children     none of {len(kids)} blocking (archived or detached)")
+    return [head] + _child_rows(kids)
+
+
+def _predecessor_lines(r: dict) -> list[str]:
+    p = r["parent"]
+    if r["parent_archived"]:
+        return [f"predecessor  {p}: archived already"]
+    n = len(r["parent_blocking"])
+    if not n:
+        return [f"predecessor  {p}: none of its children blocks: an incoming coordinator archives it first "
+                "(archive_session; its Remote Control off, its work finished)"]
+    return [f"predecessor  {p}: archive it only once none of its children blocks: {n} blocking; ask it to detach "
+            "them (detach_session works only for the session that started the child), or archive the finished ones"
+            ] + _child_rows([c for c in r["parent_children"] if c["verdict"] == "blocking"], r["id"])
+
+
 def lines(r: dict) -> list[str]:
-    """The check, for a person: one line per condition, then what the incoming coordinator does first."""
+    """The check, for a person: one line per condition, its children, then what the incoming coordinator does
+    first."""
     who = r["name"] or ("chain root" if r["root"] else "no name")
     kind = "a chain root the owner marked" if r["root"] else "a coordinator by name" if r["coordinator"] else NOT_MARKED
     note = (f"{r['note']} ({r['note_age_min']} min old)" if r["note"] else
@@ -270,10 +353,9 @@ def lines(r: dict) -> list[str]:
     out = [f"session      {r['id']} ({who}): {kind}", _started_line(r), f"note         {note}",
            "successors   " + (", ".join(r["successors"]) or "none (a coordinator it started, live and detached)"),
            _call_line(r, "on", f"set_remote_control {r['successor']} enabled true"),
-           _call_line(r, "off", "set_remote_control self enabled false")]
+           _call_line(r, "off", "set_remote_control self enabled false")] + _children_line(r)
     if r["parent"]:
-        out.append(f"predecessor  {r['parent']}: an incoming coordinator archives it first (archive_session; its "
-                   "Remote Control off, its work finished)")
+        out += _predecessor_lines(r)
     return out
 
 

@@ -113,6 +113,7 @@ brain test --changed                      # those test modules run (shadow mode)
 brain test --changed origin/main -n 4 -- -x -q    # from merge-base(HEAD, origin/main); -n and pytest's own args
 brain test --changed --inert 'packages/brain/changes/*.md'    # paths no test reads, left out
 brain test --changed --strict             # a widened answer runs the whole suite
+brain test --changed --verdict --deadline 300    # the log to a file, a blocking run, three lines out
 ```
 
 A session calls it instead of picking the tests by hand. The change runs from merge-base(HEAD, BASE or the default
@@ -149,6 +150,24 @@ pytest's exit), so that a later comparison with the CI's failures measures what 
 before it gates anything. `--strict` applies the fail-safe here: a widened answer runs the whole suite. `--list`
 prints only, `--json` gives the selection (and the run) as JSON on stdout, pytest's report then going to stderr. The
 exit code is pytest's (5, nothing collected, counts as 0).
+
+**The verdict mode** (`--verdict`), for a session: a long run is neither left in the background nor polled. The
+selection and pytest's whole output go to a log file (`<temp>/brain-test/<repo>-<head>-<UTC stamp>/pytest.log`, the
+newest 20 runs kept, or `--log FILE`); the run blocks until it ends or its deadline (`--deadline S`, 540 seconds by
+default: under the ten minutes a shell tool waits), when its process tree (its xdist workers too) is stopped and the
+exit code is 124. Three lines come out, and nothing else:
+
+```text
+test: FAILED 1 failed, 41 passed (3 test module(s)); log: <temp>/brain-test/brain-4b8063f0-20261117T210000/pytest.log
+failed: tests/test_gate.py::test_skip_and_fail_fast
+next: python -m pytest tests/test_gate.py::test_skip_and_fail_fast (in packages/brain), fix, then brain test --changed --verdict
+```
+
+PASSED, FAILED or TIMEOUT with pytest's counts, the failed and erroring tests' ids (pytest's short summary), and the
+next command: the failed tests to run again, a later deadline, or `brain gate` after a pass (a rerun repeats the
+run's own flags: its repo, map, scope, interpreter, workers and pytest arguments). An interrupt (Ctrl+C, a kill of
+brain) stops pytest's tree too: it never outlives the command. `--json` adds the log, the counts, the ids and the
+three lines to the selection's JSON.
 
 The selection is only as fresh as the map: refresh it from the CI's `coverage-data` artifact of a recent `main` run
 (above, « In the CI »); a map far behind main still answers, but its diff is wide and so is the selection.

@@ -540,7 +540,9 @@ that ran it by the store's coverage summary. `brain coverage --repo R --run --wr
 pytest-cov with test contexts and keeps that summary in the store (`coverage/<repo>.json`); `brain audit` then
 measures `test.coverage`, `feature.tests` reports a feature no test covers, and `FEATURES.md` shows each feature's
 coverage. `brain test --changed` runs the test modules a change touches by that summary first (shadow mode: missing
-or stale evidence widens the answer to the whole suite, which the CI runs before the merge). The rules:
+or stale evidence widens the answer to the whole suite, which the CI runs before the merge); `--verdict` keeps
+pytest's whole output in a log file, blocks until the run ends or its `--deadline`, and says three lines (PASSED,
+FAILED or TIMEOUT with the counts and the log, the failed tests' ids, the next command). The rules:
 [docs/tests-graph.md](docs/tests-graph.md).
 
 ### The module map
@@ -996,6 +998,21 @@ The views name the owner by `identity.display_name` (else `identity.owner`): the
 one is named; `settings.titles` there gives any panel a free title (the settings tab edits both). `identity.owner` stays the id `--by` writes and the
 stores declare.
 
+What waits on the owner reaches the queue only as a field: an item's `props.open` (a question), its
+`props.external_blocker` (a gesture of theirs) or a pending DDR that names it (a choice). `brain check` warns, never
+fails, of an open item whose title or text props say it waits on the owner while none of those carries it
+(`brain.ownerwaits`): « waits on Ada's install », « blocked on the owner », « pending Ada's answer », « until Ada
+signs », « once Ada pushes », « a session Ada runs », « Ada still has to confirm », « left: Ada », and in French
+« attend … Ada », « en attente de … du propriétaire », « bloqué par Ada », « dès que Ada », « Ada doit » (a straight
+or a typographic apostrophe alike). The owner's
+names are `identity.owner` and `identity.display_name`; « the owner » always counts. The line gives the `brain item
+set ID external_blocker=...` (or `open=...`) that records the wait. Left alone: a closed item, the props that record
+a past call (`idea`, `validated`, `priority_reason`, `size_reason`, `created`, `decided*`, `answered*`, `split*`,
+`reframed*`), quoted text (« », “ ”, "", backticks), a noun (« a wait on the owner ») and a compound
+(« waiting-on-Ada time »), and the owner named as who decides in general (« with Ada's go », « Ada decides »). A
+sentence that matches and is no wait (history, a condition to come) is marked once: `brain item set ID
+owner_wait_checked="DATE: why"`.
+
 ### The owner's answers: one writer per batch
 
 The session that asks the owner records the answers, in one PR per batch (wi-brain-answers-lane):
@@ -1099,6 +1116,16 @@ Zero-token commands for many sessions on one brain ([`docs/merge-driver.md`](doc
   when the branch is behind or lost something. The push guard `merges:stale` runs it on each pushed branch whose merge
   of main is not on the remote yet, against a fresh main, and refuses a file the merge resolved against a main that
   has moved on it since (docs/merge-driver.md).
+- **`brain gate`** (brain.gate): the pre-push checks of a branch in one call, before `git push`: clean (nothing left
+  out of HEAD, untracked files included), `brain merge-check` against the base (`--base`, origin's default branch
+  by default; a remote one fetched again), the review's stamp for HEAD with no finding open, a graph store's views regenerated and checked (`brain refresh --offline`; a view it
+  rewrote fails: commit it), `brain audit --diff` (0 NEW, 0 LEFT), the public check's stamp for a public repo's HEAD
+  (`brain check --public --history` when it has none) and the targeted tests (`brain test --changed`, `--strict`).
+  Each step runs even when one before it failed (`--fail-fast` stops; `--skip STEP` skips one: INCOMPLETE, exit 1);
+  its log goes to `<temp>/brain-gate/<run>/<n>-<step>.log` (or `--logs DIR`; the newest 20 runs kept) and three lines
+  answer: what passed (and the logs' folder), what failed and why, the next command. Exit 0 only when every step that
+  applies passes; `--python` runs the tests and `-n N` gives them xdist workers (the brain steps run with the engine
+  running the gate); `--json` for the report.
 - **`brain merge-ready PR`**: the merge gate, before `gh pr merge`: the PR open and not a draft, main not moved under
   a file it touches since their merge base, `brain merge-check` on a head that merged main, every CI check green on
   the head, the review's stamp for the head with no finding open, the public check's stamp for a public repo, nothing
@@ -1138,7 +1165,7 @@ Zero-token commands for many sessions on one brain ([`docs/merge-driver.md`](doc
   can start now, and those that wait on a branch and its session.
 - **`brain brief ITEM [--class C] [--budget B] [--coordinator ID]`**: a sub-session's brief from the graph: the item
   and its subgraph, its collisions, the class's model and effort (config.json `brief.classes`), the budget, the cost
-  estimate, while `usage.guard.wave_quota` is set the streams that fit now for the coordinator (its live streams
+  estimate, the model of each agent role (config.json `brief.agent_models`, default `verify` on `sonnet`), while `usage.guard.wave_quota` is set the streams that fit now for the coordinator (its live streams
   under `max_streams`, the streams at the item's estimate under `ask_over_pct` at the week's reset), the coordinator's
   id, what to do after the merge (the close-item procedure's step 5: the session that
   merges its own PR archives itself once the main checkout is pulled, the note written and its report sent; a
@@ -1246,8 +1273,14 @@ those conditions before the calls, at zero token, from the files the guard reads
   another's, not a coordinator), 2 when the app's files cannot be read.
 - **`brain handover check [--id ID] [--successor ID] [--json]`**: each condition (a coordinator by name or a chain
   root, started by one, its note under 6 hours old, its successors live and detached), whether `on` and `off` would
-  pass, and the predecessor, which an incoming coordinator archives first (a session's own archive is refused); exit
-  1 when the hand-over would be refused, 2 when the app's files cannot be read.
+  pass, its children and the predecessor, which an incoming coordinator archives first (a session's own archive is
+  refused); exit 1 when the hand-over would be refused, 2 when the app's files cannot be read. The `children` line
+  lists each session it started as archived, detached or blocking (any other: the app archives a parent's side
+  sessions with it and refuses while one works), with what a blocking one needs (detach a live one; archive a
+  finished one once its work is merged, else detach it); only the session that started a child may detach it, so
+  the outgoing coordinator detaches them before its archive. The `predecessor` line says to archive it only once none
+  of its children blocks, and lists those that do (wi-brain-handover-detach-children). A blocking child changes no
+  exit code; `--json` gives `children`, `blocking`, `parent_children`, `parent_blocking` and `parent_archived`.
 - **`brain handover root [ID] [--reason TEXT] [--clear]`**: the owner's, in their own terminal (refused in a Claude
   Code session's shell, and by the guard to every session, like `brain usage allow`): a session the owner started
   (no parent in the app's files) marked a chain root, `<BRAIN_HOME>/handover/roots.json`. A root hands over without a
@@ -2082,10 +2115,27 @@ The token ledger (`brain usage`) reads each session's subagents and workflow age
 the session's cost and hours, so the quota forecast and the governor count it, and a message is counted once, as the
 subagent's, should the parent's transcript copy it. `brain usage` says whose the cost is (main threads, subagents,
 workflows), `--by workflow` lists each run (its agents, phases and the session that launched it) and `--by agent` each
-agent's label (the `description` of its `.meta.json`, else the run's `journal.jsonl`). `brain usage quota` measures
+agent's label (the `description` of its `.meta.json`, else the run's `journal.jsonl`). `--by role` groups the agents by role (a workflow
+agent's label before its colon, `verify:<finding>#0`, else its phase; a subagent's type) with each model's count and
+how many ran off config.json `brief.agent_models` (`{role: model}`, default `{"verify": "sonnet"}`: the verifiers
+and skeptics on the smaller model, every other role on the session's); an agent whose model is unknown (stopped
+before its first reply) is counted apart, not off the map. `brain usage quota` measures
 the cost of a session-hour, the agents' included, as information: the governor's parallel-sessions cap uses it only
 with `usage.guard.session_hour_measured` true (default false), and then when it is above `usage.guard.session_hour_usd`;
 `brain usage guard` shows the measured value and whether it is applied.
+
+**Where the tokens go** (`brain usage --by context` and `--by output`, `brain.spend`, zero token): the scanner keeps,
+per session, each message's context and cost and each output put into the context, the main thread's and its agents'
+apart. `--by context` gives the cost by token kind (cache read, cache write, output, input) and the context reloads,
+the base (the first message's context) of the sessions and of their agents and what re-reading it costs, and the
+messages and their cost by the context they were sent with (100k buckets) per role: a coordinator (a session that
+started two sub-sessions or more), a sub-session, any other session, the agents apart; then the hand-over simulation:
+each session replayed with a hand-over each time its context passes 300k, 400k or 500k above the last restart, a fresh
+session restarting at 120k; what it saves in cache reads, less `--handover-usd` per hand-over (default 3: the note,
+the restart, the cache written again), and the ceiling that saves the most for each role. `--by output` ranks each
+kind of output (a tool's result by tool, a shell command's by program and subcommand, prompts, injected text,
+attachments such as the skill listing or the deferred tools, a hook's context by event) by its downstream cost: its
+tokens (estimated at 3.6 characters a token) written once, then re-read by every later message until a compaction.
 
 **Where a session ran** (`brain.provenance`, wi-brain-session-provenance, wi-brain-sr-provenance-fields): the
 session record also holds the model's `provider` (anthropic, bedrock, vertex, foundry...), the `harness` that ran it

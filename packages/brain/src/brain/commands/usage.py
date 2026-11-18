@@ -7,15 +7,16 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from .. import config, cost, governor, projects, quota, toolids, tooling, usage
+from .. import config, cost, governor, projects, quota, spend, toolids, tooling, usage
 from ._common import _scope, _when, _whole
 
 ORDER = 160   # its place in brain --help's list of commands (brain.commands)
 USAGE_ORDER = 510   # its usage lines' place in brain --help's epilog
 USAGE = """\
   brain usage [--project P | --all] [--since WHEN] [--until WHEN] [--by DIM | --report daily|weekly] [--top N]
-                 [--no-scan | --rescan] [--json]   the token ledger at zero token ($BRAIN_HOME/usage/sessions.json,
-                 scanned from the transcripts that changed): the sessions' tokens and cost at API prices by project,
+                 [--handover-usd USD] [--no-scan | --rescan] [--json]   the token ledger at zero token
+                 ($BRAIN_HOME/usage/sessions.json, scanned from the transcripts that changed): the sessions' tokens
+                 and cost at API prices by project,
                  item, pr, class, kind, theme, milestone, model, provider, harness, account (where a session ran:
                  the model's provider, the tool that ran it and the account's alias, config.json usage.accounts),
                  phase, tool, command, skill, session, family (a session and its sub-sessions), workflow (each
@@ -26,7 +27,14 @@ USAGE = """\
                  (3-step sequences repeated across sessions), and a « where » line (each provider, harness and
                  account's cost; --json: sources); WHEN: Nd, Nw, today, yesterday, last-week, last-month
                  or YYYY-MM-DD (default 7d); --scope REF: the sessions of the projects of a node's subtree in the
-                 scope tree (brain scopes: an id, a path of ids, global, . or ..)
+                 scope tree (brain scopes: an id, a path of ids, global, . or ..); where the tokens go (brain.spend):
+                 --by context, the cost by token kind (read, write, output, input) and the reloads, the base (the
+                 first message's context) of the sessions and their agents, the messages and their cost by the
+                 context they were sent with per role (coordinator, sub-session, session; the agents apart), and the
+                 hand-over simulation (past 300k, 400k, 500k a fresh session restarts at 120k, --handover-usd
+                 charged per hand-over, default 3: the ceiling that saves the most); --by output, each kind of
+                 output put into the context (a tool's result, a command's, prompts, attachments, hooks' context):
+                 its count, estimated tokens and downstream cost (written once, re-read by every later message)
   brain usage --kind all|skill|rule|command|script|mcp|tool|hook|guard|plugin|scheduled [--project P | --all]
                  [--since WHEN] [--until WHEN] [--top N] [--no-scan] [--json]   the usage counters by tool id
                  (brain.tooling, default window 30d): per skill (a Skill call, a slash command, a Read of its SKILL.md,
@@ -73,8 +81,11 @@ def cmd_usage(args, root: Path) -> int:
         return _tooling(args, root, projs)
     led = cost.scoped(cost.load(projs, root, refresh=not (args.no_scan or args.rescan)), projs, args.all)
     by = {"daily": "day", "weekly": "week"}.get(args.report or "", args.by)
+    if args.handover_usd is not None and (by != "context" or args.handover_usd < 0):
+        raise SystemExit("brain: --handover-usd goes with --by context, 0 or more")
     rep = cost.report(led, _when(args.since, "7d"), _when(args.until), by,
-                      usage.plans_from(config.load(root).get("usage")))
+                      usage.plans_from(config.load(root).get("usage")),
+                      handover_usd=spend.HANDOVER_USD if args.handover_usd is None else args.handover_usd)
     print(cost.as_json(rep) if args.json else "\n".join(cost.render_report(rep, args.top)))
     return 0
 
@@ -153,12 +164,18 @@ def register(sub, ctx) -> None:
                                     "scopes): an id, a path of ids, global, . or ..")
     us.add_argument("--since", help="Nd, Nw, today, yesterday, last-week, last-month or YYYY-MM-DD (default 7d)")
     us.add_argument("--until", help="the same, excluded (default: now)")
-    us.add_argument("--by", choices=cost.DIMS, default="summary",
+    us.add_argument("--by", choices=(*cost.DIMS, *spend.DIMS), default="summary",
                     help="one breakdown (default: a summary of project, item, class, phase, tool, command, the "
                          "workflow runs when there are any, and the script candidates; workflow: each workflow run; "
-                         "agent: each subagent's or workflow agent's label; provider, harness, account: where the "
-                         "sessions ran)")
+                         "agent: each subagent's or workflow agent's label; role: the agents by role (a workflow agent's label "
+                         "before its colon, else its phase; a subagent's type) with each model's count and those off "
+                         "config.json brief.agent_models; provider, harness, account: where the "
+                         "sessions ran; context: the messages by context size per role, the base, the cost by token "
+                         "kind and the hand-over simulation; output: the downstream cost of each kind of output)")
     us.add_argument("--report", choices=("daily", "weekly"), help="the same as --by day or --by week")
+    us.add_argument("--handover-usd", type=float, metavar="USD",
+                    help=f"--by context: a hand-over's price in the simulation (default {spend.HANDOVER_USD:g}: the "
+                         "note, the restart, the cache written again)")
     us.add_argument("--kind", choices=("all", *toolids.KINDS),
                     help="the usage counters of a kind of tooling by tool id (all: every kind), the unused for 30 days "
                          "marked retire or merge; the window defaults to 30d")

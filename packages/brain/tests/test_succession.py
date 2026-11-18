@@ -10,7 +10,7 @@ from datetime import datetime, timezone
 import pytest
 import test_guards_remote_control as rc
 from test_guards import bash, decide, payload, pwsh
-from test_guards_remote_control import E, F, G, K, X, call, refused
+from test_guards_remote_control import E, F, G, K, R, X, Z, call, refused
 
 from brain import cli, guards, sessions, succession
 
@@ -187,6 +187,7 @@ def test_write_with_a_successor_writes_its_brief_with_ultracode_first(lab, capsy
     first = text.splitlines()[0]
     assert first.startswith("ultracode") and "coordinator-g" in first and F in first and "(coordinator-f)" in first
     assert f"archive_session {F}" in text and note.as_posix() in text
+    assert "none of its children blocks" in text and f"ask {F} to detach them" in text   # before the archive
     assert not brief.name.endswith(".md") and guards.handover_note(F) == note   # the guard never reads it as a note
 
 
@@ -278,3 +279,74 @@ def test_a_note_written_again_without_a_successor_drops_the_old_brief(lab, capsy
     assert brief.exists()
     assert cli.main(["handover", "write", "--id", F]) == 0
     assert not brief.exists() and "brief beside it removed" in capsys.readouterr().out
+
+
+# --- the children line: each session it started, archived, detached or blocking (wi-brain-handover-detach-children) ---
+
+def test_children_line_says_which_child_blocks_and_what_it_needs(lab, capsys):
+    succession.write_note("body", host=F)
+    assert cli.main(["handover", "check", "--id", F]) == 0   # a blocking child changes no exit code
+    out = capsys.readouterr().out
+    assert "children     2 of 3 blocking: detach each live one" in out and "only the session that started it" in out
+    assert f"- {G} (coordinator-g): detached" in out
+    assert f"- {K} (rc-guard): blocking (idle): archive it once its work is merged and verified, else detach it" in out
+    assert f"- {R} (busy): blocking (running): detach it" in out
+    assert cli.main(["handover", "check", "--id", F, "--json"]) == 0
+    r = json.loads(capsys.readouterr().out)
+    assert r["blocking"] == [K, R] and [c["verdict"] for c in r["children"]] == ["detached", "blocking", "blocking"]
+    assert r["ok"] and r["on"] and r["off"]   # the guard's conditions are unchanged
+    assert decide(call(lab, G, True)) is None   # and the guard lets on through with children blocking
+
+
+def test_children_archived_or_detached_do_not_block(lab):
+    lab.put(K, parent=F, name="rc-guard", archived=True)
+    lab.put(R, parent=F, name="busy", detached=True)
+    r = succession.check(F)
+    assert r["blocking"] == []
+    assert {c["id"]: c["verdict"] for c in r["children"]} == {G: "detached", K: "archived", R: "detached"}
+    assert "children     none of 3 blocking (archived or detached)" in succession.lines(r)
+
+
+def test_a_child_with_no_transcript_blocks_as_unknown_or_starting(lab):
+    old, new = (f"local_{c * 8}-0000-4000-8000-{c * 12}" for c in "45")
+    cli = "-cli0-4000-8000-000000000000"
+    lab.put(old, parent=F, name="gone", created=1_000, cli=old[6:14] + cli)   # created long ago, no transcript here
+    lab.put(new, parent=F, name="fresh", cli=new[6:14] + cli,
+            created=int(datetime.now(timezone.utc).timestamp() * 1000))
+    kids = {c["id"]: c for c in succession.check(F)["children"]}
+    assert kids[old]["verdict"] == "blocking" and kids[old]["state"] == "unknown" and "check it" in kids[old]["advice"]
+    assert kids[new]["verdict"] == "blocking" and kids[new]["state"] == "starting"
+    assert kids[new]["advice"] == "detach it"
+
+
+def test_a_child_whose_app_file_cannot_be_read_again_blocks():
+    h = "local_66666666-0000-4000-8000-666666666666"
+    kids = succession.children(F, {h: {"parent": F, "name": "twice"}, G: {"parent": E}}, lambda _: {})
+    assert [(c["id"], c["name"], c["state"], c["verdict"]) for c in kids] == [(h, "twice", "unknown", "blocking")]
+    assert "check it" in kids[0]["advice"]
+
+
+def test_no_predecessor_line_for_a_root_and_none_without_children(lab, chain):
+    o, c1, c2 = chain
+    succession.mark_root(o, "a chain", env={})
+    out = "\n".join(succession.lines(succession.check(o)))
+    assert "predecessor" not in out and "children     none of 1 blocking" in out   # c1, detached
+    lone = "local_77777777-0000-4000-8000-777777777777"
+    lab.put(lone, title="A session on its own", cli=lone[6:14] + "-cli0-4000-8000-000000000000")
+    assert "children     none (no session it started)" in succession.lines(succession.check(lone))
+
+
+def test_predecessor_line_archive_only_once_none_of_its_children_blocks(lab):
+    assert f"predecessor  {E}: archived already" in succession.lines(succession.check(F))
+    lab.put(E, name="coordinator-e", parent=Z, title="Coordination du Brain — coordinateur E")   # live again
+    r = succession.check(F)
+    assert r["parent_blocking"] == [X, F] and not r["parent_archived"]
+    out = "\n".join(succession.lines(r))
+    assert f"predecessor  {E}: archive it only once none of its children blocks: 2 blocking" in out
+    assert "detach_session works only for the session that started the child" in out
+    assert f"- {F} (coordinator-f, this session): blocking (running): detach it" in out
+    assert f"- {X} (cousin): blocking (idle)" in out
+    lab.put(F, parent=E, name="coordinator-f", detached=True)
+    lab.put(X, parent=E, name="cousin", detached=True)
+    out = "\n".join(succession.lines(succession.check(F)))
+    assert f"predecessor  {E}: none of its children blocks: an incoming coordinator archives it first" in out

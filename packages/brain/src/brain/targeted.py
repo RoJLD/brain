@@ -352,7 +352,8 @@ def _handle(stream):
 
 def run(top: Path, tests: list[str], python: str = "", workers: str = "", extra: list[str] | None = None,
         echo=print, quiet_stdout: bool = False) -> int:
-    """pytest on ``tests``; the worst exit code (5, nothing collected, counts as 0). ``quiet_stdout``: pytest's report
+    """pytest on ``tests``; the worst exit code (5, nothing collected, counts as 0; a signal, 128 + it:
+    :func:`exit_code`). ``quiet_stdout``: pytest's report
     on stderr (stdout is JSON)."""
     worst = 0
     out = sys.stderr if quiet_stdout else sys.stdout
@@ -369,8 +370,62 @@ def run(top: Path, tests: list[str], python: str = "", workers: str = "", extra:
         say(line)
         rc = subprocess.run(cmd, cwd=cwd, env=dict(os.environ), stdout=_handle(out),
                             stderr=_handle(sys.stderr)).returncode
-        worst = max(worst, 0 if rc == 5 else rc)
+        worst = max(worst, exit_code(rc))
     return worst
+
+
+def run_logged(top: Path, tests: list[str], log: Path, deadline: float, python: str = "", workers: str = "",
+               extra: list[str] | None = None) -> tuple[int, bool]:
+    """pytest on ``tests``, its whole output (stdout and stderr) appended to ``log``, every pytest configuration's run
+    within ``deadline`` seconds in all: (the worst exit code, :func:`exit_code`; whether the deadline stopped it). At
+    the deadline the running pytest's process tree is stopped (its xdist workers too) and 124 is the exit code."""
+    import time
+
+    end = time.monotonic() + max(1.0, float(deadline))
+    group = {"creationflags": subprocess.CREATE_NEW_PROCESS_GROUP} if os.name == "nt" else {"start_new_session": True}
+    worst = 0
+    with log.open("a", encoding="utf-8", newline="\n") as out:
+        for cwd, cmd in commands(top, tests, python, workers, extra):
+            out.write(f"\n$ (in {posixpath.relpath(cwd.as_posix(), top.as_posix())}) {' '.join(cmd)}\n")
+            out.flush()
+            left = end - time.monotonic()
+            if left <= 0:
+                out.write("--- not run: the deadline was reached ---\n")
+                return 124, True
+            try:
+                proc = subprocess.Popen(cmd, cwd=cwd, env=dict(os.environ), stdout=out, stderr=subprocess.STDOUT,
+                                        stdin=subprocess.DEVNULL, **group)
+            except (OSError, ValueError) as exc:
+                out.write(f"--- pytest did not start: {exc} ---\n")
+                return 127, False
+            try:
+                rc = proc.wait(timeout=left)
+            except subprocess.TimeoutExpired:
+                _stop(proc)
+                out.write(f"\n--- stopped at the deadline ({int(deadline)} s): its process tree killed ---\n")
+                return 124, True
+            except BaseException:   # an interrupt (Ctrl+C, a kill of brain): pytest in its own group would outlive it
+                _stop(proc)
+                out.write("\n--- interrupted: its process tree killed ---\n")
+                raise
+            worst = max(worst, exit_code(rc))
+    return worst, False
+
+
+def _stop(proc: subprocess.Popen) -> None:
+    """pytest's process tree stopped (brain.formats._kill_tree), then reaped for 30 s at most."""
+    from .formats import _kill_tree
+    _kill_tree(proc)
+    try:
+        proc.wait(timeout=30)
+    except subprocess.TimeoutExpired:
+        pass
+
+
+def exit_code(rc: int) -> int:
+    """pytest's exit code as brain test's: 5 (nothing collected) is 0; a run killed by a signal (a negative code on
+    POSIX) is 128 + the signal, never a pass."""
+    return 0 if rc in (0, 5) else rc if rc > 0 else 128 - rc
 
 
 def record(sel: Selection, mode: str, ran: int, rc: int | None) -> Path:

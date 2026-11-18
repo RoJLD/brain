@@ -55,10 +55,17 @@ from collections import Counter
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
-from . import faults, paths, secretscan, stateio, toolids, transcript
+from . import faults, paths, prices, secretscan, spend, stateio, toolids, transcript
 
-SCAN_V = 4  # a row scanned by an older scanner is scanned again while its transcript exists (2: the hours; 3: the
-#            subagents and workflow runs apart, ``agents``; 4: the usage counters by tool id, ``tooling``, ``refused``)
+# the price list (brain.prices), read as usage.X by the other modules
+PRICES, LONG_PROMPT, FAMILIES, FAST = prices.PRICES, prices.LONG_PROMPT, prices.FAMILIES, prices.FAST
+_price_table, cost_parts, message_cost = prices._price_table, prices.cost_parts, prices.message_cost
+token_rates, tokens_cost = prices.token_rates, prices.tokens_cost
+
+SCAN_V = 6  # a row scanned by an older scanner is scanned again while its transcript exists (2: the hours; 3: the
+#            subagents and workflow runs apart, ``agents``; 4: the usage counters by tool id, ``tooling``, ``refused``;
+#            5: the context buckets, the hand-over simulation, the outputs' downstream cost and the base, ``spend``;
+#            6: each agent's role and model, ``agents``)
 START_MESSAGES = 10
 REFUSED_KEEP = 200  # a session's refused tool calls kept by tool use id, for the guards ledger's join
 HOOK_FAILS = ("hook_cancelled", "hook_blocking_error", "hook_non_blocking_error", "hook_error_during_execution")
@@ -69,27 +76,6 @@ SHELL_TOOLS = ("Bash", "PowerShell")
 PHASES = ("explore", "build", "test", "review", "ship", "merge", "wait", "reload")
 _STRENGTH = ("merge", "review", "test", "build", "ship", "wait", "explore")  # the strongest first
 
-# USD per million tokens: input, output, cache read, cache write 5 min, cache write 1 h. The claude-api reference's
-# price list (cached 2026-10-06; cache reads as listed, cache writes 1.25x and 2x the input), checked against Claude
-# Code's totalCostUSD (cost-state records): Opus 5.5 sessions reproduce it to the cent.
-PRICES = {
-    "claude-fable-5-1": (10.0, 50.0, 0.25, 12.5, 20.0),
-    "claude-mythos-5-1": (10.0, 50.0, 0.25, 12.5, 20.0),
-    "claude-fable-5": (10.0, 50.0, 1.0, 12.5, 20.0),
-    "claude-opus-5-5": (4.0, 20.0, 0.2, 5.0, 8.0),
-    "claude-opus-5": (5.0, 25.0, 0.5, 6.25, 10.0),
-    "claude-opus-4-8": (5.0, 25.0, 0.5, 6.25, 10.0),
-    "claude-opus-4-7": (5.0, 25.0, 0.5, 6.25, 10.0),
-    "claude-opus-4-6": (5.0, 25.0, 0.5, 6.25, 10.0),
-    "claude-sonnet-5-5": (2.0, 10.0, 0.2, 2.5, 4.0),
-    "claude-sonnet-5": (2.0, 10.0, 0.2, 2.5, 4.0),
-    "claude-sonnet-4-6": (3.0, 15.0, 0.3, 3.75, 6.0),
-    "claude-haiku-5-5": (0.1, 0.5, 0.01, 0.125, 0.2),
-    "claude-haiku-4-5": (1.0, 5.0, 0.1, 1.25, 2.0),
-}
-LONG_PROMPT = {"claude-haiku-5-5": (100_000, (0.5, 2.5, 0.05, 0.625, 1.0))}  # above that context, these prices
-FAMILIES = ("fable", "mythos", "opus", "sonnet", "haiku")  # an unknown model: its family's latest price
-FAST = 2.0  # fast mode (usage.speed "fast"): twice the price
 PLANS = (("2026-11-02", "Ultra"), ("", "Pro"))  # (since, plan), newest first; config.json usage.plans overrides
 
 _ID_RE = re.compile(r"\b(?:wi|ms|spec)-[a-z0-9]+(?:-[a-z0-9]+)*\b")
@@ -123,39 +109,6 @@ _SHIP_TOOLS = {"mcp__ccd_turn__update_plan", "mcp__ccd_turn__wrap_up", "TodoWrit
 _WAIT_TOOLS = {"AskUserQuestion"}
 _NO_STEP = _SHIP_TOOLS | {"ToolSearch"}  # bookkeeping between the steps of a sequence, not a step
 _REVIEW_WORDS = re.compile(r"review|verif|audit|simplif|security|findings", re.I)
-
-
-# --- prices ---
-
-def _price_table(model: str, prices: dict | None = None) -> tuple | None:
-    table = {**PRICES, **{k: tuple(v) for k, v in (prices or {}).items()}}
-    if model in table:
-        return table[model]
-    for fam in FAMILIES:
-        if fam in (model or ""):
-            return next((v for k, v in table.items() if fam in k), None)
-    return None
-
-
-def message_cost(part: dict, model: str, speed: str = "", prices: dict | None = None) -> float | None:
-    """The API price of one message's tokens (``transcript._usage_tokens``), None for an unknown model."""
-    table = _price_table(model, prices)
-    if table is None:
-        return None
-    long = LONG_PROMPT.get(model)
-    if long and part.get("input", 0) + part.get("cache_read", 0) + part.get("cache_write", 0) > long[0]:
-        table = long[1]
-    p_in, p_out, p_read, p_w5, p_w1 = table
-    w1, w5 = part.get("cache_write_1h", 0), part.get("cache_write_5m", 0)
-    rest = max(0, part.get("cache_write", 0) - w1 - w5)  # a write with no TTL split: priced at 5 min
-    usd = (part.get("input", 0) * p_in + part.get("output", 0) * p_out + part.get("cache_read", 0) * p_read
-           + (w5 + rest) * p_w5 + w1 * p_w1) / 1e6
-    return usd * (FAST if speed == "fast" else 1.0)
-
-
-def tokens_cost(by_model: dict, prices: dict | None = None) -> float:
-    """The price of ``{model: tokens}`` (an SR's tokens_by_model): what the cockpit shows without a scan."""
-    return sum(message_cost(t, m, prices=prices) or 0.0 for m, t in (by_model or {}).items())
 
 
 def plan_of(day: str, plans=None) -> str:
@@ -339,6 +292,7 @@ class Scan:
         self.refused: dict[str, str] = {}   # {tool use id: the guard that refused it}
         self.tool_skill = ""
         self.cwd = ""
+        self.spend = spend.Spend()   # --by context and --by output (wi-brain-cache-report)
 
     # --- records ---
     def feed_file(self, path: str | Path) -> None:
@@ -377,11 +331,13 @@ class Scan:
             if mid and model != "<synthetic>" and mid not in self.seen:
                 self.seen.add(mid)
                 part = transcript._usage_tokens(msg.get("usage") or {})
-                usd = message_cost(part, model, (msg.get("usage") or {}).get("speed") or "", self.prices)
+                speed = (msg.get("usage") or {}).get("speed") or ""
+                parts = cost_parts(part, model, speed, self.prices)
+                usd = None if parts is None else sum(parts.values())
                 if usd is None:
                     self.unpriced += 1
                     usd = 0.0
-                self.msg.update(cost=usd, part=part)
+                self.msg.update(cost=usd, part=part, parts=parts, rates=token_rates(part, model, speed, self.prices))
         self.msg["uses"] += [b for b in msg.get("content") or [] if isinstance(b, dict) and b.get("type") == "tool_use"]
         self._cited(msg.get("content"))
 
@@ -409,6 +365,7 @@ class Scan:
             total = part["input"] + part["output"] + part["cache_read"] + part["cache_write"]
             _add_to(self.days, _day(ts), cost=usd, messages=1, output=part["output"], tokens=total)
             _add_to(self.hours, _hour(ts), cost=usd, messages=1, tokens=total)
+            self.spend.message(part, usd, m.get("parts"), m.get("rates") or (0.0, 0.0))
             ctx = part["input"] + part["cache_read"] + part["cache_write"]
             reload_usd = 0.0
             if n and ctx > RELOAD_MIN and part["cache_write"] > 0.5 * ctx:
@@ -541,6 +498,7 @@ class Scan:
             return
         a = rec.get("attachment")
         kind = str(a.get("type") or "") if isinstance(a, dict) else ""
+        self.spend.attachment(a, kind, pending=self.msg is not None)
         if kind.startswith("hook_"):
             self._hook_attachment(a, kind, ts)
         elif kind in ("instructions", "nested_memory"):
@@ -551,6 +509,7 @@ class Scan:
     def _system(self, rec: dict, ts: str) -> None:
         if rec.get("subtype") == "compact_boundary":
             self._flush()
+            self.spend.compaction()
         elif rec.get("subtype") == "stop_hook_summary":
             self._hook("Stop", str(rec.get("toolUseID") or ts), runs=int(rec.get("hookCount") or 0),
                        fails=1 if rec.get("hookErrors") else 0)
@@ -585,11 +544,10 @@ class Scan:
             for b in results:
                 self._result(b, ts)
             return
-        if rec.get("isMeta"):
-            return
         text = content if isinstance(content, str) else "\n".join(b.get("text", "") for b in blocks
                                                                   if b.get("type") == "text")
-        if not text.strip():
+        self.spend.output("injected" if rec.get("isMeta") else "prompt", len(text))
+        if rec.get("isMeta") or not text.strip():
             return
         self.sig["prompts"] += 1
         if self.last_ts:
@@ -610,6 +568,7 @@ class Scan:
         text = c if isinstance(c, str) else "\n".join(x.get("text", "") for x in c if isinstance(x, dict)) \
             if isinstance(c, list) else ""
         _add_to(self.tools, name, result_chars=len(text))
+        self.spend.result(name, keys, c, text)
         self._result_tooling(counted, text, b)
         if name in _WAIT_TOOLS and at:
             self.sig["ask_wait_s"] += int(max(0.0, _secs(at, ts)))
@@ -700,6 +659,7 @@ class Scan:
             "context": {"peak": st.ctx_peak, "compactions": st.compactions},
             "start_cost": {k: round(v, 4) if isinstance(v, float) else v for k, v in self.start.items()},
             "signals": signals,
+            "spend": spend.row_of(self.spend, [s.spend for _, s in subs]),
         }
         cleaned, _ = secretscan.clean(row)
         return cleaned
@@ -733,17 +693,51 @@ def tooling_rounded(t: dict, fired: dict) -> dict:
 
 
 def _rounded(d: dict) -> dict:
-    return {k: {kk: round(vv, 4) if isinstance(vv, float) else vv for kk, vv in v.items()} for k, v in d.items()}
+    return {k: {kk: round(vv, 4) if isinstance(vv, float) else _rounded(vv) if kk == "roles" else vv
+                for kk, vv in v.items()} for k, v in d.items()}
 
 
 NO_LABEL = "(no label)"
+UNKNOWN_MODEL = "?"  # an agent with no priced message and no model in its meta
+
+
+def role_of(info: dict) -> str:
+    """An agent's role (wi-brain-review-model-routing): a workflow agent's label before its colon (``verify:x#0``:
+    verify), else its phase; a plain subagent's type (Explore, general-purpose); ``-`` when nothing says it."""
+    label = str(info.get("label") or "")
+    if info.get("run"):
+        return (label.split(":", 1)[0].strip().lower() if ":" in label else "") or str(info.get("phase") or "-").lower()
+    return str(info.get("type") or "-")
+
+
+def _model_of(s: "Scan", info: dict) -> str:
+    """The model an agent ran on: its messages' (the most of them), else its meta's alias."""
+    return (s.st.models.most_common(1)[0][0] if s.st.models else str(info.get("model") or "")) or UNKNOWN_MODEL
+
+
+def _add_agent(d: dict, key: str, role: str, model: str, **vals) -> None:
+    """One agent into its label's entry: its counts and model, and the same under its role in ``roles`` ({role:
+    {count, cost, models}}): agents of one label can have different roles (one description given to two subagent
+    types, a label with no colon used in two phases of a run)."""
+    _add_to(d, key, **vals)
+    _count_model(d[key], model)
+    by_role = d[key].setdefault("roles", {})
+    _add_to(by_role, role, count=vals.get("count", 0), cost=vals.get("cost", 0.0))
+    _count_model(by_role[role], model)
+
+
+def _count_model(entry: dict, model: str) -> None:
+    models = entry.setdefault("models", {})
+    models[model] = models.get(model, 0) + 1
 
 
 def agents_of(subs: list[tuple[dict, "Scan"]]) -> dict:
     """A session's subagents apart (wi-brain-usage-workflow-agents): ``subagents``, the plain ones by label
-    ({count, cost, output, tokens}); ``workflows``, each run by its id ({cost, agents, output, tokens, start, end,
-    days: {day: cost}, phases: {phase: {count, cost}}, labels: {label: {count, cost}}}). Their cost is already in the
-    session's ``cost`` (not in its ``main_cost``): this says whose it is."""
+    ({count, cost, output, tokens, models: {model: count}, roles: {role: {count, cost, models}}}); ``workflows``, each
+    run by its id ({cost, agents, output, tokens, start, end, days: {day: cost}, phases: {phase: {count, cost}},
+    labels: {label: {count, cost, models, roles}}}). An agent's role (:func:`role_of`) and model are what
+    wi-brain-review-model-routing reads. Their cost
+    is already in the session's ``cost`` (not in its ``main_cost``): this says whose it is."""
     plain: dict[str, dict] = {}
     runs: dict[str, dict] = {}
     for info, s in subs:
@@ -751,7 +745,8 @@ def agents_of(subs: list[tuple[dict, "Scan"]]) -> dict:
         out = s.st.tokens.get("output", 0)
         label = info.get("label") or NO_LABEL
         if not info.get("run"):
-            _add_to(plain, label, count=1, cost=s.cost, output=out, tokens=tokens)
+            _add_agent(plain, label, role_of(info), _model_of(s, info), count=1, cost=s.cost, output=out,
+                       tokens=tokens)
             continue
         r = runs.setdefault(info["run"], {"cost": 0.0, "agents": 0, "output": 0, "tokens": 0, "start": "", "end": "",
                                           "days": {}, "phases": {}, "labels": {}})
@@ -766,7 +761,7 @@ def agents_of(subs: list[tuple[dict, "Scan"]]) -> dict:
         for day, b in s.days.items():
             r["days"][day] = r["days"].get(day, 0.0) + (b.get("cost") or 0.0)
         _add_to(r["phases"], info.get("phase") or "-", count=1, cost=s.cost)
-        _add_to(r["labels"], label, count=1, cost=s.cost)
+        _add_agent(r["labels"], label, role_of(info), _model_of(s, info), count=1, cost=s.cost)
     for r in runs.values():
         r["cost"] = round(r["cost"], 4)
         r["days"] = {d: round(c, 4) for d, c in r["days"].items()}

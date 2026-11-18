@@ -44,6 +44,11 @@ inputs, the settings) and the code's version; the same inputs and seed give the 
 result in ``<BRAIN_HOME>/forecast/<project>/latest.json`` (what ``brain status --quick`` reads); ``brain cost audit
 --write``, the Monday task's command, writes the week's snapshot ``<BRAIN_HOME>/forecast/<project>/<day>.json``, which
 the calibration judges once milestones are reached.
+
+An item may be part of several milestones (wi-brain-forecast-two-parents): its row keeps its thematic milestone
+(``milestone``: the first of its milestones that is not of kind wave, an era included), its wave (``wave``: the first of
+kind wave) and every one (``parents``), additive keys of ``FORMAT`` 1. « (no milestone) » counts the open items with no
+thematic milestone, a wave's alone included; a milestone's own range reads its members (``Store.milestone_items``).
 """
 
 from __future__ import annotations
@@ -61,7 +66,7 @@ from collections import Counter
 from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 
-from . import __version__, config, cost, diffs, graph, paths, projects, ranking, records, resume
+from . import __version__, config, cost, diffs, graph, paths, projects, ranking, records, resume, waves
 from . import gates as gate_data
 
 FORMAT = 1            # the JSON's layout
@@ -316,6 +321,38 @@ def settings() -> dict:
             "calibrated_min": CALIBRATED_MIN, "coverage": COVERAGE, "coverage_tol": COVERAGE_TOL, "score": SCORE}
 
 
+def _part_of_milestones(nodes: dict[str, dict], edges: list[dict], items) -> dict[str, set[str]]:
+    """{item: the Milestones it is part of}, for each of ``items`` that is part of one."""
+    by: dict[str, set[str]] = {}
+    for e in edges:
+        if e.get("type") == "part_of" and e.get("from") in items and (nodes.get(e.get("to")) or {}).get(
+                "type") == "Milestone":
+            by.setdefault(e["from"], set()).add(e["to"])
+    return by
+
+
+def _parents(nodes: dict[str, dict], edges: list[dict], items) -> dict[str, dict]:
+    """{item: {milestone, wave, parents}}: the Milestones each of ``items`` is part of, its thematic one (the first by
+    id not of kind wave: an era counts) and its wave apart, so an item in both keeps both. Its wave is the one it is
+    in now (brain.waves: the wave its props.carried_to names once the planned one closed without it, else the one it
+    is part of), added to its parents when it is not part of it."""
+    by = _part_of_milestones(nodes, edges, items)
+    plan = waves.Plan(nodes)
+    for nid, ms in by.items():
+        plan.parents[nid] = sorted(ms)
+    out = {}
+    for nid in items:
+        ms = by.get(nid, set())
+        carried = ((nodes.get(nid) or {}).get("props") or {}).get("carried_to")
+        if not ms and not carried:
+            continue
+        wave = plan.wave_of(nid) or ""
+        thematic = sorted(m for m in ms if waves.kind(nodes[m]) != waves.WAVE)
+        out[nid] = {"milestone": thematic[0] if thematic else "", "wave": wave,
+                    "parents": sorted(ms | ({wave} if wave else set()))}
+    return out
+
+
 def gather(p: projects.Project, led: cost.Ledger, now: datetime) -> dict:
     """The model's inputs for project ``p``: its items with their estimates, the error ratios, the capacity, the
     scope's keep rate, the gates, the inflow and the deferred items; plain data (what the digest covers)."""
@@ -330,8 +367,7 @@ def gather(p: projects.Project, led: cost.Ledger, now: datetime) -> dict:
     for e in st.edges:
         if e.get("type") in ("depends_on", "gated_by") and e["from"] in status:
             deps.setdefault(e["from"], []).append(e["to"])
-    part_of = {e["from"]: e["to"] for e in st.edges if e.get("type") == "part_of" and e["from"] in status
-               and (st.nodes.get(e["to"]) or {}).get("type") == "Milestone"}
+    parents = _parents(st.nodes, st.edges, status)
     pool = cost.history(led)
     ddrs = _ddrs(p.root)
     gates, delays = decision_gates(p.root, ddrs)
@@ -361,7 +397,8 @@ def gather(p: projects.Project, led: cost.Ledger, now: datetime) -> dict:
         pri, proposed = _priority(props)
         est = estimate(nid)
         row = {"id": nid, "title": " ".join(str(n.get("title") or "").split())[:120], "status": s,
-               "priority": pri, "proposed": proposed, "milestone": part_of.get(nid, ""), **est}
+               "priority": pri, "proposed": proposed,
+               **(parents.get(nid) or {"milestone": "", "wave": "", "parents": []}), **est}
         if s == DEFERRED:
             deferred.append(row)
             continue
@@ -746,7 +783,9 @@ def summarize(model: dict, sim: dict, runs: int, seed: int, snapshots: list[dict
         q = quantiles(f) if f else None
         dates = _dates(now, q) if q else None
         items.append({"id": t["id"], "priority": t["priority"] + ("?" if t["proposed"] and t["priority"] else ""),
-                      "milestone": t["milestone"], "status": t["status"], "basis": t["basis"],
+                      "milestone": t["milestone"], "wave": t.get("wave") or "",
+                      "parents": list(t.get("parents") or ([t["milestone"]] if t["milestone"] else [])),
+                      "status": t["status"], "basis": t["basis"],
                       "kept": round(len(f) / n_runs, 3) if n_runs else None, "days": q,
                       "dates": dates, "ddr": t["ddr"], "action": t.get("action") or [],
                       "gates": [g["label"] for g in t.get("gates") or [] if not g.get("passed")],
@@ -1094,10 +1133,13 @@ def waiting(res: dict, ids, window: int = 7, today: date | None = None) -> dict:
         if nid in ms:
             moved.add(nid)
         it = items.get(nid)
-        m = ms.get(it.get("milestone")) if it else None
-        if not m:
+        # every milestone it is part of (its thematic one and its wave, wi-brain-forecast-two-parents): the slip is the
+        # largest, the tightest milestone's; a forecast before the two parents names one
+        own = [ms[x] for x in (it.get("parents") or [it.get("milestone")]) if x in ms] if it else []
+        if not own:
             continue
-        moved.add(m["id"])
+        moved.update(x["id"] for x in own)
+        m = min(own, key=lambda x: (x["days"]["p50"], x["id"]))
         slack = max(0.0, m["days"]["p50"] - it["days"]["p50"])
         slip = round(max(0.0, window - slack) / window, 3)
         out["items"][nid] = {"milestone": m["id"], "slack_days": round(slack, 1), "slip": slip,
