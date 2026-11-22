@@ -12,15 +12,16 @@ The command shares the repo's tag series with `research-graph`: `vX.Y.Z` is both
    adds `brain release apply`, which runs that `-Apply` in one gesture, but the engine installed before it (0.6.0) has
    no such command: this install is the installer's `-Apply` by hand, and `brain release apply` is the gesture from the
    next install on. Until then the commands this release adds are not there (`brain release tag`, `apply`, `status`
-   and `verify`, `brain close`, `brain decision apply`, `brain gate`, `brain review rounds`, `brain test --changed
-   --verdict`, `brain usage --by context` and `--by output`, `brain cost audit --write`) and none of its optional keys
-   is read. Do it on every machine and in the brain's CI before a brain sets one of them (`engine.clone`,
-   `brief.ceiling`, `brief.agent_models`, `tidy.auto`): an engine at 0.6.0 does not know them and its strict check
-   refuses a `config.json` that holds one.
+   and `verify`, `brain close`, `brain decision apply`, `brain gate`, `brain review rounds` and `stamp --high`, `brain
+   test --changed --verdict`, `brain usage --by context`, `--by output` and `--by role`, `brain refresh --no-tidy` and
+   `--no-clone`, `brain tidy --include-ignored`, `brain tui --once --view` and `--axis`), `brain cost audit --write`
+   appends no record yet, and none of its optional keys is read. Do it on every machine and in the brain's CI before a
+   brain sets one of them (`engine.clone`, `brief.ceiling`, `brief.agent_models`, `tidy.auto`): an engine at 0.6.0
+   does not know them and its strict check refuses a `config.json` that holds one.
 2. **Restart the Claude Code sessions**, so that they run the hooks `brain sync` rendered. Until then a session keeps
    0.6.0's `guard.sh`: its pre-filter does not start the guard for `brain release tag` or `brain release apply`, nor
-   for a `brain release` command with a word it cannot resolve, so the two new owner gestures are refused in full
-   (by the pre-filter and the guard, not only by the command itself) only in a restarted session.
+   for a release command whose program is a word it cannot resolve (`$b release ...`), so the two new owner gestures
+   reach the owner guard, and not only the command's own refusal, only in a restarted session.
 3. **Refresh the public stamp**: a stamp is valid only under the engine that made it, so the push guard refuses the
    old one until then. `brain update` and the installer's `-Apply` refresh them (`brain check --public --refresh`:
    each local checkout of `public.repos` in the registry); by hand, run `brain check --public --history` in each
@@ -32,8 +33,8 @@ adds refuses more than 0.6.0 did without a key or a command of its own. One defa
 now applies the merged-and-clean part of `brain tidy`'s plan (`tidy.auto`, on by default: the stale worktrees on a
 merged branch, the merged local branches; never an unmerged branch, a dirty, locked or leased worktree, nor one
 holding files git ignores), and fast-forwards the engine clone when it is on its default branch and clean (never a
-switch, a reset or a stash; `--no-clone` or `--offline` skip it). `tidy.auto: false` turns the first off
-(« Changes »). This release is tagged by hand (docs/release.md, « 3. The tag »): `brain release tag` tags the next one.
+switch, a reset or a stash). `--no-tidy` and `--no-clone` skip them once, `tidy.auto: false` turns the first off
+(« Changes »).
 
 ### Added
 
