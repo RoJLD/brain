@@ -15,7 +15,10 @@ What it does, every command reading files and git, never a model:
   views regenerated and checked (`brain sync`, `brain check`,
   `brain refresh`; in a brain's own root, check and refresh also run `brain check --all`'s registry check: the
   registry, `config.json`, the classes, the permissions, the stacks and the bundles they declare, the ids of every
-  registered project; first, while `config.json` `tidy.auto` is on, the default, refresh applies the merged-and-clean
+  registered project; first, refresh fast-forwards the owner's engine clone (`config.json` `engine.clone`, else the
+  registry's checkout whose remote is `engine.repo`) with `git pull --ff-only` when it is on main, clean and in no
+  merge or rebase, and says why it leaves it otherwise: never a switch, a commit, a reset or a stash (`--offline` or
+  `--no-clone` skip it; `brain.engineclone`); then, while `config.json` `tidy.auto` is on, the default, refresh applies the merged-and-clean
   part of `brain tidy`'s plan: the stale worktrees on a merged branch, the merged local branches, never origin's, an
   unmerged branch, a dirty, locked or leased worktree, one holding files git ignores and would delete with it (a
   `.env`, data: named; `brain tidy --apply` keeps it too, `--include-ignored` removes it with them) or the current

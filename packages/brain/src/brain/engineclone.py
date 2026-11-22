@@ -60,11 +60,12 @@ def _last(text: str) -> str:
     return " / ".join(lines[-2:]) or "no output"
 
 
-def find(root: Path | None = None) -> Path | None:
+def find(root: Path | None = None, cfg=None) -> Path | None:
     """The owner's engine clone: config.json ``engine.clone``, else the registry's checkout whose remote is
-    ``engine.repo``; None when neither names one that exists here."""
+    ``engine.repo``; None when neither names one that exists here. ``cfg``: a config already read (the planning
+    brain's own, brain release apply), else the one ``root`` loads."""
     from . import config
-    cfg = config.load(root)
+    cfg = cfg if cfg is not None else config.load(root)
     eng = cfg.data.get("engine") if isinstance(cfg.data, dict) else None
     if not isinstance(eng, dict):
         return None
@@ -145,7 +146,7 @@ def pull(clone: Path, runner: Runner = subprocess.run) -> Result:
     return res
 
 
-def refresh(root: Path | None = None, runner: Runner = subprocess.run) -> Result:
+def refresh(root: Path | None = None, runner: Runner = subprocess.run, cfg=None) -> Result:
     """:func:`pull` on the clone :func:`find` names; Result(None) when there is none."""
-    clone = find(root)
+    clone = find(root, cfg)
     return pull(clone, runner) if clone else Result(None)
