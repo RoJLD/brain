@@ -1,6 +1,7 @@
 """``brain release``: the version PR's mechanical part (``prepare``) and the planning brain's pin PR (``pin``) in one
 command each (brain.release), a plan then --write; where a release stands (``status``) and the after-install checks
-(``verify``) (brain.releasestatus); the signed release tag in one owner gesture (``tag``, brain.releasetag)."""
+(``verify``) (brain.releasestatus); the signed release tag (``tag``, brain.releasetag) and the install (``apply``,
+brain.releaseapply) in one owner gesture each."""
 
 from __future__ import annotations
 
@@ -43,6 +44,14 @@ USAGE = """\
                  planning brain's allowed signers, git push of the tag; stops at the first step that fails and says
                  which (a rerun resumes); refused in an agent's session; --json prints the plan, runs nothing
                  (docs/release.md, « 3. The tag »)
+  brain release apply [--planning ROOT] [--yes] [--no-tests] [--offline]   the install in one owner gesture, once
+                 the pin PR merged: this checkout's pin checked against the default branch's (refused when they
+                 differ), the brain's installer (config.json engine.installer) shows its plan, one y, then in
+                 order its -Apply (in your terminal), brain --version of <BRAIN_HOME>/venv's engine against
+                 engine.pin, the engine clone fast-forwarded when on its default branch and clean (never switched,
+                 reset or stashed; --offline leaves it), brain release verify (--no-tests passed on), the open
+                 sessions named to restart (nothing is restarted); stops at the first step that fails and says which; refused in an agent's session; a
+                 brain without an installer: brain update (docs/release.md, « 4. The pin and the machines »)
 """
 NO_PROJECT = {"release"}   # its parsers that take no --project after them
 
@@ -96,11 +105,21 @@ def register(sub, ctx) -> None:
     tg.add_argument("--remote", default="origin", help="the engine's remote (default origin)")
     tg.add_argument("--yes", action="store_true", help="run it without the y/N question (the owner's own script)")
     tg.add_argument("--json", action="store_true", help="the plan as JSON; nothing run")
+    ap = rel.add_parser("apply", help="the install in one owner gesture: the installer's plan, -Apply, the version, "
+                                      "the engine clone, verify, the sessions to restart (brain.releaseapply)")
+    ap.add_argument("--planning", help="the brain whose pin is installed (default: --root, else the brain checkout "
+                                       "holding this folder, else the personal brain)")
+    ap.add_argument("--yes", action="store_true", help="run it without the y/N question (the owner's own script)")
+    ap.add_argument("--no-tests", dest="tests", action="store_false", help="brain release verify --no-tests")
+    ap.add_argument("--offline", action="store_true", help="leave the engine clone as it is (no network read)")
 
 
 def early(args) -> int:
     """No project's root: the engine checkout is the one here (or --repo), the planning brain --planning or --root."""
     from .. import release, releasestatus
+    if args.release_cmd == "apply":
+        from .. import releaseapply
+        return releaseapply.main(args)
     if args.release_cmd == "tag":
         from .. import releasetag
         return releasetag.main(args)

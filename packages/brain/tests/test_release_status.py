@@ -101,7 +101,7 @@ def test_each_step_moves_as_the_release_goes(tmp_path, net):
     rep = rs.status(root, "0.2.0", runner=Fake(main_pin="v0.2.0"), installed="0.1.0", rec={})
     assert _steps(rep)["pin"] == ("done", "engine.pin v0.2.0 on the default branch")
     assert rep["next"]["name"] == "install" and rep["next"]["owner"] == "Ada"
-    assert rep["next"]["next"].startswith("install.ps1 -Apply")
+    assert rep["next"]["next"].startswith("brain release apply")   # wi-brain-release-apply
     rep = rs.status(root, "0.2.0", runner=Fake(main_pin="v0.2.0"), installed="0.2.0",
                     rec={"version": "0.2.0", "ok": False, "at": "T", "checks": [{"name": "tests", "ok": False}]})
     assert rep["next"]["name"] == "verified" and rep["next"]["detail"] == "failed T: tests"

@@ -153,6 +153,7 @@ OWN = {
     "brain uninstall --apply": lambda env: detail.refused(env),
     "brain queue apply": lambda env: detail.refused(env),
     "brain release tag": lambda env: detail.refused(env),   # brain.releasetag.main, after its plan
+    "brain release apply": lambda env: detail.refused(env),   # brain.releaseapply.main, after the installer's plan
 }
 
 

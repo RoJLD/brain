@@ -3,7 +3,7 @@
 
 After an engine PR merges, the owner's clone of the engine (where they cut the tags, and where the audit's code
 references are read) is behind its remote's default branch until someone pulls it. ``brain refresh`` (the merge
-path's refresh) fast-forwards it, under one rule:
+path's refresh) and ``brain release apply`` (after an install, brain.releaseapply) fast-forward it, under one rule:
 
 - **which clone**: config.json ``engine.clone`` (absolute, ``~``, or relative to the config's folder), else the
   registry's checkout whose remote is ``engine.repo`` (brain.projects.repos_of, brain.public.remote_of); an

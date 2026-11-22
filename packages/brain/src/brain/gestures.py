@@ -78,6 +78,8 @@ GESTURES: tuple[Gesture, ...] = (
             guard="strict"),
     Gesture(("queue", "apply"), "actions", "it runs an action the owner queued as theirs", guard="strict"),
     Gesture(("release", "tag"), "release", "it signs a release tag with the owner's key and pushes it"),
+    Gesture(("release", "apply"), "release", "it runs the brain's installer with -Apply: the machine's settings, "
+            "hooks and engine"),
     Gesture((), "installer", "it writes the machine's settings, hooks and scheduled tasks", flags=("-Apply",),
             program="install.ps1", cli="none"),
 )
