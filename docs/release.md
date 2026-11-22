@@ -72,7 +72,8 @@ nothing else to do, the section says « Nothing to run for the rest » after the
 ```markdown
 1. **Install the engine**, in your own terminal, not from a Claude Code session: `brain update`, then `y`. It installs
    the tag, writes `engine.pin`, commits `config.json` and runs `brain sync`. A brain whose `config.json` declares
-   `engine.installer`: merge the PR that moves `engine.pin`, then run the installer's `-Apply` instead.
+   `engine.installer`: merge the PR that moves `engine.pin`, then `brain release apply` instead (from the release
+   that adds it; before it, the installer's `-Apply`).
 2. **Restart the Claude Code sessions**, so that they run the hooks `brain sync` rendered.
 3. **Refresh the public stamp**: a stamp is valid only under the engine that made it, so the push guard refuses the
    old one. From 0.4.0 on, `brain update` and the installer's `-Apply` refresh them (`brain check --public --refresh`:
@@ -320,15 +321,18 @@ steps for that version; in general:
   (in the same PR, so that they never name a command the pin does not have). Run `brain sync` with the new engine (a venv at the tag: the machine's own is still the
   old one, and sync refuses another engine than the pin), so the hooks it renders go in too. After its merge, on each machine, in the owner's
   terminal, one command: `brain release apply` (wi-brain-release-apply; `--planning ROOT`, else `--root`, else the
-  brain checkout holding the current folder, else the personal brain). It runs the installer without arguments and
-  shows its plan, asks one y (`--yes` in a script of yours), then in order, stopping at the first step that fails and
+  brain checkout holding the current folder, else the personal brain). It checks the checkout's pin against the default branch's
+  (`git fetch` first, unless `--offline`; refused when they differ: the installer reads the main checkout), runs the
+  installer without arguments and shows its plan, asks one y (`--yes` in a script of yours), then in order, stopping at the first step that fails and
   saying which: `<installer> -Apply` (its output and prompts in your terminal), `brain --version` of the engine now
-  installed against `engine.pin`, the engine clone fast-forwarded (`config.json` `engine.clone`, else the
-  registry's checkout of `engine.repo`; only on main, clean and in no merge or rebase, never switched, reset or
+  installed (`<BRAIN_HOME>/venv`'s, what the hooks run) against `engine.pin`, the engine clone fast-forwarded
+  (`config.json` `engine.clone`, else the registry's checkout of `engine.repo`; only on its remote's default branch,
+  clean and in no merge or rebase, never switched, reset or
   stashed: any other state is said and left, not a failure; `--offline` leaves it), `brain release verify` with the
   new engine (`--no-tests` passed on), and the open sessions of this machine named, to restart yourself (nothing is
-  restarted or sent). An owner gesture: refused in an agent's session after the installer's plan, and by the owner
-  guard (category `installer`). By hand, the same: `<installer> -Apply` (its plan first), then restart the
+  restarted or sent; an index that cannot be read is said). An owner gesture: refused in an agent's session after
+  the installer's plan, and by the owner guard (category `release`, never queued: the installer needs your
+  terminal). The release that adds it is installed with the installer's `-Apply` by hand. By hand, the same: `<installer> -Apply` (its plan first), then restart the
   sessions. The mechanical part is one command, run in a branch of that brain with the tag's engine:
   `brain release pin vX.Y.Z [--planning ROOT]` (default: the brain checkout holding the current folder) prints the
   plan (`--json` as data) and `--write` writes it, refused on the brain's default branch: `engine.pin` moved in `config.json` (its keys, order, indent, line endings and BOM kept),

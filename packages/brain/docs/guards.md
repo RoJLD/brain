@@ -39,7 +39,7 @@ pre-filter, the command line and this table, so a new gesture added to the list 
 | `brain update` (but `--check`) | installer | refuses (strict) | refuses (its own check) |
 | `brain uninstall --apply` | installer | refuses (strict) | refuses (its own check) |
 | `brain queue apply` | actions | refuses (strict) | refuses (its own check) |
-| `brain release apply` | installer | refuses, queued when permissions.yaml declares `installer` | refuses (its own check, after the installer's plan) |
+| `brain release apply` | release | refuses (never queued: the installer needs the owner's terminal) | refuses (its own check, after the installer's plan) |
 | `brain release tag` | release | refuses (never queued: it needs the owner's terminal) | refuses (its own check, after its plan; `--json` too) |
 | `install.ps1 -Apply` | installer | refuses when permissions.yaml declares `installer` | not the engine's |
 

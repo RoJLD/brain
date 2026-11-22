@@ -45,11 +45,12 @@ USAGE = """\
                  which (a rerun resumes); refused in an agent's session; --json prints the plan, runs nothing
                  (docs/release.md, « 3. The tag »)
   brain release apply [--planning ROOT] [--yes] [--no-tests] [--offline]   the install in one owner gesture, once
-                 the pin PR merged: the brain's installer (config.json engine.installer) shows its plan, one y, then
-                 in order its -Apply (in your terminal), brain --version against engine.pin, the engine clone
-                 fast-forwarded when on main and clean (never switched, reset or stashed; --offline leaves it),
-                 brain release verify (--no-tests passed on), the open sessions named to restart (nothing is
-                 restarted); stops at the first step that fails and says which; refused in an agent's session; a
+                 the pin PR merged: this checkout's pin checked against the default branch's (refused when they
+                 differ), the brain's installer (config.json engine.installer) shows its plan, one y, then in
+                 order its -Apply (in your terminal), brain --version of <BRAIN_HOME>/venv's engine against
+                 engine.pin, the engine clone fast-forwarded when on its default branch and clean (never switched,
+                 reset or stashed; --offline leaves it), brain release verify (--no-tests passed on), the open
+                 sessions named to restart (nothing is restarted); stops at the first step that fails and says which; refused in an agent's session; a
                  brain without an installer: brain update (docs/release.md, « 4. The pin and the machines »)
 """
 NO_PROJECT = {"release"}   # its parsers that take no --project after them

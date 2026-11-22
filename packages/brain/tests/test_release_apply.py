@@ -22,6 +22,9 @@ log = Path(os.environ["FAKE_LOG"])
 with log.open("a", encoding="utf-8") as fh:
     fh.write("installer " + " ".join(sys.argv[1:]) + "\\n")
 if "-Apply" not in sys.argv:
+    if os.environ.get("FAKE_PLAN_SLEEP"):
+        import time
+        time.sleep(float(os.environ["FAKE_PLAN_SLEEP"]))
     print("plan: install brain " + os.environ["FAKE_PIN"])
     sys.exit(int(os.environ.get("FAKE_PLAN_EXIT", "0")))
 if os.environ.get("FAKE_APPLY_EXIT"):
@@ -35,6 +38,9 @@ from pathlib import Path
 with Path(os.environ["FAKE_LOG"]).open("a", encoding="utf-8") as fh:
     fh.write("brain " + " ".join(sys.argv[1:]) + "\\n")
 if sys.argv[1:] == ["--version"]:
+    if os.environ.get("FAKE_VERSION_GARBAGE"):
+        print("Traceback (most recent call last): ...")
+        sys.exit(1)
     print("brain " + Path(os.environ["FAKE_INSTALLED"]).read_text(encoding="utf-8").lstrip("v"))
     sys.exit(0)
 if sys.argv[1:3] == ["release", "verify"]:
@@ -86,7 +92,8 @@ def brain(tmp_path, monkeypatch):
     log = tmp_path / "log.txt"
     for k, v in {"FAKE_LOG": log, "FAKE_PIN": "v1.2.0", "FAKE_INSTALLED": installed}.items():
         monkeypatch.setenv(k, str(v))
-    for k in ("FAKE_PLAN_EXIT", "FAKE_APPLY_EXIT", "FAKE_GETS", "FAKE_VERIFY_EXIT"):
+    for k in ("FAKE_PLAN_EXIT", "FAKE_APPLY_EXIT", "FAKE_GETS", "FAKE_VERIFY_EXIT", "FAKE_PLAN_SLEEP",
+              "FAKE_VERSION_GARBAGE"):
         monkeypatch.delenv(k, raising=False)
     return SimpleNamespace(root=root, log=log, brain=[sys.executable, str(fake)], clone=clone,
                            behind=git(other, "rev-parse", "HEAD"))
@@ -192,6 +199,89 @@ def test_no_y_installs_nothing(brain, capsys, monkeypatch):
     code = releaseapply.main(args(brain, yes=False), brain=brain.brain, refused="")
     sys.stdin.close()
     assert code == 1 and "no terminal to answer y; --yes runs it (nothing installed)" in capsys.readouterr().out
+
+
+@needs_git
+def test_a_checkout_whose_pin_is_not_the_default_branch_s_is_refused(brain, capsys, tmp_path):
+    origin = tmp_path / "brain.git"
+    git(tmp_path, "init", "--quiet", "--bare", str(origin))
+    git(brain.root, "init", "--quiet")
+    git(brain.root, "remote", "add", "origin", str(origin))
+    git(brain.root, "add", "config.json", "install.py")
+    git(brain.root, "commit", "--quiet", "-m", "pin v1.1.0 on main")
+    git(brain.root, "push", "--quiet", "-u", "origin", "main")
+    git(brain.root, "remote", "set-head", "origin", "main")
+    cfg = json.loads((brain.root / "config.json").read_text(encoding="utf-8"))
+    cfg["engine"]["pin"] = "v1.1.0"
+    (brain.root / "config.json").write_text(json.dumps(cfg), encoding="utf-8")
+    git(brain.root, "commit", "--quiet", "-am", "pin v1.1.0")
+    git(brain.root, "push", "--quiet", "origin", "main")
+    cfg["engine"]["pin"] = "v1.2.0"   # a pin branch's checkout: v1.2.0 here, v1.1.0 on main
+    (brain.root / "config.json").write_text(json.dumps(cfg), encoding="utf-8")
+    code, out = run(brain, capsys)
+    assert code == 1 and "this checkout pins v1.2.0, the default branch v1.1.0" in out and logged(brain) == []
+    cfg["engine"]["pin"] = "v1.1.0"
+    (brain.root / "config.json").write_text(json.dumps(cfg), encoding="utf-8")
+    code, out = run(brain, capsys, yes=False)
+    assert "pin      v1.1.0, as on the default branch" in out
+
+
+@needs_git
+def test_a_plan_that_hangs_is_stopped_before_the_y(brain, capsys, monkeypatch):
+    monkeypatch.setenv("FAKE_PLAN_SLEEP", "30")
+    monkeypatch.setattr(releaseapply, "PLAN_TIMEOUT_S", 2)
+    code = releaseapply.main(args(brain), brain=brain.brain, refused="")   # the bounded runner, by default
+    out = capsys.readouterr().out
+    assert code == 1 and "install.py's plan did not end in 2s (stopped)" in out
+
+
+@needs_git
+def test_an_installer_that_cannot_run_and_a_version_that_says_garbage(brain, capsys, monkeypatch):
+    def runner(argv, *a, **kw):
+        if "-Apply" in argv:
+            raise OSError("no PowerShell")
+        return subprocess.run(argv, *a, **kw)
+    code = releaseapply.main(args(brain), brain=brain.brain, refused="", runner=runner, capture=subprocess.run,
+                             sessions=lambda: [])
+    out = capsys.readouterr().out
+    assert code == 1 and "install  failed  install.py -Apply could not run (OSError)" in out
+    monkeypatch.setenv("FAKE_VERSION_GARBAGE", "1")
+    code, out = run(brain, capsys)
+    assert code == 1 and "version  failed  brain --version said 'Traceback" in out and not ran(out, "verify")
+
+
+@needs_git
+def test_a_clone_whose_remote_is_gone_is_said_and_the_install_goes_on(brain, capsys):
+    git(brain.clone, "remote", "set-url", "origin", str(brain.clone.parent / "gone.git"))
+    code, out = run(brain, capsys)
+    assert code == 0 and "clone    skipped" in out and "git fetch origin main failed" in out and ran(out, "verify")
+
+
+def test_the_engine_is_brain_home_s_venv_else_the_path_s(tmp_path, monkeypatch):
+    from brain import slots
+    venv = tmp_path / "venv"
+    monkeypatch.setattr(slots, "active_path", lambda: venv)
+    monkeypatch.setattr(shutil, "which", lambda name: str(tmp_path / "brain.exe"))
+    assert releaseapply.new_brain() == [str(tmp_path / "brain.exe")]
+    py = slots.python_of(venv)
+    py.parent.mkdir(parents=True)
+    py.write_text("", encoding="utf-8")
+    assert releaseapply.new_brain() == [str(py), "-I", "-m", "brain"]
+    monkeypatch.setattr(slots, "active_path", lambda: tmp_path / "none")
+    monkeypatch.setattr(shutil, "which", lambda name: None)
+    assert releaseapply.new_brain() == [sys.executable, "-m", "brain"]
+
+
+def test_an_unreadable_session_index_is_said_not_taken_for_none(monkeypatch, capsys):
+    from brain import sessions
+
+    def broken(**kw):
+        raise ValueError("unreadable")
+    monkeypatch.setattr(sessions, "load", broken)
+    assert releaseapply.open_sessions() is None
+    p = releaseapply.ApplyPlan(root=Path("."), pin="v1.2.0", installer=Path("install.py"))
+    outcome, said = releaseapply._sessions(p, {"sessions": releaseapply.open_sessions})
+    assert outcome == "done" and "could not be listed here: restart every Claude Code session" in said
 
 
 @pytest.mark.parametrize("engine, said", [
