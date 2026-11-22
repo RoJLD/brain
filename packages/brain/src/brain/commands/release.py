@@ -1,6 +1,6 @@
 """``brain release``: the version PR's mechanical part (``prepare``) and the planning brain's pin PR (``pin``) in one
 command each (brain.release), a plan then --write; where a release stands (``status``) and the after-install checks
-(``verify``) (brain.releasestatus)."""
+(``verify``) (brain.releasestatus); the signed release tag in one owner gesture (``tag``, brain.releasetag)."""
 
 from __future__ import annotations
 
@@ -35,6 +35,14 @@ USAGE = """\
                  against the pin, brain probes, brain classes --check, the brain's tests (python -m pytest tests);
                  each one's output in $BRAIN_HOME/release/<check>.log, one line each; recorded for brain release
                  status; exit 1 when one fails
+  brain release tag vX.Y.Z [--repo DIR] [--planning ROOT] [--branch NAME] [--remote NAME] [--yes] [--json]   the
+                 signed release tag in one owner gesture: its plan, one y, then in order git switch main (--branch:
+                 release/X.Y), git pull --ff-only, the tag not on the remote yet, HEAD the version PR's merge commit
+                 (both __version__, the CHANGELOG heading whose theme makes the tag message), brain check --public
+                 --history then --private-text, git tag -s (your key's passphrase), the tag verified against the
+                 planning brain's allowed signers, git push of the tag; stops at the first step that fails and says
+                 which (a rerun resumes); refused in an agent's session; --json prints the plan, runs nothing
+                 (docs/release.md, « 3. The tag »)
 """
 NO_PROJECT = {"release"}   # its parsers that take no --project after them
 
@@ -77,11 +85,25 @@ def register(sub, ctx) -> None:
                                        "folder, else the personal brain)")
     ve.add_argument("--no-tests", dest="tests", action="store_false", help="skip the brain's own tests")
     ve.add_argument("--json", action="store_true", help="the record as JSON")
+    tg = rel.add_parser("tag", help="the signed release tag in one owner gesture: switch, pull, the version PR's "
+                                    "merge, the public checks, git tag -s, verify, push (brain.releasetag)")
+    tg.add_argument("tag", help="the release tag, vX.Y.Z")
+    tg.add_argument("--repo", help="the engine checkout (default: the one holding the current folder)")
+    tg.add_argument("--planning", help="the brain whose allowed signers verify the tag (default: --root, else the "
+                                       "personal brain)")
+    tg.add_argument("--branch", default="main", help="the branch the version PR merged into (default main; "
+                                                     "release/X.Y for a fix that cannot wait)")
+    tg.add_argument("--remote", default="origin", help="the engine's remote (default origin)")
+    tg.add_argument("--yes", action="store_true", help="run it without the y/N question (the owner's own script)")
+    tg.add_argument("--json", action="store_true", help="the plan as JSON; nothing run")
 
 
 def early(args) -> int:
     """No project's root: the engine checkout is the one here (or --repo), the planning brain --planning or --root."""
     from .. import release, releasestatus
+    if args.release_cmd == "tag":
+        from .. import releasetag
+        return releasetag.main(args)
     if args.release_cmd == "status":
         return releasestatus.main_status(args)
     if args.release_cmd == "verify":

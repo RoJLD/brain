@@ -92,6 +92,13 @@ def test_the_prefilter_starts_python_for_each_gesture(g):
     assert all(_needs_python(spellings(g))), g.name
 
 
+@pytest.mark.parametrize("g", BRAIN, ids=lambda g: g.name)
+def test_the_prefilter_starts_python_for_a_wide_spelling(g):
+    """Under guards.gestures_wide the guard matches a gesture through a variable (``$B release $T``): the pre-filter
+    must start Python for it, the subcommand's first word after a variable (review of wi-brain-release-tag-command)."""
+    assert all(_needs_python([f"$B {g.words[0]} $x {' '.join(g.flags[:1])}"])), g.name
+
+
 @pytest.mark.parametrize("command", [
     "brain usage guard", "brain usage quota --observe 41", "brain schedule install", "brain schedule install --json",
     "brain vault status", "brain vault reseal", "brain update --check", "brain uninstall", "brain queue",
@@ -145,6 +152,7 @@ OWN = {
     "brain update": lambda env: detail.refused(env),
     "brain uninstall --apply": lambda env: detail.refused(env),
     "brain queue apply": lambda env: detail.refused(env),
+    "brain release tag": lambda env: detail.refused(env),   # brain.releasetag.main, after its plan
 }
 
 
