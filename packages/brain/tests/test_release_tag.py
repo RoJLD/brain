@@ -3,6 +3,7 @@ one owner gesture, on a throwaway engine repo and its bare remote, signed with a
 owner's). Each step stops the rest when it fails and says which; the command refuses an agent's session."""
 
 import json
+import re
 import shutil
 import subprocess
 import sys
@@ -84,7 +85,10 @@ def engine(tmp_path, monkeypatch):
     planning.mkdir()
     (planning / "config.json").write_text(json.dumps({"v": 1, "identity": {"owner": "Ada"}}), encoding="utf-8")
     (planning / "allowed_signers").write_text(allowed(pub), encoding="utf-8")
-    monkeypatch.setenv("BRAIN_CONFIG", str(planning / "config.json"))
+    elsewhere = tmp_path / "elsewhere"   # $BRAIN_CONFIG names another brain, with no releaser: --planning wins
+    elsewhere.mkdir()
+    (elsewhere / "config.json").write_text(json.dumps({"v": 1}), encoding="utf-8")
+    monkeypatch.setenv("BRAIN_CONFIG", str(elsewhere / "config.json"))
     fake = tmp_path / "fake_brain.py"
     fake.write_text(FAKE_BRAIN, encoding="utf-8")
     log = tmp_path / "brain.log"
@@ -105,6 +109,11 @@ def run(e, capsys, refused="", **kw):
     return code, capsys.readouterr().out
 
 
+def ran(out: str, step: str) -> bool:
+    """Whether the step's outcome was said (its plan line aside)."""
+    return any(ln.startswith(f"{step:<9}{o}") for ln in out.splitlines() for o in ("done", "same", "failed"))
+
+
 def on_remote(e, tag="v1.2.0") -> str:
     return git(e.remote, "tag", "--list", tag)
 
@@ -123,7 +132,9 @@ def test_the_tag_is_signed_verified_and_pushed(engine, capsys):
     assert "verify   done   signed by ada" in out
     checks = engine.log.read_text(encoding="utf-8").splitlines()
     assert [c.split()[-1] for c in checks] == ["--history", "--private-text"]
-    assert all(c.startswith(f"check --public --repo {engine.repo}") for c in checks)
+    assert all(c.startswith(f"check --public --repo {engine.repo} --remote origin") for c in checks)
+    pushed = git(engine.remote, "rev-parse", "refs/tags/v1.2.0")   # the tag object verified, not a lightweight ref
+    assert git(engine.remote, "cat-file", "-t", pushed) == "tag" and pushed == git(engine.repo, "rev-parse", "v1.2.0")
     assert "next     brain release status 1.2.0" in out
 
 
@@ -145,7 +156,7 @@ def test_a_tracked_change_stops_it_before_the_switch(engine, capsys):
     write(engine.repo, releasetag.CHANGELOG, "edited\n")
     code, out = run(engine, capsys)
     assert code == 1
-    assert "switch   failed tracked files have changes" in out and "pull     not run" not in out
+    assert "switch   failed tracked files have changes" in out and not ran(out, "pull")
     assert "stopped  at switch" in out
     assert git(engine.repo, "branch", "--show-current") == "feat/next"
     assert (engine.repo / releasetag.CHANGELOG).read_text(encoding="utf-8") == "edited\n"   # nothing stashed
@@ -160,7 +171,7 @@ def test_a_head_past_the_version_merge_is_refused(engine, capsys):
     git(engine.repo, "push", "--quiet", "origin", "main")
     code, out = run(engine, capsys)
     assert code == 1
-    assert "merge    failed HEAD" in out and "does not name « release » and 1.2.0" in out
+    assert "merge    failed HEAD" in out and "does not name release-1.2.0" in out
     assert not git(engine.repo, "tag", "--list") and not engine.log.exists()
 
 
@@ -186,7 +197,7 @@ def test_a_public_check_that_fails_stops_it_before_the_tag(engine, capsys, monke
     code, out = run(engine, capsys)
     assert code == 1
     assert "public   done" in out and "private  failed brain check --public --private-text (exit 1)" in out
-    assert "sign     not run" not in out and "stopped  at private" in out
+    assert not ran(out, "sign") and "stopped  at private" in out
     assert not git(engine.repo, "tag", "--list") and not on_remote(engine)
 
 
@@ -238,6 +249,137 @@ def test_the_plan_runs_nothing_without_a_yes(engine, capsys):
     assert git(engine.repo, "branch", "--show-current") == "feat/next" and not engine.log.exists()
 
 
+@needs_ssh
+def test_a_later_pr_that_names_the_release_is_not_the_version_merge(engine, capsys):
+    git(engine.repo, "switch", "--quiet", "main")
+    git(engine.repo, "switch", "--quiet", "-c", "fix/release-1.2.0-docs")
+    write(engine.repo, "late.txt", "a fix merged after the version PR\n")
+    git(engine.repo, "add", "late.txt")
+    git(engine.repo, "commit", "--quiet", "-m", "docs")
+    git(engine.repo, "switch", "--quiet", "main")
+    git(engine.repo, "merge", "--quiet", "--no-ff", "fix/release-1.2.0-docs", "-m",
+        "Merge pull request #11 from ada/fix/release-1.2.0-docs")
+    git(engine.repo, "push", "--quiet", "origin", "main")
+    code, out = run(engine, capsys)
+    assert code == 1 and "is after the version PR's merge: its first parent is at 1.2.0 already" in out
+    assert not git(engine.repo, "tag", "--list")
+
+
+@needs_ssh
+@pytest.mark.parametrize("breaks, said", [
+    (lambda r: write(r, releasetag.RG_INIT, '__version__ = "1.1.0"\n'), "__version__ is 1.1.0, not 1.2.0"),
+    (lambda r: write(r, releasetag.CHANGELOG, "# Changelog\n\n## 1.1.0 — 2026-11-01 — Before\n"),
+     "has no heading « ## 1.2.0 — date — theme »"),
+])
+def test_the_version_merge_must_carry_both_versions_and_the_heading(engine, capsys, breaks, said):
+    git(engine.repo, "switch", "--quiet", "chore/release-1.2.0")
+    breaks(engine.repo)
+    git(engine.repo, "commit", "--quiet", "-am", "Release 1.2.0, amended")
+    git(engine.repo, "switch", "--quiet", "main")
+    git(engine.repo, "reset", "--quiet", "--hard", "HEAD~1")
+    git(engine.repo, "merge", "--quiet", "--no-ff", "chore/release-1.2.0", "-m",
+        f"Merge pull request #9 from ada/chore/release-1.2.0\n\nRelease 1.2.0: {THEME}")
+    git(engine.repo, "push", "--quiet", "--force", "origin", "main")   # the test's own throwaway remote
+    code, out = run(engine, capsys)
+    assert code == 1 and "merge    failed" in out and said in out and not git(engine.repo, "tag", "--list")
+
+
+@needs_ssh
+def test_a_main_that_diverged_stops_at_the_pull(engine, capsys):
+    git(engine.repo, "switch", "--quiet", "main")
+    write(engine.repo, "local.txt", "a commit of its own\n")
+    git(engine.repo, "add", "local.txt")
+    git(engine.repo, "commit", "--quiet", "-m", "local")
+    other = engine.repo.parent / "other"
+    git(engine.repo.parent, "clone", "--quiet", str(engine.remote), str(other))
+    write(other, "remote.txt", "x\n")
+    git(other, "add", "remote.txt")
+    git(other, "commit", "--quiet", "-m", "remote")
+    git(other, "push", "--quiet", "origin", "main")
+    code, out = run(engine, capsys)
+    assert code == 1 and "pull     failed git pull --ff-only origin main" in out and not ran(out, "free")
+
+
+@needs_ssh
+@pytest.mark.parametrize("fails, said", [
+    ("ls-remote", "free     failed git ls-remote origin could not read its tags"),
+    ("timeout", "free     failed git ls-remote origin could not read its tags: git could not run (TimeoutExpired"),
+])
+def test_a_remote_that_cannot_be_read_stops_before_the_tag(engine, capsys, fails, said):
+    def runner(argv, *a, **kw):
+        if "ls-remote" in argv:
+            if fails == "timeout":
+                raise subprocess.TimeoutExpired(argv, 1)
+            return subprocess.CompletedProcess(argv, 128, "", "fatal: could not read from remote repository")
+        return subprocess.run(argv, *a, **kw)
+    code = releasetag.main(args(engine), brain=engine.brain, refused="", runner=runner)
+    out = capsys.readouterr().out
+    assert code == 1 and said in out and not git(engine.repo, "tag", "--list")
+
+
+@needs_ssh
+def test_a_warning_on_stderr_is_not_a_tag_on_the_remote(engine, capsys):
+    def runner(argv, *a, **kw):
+        if "ls-remote" in argv:
+            return subprocess.CompletedProcess(argv, 0, "", "Warning: Permanently added 'host' to the known hosts.")
+        return subprocess.run(argv, *a, **kw)
+    code = releasetag.main(args(engine), brain=engine.brain, refused="", runner=runner)
+    assert code == 0, capsys.readouterr().out
+    assert on_remote(engine) == "v1.2.0"
+
+
+@needs_ssh
+def test_a_tag_moved_after_its_verification_is_not_pushed(engine, capsys, monkeypatch):
+    real = releasetag._push
+
+    def push(p, ctx):   # another hand moves the local tag between verify and push
+        git(engine.repo, "tag", "-f", "-a", "v1.2.0", "-m", "moved", "main~1")
+        return real(p, ctx)
+    monkeypatch.setitem(releasetag.RUN, "push", push)
+    code = releasetag.main(args(engine), brain=engine.brain, refused="")
+    out = capsys.readouterr().out
+    assert code == 1 and "push     failed v1.2.0 moved after it was verified" in out and not on_remote(engine)
+
+
+@needs_ssh
+def test_the_planning_brain_named_is_read_not_brain_config(engine, capsys, monkeypatch):
+    monkeypatch.setenv("BRAIN_CONFIG", str(engine.planning / "config.json"))   # the releaser's brain
+    elsewhere = engine.planning.parent / "elsewhere"
+    code, out = run(engine, capsys, planning=str(elsewhere))   # names a brain without a releaser
+    assert code == 1 and "verify   failed no releaser key to verify with" in out and not on_remote(engine)
+
+
+@needs_ssh
+def test_no_terminal_and_no_yes_runs_nothing_and_fails(engine, capsys, monkeypatch):
+    monkeypatch.setattr(sys, "stdin", open(__file__, encoding="utf-8"))   # not a tty
+    code = releasetag.main(args(engine, yes=False), brain=engine.brain, refused="")
+    sys.stdin.close()
+    out = capsys.readouterr().out
+    assert code == 1 and "no terminal to answer y; --yes runs it (nothing tagged)" in out
+    assert git(engine.repo, "branch", "--show-current") == "feat/next"
+
+
+@needs_ssh
+def test_the_json_plan_in_an_agent_session_is_refused_too(engine, capsys):
+    code = releasetag.main(args(engine, json=True), brain=engine.brain, refused="not here")
+    assert code == 1 and json.loads(capsys.readouterr().out)["tag"] == "v1.2.0"
+
+
+def test_the_commands_it_runs_and_its_docs_pass_the_real_parser(tmp_path):
+    parser = cli.build_parser()
+    p = releasetag.TagPlan(repo=tmp_path, tag="v1.2.0", version="1.2.0", remote="upstream")
+    for flag in ("--history", "--private-text"):
+        ns = parser.parse_args(releasetag.check_argv(p, flag))
+        assert ns.public and ns.remote == "upstream" and ns.repo == str(tmp_path)
+    doc = (Path(__file__).resolve().parents[3] / "docs" / "release.md").read_text(encoding="utf-8")
+    lines = {ln.split("#")[0].strip().strip("`") for ln in doc.splitlines() if "brain release tag v" in ln}
+    lines |= {"brain release tag vX.Y.Z --branch release/X.Y", "brain release tag v1.2.0 --json"}
+    for line in lines:
+        for found in re.findall(r"brain release tag vX\.Y\.Z[^`;,)]*|brain release tag v[\d.]+[^`;,)]*", line):
+            ns = parser.parse_args(found.split()[1:])
+            assert ns.release_cmd == "tag", found
+
+
 def test_a_tag_that_is_not_a_release_is_refused(tmp_path, capsys):
     ns = SimpleNamespace(tag="1.2.0", repo=str(tmp_path), planning=str(tmp_path), root=None, branch="main",
                          remote="origin", yes=True, json=False)
@@ -251,6 +393,8 @@ def test_a_tag_that_is_not_a_release_is_refused(tmp_path, capsys):
     ("Merge pull request #9 from ada/chore/release-1.2.0", "1.2.0", True),
     ("Release 1.2.10", "1.2.1", False),
     ("Bump 1.2.0 deps", "1.2.0", False),
+    ("Merge pull request #11 from ada/fix/release-status-1.2.0", "1.2.0", False),
+    ("Release notes for 1.2.0", "1.2.0", False),
 ])
 def test_names_release(text, version, named):
     assert releasetag.names_release(text, version) is named

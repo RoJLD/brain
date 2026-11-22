@@ -39,7 +39,7 @@ pre-filter, the command line and this table, so a new gesture added to the list 
 | `brain update` (but `--check`) | installer | refuses (strict) | refuses (its own check) |
 | `brain uninstall --apply` | installer | refuses (strict) | refuses (its own check) |
 | `brain queue apply` | actions | refuses (strict) | refuses (its own check) |
-| `brain release tag` | keys | refuses, queued | refuses (its own check, after its plan) |
+| `brain release tag` | release | refuses (never queued: it needs the owner's terminal) | refuses (its own check, after its plan; `--json` too) |
 | `install.ps1 -Apply` | installer | refuses when permissions.yaml declares `installer` | not the engine's |
 
 A gesture's words follow `brain`'s own options (`--root`, `--project`, `--store`, or argparse's prefixes of them:
@@ -103,8 +103,8 @@ agent's session already (`vault open`, `drill`, `device init` and `forget-previo
 `queue apply`: refused before they run, `brain update`'s plan included); at the command line, its own refusal of
 `brain usage allow`, `brain schedule install --apply` and `brain vault reseal --apply` in an agent's session (exit 2).
 Without it, the guard refuses what 0.5.0 refused (`usage allow`, `handover root`, `schedule install --apply`, `ipc
-otel-headers`), now however brain is run, and the release commands since they exist (`release tag`, 0.6.1); each
-command keeps its own check.
+otel-headers`), now however brain is run, and the release commands from the release that adds them (`release
+tag`); each command keeps its own check.
 
 ## The locked floor
 

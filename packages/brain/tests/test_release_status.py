@@ -286,3 +286,10 @@ def test_another_planning_brains_verify_is_not_this_ones(tmp_path):
     rec = {"version": "0.2.0", "ok": True, "at": "T", "root": str(tmp_path / "other")}
     assert rs.verify_step("0.2.0", rec, tmp_path / "planning").state == "pending"
     assert rs.verify_step("0.2.0", rec, tmp_path / "other").state == "done"
+
+
+def test_the_tag_s_next_move_is_brain_release_tag(tmp_path, net):
+    """wi-brain-release-tag-command: the owner's move for a tag not cut yet is the one command."""
+    step, cut = rs.tag_step(_brain(tmp_path), "0.2.0", "owner/engine", False, "Ada", Fake())
+    assert (step.state, cut, step.owner) == ("pending", False, "Ada")
+    assert step.next == "once the version PR is merged: brain release tag v0.2.0 in the engine checkout, your terminal"

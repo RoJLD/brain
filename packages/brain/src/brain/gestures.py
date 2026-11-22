@@ -77,7 +77,7 @@ GESTURES: tuple[Gesture, ...] = (
     Gesture(("uninstall",), "installer", "it removes the brain from this machine", flags=("--apply",),
             guard="strict"),
     Gesture(("queue", "apply"), "actions", "it runs an action the owner queued as theirs", guard="strict"),
-    Gesture(("release", "tag"), "keys", "it signs a release tag with the owner's key and pushes it"),
+    Gesture(("release", "tag"), "release", "it signs a release tag with the owner's key and pushes it"),
     Gesture((), "installer", "it writes the machine's settings, hooks and scheduled tasks", flags=("-Apply",),
             program="install.ps1", cli="none"),
 )

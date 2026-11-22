@@ -267,13 +267,16 @@ brain release tag vX.Y.Z                              # its plan, one y, then yo
 It prints its plan, asks one y (`--yes` in a script of yours; `--json` prints the plan and runs nothing), then runs the
 lines below in order and stops at the first that fails, saying which: the switch (refused while a tracked file has
 changes: nothing is switched, stashed or reset), the pull, the tag not on the remote yet, HEAD the version PR's merge
-(its message names « release » and the version, both `__version__` are the version, the brain's CHANGELOG holds
-`## X.Y.Z — date — theme`, whose theme makes the tag message), the two public checks, `git tag -s` (git asks your key's
+(its message names `release-X.Y.Z`, both `__version__` are the version and its first parent's another, so a PR merged
+after it is refused; the brain's CHANGELOG holds `## X.Y.Z — date — theme`, whose theme makes the tag message), the two public checks, `git tag -s` (git asks your key's
 passphrase; the engine never reads a key), the verification against the planning brain's allowed signers (`--planning`,
-else `--root`, else the personal brain: members.yaml's `releaser` keys, else its `allowed_signers`), the push. A rerun
+else `--root`, else the personal brain: members.yaml's `releaser` keys, else its `allowed_signers`), the push of
+the tag object verified. A rerun
 resumes: a local tag already at HEAD (a push that failed) is verified and pushed; one elsewhere is said, never moved.
 It is an owner gesture (`brain.gestures`): refused in an agent's session after its plan, and the owner guard refuses
-it to a session's tool call (`packages/brain/docs/guards.md`). `--branch release/X.Y` tags a fix that cannot wait
+it to a session's tool call (`packages/brain/docs/guards.md`). The command exists from the release that adds it: the
+tag of that release itself is cut with the lines below (the engine installed is still the previous one), or with
+the checkout's own engine (`python -m brain release tag vX.Y.Z` from a venv where this checkout is installed). `--branch release/X.Y` tags a fix that cannot wait
 (below); `--repo` names the checkout, `--remote` the remote (default `origin`). By hand, the same lines:
 
 ```bash
