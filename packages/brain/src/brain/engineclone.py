@@ -137,35 +137,38 @@ def default_branch(clone: Path, runner: Runner = bounded) -> str:
     return out.split("/", 1)[-1] if code == 0 and out.startswith("origin/") else "main"
 
 
+def _standing(clone: Path, runner: Runner) -> tuple[str, str, str]:
+    """(the default branch, '', '') when the clone may move: on that branch, in no operation, no tracked change;
+    else ('', state, why)."""
+    code, top = _git(clone, ["rev-parse", "--absolute-git-dir"], runner)
+    if code != 0 or not top:
+        return "", SKIPPED, f"not a git checkout ({_last(top)}): left as it is"
+    main = default_branch(clone, runner)
+    code, here = _git(clone, ["branch", "--show-current"], runner)
+    if code != 0:
+        return "", FAILED, f"git branch failed ({_last(here)}): left as it is"
+    if here != main:
+        return "", SKIPPED, f"on {here or 'a detached HEAD'}, not {main}: left as it is (never switched)"
+    busy = [n for n in IN_PROGRESS if (Path(top.splitlines()[-1]) / n).exists()]
+    if busy:
+        return "", SKIPPED, f"a {IN_PROGRESS[busy[0]]} is in progress: left as it is"
+    code, dirty = _git(clone, ["status", "--porcelain", "--untracked-files=no"], runner)
+    if code != 0:
+        return "", FAILED, f"git status failed ({_last(dirty)}): left as it is"
+    if dirty:
+        return "", SKIPPED, (f"{len(dirty.splitlines())} tracked file(s) changed: left as it is (never stashed, reset "
+                             "or committed)")
+    return main, "", ""
+
+
 def pull(clone: Path, runner: Runner = bounded) -> Result:
     """Fast-forward ``clone`` to origin's default branch when it is on it, clean and in no operation; else say why
     and touch nothing."""
     res = Result(clone)
-    code, top = _git(clone, ["rev-parse", "--absolute-git-dir"], runner)
-    if code != 0 or not top:
-        res.line = f"not a git checkout ({_last(top)}): left as it is"
+    main, res.state, res.line = _standing(clone, runner)
+    if not main:
         return res
-    gitdir = Path(top.splitlines()[-1])
-    main = default_branch(clone, runner)
-    code, here = _git(clone, ["branch", "--show-current"], runner)
-    if code != 0:
-        res.state, res.line = FAILED, f"git branch failed ({_last(here)}): left as it is"
-        return res
-    if here != main:
-        res.line = f"on {here or 'a detached HEAD'}, not {main}: left as it is (never switched)"
-        return res
-    busy = [n for n in IN_PROGRESS if (gitdir / n).exists()]
-    if busy:
-        res.line = f"a {IN_PROGRESS[busy[0]]} is in progress: left as it is"
-        return res
-    code, dirty = _git(clone, ["status", "--porcelain", "--untracked-files=no"], runner)
-    if code != 0:
-        res.state, res.line = FAILED, f"git status failed ({_last(dirty)}): left as it is"
-        return res
-    if dirty:
-        n = len(dirty.splitlines())
-        res.line = f"{n} tracked file(s) changed: left as it is (never stashed, reset or committed)"
-        return res
+    res.state = SKIPPED
     code, before = _git(clone, ["rev-parse", "--verify", "HEAD"], runner)
     if code != 0:
         res.state, res.line = FAILED, f"git rev-parse HEAD failed ({_last(before)}): left as it is"
