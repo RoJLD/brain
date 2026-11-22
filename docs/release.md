@@ -258,6 +258,24 @@ owner's SSH release key, so that `brain update` and the installer can tell it fr
 (wi-brain-release-signing; the key, the `releaser` role and `allowed_signers`:
 [`packages/brain/docs/identity.md`](../packages/brain/docs/identity.md), « Signed releases »):
 
+One command does it, in the owner's own terminal (wi-brain-release-tag-command), from the engine checkout:
+
+```bash
+brain release tag vX.Y.Z                              # its plan, one y, then your key's passphrase
+```
+
+It prints its plan, asks one y (`--yes` in a script of yours; `--json` prints the plan and runs nothing), then runs the
+lines below in order and stops at the first that fails, saying which: the switch (refused while a tracked file has
+changes: nothing is switched, stashed or reset), the pull, the tag not on the remote yet, HEAD the version PR's merge
+(its message names « release » and the version, both `__version__` are the version, the brain's CHANGELOG holds
+`## X.Y.Z — date — theme`, whose theme makes the tag message), the two public checks, `git tag -s` (git asks your key's
+passphrase; the engine never reads a key), the verification against the planning brain's allowed signers (`--planning`,
+else `--root`, else the personal brain: members.yaml's `releaser` keys, else its `allowed_signers`), the push. A rerun
+resumes: a local tag already at HEAD (a push that failed) is verified and pushed; one elsewhere is said, never moved.
+It is an owner gesture (`brain.gestures`): refused in an agent's session after its plan, and the owner guard refuses
+it to a session's tool call (`packages/brain/docs/guards.md`). `--branch release/X.Y` tags a fix that cannot wait
+(below); `--repo` names the checkout, `--remote` the remote (default `origin`). By hand, the same lines:
+
 ```bash
 git switch main
 git pull --ff-only
@@ -275,7 +293,8 @@ personal brain's `members.yaml`, `brain identity allowed-signers --write` commit
 unsigned: delete it before pushing it (`git tag -d vX.Y.Z`) and sign it again; once pushed, a tag is never moved.
 
 **A fix that cannot wait** (« The version policy ») is tagged the same way from `release/X.Y`, at the merge of its
-version PR, instead of main: `git switch release/X.Y`, then `git pull --ff-only` and the lines after it. Then
+version PR, instead of main: `brain release tag vX.Y.Z --branch release/X.Y`, or by hand `git switch release/X.Y`,
+then `git pull --ff-only` and the lines after it. Then
 `release/X.Y` merges back into main by a PR, which deletes from main every fragment that `## X.Y.Z+1` now holds:
 the next version PR's `release-check` refuses a section that repeats an entry already released, word for word; one
 reworded during the cherry-pick is yours to see.

@@ -229,7 +229,7 @@ def tag_step(root: Path, version: str, repo: str, offline: bool, owner: str, run
         return Step("tag", UNKNOWN, str(exc)), False
     if tag not in tags:
         return Step("tag", PENDING, f"{tag} not on {repo}", owner,
-                    f"once the version PR is merged: git tag -s {tag} on it, then git push origin {tag}"), False
+                    f"once the version PR is merged: brain release tag {tag} in the engine checkout, your terminal"), False
     v = tagsig.verify(root, repo, tag, runner=runner)
     status_ = v.get("status")
     if status_ == tagsig.VERIFIED:

@@ -145,6 +145,7 @@ OWN = {
     "brain update": lambda env: detail.refused(env),
     "brain uninstall --apply": lambda env: detail.refused(env),
     "brain queue apply": lambda env: detail.refused(env),
+    "brain release tag": lambda env: detail.refused(env),   # brain.releasetag.main, after its plan
 }
 
 
