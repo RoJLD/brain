@@ -1,3 +1,0 @@
-section: Added
-
-- `brain close ID --pr "repo #N" [--outcome T] [--journal-title T] [--no-tidy] [--write] [--json]`: an item's definition of done from its merged PR in one command, at zero token (brain.closing): the item closed done with the PR and its merge's date, the journal's line, the features the PR names (`feat-x: have`) set, its changelog fragment checked, the milestones it leaves with no open item listed with their trigger, and the PR's merged branch and its worktree removed through `brain tidy`'s plan; the plan first, `--write` refused while the PR is not merged (README, « An item closes with its evidence »).

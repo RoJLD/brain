@@ -1,3 +1,0 @@
-section: Added
-
-- `brain decision apply [ID]... [--spec S] [--title T] [--date D] [--write] [--json]`: the answered decisions applied at zero token but the prose (brain.answerapply): the ADR's skeleton appended to the decision log (its Context from the questions, its Decision from the answers and their options' consequences, its Why and Revisit if left TODO for the session), a `decided_by` edge and `props.decided_<date>[_<code>]` on each item a DDR names, the answers table inserted into the spec's section that first mentions the first code, then each DDR acknowledged and archived; the plan first, `--write` applies it (README, « The session that asks the owner records the answers »).

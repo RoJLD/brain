@@ -2,6 +2,190 @@
 
 The command shares the repo's tag series with `research-graph`: `vX.Y.Z` is both at X.Y.Z.
 
+## 0.6.1 — 2026-11-23 — The release commands
+
+### Upgrade
+
+1. **Install the engine**, in your own terminal, not from a Claude Code session: `brain update`, then `y`. It installs
+   the tag, writes `engine.pin`, commits `config.json` and runs `brain sync`. A brain whose `config.json` declares
+   `engine.installer`: merge the PR that moves `engine.pin`, then run the installer's `-Apply` instead. This release
+   adds `brain release apply`, which runs that `-Apply` in one gesture, but the engine installed before it (0.6.0) has
+   no such command: this install is the installer's `-Apply` by hand, and `brain release apply` is the gesture from the
+   next install on. Until then the commands this release adds are not there (`brain release tag`, `apply`, `status`
+   and `verify`, `brain close`, `brain decision apply`, `brain gate`, `brain review rounds` and `stamp --high`, `brain
+   test --changed --verdict`, `brain usage --by context`, `--by output` and `--by role`, `brain refresh --no-tidy` and
+   `--no-clone`, `brain tidy --include-ignored`, `brain tui --once --view` and `--axis`), `brain cost audit --write`
+   appends no record yet, and none of its optional keys is read. Do it on every machine and in the brain's CI before a
+   brain sets one of them (`engine.clone`, `brief.ceiling`, `brief.agent_models`, `tidy.auto`): an engine at 0.6.0
+   does not know them and its strict check refuses a `config.json` that holds one.
+2. **Restart the Claude Code sessions**, so that they run the hooks `brain sync` rendered. Until then a session keeps
+   0.6.0's `guard.sh`: its pre-filter does not start the guard for `brain release tag` or `brain release apply`, nor
+   for a release command whose program is a word it cannot resolve (`$b release ...`), so the two new owner gestures
+   reach the owner guard, and not only the command's own refusal, only in a restarted session.
+3. **Refresh the public stamp**: a stamp is valid only under the engine that made it, so the push guard refuses the
+   old one until then. `brain update` and the installer's `-Apply` refresh them (`brain check --public --refresh`:
+   each local checkout of `public.repos` in the registry); by hand, run `brain check --public --history` in each
+   public repo's checkout they skipped (uncommitted work, named in their output) or outside the registry, before its
+   next push.
+
+Nothing to run for the rest: no schema moved (`config.json`'s grew by optional keys only), and nothing this release
+adds refuses more than 0.6.0 did without a key or a command of its own. One default acts by itself: `brain refresh`
+now applies the merged-and-clean part of `brain tidy`'s plan (`tidy.auto`, on by default: the stale worktrees on a
+merged branch, the merged local branches; never an unmerged branch, a dirty, locked or leased worktree, nor one
+holding files git ignores), and fast-forwards the engine clone when it is on its default branch and clean (never a
+switch, a reset or a stash). `--no-tidy` and `--no-clone` skip them once, `tidy.auto: false` turns the first off
+(« Changes »).
+
+### Added
+
+- `brain cost audit --write` also appends its record, one JSON line (`v: 1`), to
+  `<BRAIN_HOME>/usage/<project>/audits.jsonl`: the window, its sessions and cost, the estimates' error (backtests,
+  the share within x1.5, the typical factor, the window's items and how many were off) and the context counts. The
+  audit gains a section « Context against the budgets »: the sessions whose brief gave a context budget, how many
+  passed 80 % and 100 % of it, and the sessions that peaked above 400k with their cost. The weekly task's command
+  is unchanged; the records are the week-by-week series a KPI reads (`brain.auditrecord.series`: the `v: 1`
+  lines, one per window, the last line of a window winning; a torn line or a byte that is not UTF-8 is skipped).
+- `brain digest`'s token cost section names the latest cost audit: its window, the estimates' typical error, the
+  sessions past their budget, and its file.
+- `brain usage --by context` and `--by output`: where the tokens go, at zero token from the ledger (the scanner's `SCAN_V` 5 adds a row's `spend`). `--by context`: the cost by token kind and the context reloads, the base (first message's context) of the sessions and their agents, the messages and their cost by context bucket per role (coordinator, sub-session, session; the agents apart), and the hand-over simulation at 300k, 400k and 500k (a fresh session restarting at 120k, `--handover-usd` per hand-over, default 3) with the ceiling that saves the most per role. `--by output`: each kind of output put into the context (a tool's or command's result, prompts, attachments, a hook's context) by its downstream cost, the main threads and the agents apart (`wi-brain-cache-report`).
+- The owner's engine clone kept current: `brain refresh` fast-forwards it (`git fetch`, then `git merge --ff-only`)
+  when it is on its remote's default branch, no tracked file has a change, no merge, rebase, cherry-pick or revert
+  is in progress and the remote brings no file it ignores here; otherwise it says why in one line and leaves it as it
+  is: never a switch, a commit, a reset or a stash. Each git call is bounded (60 s, its process tree stopped). The
+  clone is `config.json` `engine.clone` (optional, new: absolute, `~` or relative to the config's folder; set it once
+  every machine and CI run this release), else the registry's checkout whose remote is `engine.repo`; `--offline` or
+  `--no-clone` skip it (`brain.engineclone`; `wi-brain-clone-autopull`).
+- `brain close ID --pr "repo #N" [--outcome T] [--journal-title T] [--no-tidy] [--write] [--json]`: an item's definition of done from its merged PR in one command, at zero token (brain.closing): the item closed done with the PR and its merge's date, the journal's line, the features the PR names (`feat-x: have`) set, its changelog fragment checked, the milestones it leaves with no open item listed with their trigger, and the PR's merged branch and its worktree removed through `brain tidy`'s plan; the plan first, `--write` refused while the PR is not merged (README, « An item closes with its evidence »).
+- `brain decision apply [ID]... [--spec S] [--title T] [--date D] [--write] [--json]`: the answered decisions applied at zero token but the prose (brain.answerapply): the ADR's skeleton appended to the decision log (its Context from the questions, its Decision from the answers and their options' consequences, its Why and Revisit if left TODO for the session), a `decided_by` edge and `props.decided_<date>[_<code>]` on each item a DDR names, the answers table inserted into the spec's section that first mentions the first code, then each DDR acknowledged and archived; the plan first, `--write` applies it (README, « The session that asks the owner records the answers »).
+- `brain gate`: the pre-push checks of a branch in one call, on the checkout here (or `--repo-dir`): clean (nothing
+  left out of HEAD, untracked files included), merge-check (a fresh base merged in, nothing of it lost), review
+  (HEAD's review stamp, no finding open, or carried by git's own merge of the base), views (a graph store's views
+  regenerated and the store checked: `brain refresh --offline`; a view it rewrote is a change to commit), audit
+  (`brain audit --diff`: 0 NEW, 0 LEFT), public (a public repo's HEAD stamped by `brain check --public --history`, a
+  valid stamp kept) and tests (`brain test --changed`, `--strict` for the whole suite when the selection widens).
+  Every step runs (`--fail-fast` stops at the first failure; `--skip STEP` skips one, and the verdict then says
+  INCOMPLETE with exit 1: a skipped check is no pass); the brain steps run with the engine running the gate,
+  `--python` names the tests' interpreter and `-n N` their workers; each step's command and output go to a log
+  file under `<temp>/brain-gate/<run>/` (or `--logs`, the newest 20 runs kept), the report to `verdict.json`, and
+  three lines say what passed, what failed and why, and the next command.
+  Exit 0 only when every step that applies passes, 1 otherwise, 2 when it cannot start (not a git checkout, a
+  `--base` that is a commit neither here nor on its remote); `--json` for the report
+  (brain.gate, brain.verdict).
+- `brain handover check` gains a `children` line: each session the checked one started, archived, detached or
+  blocking (any other: the app archives a parent's side sessions with it and refuses while one works), with what a
+  blocking one needs; its `predecessor` line says to archive the predecessor only once none of its children blocks,
+  and lists those that do (only the session that started a child may detach it). The successor's brief says so.
+  `--json` adds `children`, `blocking`, `parent_children`, `parent_blocking` and `parent_archived`; the exit code is
+  unchanged (`wi-brain-handover-detach-children`).
+- `brain check` warns of an open item whose text says it waits on the owner (« waits on Ada's install », « pending
+  Ada's answer », « en attente de … du propriétaire ») while no `props.open`, `props.external_blocker` or pending DDR
+  carries it, with the `brain item set` command that records the wait; a warning, never an error. The owner's names
+  come from `identity.owner` and `identity.display_name`; history props, quoted text and general phrasings (« with
+  Ada's go ») are left alone, and `props.owner_wait_checked` marks a sentence that is no wait
+  (`brain.ownerwaits`, `wi-brain-owner-waits-check`).
+- `brain release apply`: the install in one owner gesture, once the pin PR merged: the checkout's pin checked against the default branch's, the brain's installer
+  (`config.json` `engine.installer`) shows its plan, one y (`--yes`), then in order, stopping at the first step that
+  fails and saying which: its `-Apply` in the owner's terminal, `brain --version` of the new engine
+  (`<BRAIN_HOME>/venv`'s) against `engine.pin`, the engine clone fast-forwarded when on its default branch and clean (`brain.engineclone`; `--offline` leaves it),
+  `brain release verify` (`--no-tests` passed on), the open sessions of this machine named, to restart (nothing is
+  restarted). A brain without an installer of its own is refused (`brain update` is its gesture). An owner gesture
+  (`brain.gestures`, category release, never queued): refused in an agent's session after the installer's plan, and by the owner
+  guard; `brain release status` names it as the install's next move (docs/release.md, « 4. The pin and the
+  machines »; `wi-brain-release-apply`).
+- `brain release status [X.Y.Z]`: where a release stands, at zero token: its wave closed, the version PR merged, the
+  tag cut and signed, the pin PR merged, the engine installed and verified on this machine, each done, pending or
+  unknown, then the next step and whose it is (`--offline`, `--json`); `brain release verify`: the after-install
+  checks in one call (the engine against the pin, `brain probes`, `brain classes --check`, the brain's tests), each
+  logged under `$BRAIN_HOME/release/`, recorded for `status` (docs/release.md, « Where a release stands »;
+  `wi-brain-release-status`).
+- `brain release tag vX.Y.Z`: the signed release tag in one owner gesture, from the engine checkout: its plan, one y
+  (`--yes`; `--json` prints the plan), then the runbook's lines in order, stopping at the first that fails and saying
+  which: `git switch main` (`--branch release/X.Y`; refused while a tracked file has changes), `git pull --ff-only`,
+  the tag not on the remote yet, HEAD the version PR's merge commit (its message, both `__version__` moved by it,
+  the CHANGELOG heading whose theme makes the tag message), `brain check --public --history` then `--private-text`,
+  `git tag -s` (the owner's passphrase), the tag verified against the planning brain's allowed signers, the push of
+  the verified tag object; a rerun resumes. An owner gesture (`brain.gestures`, category release, never queued):
+  refused in an agent's session after its plan, and by the owner guard; `brain release status` names it as the
+  tag's next move. The release that adds it is itself tagged by hand (docs/release.md, « 3. The tag »;
+  `wi-brain-release-tag-command`).
+- `brain review rounds PR`: the review rounds of a PR from its stamps (one per head: findings, high, fixed, contested, open) and the stop rule: not converging when the high findings have not halved over the last 3 rounds (`--rounds N`), the next step a structural decision rather than another round; it says, never refuses. `brain review stamp --high H` records a round's high findings (else the note's high lines are read) (`wi-brain-review-convergence`).
+- The model of each agent role: config.json `brief.agent_models` (`{role: model}`, default `{"verify": "sonnet"}`: the verifiers and skeptics on the smaller model, every other role on the session's), printed by `brain brief`. The token ledger records each agent's role (a workflow agent's label before its colon, else its phase; a subagent's type) and model (the scanner's `SCAN_V` 6), and `brain usage --by role` lists the agents by role with each model's count and how many ran off the map, those whose model is unknown apart; the agents of one label are counted under each of their roles (`wi-brain-review-model-routing`).
+- `brain test --changed --verdict`: the verdict mode of the targeted tests, for a session that would otherwise run a
+  long suite in the background and poll it. The selection and pytest's whole output go to a log file
+  (`<temp>/brain-test/<run>/pytest.log`, the newest 20 runs kept, or `--log FILE`); the run blocks until it ends or
+  its deadline (`--deadline S`, 540 seconds by default, under a shell tool's ten minutes), when its process tree is
+  stopped and the exit code is 124 (an interrupt stops it too); three lines come out: PASSED, FAILED or TIMEOUT with
+  pytest's counts and the log, the failed and erroring tests' ids, the next command (the run's own flags kept).
+  `--json` adds them to the selection's JSON ([docs/tests-graph.md](docs/tests-graph.md)).
+- The cockpit's Milestones tab gains its Tree view, the backlog's WBS (`v`; `brain.planviews`, `brain.tui_plan`):
+  era › milestone › item, or with `g` era › wave › item (a carried item in the wave it is in now), each milestone's
+  items done out of its live items through its sub-milestones, its bar and its p10–p90, each item's state, priority,
+  gates and band, the done items folded; the dates read from the last `brain forecast`'s `latest.json` (re-read when it
+  changes), never recomputed. The tree's axes are data (`cockpit.MODES`), the axis kept in `tui.json` with the tab's
+  view; `brain tui --once --tab milestones --view tree [--axis waves]` prints it, and `--view` prints one view of a
+  tab (`wi-brain-tui-plan-tree`).
+- The cockpit's Milestones tab gains its Trajectories view, the Gantt as bands (`v`; `brain.planbands`,
+  `brain.tui_plan`): one row per milestone, era and wave the last `brain forecast` dates, sorted by its median, `▒`
+  p10 to p80, `░` p80 to p90, `█` the median, the band stopped at the 6-week horizon with `▸` where it goes on; the
+  gates (`◆` go/no-go, `⧗` calendar, `⚙` hardware, `⇢` another project), why a milestone is not dated, « (no
+  milestone) » and the backlog's flow, the notes wrapped rather than cut; UNCALIBRATED until judged, read from
+  `latest.json`, never recomputed. `[` `]` change the scale, `←`/`→` pan a week up to the horizon, Enter opens a milestone's detail, and Enter on a Tree milestone opens its row
+  there; `brain tui --once --tab milestones --view trajectories` prints it (`wi-brain-tui-trajectories-bands`).
+- The Milestones Tree's waves axis shows where a wave stands (`wi-brain-tui-waves`): a pending wave's open items sit in
+  its lots, by round, as `brain wave plan` cuts them (brain.lots: lots that share no file but hot ones, rounds at the
+  caps in force), each lot named by its round, its number and the chain of its first items; the items carried in come
+  first among the rest; each item shows the wave it was carried from (`↩`), its PR (`props.pr`) and the live session
+  whose report names it, redrawn when the sessions change. `f` keeps the P0 and P1 items alone and what holds them,
+  each lot's and group's count and each lot's chain of what it still holds. `brain tui --help` describes the axis.
+  `brain.waves.build` gives the plan of nodes and edges already read.
+
+### Fixes
+
+- `brain test --changed`: a pytest run killed by a signal (a negative exit code on POSIX) counted as a pass, the
+  worst code being taken with `max()` against 0; it is now 128 + the signal (`brain.targeted.exit_code`), so neither
+  the targeted tests nor the merge queue's step can pass on a killed run.
+
+### Changes
+
+- `brain brief` starts every task class at 400k: the strategic class's default budget was 800k. A budget above
+  config.json `brief.ceiling` (new, default `400k`), from `--budget` or a class of `brief.classes`, is warned about in
+  the brief's warnings: it is the expansion step of an unfinished task, not a start (a message costs two to three
+  times more above 400k of context).
+- Each command module declares its own phase (`PHASE = "early"` or `"both"`; none for a run-only command), its
+  aliases (`ALIASES`) and its `NO_PROJECT`, and `brain.commands._registry.undeclared()` lists a module whose
+  declarations disagree with its handlers or its parsers; `tests/test_cli_registry.py` reads them instead of its
+  shared EARLY and BOTH lists, so two PRs that each add a command no longer conflict there
+  (`wi-brain-cli-registry-declared`).
+- `brain forecast` keeps both parents of an item that is part of a wave and of a thematic milestone: each item row of
+  `--json` and `latest.json` carries `milestone` (its thematic milestone: the first not of kind wave, an era included),
+  `wave` (the one it is in now: the wave its `props.carried_to` names once the planned one closed, else its own) and
+  `parents` (every milestone it is part of, and that wave), additive keys of format 1; before, the last `part_of` edge
+  won.
+  « (no milestone) » now counts the open items with no thematic milestone, those in a wave alone included, and the
+  slip a day of waiting costs (`brain queue`, `brain detail`) reads every milestone of the item, the tightest first
+  (`wi-brain-forecast-two-parents`).
+- `brain tidy` is applied where work ends, not only reported. `brain close ID --pr "repo #N" --write` removes the PR's
+  head branch and its worktrees at once: the PR's merge stands for tidy's 24-hour idle rule, so a worktree made with
+  `git worktree add` that no desktop-app session knows no longer waits a day (never an unmerged branch, a dirty,
+  locked or leased worktree). The head branch counts as merged when its tip is on the head commit the PR merged (gh's
+  `headRefOid`), so a squash or rebase merge is tidied too; a tip with commits the PR did not merge is kept. The one
+  the shell stands in is kept, and the output names the `cd` out of it; a worktree kept says why, after `--write`
+  too. `brain item close --pr` prints that `brain close` line.
+- `brain refresh` first applies the merged-and-clean part of `brain tidy`'s plan of its projects' repos while the new
+  `config.json` key `tidy.auto` is on (the default): the stale worktrees on a merged branch or detached on a commit the
+  default branch holds, the merged local branches, the worktrees whose folder is gone; never origin's branches, an
+  unmerged branch, a dirty, locked or leased worktree, nor the current folder. A failure is a warning line, never a
+  failed refresh. `--no-tidy` skips it once; `tidy.auto: false` turns it off. The refreshes that `brain gate`,
+  `brain ship` and the answers' worktree run pass `--no-tidy`: a check never deletes.
+- Neither `brain close` nor `brain refresh` removes a worktree holding files git ignores, which `git worktree remove`
+  deletes without asking (a hand-placed `.env`, local data, outputs; caches and virtual environments such as
+  `__pycache__` or `.venv` aside): it is kept and the paths are named. `brain tidy --apply` keeps it too (the
+  coordinator's scripted step after an archive) and says so; the new `--include-ignored` removes it with those files,
+  which its plan names under the worktree. An ignored junction or folder link is not counted: tidy unlinks it first,
+  never following it.
+- The close-item procedure's step 5 removes the worktree with `brain close`, never by hand, and the coordinator runs
+  `brain tidy --apply` on a child's repos right after archiving it; the brief's after-merge lines say so.
+
 ## 0.6.0 — 2026-11-18 — Typology packs, the merge queue and session provenance
 
 ### Upgrade
