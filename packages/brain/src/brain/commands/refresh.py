@@ -19,9 +19,10 @@ USAGE = """\
   brain refresh [--all] [--offline] [--no-tidy] [--no-clone]   sync, then check, for this project's stores or every
                         registered project's (--all: and the registry and the ids, as check --all); first, the
                         owner's engine clone (config.json engine.clone, else the registry's checkout of engine.repo)
-                        fast-forwarded with git pull --ff-only when it is on main, clean and in no merge or rebase,
-                        else said and left as it is: never a switch, commit, reset or stash (--offline or
-                        --no-clone skip it); then, while config.json
+                        fast-forwarded (git fetch, then git merge --ff-only) when it is on its remote's default
+                        branch, clean and in no merge or rebase, and the remote brings no file it ignores here; else
+                        said and left as it is: never a switch, commit, reset or stash (--offline or --no-clone skip
+                        it); then, while config.json
                         tidy.auto is on (the default), the merged-and-clean part of brain tidy's plan of their repos
                         is applied (the stale worktrees on a merged branch, the merged local branches, the worktrees
                         whose folder is gone; never origin's, an unmerged branch, a dirty, locked or leased worktree
@@ -53,9 +54,9 @@ def _clone(args, root: Path) -> None:
 
 
 def cmd_refresh(args, root: Path) -> int:
-    """the engine clone's fast-forward, tidy's merged-and-clean part, then sync --write, the records and queue views, kanban --write, then check, for
-    each store of each project in scope. A main checkout on main or master is only checked (its generated files are
-    refreshed from a worktree), unless --on-main. --all ends with the registry and the ids (check_registry). Once it
+    """The engine clone's fast-forward, tidy's merged-and-clean part, then sync --write, the records and queue views,
+    kanban --write, then check, for each store of each project in scope. A main checkout on main or master is only
+    checked (its generated files are refreshed from a worktree), unless --on-main. --all ends with the registry and the ids (check_registry). Once it
     passes, the views the merge driver kept from one side here are regenerated: their marks are cleared."""
     if skew.refuse(root, "refresh", args.force):   # another engine than config.json engine.pin: nothing written
         return 1
@@ -71,7 +72,8 @@ def cmd_refresh(args, root: Path) -> int:
 def register(sub, ctx) -> None:
     rf = sub.add_parser("refresh", help="sync then check for the project's stores, or every registered project's; "
                                         "with --all, or in a brain's own root, the registry check of check --all too")
-    rf.add_argument("--offline", action="store_true", help="no gh call (the features' statuses are not read)")
+    rf.add_argument("--offline", action="store_true", help="no network: no gh call (the features' statuses are not "
+                                                       "read), the engine clone not fetched")
     rf.add_argument("--all", action="store_true", help="every project of the registry")
     rf.add_argument("--force", action="store_true", help="write even when the running engine is not config.json "
                                                          "engine.pin")
