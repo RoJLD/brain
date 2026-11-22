@@ -39,6 +39,7 @@ pre-filter, the command line and this table, so a new gesture added to the list 
 | `brain update` (but `--check`) | installer | refuses (strict) | refuses (its own check) |
 | `brain uninstall --apply` | installer | refuses (strict) | refuses (its own check) |
 | `brain queue apply` | actions | refuses (strict) | refuses (its own check) |
+| `brain release apply` | installer | refuses, queued when permissions.yaml declares `installer` | refuses (its own check, after the installer's plan) |
 | `brain release tag` | release | refuses (never queued: it needs the owner's terminal) | refuses (its own check, after its plan; `--json` too) |
 | `install.ps1 -Apply` | installer | refuses when permissions.yaml declares `installer` | not the engine's |
 
@@ -75,7 +76,7 @@ and so does a message or a search that only names the forms (`git commit -m "uns
 the key too (off: it matches as 0.5.1 did).
 
 **The lock under the guard.** The gestures that act check the session themselves: `brain schedule install --apply`,
-`brain update`, `brain uninstall --apply`, `brain queue apply`, `brain release tag`, `brain handover root` (and
+`brain update`, `brain uninstall --apply`, `brain queue apply`, `brain release tag` and `apply`, `brain handover root` (and
 `brain tidy --remote --apply`, the cockpit's actions) refuse to run while `CLAUDECODE` is set (`brain.detail.refused`,
 `brain.gestures.lock_marker`), as 0.5.1 did, and so do `brain usage allow` and `brain vault reseal --apply` under
 `guards.owner_strict` or `guards.gestures_wide` (the command line's gate, `brain.gestures.agent_session`: while
@@ -104,7 +105,7 @@ agent's session already (`vault open`, `drill`, `device init` and `forget-previo
 `brain usage allow`, `brain schedule install --apply` and `brain vault reseal --apply` in an agent's session (exit 2).
 Without it, the guard refuses what 0.5.0 refused (`usage allow`, `handover root`, `schedule install --apply`, `ipc
 otel-headers`), now however brain is run, and the release commands from the release that adds them (`release
-tag`); each command keeps its own check.
+tag` and `apply`); each command keeps its own check.
 
 ## The locked floor
 

@@ -318,8 +318,18 @@ steps for that version; in general:
 - **A brain with an installer of its own** (`config.json` `engine.installer`): a PR in the brain that moves `engine.pin`
   to `vX.Y.Z`, with anything else its brain holds that names the version, and the rules that follow the engine's change
   (in the same PR, so that they never name a command the pin does not have). Run `brain sync` with the new engine (a venv at the tag: the machine's own is still the
-  old one, and sync refuses another engine than the pin), so the hooks it renders go in too. After its merge, on each machine: `<installer> -Apply` (its plan first), then restart
-  the sessions. The mechanical part is one command, run in a branch of that brain with the tag's engine:
+  old one, and sync refuses another engine than the pin), so the hooks it renders go in too. After its merge, on each machine, in the owner's
+  terminal, one command: `brain release apply` (wi-brain-release-apply; `--planning ROOT`, else `--root`, else the
+  brain checkout holding the current folder, else the personal brain). It runs the installer without arguments and
+  shows its plan, asks one y (`--yes` in a script of yours), then in order, stopping at the first step that fails and
+  saying which: `<installer> -Apply` (its output and prompts in your terminal), `brain --version` of the engine now
+  installed against `engine.pin`, the engine clone fast-forwarded (`config.json` `engine.clone`, else the
+  registry's checkout of `engine.repo`; only on main, clean and in no merge or rebase, never switched, reset or
+  stashed: any other state is said and left, not a failure; `--offline` leaves it), `brain release verify` with the
+  new engine (`--no-tests` passed on), and the open sessions of this machine named, to restart yourself (nothing is
+  restarted or sent). An owner gesture: refused in an agent's session after the installer's plan, and by the owner
+  guard (category `installer`). By hand, the same: `<installer> -Apply` (its plan first), then restart the
+  sessions. The mechanical part is one command, run in a branch of that brain with the tag's engine:
   `brain release pin vX.Y.Z [--planning ROOT]` (default: the brain checkout holding the current folder) prints the
   plan (`--json` as data) and `--write` writes it, refused on the brain's default branch: `engine.pin` moved in `config.json` (its keys, order, indent, line endings and BOM kept),
   the engine stores its `classes:` block leaves at their default added there (`brain classes --suggest`'s lines, the
@@ -356,7 +366,7 @@ given, else the lowest live wave's release above the pin, else the pin's own. Si
 | version | the version PR, whose title names « Release » and the version, is merged (or the tag is cut) | the coordinator: `brain release prepare`, then its PR's review and merge |
 | tag | the tag is on the engine repo and signed by a releaser of `allowed_signers` (brain.tagsig, the tag fetched alone into a temporary folder) | the owner, named by their display name: « 3. The tag » |
 | pin | `engine.pin` on the planning brain's default branch is at the tag (read from the local refs: as of the last fetch); while not, an open PR whose title names « pin » and the version | the coordinator: `brain release pin vX.Y.Z --write` in a pin branch, its PR, the merge |
-| install | the engine running is at the version, on this machine | the owner: the brain's installer `-Apply`, else `brain update` |
+| install | the engine running is at the version, on this machine | the owner: `brain release apply` (a brain with an installer of its own), else `brain update` |
 | verified | this machine's last `brain release verify` passed at the version | the session: `brain release verify` |
 
 Every read is bounded (60 s) and none writes. A read that fails (gh or git missing, the network down) leaves its step

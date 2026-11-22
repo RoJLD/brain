@@ -268,7 +268,8 @@ def install_step(cfg, version: str, installed: str, owner: str) -> Step:
         return Step("install", DONE, f"brain {installed} on this machine")
     name = engine_of(cfg).get("installer")
     name = name if isinstance(name, str) and name else None
-    how = f"{name} -Apply (its plan first), then restart the sessions" if name else "brain update, then y"
+    how = "brain release apply (the installer's plan, -Apply, the checks, the sessions named)" if name else \
+        "brain update, then y"
     return Step("install", PENDING, f"brain {installed} on this machine", owner, how)
 
 
