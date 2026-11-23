@@ -19,10 +19,19 @@ from brain import resources_containers as rc
 FIXTURES = Path(__file__).parent / "fixtures" / "docker"
 STATS = (FIXTURES / "stats.jsonl").read_text(encoding="utf-8")   # a real docker stats payload, names invented
 DOWN = (FIXTURES / "down.txt").read_text(encoding="utf-8")       # what the client says when the engine is not there
-TODAY = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+# The sampler's clock is frozen (the autouse fixture below): the fixtures' ledger day and the day tokens_today reads
+# are one value, so a run that crosses midnight UTC no longer reads an empty day (main's CI, 2026-11-23 00:03 UTC).
+NOW = datetime(2026, 11, 22, 23, 59, 59, tzinfo=timezone.utc)
+TODAY = NOW.strftime("%Y-%m-%d")
 CLI_A = "11111111-2222-4333-8444-555555555555"
 CLI_B = "66666666-7777-4888-9999-aaaaaaaaaaaa"
 FORKED = "bbbbbbbb-cccc-4ddd-8eee-ffffffffffff"
+
+
+@pytest.fixture(autouse=True)
+def _frozen_clock(monkeypatch):
+    """The sampler's now is NOW in every test here; a test that moves the clock sets resources._now itself."""
+    monkeypatch.setattr(resources, "_now", lambda: NOW)
 
 
 # --- the thresholds and the small parsers ---------------------------------------------------------------------------
@@ -294,6 +303,23 @@ def test_tokens_today_sums_the_utc_day_only_and_reparses_only_a_changed_ledger(m
         raise AssertionError("parsed again")
     monkeypatch.setattr(usage, "load", boom)
     assert s.tokens_today()["tokens"] == 1250   # the same file: the cache
+
+
+def test_tokens_today_follows_the_utc_day_across_midnight_with_the_ledger_unchanged(monkeypatch):
+    s = resources.Sampler(ps=None)
+    row = _row(CLI_A, "/w/a", 1000, 0.5)
+    row["days"]["2026-11-23"] = {"cost": 0.1, "messages": 1, "output": 1, "tokens": 40}
+    _ledger({"a.jsonl": row})
+    t = s.tokens_today()
+    assert (t["day"], t["tokens"], t["usd"]) == ("2026-11-22", 1000, 0.5)
+    # one second later the UTC day is the next one: the cached day is dropped although the file did not change
+    monkeypatch.setattr(resources, "_now", lambda: datetime(2026, 11, 23, 0, 0, 0, tzinfo=timezone.utc))
+    t = s.tokens_today()
+    assert (t["day"], t["tokens"], t["usd"], t["sessions"]) == ("2026-11-23", 40, 0.1, 1)
+    # a ledger with nothing on the new day reads 0 tokens on it, not the day before's
+    _ledger({"b.jsonl": _row(CLI_B, "/w/b", 250, 0.25)})
+    t = s.tokens_today()
+    assert (t["day"], t["tokens"], t["sessions"]) == ("2026-11-23", 0, 0)
 
 
 @pytest.mark.parametrize("text, why", [("{not json", "is not JSON"),
