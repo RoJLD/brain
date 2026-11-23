@@ -147,8 +147,8 @@ KEYS = {
     "classes": "{floor: <class>}: the project's own class floor in the scope tree (DENY-1): its stores are at least "
                "that class (brain classes), and a floor of private or stricter puts its name and repos in "
                "public.deny.repos when public.deny_from_tree is on (brain.scopes)",
-    "standards": "its opt-in to the standards registry, {profiles, stage, include, exclude: {id: reason}, catalogs}: "
-                 "the rows it follows (brain standards; docs/standards.md); without it, none",
+    "standards": "its standards opt-in, {profiles, stage, include, exclude: {id: reason}, catalogs, coverage: {id: "
+                 "status}}: the rows it follows, how it meets them (brain standards; docs/standards.md); else none",
     "formats": "its persisted formats, a list of {id, glob, repo, class, version, schema, fixtures, check, timeout}: "
                "the declarations checked by brain check, the check: commands run only by brain formats check "
                "(brain.formats)",

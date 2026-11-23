@@ -292,7 +292,7 @@ def test_the_software_catalog_covers_its_ten_domains_for_code_products_only():
     each with how the Brain meets it."""
     [cat] = standards.engine_catalogs(strict=True)
     assert list(dict.fromkeys(r.domain for r in cat.rows)) == DOMAINS
-    assert len(cat.rows) == 90   # docs/standards.md's table and the fragment say so
+    assert len(cat.rows) == 95   # docs/standards.md's table and the fragments say so
     ids = {r.id for r in cat.rows}
     for r in cat.rows:
         assert r.id.startswith("sw-") and r.status == "proposed", r.id
@@ -419,3 +419,113 @@ def test_a_non_string_stage_or_profile_is_named():
     errors = standards.selection_errors("project demo", {"profiles": ["cli", 3], "stage": 2})
     assert any("profiles is a list of names" in e for e in errors)
     assert any("stage is one of" in e for e in errors)
+
+
+# --- the scorecard (wi-brain-standards-score) -----------------------------------------------------------------
+
+def test_the_pillars_grid_adds_five_rows_each_in_its_domain():
+    """The five rows the pillars grid brought that the catalog lacked (the owner, 2026-11-23), each in its domain."""
+    by = {r.id: r for r in standards.rows_of(standards.engine_catalogs(strict=True))}
+    assert {sid: by[sid].domain for sid in ("sw-debt-tracked", "sw-hot-paths", "sw-sobriety", "sw-alert-runbooks",
+                                            "sw-onboarding-time")} == {
+        "sw-debt-tracked": "architecture", "sw-hot-paths": "testing", "sw-sobriety": "release",
+        "sw-alert-runbooks": "observability", "sw-onboarding-time": "data-governance"}
+    assert by["sw-alert-runbooks"].coverage == {"status": "none"}   # the Brain has no runbook link on its alerts
+
+
+def test_a_coverage_reads_a_status_or_a_mapping():
+    sel = standards.selection({"profiles": ["cli"], "stage": "mvp", "coverage": {
+        "sw-utc": "have", "sw-atomic-writes": {"status": "partial", "by": "the state helper"}, "sw-sbom": 3}})
+    assert sel.coverage == {"sw-utc": {"status": "have", "by": ""},
+                            "sw-atomic-writes": {"status": "partial", "by": "the state helper"}}
+
+
+@pytest.mark.parametrize("coverage, needle", [
+    (["sw-utc"], "coverage is a mapping"),
+    ({"sw-utc": 3}, "coverage 'sw-utc': a status"),
+    ({"sw-utc": {"by": "x"}}, "coverage 'sw-utc': a status"),
+    ({"sw-utc": "great"}, "status 'great'"),
+    ({"sw-nope": "have"}, "'sw-nope' is no standard"),
+])
+def test_a_bad_coverage_is_named(coverage, needle):
+    errors = standards.selection_errors("project demo", {"profiles": ["cli"], "stage": "mvp", "coverage": coverage},
+                                        {"sw-utc"}, strict=True)
+    assert any(needle in e for e in errors), errors
+
+
+def test_an_unknown_coverage_status_is_a_note_in_read_mode():
+    notes = []
+    value = {"profiles": ["cli"], "stage": "mvp", "coverage": {"sw-utc": "audited"}}
+    assert standards.selection_errors("project demo", value, {"sw-utc"}, strict=False, notes=notes) == []
+    assert notes and "audited" in notes[0]
+
+
+@pytest.mark.parametrize("points, top, want", [
+    (17, 34, "prototype"), (18, 34, "production"), (27, 34, "production"), (28, 34, "hardened"), (34, 34, "hardened"),
+    (0, 34, "prototype"), (0, 0, ""), (3, 4, "production"), (4, 4, "hardened"),
+])
+def test_the_bands_are_the_grid_s(points, top, want):
+    assert standards.band(points, top) == want
+
+
+def test_the_score_rates_each_row_from_the_coverage(engine):
+    rows = standards.rows_of(standards.engine_catalogs())
+    chosen = standards.applicable(rows, standards.selection({"profiles": ["cli"], "stage": "scale"}))
+    card = standards.score(chosen, standards.coverage_of({
+        "sw-utc": "have", "sw-atomic-writes": {"status": "partial", "by": "the state helper"}, "sw-fuzz": "n/a"}))
+    assert {r["id"]: (r["status"], r["points"]) for r in card["rows"]} == {
+        "sw-utc": ("have", 2), "sw-atomic-writes": ("partial", 1), "sw-fuzz": ("n/a", None)}
+    assert (card["points"], card["max"], card["percent"], card["band"]) == (3, 4, 75, "production")
+    assert card["domains"] == {"software/time": {"points": 2, "max": 2},
+                               "software/persistence": {"points": 1, "max": 2}}   # n/a counted nowhere
+    assert card["na"] == ["sw-fuzz"] and card["unknown"] == []
+    floor = standards.score(chosen, {})   # nothing said: every row 0, listed to say
+    assert (floor["points"], floor["max"], floor["band"]) == (0, 6, "prototype")
+    assert sorted(floor["unknown"]) == ["sw-atomic-writes", "sw-fuzz", "sw-utc"]
+    assert standards.score([], {})["band"] == "" and standards.score([], {})["percent"] is None
+
+
+def test_the_score_lists_unread_statuses_and_ignored_entries_and_floors_its_percent(engine):
+    rows = standards.rows_of(standards.engine_catalogs())
+    chosen = standards.applicable(rows, standards.selection({"profiles": ["cli"], "stage": "mvp"}))
+    card = standards.score(chosen, standards.coverage_of({"sw-utc": "audited", "sw-atomic-writes": "have",
+                                                         "sw-fuzz": "have"}))   # a newer status; a scale row
+    assert card["unknown"] == ["sw-utc"] and card["ignored"] == ["sw-fuzz"]
+    assert (card["points"], card["max"]) == (2, 4)
+    big = standards.score([(standards.Row(f"r{i}", "c", "d", "s", ["cli"], "mvp", "check", "x", ["any"], "proposed"),
+                            "") for i in range(203)], {f"r{i}": {"status": "have"} for i in range(53)}
+                          | {f"r{i}": {"status": "partial"} for i in range(53, 54)})
+    assert (big["points"], big["max"]) == (107, 406)
+    assert big["percent"] == 26 and big["band"] == "prototype"
+    near = standards.score([(standards.Row(f"r{i}", "c", "d", "s", ["cli"], "mvp", "check", "x", ["any"],
+                                           "proposed"), "") for i in range(203)],
+                           {f"r{i}": {"status": "have"} for i in range(107)})   # 214 of 406: 52.7 %, below 18/34
+    assert near["percent"] == 52 and near["band"] == "prototype"   # floored: never 53 % beside prototype
+
+
+def test_the_registry_accepts_a_coverage_and_refuses_a_wrong_one(engine, registry):
+    registry("  standards: {profiles: [cli], stage: mvp, coverage: {sw-utc: have, sw-atomic-writes: none}}\n")
+    assert projects.check() == []
+    registry("  standards: {profiles: [cli], stage: mvp, coverage: {sw-unknown: have}}\n")
+    assert any("'sw-unknown' is no standard" in e for e in projects.check())
+
+
+def test_cli_score(engine, registry, capsys):
+    assert cli.main(["--project", "demo", "standards", "score"]) == 0
+    assert "declares no standards" in capsys.readouterr().out
+    assert cli.main(["--project", "demo", "standards", "score", "--json"]) == 0
+    assert json.loads(capsys.readouterr().out) == {"project": "demo", "concerned": False}
+    registry("  standards: {profiles: [cli], stage: mvp, "
+             "coverage: {sw-utc: have, sw-atomic-writes: {status: partial, by: the state helper}}}\n")
+    assert cli.main(["--project", "demo", "standards", "score"]) == 0
+    out = capsys.readouterr().out
+    assert "== software / persistence  1/2" in out and "  1  sw-atomic-writes  partial: the state helper" in out
+    assert "score: 3 of 4 (75 %): production (hardened from 82 %, production from 53 %)" in out
+    assert cli.main(["--project", "demo", "standards", "score", "--json"]) == 0
+    data = json.loads(capsys.readouterr().out)
+    assert data["concerned"] and (data["points"], data["max"], data["band"]) == (3, 4, "production")
+    registry("  standards: {profiles: [cli], stage: mvp}\n")
+    assert cli.main(["--project", "demo", "standards", "score"]) == 0
+    out = capsys.readouterr().out
+    assert "score: 0 of 4 (0 %): prototype" in out and "2 not said or not read, counted 0" in out
+    assert "  0  sw-utc  unknown" in out
