@@ -1,6 +1,7 @@
 """Typology packs (wi-brain-typology-packs, spec-brain-typology-packs E3, TYPO-1, TYPO-4, TYPO-6): a pack of
-source/packs.yaml names its typologies and bundles a kind's parts; the engine ships software and research; a brain takes
-one with ``from: engine``; a project's typologies propose its packs by a plan the owner applies, never silently.
+source/packs.yaml names its typologies and bundles a kind's parts; the engine ships software, research and
+hardware-cad; a brain takes one with ``from: engine``; a project's typologies propose its packs by a plan the owner
+applies, never silently.
 Fictitious names only."""
 
 import json
