@@ -23,7 +23,8 @@ guard (`brain.guards.check_owner`) reads it for every shell call and every comma
 launcher it sees through; `guard.sh`'s pre-filter starts Python for each; the command line (`brain.cli`) refuses the
 ones it gates when an agent's session (`CLAUDECODE`, `CLAUDE_CODE_ENTRYPOINT` or `BRAIN_AGENT_SESSION` set) runs them
 past the hook, through a script for instance. `tests/test_gestures.py` checks each gesture against the guard, the
-pre-filter, the command line and this table, so a new gesture added to the list is refused everywhere at once.
+pre-filter, the command line and this table, so a new gesture added to the list is refused everywhere at once. Each
+one is also an entry of the automation catalogue ([automation.md](automation.md)), with its ceiling and floor.
 
 | Gesture | Category | The guard | The command line in a session |
 |---|---|---|---|

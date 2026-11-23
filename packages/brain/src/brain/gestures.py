@@ -20,6 +20,13 @@ Each gesture says where it is refused:
 An agent's session is one of :data:`AGENT_ENV` set (brain.vault's and brain.answers' markers), or under config.json
 ``guards.gestures_session_markers: true`` (off by default) one of :data:`MARKER_NAMES`. Standard library only:
 the guard hook imports it on every refusal check.
+
+The automation catalogue (:data:`CATALOGUE`, wi-brain-automation-catalogue) lists every recurring owner gesture, the
+ones a session runs too (the engine clone's pull, a session's archive, Remote Control at a hand-over, the merge go, a
+workflow's launch), each with its stable id, its ceiling (manual, ask or auto: the highest level the engine allows),
+its default (its level today), its conditions, where it runs and its floor category (AUTO-1: :data:`FLOOR`); a level
+above the ceiling, unknown or unreadable, and any level of a floor gesture, reads manual (:func:`effective`). It is
+data only: no guard reads it yet (``brain automation list`` prints it; docs/automation.md).
 """
 
 from __future__ import annotations
@@ -83,6 +90,147 @@ GESTURES: tuple[Gesture, ...] = (
     Gesture((), "installer", "it writes the machine's settings, hooks and scheduled tasks", flags=("-Apply",),
             program="install.ps1", cli="none"),
 )
+
+
+# The automation catalogue (wi-brain-automation-catalogue, spec-brain-automation-levels S1): every recurring owner
+# gesture, the ones a session runs as well as the owner-only commands above, with the highest level the engine allows
+# it (its ceiling), its level today (the engine's default), its conditions, where it runs and its floor category
+# (AUTO-1). The ids are a public contract: config.json's automation section keys its levels by them
+# (wi-brain-automation-config), so an id is never renamed or reused; one that leaves the catalogue goes to RETIRED.
+CATALOGUE_V = 1
+LEVELS = ("manual", "ask", "auto")   # in order: a level above another confirms less
+RUNS = {
+    "session": "an agent's session",
+    "terminal": "the owner's terminal",
+    "elevated": "the owner's elevated terminal",
+    "harness": "Claude Code's own confirmation (the app)",
+}
+# The owner's never-grantable categories (brain.permissions.NEVER, its first words; tests/test_gestures.py checks the
+# copy), then the three the floor adds (AUTO-1): the owner's elevated terminal, the rules' text, raising a level.
+NEVER_GRANTABLE = ("keys", "money", "arming", "visibility", "accounts", "scheduled", "legal", "security-settings")
+FLOOR = (*NEVER_GRANTABLE, "elevated", "rules", "raise")
+RETIRED: tuple[str, ...] = ()   # ids that left the catalogue, never reused
+
+
+@dataclass(frozen=True)
+class Automation:
+    id: str                            # the stable key (config.json automation.levels)
+    label: str                         # what it is, for a reader: may change, the id does not
+    runs: str                          # where it runs: a key of RUNS
+    ceiling: str                       # the highest level the engine allows, whatever the config says
+    default: str                       # its level today, the engine's default: a new engine never raises it
+    conditions: tuple[str, ...] = ()   # what must hold at any level: a level changes who confirms, never these
+    floor: str = ""                    # its floor category (a FLOOR name), '' when none: its ceiling is manual
+    commands: tuple[str, ...] = ()     # the owner's gestures above it covers (Gesture.name), or the commands it runs
+    note: str = ""                     # why its ceiling is what it is
+
+
+CATALOGUE: tuple[Automation, ...] = (
+    # What a session runs, under the guard's conditions (spec § 1, G3 to G7)
+    Automation("engine-clone-pull", "pull the engine's clone", "session", "auto", "auto",
+               ("fast-forward only (git merge --ff-only), never a switch, a reset or a stash",
+                "on its remote's default branch, no tracked change, no merge, rebase, cherry-pick or revert in "
+                "progress, no file the remote brings that it ignores"),
+               commands=("brain refresh",),
+               note="brain refresh fast-forwards it since 0.6.1 (engine.clone; --no-clone skips it once)"),
+    Automation("session-archive", "archive a finished session", "session", "auto", "ask",
+               ("the guard's archive case (wi-brain-guard-rc-archive): a session the caller started, its turn "
+                "finished, Remote Control off first",
+                "its PRs merged and its worktree clean (the definition of done: a hook cannot see them)"),
+               note="today the app's approval card asks; the guard's conditions hold at every level"),
+    Automation("handover-remote-control", "Remote Control at a coordinators' hand-over", "session", "auto", "ask",
+               ("on for the coordinator the caller started to succeed it, live or starting, detached",
+                "off on the caller itself once its hand-over note is written and its successor detached"),
+               note="outside a hand-over Remote Control is the floor's (remote-control)"),
+    Automation("merge-go", "merge a PR on the owner's word", "harness", "ask", "ask",
+               ("the owner's words in the session that merges; a relayed go is refused",),
+               note="the harness's: its auto-mode classifier asks, the Brain cannot raise it"),
+    Automation("workflow-launch", "launch a workflow of agents", "harness", "ask", "ask",
+               ("the owner's explicit opt-in, in the session that launches it",),
+               note="the harness's: the Workflow tool's opt-in, the Brain cannot raise it"),
+    # What the owner's terminal runs (G1, G2, G8 and the other owner-only commands)
+    Automation("release-tag", "sign and push a release tag", "terminal", "ask", "ask",
+               ("on main, pulled fast-forward, HEAD the version PR's merge commit, the public stamp valid",
+                "the owner's key: their passphrase where the key asks"),
+               commands=("brain release tag",), note="its plan, then one y"),
+    Automation("release-apply", "install a release (the installer's -Apply)", "terminal", "ask", "ask",
+               ("the pin PR merged and pulled", "the installer's plan shown first"),
+               commands=("brain release apply",),
+               note="auto would be an unattended patch install (wi-brain-engine-auto-update), not declared yet"),
+    Automation("installer-apply", "apply the installer by hand", "terminal", "ask", "manual",
+               ("its plan read first (install.ps1 without -Apply)",),
+               commands=("install.ps1 -Apply",), note="brain release apply runs it as one gesture"),
+    Automation("engine-update", "install a newer engine and move the pin", "terminal", "ask", "ask",
+               ("its plan, then one y",), commands=("brain update",)),
+    Automation("usage-allow", "lift the usage guard (governor override)", "terminal", "ask", "manual",
+               ("for a bounded time (--hours)",), commands=("brain usage allow",)),
+    Automation("queue-apply", "run an action the owner queued", "terminal", "ask", "ask",
+               ("the action's exact command, shown, confirmed by the owner",), commands=("brain queue apply",)),
+    Automation("uninstall", "remove the brain from this machine", "terminal", "manual", "manual",
+               commands=("brain uninstall --apply",), note="not recurring: always typed"),
+    # The floor (AUTO-1): shown locked, refused above manual whatever config.json says
+    Automation("handover-root", "mark a coordinators' chain root", "terminal", "manual", "manual",
+               floor="security-settings", commands=("brain handover root",),
+               note="it lets a session switch Remote Control"),
+    Automation("remote-control", "Remote Control outside a hand-over", "harness", "manual", "manual",
+               floor="security-settings"),
+    Automation("permission-mode", "a session's permission mode", "harness", "manual", "manual",
+               floor="security-settings"),
+    Automation("schedule-install", "create, change or remove scheduled tasks", "terminal", "manual", "manual",
+               floor="scheduled", commands=("brain schedule install --apply",)),
+    Automation("otel-headers", "print the machine's token for Claude Code's telemetry", "harness", "manual",
+               "manual", floor="keys", commands=("brain ipc otel-headers",),
+               note="Claude Code's otelHeadersHelper runs it, never a session"),
+    Automation("vault-open", "decrypt a sealed store", "terminal", "manual", "manual", floor="keys",
+               commands=("brain vault open",)),
+    Automation("vault-drill", "open the recovery key's canary", "terminal", "manual", "manual", floor="keys",
+               commands=("brain vault drill",)),
+    Automation("vault-device-init", "create this machine's device key", "terminal", "manual", "manual",
+               floor="keys", commands=("brain vault device init",)),
+    Automation("vault-device-forget-previous", "delete the previous device key", "terminal", "manual", "manual",
+               floor="keys", commands=("brain vault device forget-previous",)),
+    Automation("vault-reseal", "seal every sealed file again", "terminal", "manual", "manual", floor="keys",
+               commands=("brain vault reseal --apply",)),
+    Automation("elevated", "a gesture of the owner's elevated terminal (ACLs, takeown, the locked floor)",
+               "elevated", "manual", "manual", floor="elevated",
+               commands=("brain floor lock --apply", "brain floor unlock --apply")),
+    Automation("rules-text", "change the rules' text (global and project rules)", "terminal", "manual", "manual",
+               floor="rules", note="a session proposes, the owner merges"),
+    Automation("automation-raise", "raise an automation level", "terminal", "manual", "manual", floor="raise",
+               note="the owner's merge of config.json is the raise; lowering a level is anyone's"),
+    Automation("money", "anything touching money", "terminal", "manual", "manual", floor="money"),
+    Automation("arming", "arm a live system (live orders)", "terminal", "manual", "manual", floor="arming"),
+    Automation("visibility", "a repository's visibility", "terminal", "manual", "manual", floor="visibility"),
+    Automation("accounts", "create or change an account", "terminal", "manual", "manual", floor="accounts"),
+    Automation("legal", "accept terms, a licence, a legal act", "terminal", "manual", "manual", floor="legal"),
+)
+
+
+def automation(gesture_id: str) -> Automation | None:
+    """The catalogue's gesture ``gesture_id``, None when it has none (an unknown id: a config that names it is ignored
+    with a warning, so an older engine reads a newer config)."""
+    return next((a for a in CATALOGUE if a.id == gesture_id), None)
+
+
+def effective(a: Automation | None, level) -> str:
+    """The level ``a`` runs at when ``level`` is asked (AUTO-1, fail closed): ``manual`` for an unknown gesture, a
+    level that is not one of :data:`LEVELS` (unknown or unreadable), one above the gesture's ceiling, and any level of a
+    floor gesture; else ``level``."""
+    if a is None or a.floor or level not in LEVELS or LEVELS.index(level) > LEVELS.index(a.ceiling):
+        return "manual"
+    return level
+
+
+def catalogue() -> dict:
+    """The catalogue as data (``brain automation list --json``): its version, the levels, where a gesture runs, the
+    floor's categories, the retired ids and each gesture with its level (the engine's default; the source of a level
+    is ``default`` until config.json's automation section, wi-brain-automation-config) and whether it is locked."""
+    return {"v": CATALOGUE_V, "levels": list(LEVELS), "runs": dict(RUNS), "floor": list(FLOOR),
+            "retired": list(RETIRED),
+            "gestures": [{"id": a.id, "label": a.label, "level": effective(a, a.default), "source": "default",
+                          "ceiling": a.ceiling, "runs": a.runs, "floor": a.floor or None, "locked": bool(a.floor),
+                          "conditions": list(a.conditions), "commands": list(a.commands), "note": a.note}
+                         for a in CATALOGUE]}
 
 
 def agent_session(env=None, data: dict | None = None) -> str:
