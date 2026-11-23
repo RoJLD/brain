@@ -521,26 +521,34 @@ def score(chosen: list[tuple[Row, str]], coverage: dict[str, dict]) -> dict:
     scores 0: the score is a floor, and ``unknown`` lists those rows; ``ignored``, the coverage entries of rows that do
     not apply (excluded, or required from a later stage). The percent is floored, so it never shows a band's floor
     the total has not reached."""
-    rows, domains = [], {}
-    for row, why in chosen:
-        cov = coverage.get(row.id, {})
-        status = cov.get("status") or "unknown"
-        points = SCORES.get(status, 0) if status != "n/a" else None
-        rows.append({"id": row.id, "catalog": row.catalog, "domain": row.domain, "enforcement": row.enforcement,
-                     "status": status, "by": cov.get("by", ""), "points": points, "selected_by": why})
-        if points is not None:
-            d = domains.setdefault(f"{row.catalog}/{row.domain}", {"points": 0, "max": 0})
-            d["points"] += points
-            d["max"] += 2
-    points = sum(r["points"] for r in rows if r["points"] is not None)
-    top = 2 * sum(1 for r in rows if r["points"] is not None)
+    rows = [_scored(row, why, coverage.get(row.id, {})) for row, why in chosen]
+    counted = [r for r in rows if r["points"] is not None]
+    points, top = sum(r["points"] for r in counted), 2 * len(counted)
     applied = {r["id"] for r in rows}
     return {"points": points, "max": top, "percent": 100 * points // top if top else None,
-            "band": band(points, top), "rows": rows, "domains": domains,
+            "band": band(points, top), "rows": rows, "domains": _by_domain(counted),
             "unknown": [r["id"] for r in rows if r["status"] not in SCORES and r["status"] != "n/a"],
-            "na": [r["id"] for r in rows if r["status"] == "n/a"],
+            "na": [r["id"] for r in rows if r["points"] is None],
             "ignored": sorted(sid for sid in coverage if sid not in applied),
             "bands": [{"band": name, "from_percent": round(100 * floor)} for floor, name in BANDS]}
+
+
+def _scored(row: Row, why: str, cov: dict) -> dict:
+    """One row of the scorecard: its status (``unknown`` when the project says none) and its points (None for n/a)."""
+    status = cov.get("status") or "unknown"
+    return {"id": row.id, "catalog": row.catalog, "domain": row.domain, "enforcement": row.enforcement,
+            "status": status, "by": cov.get("by", ""), "points": None if status == "n/a" else SCORES.get(status, 0),
+            "selected_by": why}
+
+
+def _by_domain(counted: list[dict]) -> dict[str, dict]:
+    """{catalog/domain: {points, max}} of the counted rows of a scorecard."""
+    out: dict[str, dict] = {}
+    for r in counted:
+        d = out.setdefault(f"{r['catalog']}/{r['domain']}", {"points": 0, "max": 0})
+        d["points"] += r["points"]
+        d["max"] += 2
+    return out
 
 
 def score_for(p) -> dict | None:
