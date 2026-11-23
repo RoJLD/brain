@@ -29,7 +29,8 @@ commit, it was never indexed, or GitNexus no longer lists it; exit code 1 then. 
 
 This module is the ``gitnexus`` backend of the code index; brain.codebackends picks it or codebase-memory-mcp
 (brain.cbm): ``brain index`` and ``brain health code-index`` hand the declared repos to the latter when no stack
-declares ``index:`` and its binary is installed, or when ``--backend cbm`` names it (docs/code-index.md).
+declares ``index:`` and its binary is installed, or when ``--backend cbm`` names it; to xerj (brain.xerj, opt-in) only
+when ``--backend xerj`` names it (docs/code-index.md).
 """
 
 from __future__ import annotations
@@ -46,7 +47,7 @@ import urllib.request
 from dataclasses import dataclass
 from pathlib import Path
 
-from . import cbm, faults, net, paths, projects, stacks
+from . import cbm, faults, net, paths, projects, stacks, xerj
 
 CHECK = "code-index"
 NAME = re.compile(r"^[A-Za-z0-9._-]+$")  # GitNexus's REPO_NAME_PATTERN, for the clone's folder
@@ -244,8 +245,10 @@ def _repo_path(path: Path) -> Path:
     return main.resolve() if main else path
 
 
-def load(root: Path | None = None) -> tuple[Indexer | None, dict[str, Repo]]:
-    """The indexing stack (None when no stack declares index:) and the declared repos, in declaration order."""
+def load(root: Path | None = None, opt_in: bool = False) -> tuple[Indexer | None, dict[str, Repo]]:
+    """The indexing stack (None when no stack declares index:) and the declared repos, in declaration order. Declared
+    repos with neither GitNexus's stack nor codebase-memory-mcp are a declaration error, unless ``opt_in`` (xerj
+    named): an opt-in backend never stands for a counted one."""
     try:
         reg = stacks.load(root)
     except stacks.StackError as exc:
@@ -271,7 +274,7 @@ def load(root: Path | None = None) -> tuple[Indexer | None, dict[str, Repo]]:
                 raise CodeIndexError(f"code_index: {path.name} is declared by {repos[path.name].project} and {p.name} "
                                      "(GitNexus names a repo after its folder)")
             repos[path.name] = Repo(path.name, p.name, path, branch)
-    if repos and ix is None and not cbm.installed():
+    if repos and ix is None and not cbm.installed() and not (opt_in and xerj.installed()):
         raise CodeIndexError("code_index: is declared but no stack declares index: (the GitNexus stack) and "
                              "codebase-memory-mcp is not installed (docs/code-index.md)")
     return ix, repos
@@ -484,16 +487,19 @@ def run(names: list[str], every: bool = False, stale: bool = False, root: Path |
         project: str | None = None, backend: str | None = None) -> int:
     """``brain index``: the state of each repo (no name, no flag), else index the named, every or stale ones; only
     ``project``'s with ``--project``. GitNexus when a stack declares ``index:``, else codebase-memory-mcp when it is
-    installed, or the ``backend`` named (brain.codebackends)."""
+    installed, or the ``backend`` named (brain.codebackends; xerj only when named)."""
     from . import codebackends
     out = out or sys.stdout
-    ix, repos = load(root)
+    ix, repos = load(root, opt_in=backend == "xerj")
     repos = of_project(repos, project)
     unknown = [n for n in names if n not in repos]
     if unknown:
         raise CodeIndexError(f"unknown repo(s) {', '.join(unknown)} (declared under code_index"
                              f"{' of ' + project if project else ''}: {', '.join(repos) or 'none'})")
-    if codebackends.choose("index", backend, root)[:1] == ["cbm"]:   # its settings set off even with no repo
+    chosen = codebackends.choose("index", backend, root)[:1]
+    if chosen == ["xerj"]:
+        return codebackends.xerj_index(repos, names, every, stale, out)
+    if chosen == ["cbm"]:   # its settings set off even with no repo
         return codebackends.cbm_index(repos, names, every, stale, out)
     if not repos:
         print(f"no repo declared under code_index: {'of ' + project if project else 'in projects.yaml'}", file=out)
@@ -539,6 +545,10 @@ def health(root: Path | None = None, out=None, named: bool = True, project: str 
     if cbm.installed():   # its settings matter even with no repo declared
         rc, line = codebackends.cbm_health(repos, every=ix is None)
         if named or rc:
+            print(line, file=out, flush=True)
+    if xerj.installed():   # opt-in: said when it indexed a repo, never counted
+        _, line = codebackends.xerj_health(repos)
+        if named and line:
             print(line, file=out, flush=True)
     if ix is None:
         if named and not repos and not cbm.installed():

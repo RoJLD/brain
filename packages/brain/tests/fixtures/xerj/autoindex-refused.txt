@@ -1,0 +1,1 @@
+xerj-done ok=true exit=3 reason=completed-with-junk wall=0.7s files=1 records=1 generation=1 datasets_refused=1 files_refused=2 code_files=0 code_files_indexed=0 code_files_junked=0

@@ -1,0 +1,3 @@
+autoindex: the server refused a bulk request of 57 action(s) (80317 bytes) as too large (length limit exceeded); nothing in it was written — sending it as two requests and keeping later requests under that size
+xerj-done ok=false exit=1 reason=aborted wall=2.2s
+error: _bulk: HTTP 413 Payload Too Large for a request of one action (70471 bytes): length limit exceeded. One record is larger than the server accepts; raise limits.max_body_bytes on the node (or the proxy in front of it), or exclude the file

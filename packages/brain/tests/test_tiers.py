@@ -157,7 +157,7 @@ def test_set_freezes_recommended_and_a_second_apply_changes_nothing(brain):
     off = tiers.Choice("default", {"gitnexus": True, "docker": False}, machine="box1")
     assert tiers.active(reg, off)[1] == ["gitnexus needs docker, which the overrides turn off"]
     assert tiers.plan(reg, cur, "lite", ["all"], [], None).components == {
-        "docker": True, "gitnexus": True, "tui": True, "infra-node": True}
+        "docker": True, "gitnexus": True, "tui": True, "infra-node": True, "code-index-xerj": True}
 
 
 @pytest.mark.parametrize("with_, without, message", [
