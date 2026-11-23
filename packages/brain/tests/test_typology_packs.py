@@ -1,6 +1,7 @@
 """Typology packs (wi-brain-typology-packs, spec-brain-typology-packs E3, TYPO-1, TYPO-4, TYPO-6): a pack of
-source/packs.yaml names its typologies and bundles a kind's parts; the engine ships software and research; a brain takes
-one with ``from: engine``; a project's typologies propose its packs by a plan the owner applies, never silently.
+source/packs.yaml names its typologies and bundles a kind's parts; the engine ships software, research and
+hardware-cad; a brain takes one with ``from: engine``; a project's typologies propose its packs by a plan the owner
+applies, never silently.
 Fictitious names only."""
 
 import json
@@ -48,9 +49,14 @@ def _run(root, *args) -> int:
 def test_the_engines_packs_are_software_and_research_and_carry_the_clauses_of_done():
     assert typology_packs.self_check() == []
     packs = typology_packs.engine()
-    assert set(packs) == {"software", "research"}
+    assert set(packs) == {"software", "research", "hardware-cad"}
     assert packs["software"]["typologies"] == ["software"] and packs["research"]["typologies"] == ["research"]
+    assert packs["hardware-cad"]["typologies"] == ["hardware-cad"]
     cat = typologies.engine()
+    # the hardware pack's clauses reach an item of the entry and of its sub-profiles
+    hw = ["physical-evidence", "failsafe-tested", "design-checked"]
+    assert [c.id for c in cat.clauses["hardware-cad"]] == hw
+    assert [c.id for c in cat.done_clauses(["hardware"])][-3:] == hw
     # the clauses moved from the catalog into the packs: an item's definition of done is unchanged
     assert [c.id for c in cat.clauses["software"]] == ["pr", "test", "same-pr-docs", "scout", "worktree"]
     assert [c.id for c in cat.done_clauses(["cli"])][-5:] == ["pr", "test", "same-pr-docs", "scout", "worktree"]

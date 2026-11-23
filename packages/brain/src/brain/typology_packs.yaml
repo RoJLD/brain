@@ -60,3 +60,25 @@ packs:
       - {id: published-claim, text: "a claim published outside the project"}
     roles:
       - {id: reviewer, text: "reads a result against its pre-registration before its verdict is recorded"}
+  hardware-cad:
+    title: Hardware and CAD
+    description: "a physical or cyber-physical product: schematics, parts, firmware and their verification"
+    typologies: [hardware-cad]
+    layers: [code, docs_tests, features]
+    standards: {catalogs: [software], profiles: [hardware-cad]}
+    stages:
+      build: ["the standards rows of the project's stage met (brain standards)"]
+      launch: ["a release tagged once its hardware verification and failsafe validation passed"]
+    done:
+      - {id: physical-evidence, text: "a reproducible run on the hardware or in simulation (hardware in the loop) recorded
+          with its run id, its date and the hash of its data"}
+      - {id: failsafe-tested, text: "the failsafe behaviour verified: an emergency stop and a lost link put the device in
+          its safe state"}
+      - {id: design-checked, text: "schematics, bill of materials and netlist in step, the electrical and design rule
+          checks passed"}
+    doors:
+      - {id: hardware-spec, text: "a change of the electrical, thermal or pinout limits"}
+      - {id: safety-interlock, text: "a change of an emergency stop or a protection circuit"}
+    roles:
+      - {id: hardware-engineer, text: "designs and validates the circuit, its pinout and its telemetry"}
+      - {id: firmware-engineer, text: "writes the low-level drivers, the framing and the failsafe states"}

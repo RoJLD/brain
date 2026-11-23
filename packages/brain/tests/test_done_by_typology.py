@@ -42,7 +42,8 @@ def test_the_catalog_holds_the_generic_sentence_and_the_clauses_of_software_and_
     soft = [c.id for c in cat.clauses["software"]]
     assert soft == ["pr", "test", "same-pr-docs", "scout", "worktree"]
     assert [c.id for c in cat.clauses["research"]] == ["preregistered", "verdict", "reproducible"]
-    assert set(cat.clauses) == {"software", "research"}   # the other kinds: named, not designed (TYPO scope)
+    # hardware-cad's pack came with its first project (STD-5); the other kinds: named, not designed (TYPO scope)
+    assert set(cat.clauses) == {"software", "research", "hardware-cad"}
     # a sub-profile takes its entry's clauses, once; two kinds stack; an unknown kind adds none
     ids = [c.id for c in cat.done_clauses(["cli", "service", "trading", "video-x"])]
     assert ids == ["documented", "verified", "linked", "integrated", "recorded", *soft,

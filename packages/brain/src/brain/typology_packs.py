@@ -17,8 +17,8 @@ the generic core, in one place instead of nine mechanisms that each select by ki
     registry    [repos, audit]                   the keys of a project's entry it reads (brain.projects.KEYS)
 
 **The engine's packs.** The engine ships its typology packs in ``typology_packs.yaml`` beside this module
-(:func:`engine`): ``software`` and ``research``, the real typologies of TYPO-1 (the others are named by the catalog,
-their packs written with a real project, STD-5). A brain takes one in its own ``packs.yaml`` by its id with
+(:func:`engine`): ``software`` and ``research``, the real typologies of TYPO-1, and ``hardware-cad``, written with the
+first hardware project (the others are named by the catalog, their packs written with a real project, STD-5). A brain takes one in its own ``packs.yaml`` by its id with
 ``from: engine``: the engine's parts, the brain's own keys laid over them key by key (the nearest wins: a list the
 brain gives replaces the engine's), as the owner's procedure files are laid over the engine's (:func:`overlay`).
 

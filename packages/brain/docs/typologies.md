@@ -77,7 +77,11 @@ profile, a catalog, a stage, a guard, a registry key) is a note in read mode and
 pack written for a later engine is read by this one. A typology pack is never the core pack.
 
 **The engine's packs.** The engine ships `software` and `research` (`src/brain/typology_packs.yaml`), the two real
-typologies of TYPO-1; the other kinds are named by the catalog and get their pack with a real project (STD-5). A brain
+typologies of TYPO-1, and `hardware-cad`, written with the first hardware project (a physical or cyber-physical product:
+its clauses of done are a recorded hardware or simulated run, a tested failsafe and checked schematics; its one-way
+doors the hardware limits and the safety interlocks); the other kinds are named by the catalog and get their pack with
+a real project (STD-5). A project's own rules (a telemetry contract, a heartbeat's timeout) stay in its brain's
+`packs.yaml`, laid over the engine's. A brain
 takes one in its `packs.yaml` by its id with `from: engine`: the engine's parts, the brain's own keys laid over them
 key by key (the nearest wins: a list the brain gives replaces the engine's):
 
