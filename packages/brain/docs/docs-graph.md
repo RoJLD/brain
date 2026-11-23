@@ -12,7 +12,7 @@ Every doc file a Doc node belongs to (its sections are the Doc nodes: a README, 
 | Column | What |
 |---|---|
 | Kind | Diataxis: `tutorial`, `how-to`, `reference`, `explanation`; and two kinds kept apart, `generated` (a `GENERATED` marker in its first lines: a view, the reference, FEATURES.md) and `dated-spec` (a spec of `docs/specs/`, or a file named by its date: a record of that day) |
-| Last commit | the day of its last commit in its own repo; `edited` when it has uncommitted changes |
+| Last commit | the day of its last commit in its own repo; today when it has uncommitted changes (a new doc included), the day the commit that follows will carry, so the view a PR writes is still main's once the PR merges (before 0.7.0 it said `edited`, which became a date at the merge and left main's view stale) |
 | Owner | who answers for it, when it declares one |
 | Sections | its Doc nodes |
 | Cites | the nodes its sections cite (the `documented_in` edges into them) |
@@ -60,7 +60,9 @@ checkout on the machine (as the links graph reads it) and compared with the stor
 without a checkout it has no last commit and is never stale.
 
 Each stale section is named (section level). A doc with uncommitted changes is being edited and is never stale;
-generated docs and dated specs are exempt (a spec is history: the reference is the present).
+generated docs and dated specs are exempt (a spec is history: the reference is the present). A parent committed after
+the doc and a parent with uncommitted changes give the same reason (« changed after its last commit »), so the view
+written before a commit is the view after it.
 
 - `brain check` warns, one line per doc: `doc.stale: <path>: N section(s) to re-read (a cited node or a declared
   parent changed after its last commit; notes/docs_graph.md)`, the docs of the project's other repos included.
