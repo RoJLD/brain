@@ -2031,6 +2031,15 @@ cannot resolve (`brain schedule install $FLAG`) and Python's inline code that dr
 too. `guards.gestures_session_markers: true` (optional, off by default) makes the acting gestures refuse themselves
 while any agent marker is set (the variables Claude Code sets for each session too), not only `CLAUDECODE`.
 
+**The automation catalogue** (`brain.gestures.CATALOGUE`, [docs/automation.md](docs/automation.md)): every recurring
+owner gesture, the ones a session runs too (the engine clone's pull, a session's archive, Remote Control at a
+hand-over, the merge go, a workflow's launch) and each owner-only command above, with its stable id, its ceiling
+(`manual`, `ask` or `auto`: the highest level the engine allows), its level today, its conditions, where it runs and
+its floor category; the floor (the never-grantable categories, the elevated terminal, the rules' text, raising a
+level) stays `manual` whatever a config says, and a level above its ceiling, unknown or unreadable reads `manual`.
+`brain automation list [--json]` prints it, read only. No guard reads it yet: the `automation` section of
+`config.json` and its enforcement are the next slices of `spec-brain-automation-levels`.
+
 **The machine's token** (`brain.tokenguard`, [docs/guards.md](docs/guards.md#the-machines-token)): under config.json
 `guards.refuse_token_read: true` (off by default), the owner guard (check `token`) refuses a session's `Read`, `Grep`,
 tool edit or shell call that reaches `<BRAIN_HOME>/ipc/token` (or `$BRAIN_IPC_TOKEN_FILE`), as it refuses `brain ipc

@@ -2,6 +2,7 @@
 session by the owner guard, through guard.sh's pre-filter, and by the command line where it gates it; the runbook's
 table lists each. A gesture added to the list without its refusals fails here. The tests run as owner Ada."""
 
+import dataclasses
 import json
 import re
 from pathlib import Path
@@ -193,6 +194,128 @@ def test_the_runbook_lists_each_gesture():
     text = DOC.read_text(encoding="utf-8")
     for g in gestures.GESTURES:
         assert f"| `{g.name}" in text, g.name
+
+
+# The automation catalogue (wi-brain-automation-catalogue): its ids as 0.7.0 publishes them, a public contract that
+# config.json's automation section keys (wi-brain-automation-config). An id may be added; one listed here stays in the
+# catalogue or moves to gestures.RETIRED, never renamed, never reused.
+IDS_V1 = (
+    "engine-clone-pull", "session-archive", "handover-remote-control", "merge-go", "workflow-launch", "release-tag",
+    "release-apply", "installer-apply", "engine-update", "usage-allow", "queue-apply", "uninstall", "handover-root",
+    "remote-control", "permission-mode", "schedule-install", "otel-headers", "vault-open", "vault-drill",
+    "vault-device-init", "vault-device-forget-previous", "vault-reseal", "elevated", "rules-text", "automation-raise",
+    "money", "arming", "visibility", "accounts", "legal",
+)
+AUTOMATION_DOC = Path(__file__).resolve().parents[1] / "docs" / "automation.md"
+
+
+def test_the_catalogue_is_well_formed():
+    ids = [a.id for a in gestures.CATALOGUE]
+    assert len(ids) == len(set(ids))
+    assert not set(ids) & set(gestures.RETIRED)
+    for a in gestures.CATALOGUE:
+        assert re.fullmatch(r"[a-z][a-z0-9]*(?:-[a-z0-9]+)*", a.id), a.id
+        assert a.ceiling in gestures.LEVELS and a.default in gestures.LEVELS, a.id
+        assert gestures.LEVELS.index(a.default) <= gestures.LEVELS.index(a.ceiling), a.id   # its default fits
+        assert a.runs in gestures.RUNS and a.label, a.id
+        assert a.floor == "" or a.floor in gestures.FLOOR, a.id
+        # where it runs bounds it (review of #310): the elevated terminal is the floor's, the harness's own
+        # confirmation is never raised by the Brain
+        assert a.runs != "elevated" or a.floor == "elevated", a.id
+        assert a.runs != "harness" or a.ceiling in ("manual", "ask"), a.id
+
+
+def test_the_ids_are_stable():
+    ids = {a.id for a in gestures.CATALOGUE}
+    assert [i for i in IDS_V1 if i not in ids and i not in gestures.RETIRED] == []
+    assert gestures.CATALOGUE_V == 1
+
+
+def test_a_floor_gesture_never_reads_above_manual():
+    floor = [a for a in gestures.CATALOGUE if a.floor]
+    assert {a.floor for a in floor} == set(gestures.FLOOR)   # every category of the floor is shown
+    for a in floor:
+        assert a.ceiling == "manual" and a.default == "manual", a.id
+        assert [gestures.effective(a, lvl) for lvl in gestures.LEVELS] == ["manual"] * 3, a.id
+    # what AUTO-1 names: Remote Control outside a hand-over, the permission mode, the rules' text, raising a level
+    for gid in ("remote-control", "permission-mode", "rules-text", "automation-raise", "elevated"):
+        assert gestures.automation(gid).floor, gid
+
+
+def test_the_floor_copies_the_never_grantable_categories():
+    from brain import permissions
+    assert gestures.NEVER_GRANTABLE == tuple(c for c, *_ in permissions.NEVER)
+    assert set(gestures.FLOOR) == {*gestures.NEVER_GRANTABLE, "elevated", "rules", "raise"}
+
+
+def test_a_never_grantable_owner_gesture_is_a_floor_gesture():
+    """A gesture of the owner-only list whose guard category is never-grantable is a floor gesture of the catalogue."""
+    for g in gestures.GESTURES:
+        if g.category in gestures.NEVER_GRANTABLE:
+            a = next(a for a in gestures.CATALOGUE if g.name in a.commands)
+            assert a.floor and a.ceiling == "manual", (g.name, a.id)
+
+
+def test_each_owner_gesture_is_in_the_catalogue_once():
+    for g in gestures.GESTURES:
+        assert [a.id for a in gestures.CATALOGUE if g.name in a.commands] != [], g.name
+        assert len([a for a in gestures.CATALOGUE if g.name in a.commands]) == 1, g.name
+
+
+def test_the_session_run_gestures_are_declared():
+    """spec-brain-automation-levels § 1, G3 to G7: what a session runs, and the harness's two, which stay ask."""
+    runs = {a.id: a.runs for a in gestures.CATALOGUE}
+    assert {k: runs[k] for k in ("engine-clone-pull", "session-archive", "handover-remote-control")} == \
+        dict.fromkeys(("engine-clone-pull", "session-archive", "handover-remote-control"), "session")
+    for gid in ("merge-go", "workflow-launch"):
+        a = gestures.automation(gid)
+        assert a.runs == "harness" and a.ceiling == "ask" and a.conditions, gid
+    for gid in ("engine-clone-pull", "session-archive", "handover-remote-control"):
+        assert gestures.automation(gid).conditions, gid   # a level changes who confirms, never the conditions
+
+
+@pytest.mark.parametrize("level, expected", [
+    ("manual", "manual"), ("ask", "ask"), ("auto", "manual"),   # above release-tag's ceiling (ask)
+    ("AUTO", "manual"), ("", "manual"), (None, "manual"), (2, "manual"), (["ask"], "manual"),   # unreadable
+])
+def test_effective_fails_closed(level, expected):
+    assert gestures.effective(gestures.automation("release-tag"), level) == expected
+
+
+def test_an_unknown_gesture_reads_manual():
+    assert gestures.automation("no-such-gesture") is None
+    assert gestures.effective(None, "auto") == "manual"
+    assert gestures.effective("engine-clone-pull", "auto") == "manual"   # an id, not its entry (review of #310)
+    floor = gestures.automation("vault-open")
+    assert gestures.effective(dataclasses.replace(floor, ceiling="auto"), "auto") == "manual"   # the floor wins
+    assert gestures.effective(gestures.automation("engine-clone-pull"), "auto") == "auto"
+
+
+def test_no_default_raises_today_s_behaviour():
+    """The engine's defaults are today's behaviour: only the clone's fast-forward (brain refresh, 0.6.1) runs by itself;
+    the archive and Remote Control at a hand-over stay the app's ask until a config raises them."""
+    assert [a.id for a in gestures.CATALOGUE if a.default == "auto"] == ["engine-clone-pull"]
+    for gid in ("session-archive", "handover-remote-control", "usage-allow", "installer-apply"):
+        assert gestures.automation(gid).default != "auto", gid
+
+
+def test_the_catalogue_data():
+    data = gestures.catalogue()
+    assert data["v"] == 1 and data["levels"] == ["manual", "ask", "auto"]
+    assert [g["id"] for g in data["gestures"]] == [a.id for a in gestures.CATALOGUE]
+    assert all(g["source"] == "default" for g in data["gestures"])
+    assert all(g["level"] == "manual" for g in data["gestures"] if g["locked"])
+    levels = {g["id"]: g["level"] for g in data["gestures"]}
+    assert levels == {a.id: a.default for a in gestures.CATALOGUE}   # its level is its default, never its ceiling
+    assert levels["session-archive"] == "ask" and levels["usage-allow"] == "manual"
+    assert data["floor"] == list(gestures.FLOOR) and data["retired"] == list(gestures.RETIRED)
+
+
+def test_the_automation_doc_lists_each_gesture():
+    text = AUTOMATION_DOC.read_text(encoding="utf-8")
+    for a in gestures.CATALOGUE:
+        assert f"| `{a.id}` | {a.runs} | {a.ceiling} | {a.default} | {a.floor or ''} |".replace("|  |", "| |") \
+            in text, a.id
 
 
 @pytest.mark.parametrize("words, name", [
