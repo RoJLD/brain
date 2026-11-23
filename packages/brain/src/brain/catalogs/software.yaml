@@ -132,6 +132,22 @@ rows:
     source: software engineering 1, architectural governance
     refs: [sw-separation-of-concerns]
 
+  - id: sw-debt-tracked
+    domain: architecture
+    title: Technical debt tracked
+    statement: Technical debt is tracked explicitly (an item, a ticket or a tag per debt, with its cost and where it lives), prioritised and paid back by planned batches; a shortcut taken is recorded, never hidden.
+    why: Debt nobody records grows until a change costs more than the feature it brings, and no one can say where to pay first.
+    profiles: [library, cli, local-client, service, data-pipeline, embedded]
+    stage: mvp
+    enforcement: check
+    check: a deferred finding of the scout or the review lands in the repo's debt item; a TODO or waive without an item fails
+    languages: [any]
+    coverage:
+      status: have
+      by: "the scout defers into the repo's debt item, brain audit lists the debt and waivers expire"
+    status: proposed
+    source: pillars grid 7, technical debt governance (2026-11-23)
+    refs: [sw-fitness-functions, sw-decision-records]
   # --- code-quality: typing, errors, contracts, purity -----------------------------------------------------------
   - id: sw-parse-dont-validate
     domain: code-quality
@@ -943,6 +959,22 @@ rows:
     status: proposed
     source: software engineering 7, chaos engineering and performance
 
+  - id: sw-hot-paths
+    domain: testing
+    title: Hot paths kept lean
+    statement: The hot paths are known and kept free of per-item queries (N+1), needless allocations and copies; an optimisation starts from a profile or a benchmark, never from a guess.
+    why: A query or an allocation per item is invisible on a test fixture and dominates the run on real volumes.
+    profiles: [library, cli, local-client, service, data-pipeline]
+    stage: v1
+    enforcement: review-lens
+    check: does the change add a query, a read or an allocation per item on a hot path, and was a speed-up measured?
+    languages: [any]
+    coverage:
+      status: partial
+      by: "brain perf measures the commands' time; the hot paths are reviewed by hand"
+    status: proposed
+    source: pillars grid 4, performance and latency (2026-11-23)
+    refs: [sw-performance-budgets, sw-profiling, sw-mechanical-sympathy]
   # --- release: CI/CD, deployment, run-time lifecycle, host footprint --------------------------------------------
   - id: sw-ci-gates
     domain: release
@@ -1074,6 +1106,22 @@ rows:
     status: proposed
     source: client architecture gap 1; software engineering 8, host footprint
 
+  - id: sw-sobriety
+    domain: release
+    title: Sobriety
+    statement: The program does the work it needs and no more - no aggressive polling where an event or a schedule serves, no over-allocated pools or caches, no repeated remote calls for data it holds - so its energy, hardware and paid calls stay proportionate to its work.
+    why: Polling, over-allocation and needless remote calls cost energy, battery and money at every run, and on constrained or local hardware they crowd out the real work.
+    profiles: [library, cli, local-client, service, data-pipeline, embedded]
+    stage: v1
+    enforcement: review-lens
+    check: does the change poll, wake, allocate or call a paid service more than its work needs?
+    languages: [any]
+    coverage:
+      status: partial
+      by: "token-free automation before model calls, the usage and memory governors; polling reviewed by hand"
+    status: proposed
+    source: pillars grid 4, sobriety and energy impact (2026-11-23)
+    refs: [sw-host-footprint, sw-backpressure]
   # --- observability: logs, metrics, traces, diagnosis -----------------------------------------------------------
   - id: sw-structured-logs
     domain: observability
@@ -1161,6 +1209,21 @@ rows:
     status: proposed
     source: software engineering 9, post-mortem diagnostics
 
+  - id: sw-alert-runbooks
+    domain: observability
+    title: Every alert has its runbook
+    statement: Every alert is actionable and names its runbook - the symptom, the impact, the first checks and the fix - kept beside the code; an alert with no runbook is not raised.
+    why: An alert that says only that something is wrong leaves the person woken by it to rediscover the system at the worst moment.
+    profiles: [local-client, service, data-pipeline]
+    stage: v1
+    enforcement: check
+    check: an alert definition without a runbook link, or with a link to a missing page, fails the check
+    languages: [any]
+    coverage:
+      status: none
+    status: proposed
+    source: pillars grid 5, actionable alerting and runbooks (2026-11-23)
+    refs: [sw-health-probes, sw-error-messages]
   # --- data-governance: privacy, lifecycle, encodings, time, i18n, accessibility, DX ------------------------------
   - id: sw-privacy-by-design
     domain: data-governance
@@ -1317,3 +1380,19 @@ rows:
       by: "an editable install into a virtual environment, documented"
     status: proposed
     source: software engineering 10, documentation and maintainability
+  - id: sw-onboarding-time
+    domain: data-governance
+    title: Onboarding time measured
+    statement: A newcomer runs and tests the project from a fresh clone by following its README alone, in a bounded time (15 minutes by default), and that time is measured on a clean machine or container.
+    why: A setup that only works on its author's machine slows every new contributor and hides undeclared dependencies.
+    profiles: [library, cli, local-client, service, data-pipeline, embedded]
+    stage: v1
+    enforcement: measure
+    check: the time from a fresh clone to a green suite, following the README in a clean container
+    languages: [any]
+    coverage:
+      status: partial
+      by: "the installer's stranger test installs from the public repo into a fresh venv and runs a scenario; not timed against a bound"
+    status: proposed
+    source: pillars grid 7, developer experience and onboarding (2026-11-23)
+    refs: [sw-reproducible-dev-env, sw-docs-as-code]

@@ -59,7 +59,7 @@ until the engine is updated.
 
 ## The engine's catalogs
 
-**software** (`catalogs/software.yaml`, `wi-brain-standards-catalog-software`): 90 standards for code products
+**software** (`catalogs/software.yaml`, `wi-brain-standards-catalog-software`): 95 standards for code products
 (profiles library, cli, local-client, service, data-pipeline, embedded), in ten domains, curated from two
 taxonomies of engineering standards (a client architecture's six pillars and five gaps; software engineering's ten
 domains) and the pillars they leave out (supply chain, portability and encodings, time, configuration and feature
@@ -67,20 +67,23 @@ flags, error messages, performance budgets, data lifecycle, recovery, AI-agent s
 accessibility and i18n). Every row is `proposed` until the owner validates its domain; a validated row turns
 `validated` in the same file. A row's `source` is a provenance trail (the pillar, gap or domain of the taxonomies it
 comes from, by number); `refs` links the rows that overlap, kept apart because they are enforced differently. The
-last domain holds data governance and the developer experience together, as the taxonomy does.
+last domain holds data governance and the developer experience together, as the taxonomy does. Five rows come from
+a third taxonomy, a grid of resilience pillars the owner brought (2026-11-23, `wi-brain-standards-score`), for what
+the first two left out: technical debt tracked, hot paths kept lean, sobriety, a runbook per alert and a measured
+onboarding time (`source: pillars grid N`).
 
 | Domain | Rows | What it holds |
 |---|---|---|
-| architecture | 8 | separation of concerns, bounded contexts, simplicity, injected dependencies, state machines, decision records, fitness functions |
+| architecture | 9 | separation of concerns, bounded contexts, simplicity, injected dependencies, state machines, decision records, fitness functions, technical debt tracked |
 | code-quality | 6 | parse don't validate, strict typing, typed errors, contracts, functional core, lint and format |
 | concurrency | 7 | timeouts, locked writers, backpressure, cancellation, deterministic memory, mechanical sympathy, lock-free by measure |
 | persistence | 9 | atomic writes, versioned formats, tolerant reader, migrations, checksums, backups, transactions, caches, recovery |
 | distributed | 8 | idempotency, retries with backoff, circuit breakers, outbox, graceful degradation, bulkheads, replication, protocol versions |
 | security | 14 | zero-trust input, secrets, encryption at rest and in transit, local IPC, least privilege, constant time, lockfiles, SBOM, reproducible builds, signing, image pinning, tenant isolation, AI-agent safety |
-| testing | 12 | a test per change, the pyramid, hermetic tests, coverage, property-based, fuzzing, mutation, fault injection, simulation, formal specs, performance budgets, load tests |
-| release | 9 | CI gates, SemVer, blue/green updates, canaries, feature flags, configuration as data, single instance, graceful shutdown, host footprint |
-| observability | 6 | structured logs, metrics, correlation ids, crash reports, self-diagnosis, profiling |
-| data-governance | 11 | privacy by design, erasure, retention, UTF-8, UTC, portability, i18n, accessibility, error messages, docs as code, a reproducible dev environment |
+| testing | 13 | a test per change, the pyramid, hermetic tests, coverage, property-based, fuzzing, mutation, fault injection, simulation, formal specs, performance budgets, load tests, hot paths kept lean |
+| release | 10 | CI gates, SemVer, blue/green updates, canaries, feature flags, configuration as data, single instance, graceful shutdown, host footprint, sobriety |
+| observability | 7 | structured logs, metrics, correlation ids, crash reports, self-diagnosis, profiling, a runbook per alert |
+| data-governance | 12 | privacy by design, erasure, retention, UTF-8, UTC, portability, i18n, accessibility, error messages, docs as code, a reproducible dev environment, onboarding time measured |
 
 A prototype gets few rows (simplicity, lint and format, secrets, a test per change, UTF-8, UTC); a row's stage says
 from when it is required, and the heavy ones (consensus, lock-free structures, canaries, mutation scores) wait for
@@ -99,12 +102,20 @@ app:
     include: [sw-sbom]             # rows taken whatever their profile and stage
     exclude: {sw-utc: "it stores no time at all, only counters"}   # rows waived, a reason of 15 characters or more
     catalogs: [standards/research.yaml]   # the brain's local catalogs, relative to the registry's folder
+    coverage:                      # how it meets its rows: brain standards score reads it
+      sw-lint-format: have
+      sw-atomic-writes: {status: partial, by: "the state file only"}
 ```
 
 The rows that apply are those whose profiles meet the project's (or `any`; a project's sub-profile meets its entry's
 rows too: `cli` meets `software`) and whose stage is at or before its own,
 plus `include`, minus `exclude`. `profiles` and `stage` go together; a project may hold `include` alone. An empty
 `standards:` declares none, as without the key.
+
+`coverage` says how the project meets its rows, in the vocabulary of a row's own `coverage` (`have`, `partial`,
+`none`, `n/a`): a status alone, or `{status, by}` to say by what. It selects nothing: it is read by
+`brain standards score`. An id it names must be a standard of the catalogs; a status this engine does not know is a
+note in read mode (a newer engine's), an error in strict mode.
 
 ## The commands
 
@@ -119,6 +130,14 @@ plus `include`, minus `exclude`. `profiles` and `stage` go together; a project m
   command exits 2 when one of the engine's own catalogs cannot be read.
 - `brain check --all` (and a brain's own `brain check`) checks every project's `standards:` the same way.
 - `brain brief` lists the project's applicable standards as the invariants of the item's session.
+- `brain standards score [--json]` (`wi-brain-standards-score`): the project's scorecard. Each applicable row scores
+  from its `coverage`: 2 for `have`, 1 for `partial`, 0 for `none` or for a row the project does not say (listed as
+  `unknown`: the score is a floor until every row is said); a row of `n/a` counts nowhere. It prints the rows by
+  catalog and domain with their points, the points of each domain, and the total with its percent and band:
+  `prototype` below 18 of 34 points (53 %), `production` from there, `hardened` from 28 of 34 (82 %), the bands of the
+  pillars grid. Read only; a project without `standards:` has nothing to score; exit 2 when its catalogs cannot be
+  read whole. `--json` gives `points`, `max`, `percent`, `band`, `rows` (`id`, `status`, `by`, `points`), `domains`,
+  `unknown`, `na` and `bands`.
 
 The other consumers (`wi-brain-standards-registry-consumers`) read the project's applicable rows by enforcement
 level; a project without `standards:` gets none of them, and one whose catalogs cannot be read whole gets none
@@ -200,6 +219,12 @@ a project's code yet: the registry says what applies, and `brain standards check
   --stage S`) write a `standards:` selection for their profile at that stage.
 - Left open: packs (a named set of ids), which a later key can add to the selection (an older engine notes an
   unknown key and keeps the file), and a row's per-stage severity (a later `v`).
+- The scorecard (`wi-brain-standards-score`, wave s9, 0.7.0) adds the selection's `coverage` key, read by
+  `brain standards score` only. Its scope: a status said by hand per row, scored 2, 1 or 0, and three bands of the
+  total. Compatible: an engine before it notes `coverage` as an unknown key and keeps the file. Extension points: a
+  coverage measured by a tool (an adapter's report, `lang.report`) can fill a row's status where the project says
+  none, and the score can feed `brain status` or a stage gate; neither changes the key. Left open: weights per row or
+  domain and bands per stage (a later key of the selection, never a change of the points of a status).
 
 A new key in a row or in the selection is a new format version or a note in read mode, never a silent change: the
 catalogs and the selection are read tolerantly, written strictly ([formats.md](formats.md)).

@@ -1,6 +1,7 @@
 """``brain standards``: the standards registry (brain.standards, wi-brain-standards-registry): ``list`` its rows (the
 engine's catalogs, then the project's local ones), ``show`` one, ``check`` the catalogs and the project's opt-in
-(projects.yaml standards:) and say which applicable standards' checks do not cover its repos' languages.
+(projects.yaml standards:) and say which applicable standards' checks do not cover its repos' languages; ``score``
+the project's standing on them from its standards.coverage (wi-brain-standards-score).
 """
 
 from __future__ import annotations
@@ -37,6 +38,11 @@ USAGE = """\
                  Actions skeleton from its check and measure rows with an adapter, one step per slot and repo (the
                  usual tool of its language in the step's env; the engine runs no tool). Nothing when it declares
                  none; exit 2 when its catalogs cannot be read whole
+  brain standards score [--json]   the project's scorecard: each applicable standard rated from its projects.yaml
+                 standards.coverage, 2 (have), 1 (partial) or 0 (none, or not said: listed as unknown), a row of n/a
+                 left out; the points by catalog and domain, the total and its band (prototype, production from 18 of
+                 34, hardened from 28 of 34). Read only; nothing when it declares no standards:; exit 2 when its
+                 catalogs cannot be read whole
 """
 
 
@@ -230,10 +236,39 @@ def _cmd_ci(args, root: Path) -> int:
     return 0
 
 
+def _cmd_score(args, root: Path) -> int:
+    p = _project(args, root)
+    card = standards.score_for(p)
+    if args.json:
+        _print_json({"project": p.name, "concerned": card is not None, **(card or {})})
+        return 0
+    if card is None:
+        print(f"brain standards: project {p.name} declares no standards: in projects.yaml (docs/standards.md): "
+              "nothing to score")
+        return 0
+    domain = None
+    for r in sorted(card["rows"], key=lambda r: (r["catalog"], r["domain"], r["id"])):
+        key = f"{r['catalog']}/{r['domain']}"
+        if key != domain:
+            domain = key
+            d = card["domains"].get(key)
+            print(f"== {r['catalog']} / {r['domain']}" + (f"  {d['points']}/{d['max']}" if d else "  n/a"))
+        pts = "-" if r["points"] is None else str(r["points"])
+        print(f"  {pts}  {r['id']}  {r['status']}" + (f": {' '.join(r['by'].split())}" if r["by"] else ""))
+    if not card["max"]:
+        print(f"score: no standard counted for {p.name} ({len(card['rows'])} applicable, {len(card['na'])} n/a)")
+        return 0
+    floors = ", ".join(f"{b['band']} from {b['from_percent']} %" for b in card["bands"] if b["from_percent"])
+    tail = (f"; {len(card['unknown'])} not said, counted 0 (projects.yaml standards.coverage)" if card["unknown"]
+            else "") + (f"; {len(card['na'])} n/a" if card["na"] else "")
+    print(f"score: {card['points']} of {card['max']} ({card['percent']} %): {card['band']} ({floors}){tail}")
+    return 0
+
+
 def cmd_standards(args, root: Path) -> int:
     try:
         return {"list": _cmd_list, "show": _cmd_show, "check": _cmd_check, "lenses": _cmd_lenses,
-                "rules": _cmd_rules, "ci": _cmd_ci}[args.standards_cmd](args, root)
+                "rules": _cmd_rules, "ci": _cmd_ci, "score": _cmd_score}[args.standards_cmd](args, root)
     except standards.StandardsError as exc:
         print(f"brain standards: {exc}", file=sys.stderr)
         return 2
@@ -259,9 +294,11 @@ def register(sub, ctx) -> None:
     sle = ss.add_parser("lenses", help="the review-lens rows: the standards lens brain review prep adds")
     sr = ss.add_parser("rules", help="the rule rows as a markdown section of rules text")
     sci = ss.add_parser("ci", help="a CI workflow skeleton from the check and measure rows with an adapter")
+    sco = ss.add_parser("score", help="the project's scorecard: each applicable standard rated 0, 1 or 2 from its "
+                                      "standards.coverage, the total and its band")
     for p in (sr, sci):
         p.add_argument("--write", metavar="FILE", help="write it to FILE instead of printing it")
-    for p in (sl, sh, sc, sle, sr, sci):
+    for p in (sl, sh, sc, sle, sr, sci, sco):
         p.add_argument("--json", action="store_true", help="stable keys")
 
 

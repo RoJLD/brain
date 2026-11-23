@@ -21,7 +21,10 @@ that stay in the owner's private brain. A row says:
 its ``profiles`` and ``stage`` select the rows whose profiles meet its own (or ``any``) and whose stage is at or
 before its own; ``include`` adds rows by id whatever their profile and stage, ``exclude`` waives rows by id with a
 reason (``{id: reason}``, 15 characters or more). A project without the key is not concerned: nothing it does is
-checked against the registry, so nothing that passed before is refused.
+checked against the registry, so nothing that passed before is refused. ``coverage`` says how the project meets its
+rows (``{id: status}`` or ``{id: {status, by}}``, the statuses of a row's own coverage): ``brain standards score``
+rates each applicable row from it, 0 (none, or not said), 1 (partial) or 2 (have), a row of n/a left out, and puts
+the total in a band (:func:`score`, wi-brain-standards-score).
 
 ``brain standards list|show|check`` read it (brain.commands.standards); ``brain brief`` lists a project's rows as the
 invariants of its sessions. The other consumers (wi-brain-standards-registry-consumers): ``brain review prep`` adds a
@@ -36,6 +39,7 @@ from __future__ import annotations
 import os
 import posixpath
 from dataclasses import dataclass, field
+from fractions import Fraction
 from pathlib import Path
 
 import yaml
@@ -77,8 +81,14 @@ SELECTION_KEYS = {
     "include": "ids taken whatever their profile and stage",
     "exclude": "{id: reason of 15 characters or more}: rows waived",
     "catalogs": "the brain's local catalogs, relative to the registry's folder",
+    "coverage": "{id: status or {status, by}}: how the project meets its rows (have, partial, none, n/a)",
 }
 REASON = 15
+# brain standards score (wi-brain-standards-score): the points of a coverage status (a row not said scores 0, a row of
+# n/a is left out), and the bands of the total, highest first: a hardened system from 28 of 34 points, production from
+# 18 of 34, a prototype below (the bands of the pillars grid the owner brought, 2026-11-23).
+SCORES = {"have": 2, "partial": 1, "none": 0}
+BANDS = ((Fraction(28, 34), "hardened"), (Fraction(18, 34), "production"), (Fraction(0), "prototype"))
 
 
 class StandardsError(ValueError):
@@ -137,6 +147,7 @@ class Selection:
     include: list[str] = field(default_factory=list)
     exclude: dict[str, str] = field(default_factory=dict)
     catalogs: list[str] = field(default_factory=list)
+    coverage: dict[str, dict] = field(default_factory=dict)   # {id: {status, by}}, as :func:`coverage_of` reads it
 
 
 def _strings(value) -> list[str]:
@@ -259,7 +270,21 @@ def selection(value) -> Selection | None:
     value = value if isinstance(value, dict) else {}
     exclude = value.get("exclude") if isinstance(value.get("exclude"), dict) else {}
     return Selection(_strings(value.get("profiles")), str(value.get("stage") or ""), _strings(value.get("include")),
-                     {str(k): str(v) for k, v in exclude.items()}, _strings(value.get("catalogs")))
+                     {str(k): str(v) for k, v in exclude.items()}, _strings(value.get("catalogs")),
+                     coverage_of(value.get("coverage")))
+
+
+def coverage_of(value) -> dict[str, dict]:
+    """A selection's ``coverage:`` as {id: {status, by}}: a status alone (``have``) or a mapping with its status and,
+    optionally, by what (``{status: partial, by: the CI's lint}``); an entry of another shape is left out
+    (:func:`selection_errors` names it)."""
+    out: dict[str, dict] = {}
+    for sid, entry in (value.items() if isinstance(value, dict) else ()):
+        status = entry if isinstance(entry, str) else entry.get("status") if isinstance(entry, dict) else None
+        if isinstance(status, str) and status:
+            by = entry.get("by") if isinstance(entry, dict) else ""
+            out[str(sid)] = {"status": status, "by": str(by or "")}
+    return out
 
 
 def catalog_path(rel: str, registry_dir: Path) -> Path:
@@ -334,9 +359,11 @@ def selection_errors(where: str, value, ids: set[str] | None = None, strict: boo
     errors += [f"{where}: {key} is a list of names" for key in ("profiles", "include", "catalogs")
                if key in value and not _names(value[key])]
     errors += _profile_stage_errors(where, value, strict, notes) + _exclude_errors(where, value.get("exclude"))
+    errors += _coverage_errors(where, value.get("coverage"), strict, notes)
     if ids is not None:
         exclude = value.get("exclude") if isinstance(value.get("exclude"), dict) else {}
-        named = _strings(value.get("include")) + [str(k) for k in exclude]
+        cov = value.get("coverage") if isinstance(value.get("coverage"), dict) else {}
+        named = _strings(value.get("include")) + [str(k) for k in exclude] + [str(k) for k in cov]
         errors += [f"{where}: {sid!r} is no standard of the catalogs (brain standards list)" for sid in named
                    if sid not in ids]
     return errors
@@ -368,6 +395,23 @@ def _exclude_errors(where: str, exclude) -> list[str]:
         return [f"{where}: exclude is a mapping of id -> reason"]
     return [f"{where}: exclude {sid!r}: a reason of {REASON} characters at least" for sid, reason in exclude.items()
             if not isinstance(reason, str) or len(reason.strip()) < REASON]
+
+
+def _coverage_errors(where: str, coverage, strict: bool | None, notes: list[str] | None) -> list[str]:
+    """``coverage:``: a mapping of id -> a status of :data:`COVERAGE` or {status, by}; another status is a note in
+    read mode (a newer engine's), an error in strict mode."""
+    if coverage is None:
+        return []
+    if not isinstance(coverage, dict):
+        return [f"{where}: coverage is a mapping of id -> status or {{status, by}}"]
+    errors = []
+    for sid, entry in coverage.items():
+        status = entry if isinstance(entry, str) else entry.get("status") if isinstance(entry, dict) else None
+        if not isinstance(status, str) or not status:
+            errors.append(f"{where}: coverage {sid!r}: a status ({', '.join(COVERAGE)}) or {{status, by}}")
+        else:
+            errors += _vocab(f"{where}: coverage {sid!r}", "status", status, COVERAGE, strict, notes)
+    return errors
 
 
 def applicable(rows: list[Row], sel: Selection | None) -> list[tuple[Row, str]]:
@@ -460,6 +504,47 @@ def chosen_for(p) -> list[tuple[Row, str]]:
     if errors:
         raise StandardsError(f"the catalogs of {p.name} cannot be read whole: {errors[0]} (brain standards check)")
     return sorted(applicable(rows_of(catalogs), sel), key=lambda rw: (rw[0].catalog, rw[0].domain, rw[0].id))
+
+
+def band(points: int, top: int) -> str:
+    """The band of ``points`` out of ``top`` (:data:`BANDS`); '' when nothing is counted (``top`` 0)."""
+    if top <= 0:
+        return ""
+    return next(name for floor, name in BANDS if Fraction(points, top) >= floor)
+
+
+def score(chosen: list[tuple[Row, str]], coverage: dict[str, dict]) -> dict:
+    """The scorecard of the applicable rows (wi-brain-standards-score), with stable keys: each row's status from the
+    project's ``coverage`` (``unknown`` when it says none) and its points (:data:`SCORES`: have 2, partial 1, none
+    or unknown 0; a row of n/a counted nowhere), the totals by catalog and domain, the total, its percent and its band
+    (:func:`band`). A row the project does not say scores 0: the score is a floor, and ``unknown`` lists what to say."""
+    rows, domains = [], {}
+    for row, why in chosen:
+        cov = coverage.get(row.id, {})
+        status = cov.get("status") or "unknown"
+        points = SCORES.get(status, 0) if status != "n/a" else None
+        rows.append({"id": row.id, "catalog": row.catalog, "domain": row.domain, "enforcement": row.enforcement,
+                     "status": status, "by": cov.get("by", ""), "points": points, "selected_by": why})
+        if points is not None:
+            d = domains.setdefault(f"{row.catalog}/{row.domain}", {"points": 0, "max": 0})
+            d["points"] += points
+            d["max"] += 2
+    points = sum(r["points"] for r in rows if r["points"] is not None)
+    top = 2 * sum(1 for r in rows if r["points"] is not None)
+    return {"points": points, "max": top, "percent": round(100 * points / top) if top else None,
+            "band": band(points, top), "rows": rows, "domains": domains,
+            "unknown": [r["id"] for r in rows if r["status"] == "unknown"],
+            "na": [r["id"] for r in rows if r["status"] == "n/a"],
+            "bands": [{"band": name, "from_percent": round(100 * floor)} for floor, name in BANDS]}
+
+
+def score_for(p) -> dict | None:
+    """The scorecard of a project (:func:`score`); None when it declares no standards:. Raises StandardsError when its
+    catalogs cannot be read whole (:func:`chosen_for`)."""
+    sel = selection(getattr(p, "standards", None))
+    if sel is None:
+        return None
+    return score(chosen_for(p), sel.coverage)
 
 
 def _line(row: Row) -> str:

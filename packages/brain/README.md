@@ -500,7 +500,10 @@ never in the scout), a row whose check covers neither a repo's language nor a sl
 `brain standards rules [--write FILE]` prints the `rule` rows as a section of rules text (only what needs
 judgement); `brain standards ci [--write FILE]` prints a GitHub Actions skeleton from the `check` and `measure`
 rows with an adapter, one step per slot and repo in its folder, each failing until it is filled with the project's
-own tool.
+own tool. `brain standards score [--json]` rates each applicable row from the project's `standards.coverage`
+(`{id: status}` or `{id: {status, by}}`): 2 for have, 1 for partial, 0 for none or not said (listed, so the score is a
+floor), a row of n/a left out; it prints the points by catalog and domain, the total and its band (prototype,
+production from 18 of 34 points, hardened from 28 of 34).
 
 ### A project's own formats
 
