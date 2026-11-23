@@ -136,8 +136,10 @@ note in read mode (a newer engine's), an error in strict mode.
   catalog and domain with their points, the points of each domain, and the total with its percent and band:
   `prototype` below 18 of 34 points (53 %), `production` from there, `hardened` from 28 of 34 (82 %), the bands of the
   pillars grid. Read only; a project without `standards:` has nothing to score; exit 2 when its catalogs cannot be
-  read whole. `--json` gives `points`, `max`, `percent`, `band`, `rows` (`id`, `status`, `by`, `points`), `domains`,
-  `unknown`, `na` and `bands`.
+  read whole. A status this engine does not read (a newer engine's) scores 0 and is listed with the unknown; a
+  coverage entry of a row that does not apply (excluded, or required from a later stage) is listed as ignored; the
+  percent is floored. `--json` gives `points`, `max`, `percent`, `band`, `rows` (`id`, `status`, `by`, `points`),
+  `domains`, `unknown`, `na`, `ignored` and `bands`.
 
 The other consumers (`wi-brain-standards-registry-consumers`) read the project's applicable rows by enforcement
 level; a project without `standards:` gets none of them, and one whose catalogs cannot be read whole gets none

@@ -259,8 +259,10 @@ def _cmd_score(args, root: Path) -> int:
         print(f"score: no standard counted for {p.name} ({len(card['rows'])} applicable, {len(card['na'])} n/a)")
         return 0
     floors = ", ".join(f"{b['band']} from {b['from_percent']} %" for b in card["bands"] if b["from_percent"])
-    tail = (f"; {len(card['unknown'])} not said, counted 0 (projects.yaml standards.coverage)" if card["unknown"]
-            else "") + (f"; {len(card['na'])} n/a" if card["na"] else "")
+    tail = (f"; {len(card['unknown'])} not said or not read, counted 0 (projects.yaml standards.coverage)"
+            if card["unknown"] else "") + (f"; {len(card['na'])} n/a" if card["na"] else "")
+    tail += (f"; coverage of rows that do not apply, ignored: {', '.join(card['ignored'])}" if card["ignored"]
+             else "")
     print(f"score: {card['points']} of {card['max']} ({card['percent']} %): {card['band']} ({floors}){tail}")
     return 0
 

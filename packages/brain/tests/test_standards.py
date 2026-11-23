@@ -485,6 +485,24 @@ def test_the_score_rates_each_row_from_the_coverage(engine):
     assert standards.score([], {})["band"] == "" and standards.score([], {})["percent"] is None
 
 
+def test_the_score_lists_unread_statuses_and_ignored_entries_and_floors_its_percent(engine):
+    rows = standards.rows_of(standards.engine_catalogs())
+    chosen = standards.applicable(rows, standards.selection({"profiles": ["cli"], "stage": "mvp"}))
+    card = standards.score(chosen, standards.coverage_of({"sw-utc": "audited", "sw-atomic-writes": "have",
+                                                         "sw-fuzz": "have"}))   # a newer status; a scale row
+    assert card["unknown"] == ["sw-utc"] and card["ignored"] == ["sw-fuzz"]
+    assert (card["points"], card["max"]) == (2, 4)
+    big = standards.score([(standards.Row(f"r{i}", "c", "d", "s", ["cli"], "mvp", "check", "x", ["any"], "proposed"),
+                            "") for i in range(203)], {f"r{i}": {"status": "have"} for i in range(53)}
+                          | {f"r{i}": {"status": "partial"} for i in range(53, 54)})
+    assert (big["points"], big["max"]) == (107, 406)
+    assert big["percent"] == 26 and big["band"] == "prototype"
+    near = standards.score([(standards.Row(f"r{i}", "c", "d", "s", ["cli"], "mvp", "check", "x", ["any"],
+                                           "proposed"), "") for i in range(203)],
+                           {f"r{i}": {"status": "have"} for i in range(107)})   # 214 of 406: 52.7 %, below 18/34
+    assert near["percent"] == 52 and near["band"] == "prototype"   # floored: never 53 % beside prototype
+
+
 def test_the_registry_accepts_a_coverage_and_refuses_a_wrong_one(engine, registry):
     registry("  standards: {profiles: [cli], stage: mvp, coverage: {sw-utc: have, sw-atomic-writes: none}}\n")
     assert projects.check() == []
@@ -509,5 +527,5 @@ def test_cli_score(engine, registry, capsys):
     registry("  standards: {profiles: [cli], stage: mvp}\n")
     assert cli.main(["--project", "demo", "standards", "score"]) == 0
     out = capsys.readouterr().out
-    assert "score: 0 of 4 (0 %): prototype" in out and "2 not said, counted 0" in out
+    assert "score: 0 of 4 (0 %): prototype" in out and "2 not said or not read, counted 0" in out
     assert "  0  sw-utc  unknown" in out

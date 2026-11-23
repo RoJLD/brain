@@ -2,14 +2,15 @@
 # for code products, curated from two taxonomies of engineering standards (client architecture: six pillars and five
 # gaps; software engineering: ten domains) and the pillars they leave out (supply chain, portability, time,
 # configuration, error messages, performance budgets, data lifecycle, recovery, AI-agent safety, multi-tenant
-# isolation, accessibility). Every row is proposed until the owner validates it, domain by domain.
+# isolation, accessibility); five rows from a third, a grid of resilience pillars (technical debt, hot paths,
+# sobriety, alert runbooks, onboarding time). Every row is proposed until the owner validates it, domain by domain.
 #
 # Profiles: library, cli, local-client, service, data-pipeline, embedded (never research, strategy or marketing: their
 # catalogs are their own). coverage says how the Brain itself meets the row today.
 v: 1
 catalog: software
 title: Software engineering standards for code products, from the architecture to the developer experience
-source: two taxonomies of engineering standards (client architecture, software engineering) and the pillars they leave out
+source: two taxonomies of engineering standards (client architecture, software engineering), the pillars they leave out, and a grid of resilience pillars
 rows:
   # --- architecture: system design, modelling, governance -----------------------------------------------------
   - id: sw-separation-of-concerns
@@ -144,7 +145,7 @@ rows:
     languages: [any]
     coverage:
       status: have
-      by: "the scout defers into the repo's debt item, brain audit lists the debt and waivers expire"
+      by: "the scout defers into the repo's debt item, brain audit lists the debt and flags stale waive globs"
     status: proposed
     source: pillars grid 7, technical debt governance (2026-11-23)
     refs: [sw-fitness-functions, sw-decision-records]

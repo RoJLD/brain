@@ -517,7 +517,10 @@ def score(chosen: list[tuple[Row, str]], coverage: dict[str, dict]) -> dict:
     """The scorecard of the applicable rows (wi-brain-standards-score), with stable keys: each row's status from the
     project's ``coverage`` (``unknown`` when it says none) and its points (:data:`SCORES`: have 2, partial 1, none
     or unknown 0; a row of n/a counted nowhere), the totals by catalog and domain, the total, its percent and its band
-    (:func:`band`). A row the project does not say scores 0: the score is a floor, and ``unknown`` lists what to say."""
+    (:func:`band`). A row the project does not say, or says in a status this engine does not read (a newer engine's),
+    scores 0: the score is a floor, and ``unknown`` lists those rows; ``ignored``, the coverage entries of rows that do
+    not apply (excluded, or required from a later stage). The percent is floored, so it never shows a band's floor
+    the total has not reached."""
     rows, domains = [], {}
     for row, why in chosen:
         cov = coverage.get(row.id, {})
@@ -531,10 +534,12 @@ def score(chosen: list[tuple[Row, str]], coverage: dict[str, dict]) -> dict:
             d["max"] += 2
     points = sum(r["points"] for r in rows if r["points"] is not None)
     top = 2 * sum(1 for r in rows if r["points"] is not None)
-    return {"points": points, "max": top, "percent": round(100 * points / top) if top else None,
+    applied = {r["id"] for r in rows}
+    return {"points": points, "max": top, "percent": 100 * points // top if top else None,
             "band": band(points, top), "rows": rows, "domains": domains,
-            "unknown": [r["id"] for r in rows if r["status"] == "unknown"],
+            "unknown": [r["id"] for r in rows if r["status"] not in SCORES and r["status"] != "n/a"],
             "na": [r["id"] for r in rows if r["status"] == "n/a"],
+            "ignored": sorted(sid for sid in coverage if sid not in applied),
             "bands": [{"band": name, "from_percent": round(100 * floor)} for floor, name in BANDS]}
 
 
