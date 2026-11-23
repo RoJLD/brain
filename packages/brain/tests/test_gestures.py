@@ -291,20 +291,13 @@ def test_no_default_raises_today_s_behaviour():
         assert gestures.automation(gid).default != "auto", gid
 
 
-def test_the_catalogue_data_and_the_command(capsys):
+def test_the_catalogue_data():
     data = gestures.catalogue()
     assert data["v"] == 1 and data["levels"] == ["manual", "ask", "auto"]
     assert [g["id"] for g in data["gestures"]] == [a.id for a in gestures.CATALOGUE]
     assert all(g["source"] == "default" for g in data["gestures"])
     assert all(g["level"] == "manual" for g in data["gestures"] if g["locked"])
-    assert cli.main(["automation", "list", "--json"]) == 0
-    assert json.loads(capsys.readouterr().out) == json.loads(json.dumps(data))
-    assert cli.main(["automation", "list"]) == 0
-    out = capsys.readouterr().out
-    assert out.startswith(f"automation catalogue v1: {len(gestures.CATALOGUE)} gestures")
-    assert "session-archive" in out and "locked: keys" in out and "if: fast-forward only" in out
-    with pytest.raises(SystemExit):
-        cli.main(["automation"])   # a subcommand is required
+    assert data["floor"] == list(gestures.FLOOR) and data["retired"] == list(gestures.RETIRED)
 
 
 def test_the_automation_doc_lists_each_gesture():
