@@ -2,7 +2,7 @@
 and ``brain health code-index`` ask one interface which backend serves them, and each backend is declared in the tier
 registry (tiers.yaml) with its requirements and its fallback.
 
-Two backends index code:
+Three backends index code:
 
 - ``gitnexus`` (brain.codeindex): GitNexus in its container, declared by the stack whose ``index:`` names it. The
   code authority for search and the default: it serves all four (``brain code-map`` reads its Cypher).
@@ -11,6 +11,11 @@ Two backends index code:
   ``index:``) and ``brain impact`` on a worktree: it indexes the worktree in place under a temporary name, asks
   ``detect_changes`` against the base and deletes that index, so a branch never pushed anywhere has its symbols and
   callers. It serves index, impact and health, not code-map.
+
+- ``xerj`` (brain.xerj): xerj's search node, a local service (the stack whose start is ``brain index --backend xerj
+  --serve``). Opt-in: chosen only when ``--backend xerj`` names it, never by default, a third arm of the code bench's
+  second stage (the owner's answer XJ-1) until that bench picks the search authority (CBM-1). It serves index, health
+  and search (:func:`search`), not code-map nor impact.
 
 Without either, ``brain impact`` falls back to the file level (every CodeRef of a changed file, a Python symbol's
 narrowed by the AST of both sides) and says why.
@@ -28,9 +33,9 @@ import sys
 from dataclasses import dataclass
 from pathlib import Path
 
-from . import cbm, codeindex, faults
+from . import cbm, codeindex, faults, xerj
 
-PURPOSES = ("index", "code-map", "impact", "health")
+PURPOSES = ("index", "code-map", "impact", "health", "search")
 CONTAINERS = ("File", "Module", "Folder", "Package", "Project", "Section")   # CBM's nodes that hold symbols
 TEMP = re.compile(r"-wt-[0-9a-f]{8}$")   # a temporary project of brain impact (temp_name)
 
@@ -42,11 +47,15 @@ class Backend:
     title: str
     serves: frozenset      # of PURPOSES
     tier: str              # its entry in tiers.yaml
+    opt_in: bool = False   # chosen only when named (--backend), never by default
 
 
 BACKENDS = {
-    "gitnexus": Backend("gitnexus", "code", "GitNexus", frozenset(PURPOSES), "code-index-gitnexus"),
+    # GitNexus's search is its own MCP query tool, outside the adapter (the authority, CBM-1)
+    "gitnexus": Backend("gitnexus", "code", "GitNexus", frozenset({"index", "code-map", "impact", "health"}),
+                        "code-index-gitnexus"),
     "cbm": Backend("cbm", "code", "codebase-memory-mcp", frozenset({"index", "impact", "health"}), "code-index-cbm"),
+    "xerj": Backend("xerj", "code", "xerj", frozenset({"index", "health", "search"}), "code-index-xerj", opt_in=True),
 }
 
 
@@ -54,6 +63,8 @@ def why_not(name: str, root: Path | None = None) -> str:
     """'' when backend ``name`` is declared or installed on this machine, else why not (it may still be down)."""
     if name == "cbm":
         return "" if cbm.installed() else f"codebase-memory-mcp is not installed ({cbm.binary().as_posix()})"
+    if name == "xerj":
+        return "" if xerj.installed() else f"xerj is not installed ({xerj.binary().as_posix()})"
     try:
         ix, _ = codeindex.load(root)
     except codeindex.CodeIndexError as exc:
@@ -72,7 +83,7 @@ def choose(purpose: str, wanted: str | None = None, root: Path | None = None, wo
                                            f"(it serves {', '.join(sorted(BACKENDS[wanted].serves))})")
         return [wanted]
     order = ["cbm", "gitnexus"] if purpose == "impact" and worktree else ["gitnexus", "cbm"]
-    return [b for b in order if purpose in BACKENDS[b].serves and not why_not(b, root)]
+    return [b for b in order if purpose in BACKENDS[b].serves and not BACKENDS[b].opt_in and not why_not(b, root)]
 
 
 # --- cbm: brain index and brain health code-index ---
@@ -176,6 +187,129 @@ def cbm_health(repos: dict[str, codeindex.Repo], every: bool) -> tuple[int, str]
             f"{n} ({'not indexed' if s == 'NOT INDEXED' else w})" for n, s, w in bad)
                    + "; brain index --backend cbm --stale reindexes " + ("it" if len(bad) == 1 else "them"))
     return 0, f"{codeindex.CHECK} cbm OK (settings off, {len(checked)} repo(s) at their checkout's HEAD)"
+
+
+# --- xerj: brain index, brain health code-index and search (opt-in) ---
+
+def xerj_state(r: codeindex.Repo, rec: dict | None) -> tuple[str, str]:
+    """(OK, STALE, NOT INDEXED or ERROR; why) of ``r`` in xerj's record, against its branch head."""
+    branch, sha, why = codeindex.head(r)
+    if why:
+        return "ERROR", why
+    if not rec or not rec.get("sha"):
+        return "NOT INDEXED", f"{branch}@{sha[:7]}"
+    if rec["sha"] != sha:
+        return "STALE", f"{branch} moved off the index ({str(rec['sha'])[:7]})"
+    return "OK", f"{branch}@{sha[:7]}, indexed {str(rec.get('indexed_at', '?'))[:16]}"
+
+
+def xerj_index(repos: dict[str, codeindex.Repo], names: list[str], every: bool, stale: bool, out) -> int:
+    """``brain index --backend xerj``: each repo's state and the node's (no name, no flag), else index the named,
+    every or stale ones: a snapshot of the branch head, then xerj autoindex under the repo's prefix."""
+    if why_not("xerj"):
+        print(f"brain index: {why_not('xerj')}; docs/code-index.md says how the owner builds it", file=out)
+        return 1
+    if not repos:
+        print("no repo declared under code_index: (xerj)", file=out)
+        return 0
+    rec = xerj.read_record()
+    up = xerj.running()
+    if not (names or every or stale):
+        _xerj_states(repos, rec, up, out)
+        return 0
+    if not up:
+        print(f"brain index: the engine's xerj does not answer at {xerj.URL}; brain up xerj starts it", file=out)
+        return 1
+    chosen, refused = _xerj_chosen(repos, names, out)
+    if stale and chosen:
+        chosen = [r for r in chosen if xerj_state(r, rec.get(r.name))[0] != "OK"]
+        if not chosen:
+            print("every repo is indexed at its branch head (xerj)", file=out)
+    return max([_xerj_index_one(r, out) for r in chosen] + [1 if refused else 0])
+
+
+def _xerj_chosen(repos: dict[str, codeindex.Repo], names: list[str], out) -> tuple[list[codeindex.Repo], bool]:
+    """(the named repos, every one without names, less those sharing a prefix; whether some were refused)."""
+    wanted = names or list(repos)
+    clash = {p: ns for p, ns in xerj.clashes(repos).items() if set(ns) & set(wanted)}
+    for p, ns in clash.items():
+        print(f"brain index: {', '.join(ns)} share xerj's prefix {p}: their indices would mix, neither is indexed "
+              "(rename a folder)", file=out)
+    shared = {n for ns in clash.values() for n in ns}
+    return [repos[n] for n in wanted if n not in shared], bool(shared)
+
+
+def _xerj_states(repos: dict[str, codeindex.Repo], rec: dict, up: bool, out) -> None:
+    for r in repos.values():
+        state, why = xerj_state(r, rec.get(r.name))
+        print(f"{r.name} {state} (xerj): {why}" if state != "OK" else f"{r.name} OK (xerj, {why})", file=out)
+    print(f"(xerj {'answers' if up else 'does not answer'} at {xerj.URL}"
+          f"{'' if up else '; brain up xerj starts it'})", file=out)
+
+
+def _xerj_index_one(r: codeindex.Repo, out) -> int:
+    t0 = codeindex._clock()
+    branch, sha, why = codeindex.head(r)
+    done: dict = {}
+    if not why:
+        try:
+            done = xerj.index(r.path, r.name, sha)
+        except xerj.XerjError as exc:
+            why = str(exc)
+    if why:
+        print(f"{r.name} FAILED (xerj, {codeindex._secs(t0)}): {why}", file=out, flush=True)
+        return 1
+    secs = round(codeindex._clock() - t0)
+    xerj.save(r.name, {"project": r.project, "path": r.path.as_posix(), "branch": branch, "sha": sha,
+                       "prefix": xerj.prefix(r.name), "indexed_at": faults.now().isoformat(timespec="seconds"),
+                       "seconds": secs, "exit": done.get("exit"), "reason": done.get("reason"),
+                       "code_files": done.get("code_files"), "code_files_indexed": done.get("code_files_indexed")})
+    junk = f", {done['reason']}" if done.get("reason") and done.get("reason") != "completed" else ""
+    print(f"{r.name} OK (xerj, {secs} s, {branch}@{sha[:7]}, prefix {xerj.prefix(r.name)}{junk})", file=out,
+          flush=True)
+    return 0
+
+
+def xerj_health(repos: dict[str, codeindex.Repo]) -> tuple[int, str]:
+    """(0, its line) of xerj in ``brain health code-index``, '' when it indexed nothing: an opt-in arm, never the
+    authority, so a stale index or a stopped node is said and never fails the check."""
+    rec = xerj.read_record()
+    checked = [r for r in repos.values() if r.name in rec]
+    if not checked:
+        return 0, ""
+    bad = [(r.name, *xerj_state(r, rec.get(r.name))) for r in checked]
+    bad = [b for b in bad if b[1] != "OK"]
+    node = (f"node up at {xerj.URL}" if xerj.running()
+            else f"node down at {xerj.URL} (brain up xerj starts it)")
+    if bad:
+        word = "ERROR" if any(b[1] == "ERROR" for b in bad) else "STALE"
+        return 0, (f"{codeindex.CHECK} xerj {word} (opt-in, not counted): "
+                   + ", ".join(f"{n} ({w})" for n, _, w in bad)
+                   + f"; brain index --backend xerj --stale reindexes; {node}")
+    return 0, f"{codeindex.CHECK} xerj OK (opt-in, {len(checked)} repo(s) at their branch head, {node})"
+
+
+def search(query: str, repo: str, k: int = 5, backend: str | None = None, root: Path | None = None) -> list[dict]:
+    """The adapter's search: the ``k`` first rows (rank, path, line, name, kind, score, backend) for ``query`` in the
+    declared repo ``repo``. Only an opt-in backend serves it today, so ``backend`` must name it: GitNexus stays the
+    search authority (CBM-1) through its own MCP tool. CodeIndexError when it cannot answer."""
+    chosen = choose("search", backend, root)
+    if not chosen:
+        raise codeindex.CodeIndexError("search has no default backend here: GitNexus stays the search authority "
+                                       "through its MCP query tool (CBM-1); --backend xerj names the opt-in arm")
+    if why_not(chosen[0], root):
+        raise codeindex.CodeIndexError(f"{chosen[0]}: {why_not(chosen[0], root)}")
+    _, repos = codeindex.load(root, opt_in=True)
+    if repo not in repos:
+        raise codeindex.CodeIndexError(f"unknown repo {repo} (declared under code_index: {', '.join(repos) or 'none'})")
+    for p, ns in xerj.clashes(repos).items():
+        if repo in ns:
+            raise codeindex.CodeIndexError(f"{', '.join(ns)} share xerj's prefix {p}: their indices mix (rename a "
+                                           "folder)")
+    try:
+        return xerj.search(query, repo, k)
+    except xerj.XerjError as exc:
+        raise codeindex.CodeIndexError(f"xerj: {exc}") from exc
 
 
 # --- cbm: brain impact on a worktree ---

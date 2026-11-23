@@ -207,6 +207,17 @@ capabilities:
     resources: {ram_mb: 1024, disk_mb: 500}
     fallback: GitNexus when its stack answers (code-index-gitnexus), else the CodeRefs at the file level, a Python
       symbol's checked by the AST of both sides
+  code-index-xerj:
+    title: xerj's search node (its binary built from its public main under BRAIN_HOME/code-index/xerj), an opt-in
+      backend of the code index (brain index --backend xerj, health code-index, the adapter's search), chosen only
+      when named, a third arm of the code bench; a local service, the stack whose start is brain index --backend
+      xerj --serve; feedback off, lexical, no autostart, never xerj init
+    class: service
+    profile: custom
+    provides: [code search]
+    requires: []
+    resources: {ram_mb: 2048, disk_mb: 500}
+    fallback: GitNexus, the search authority (code-index-gitnexus), else git grep
   infra-node:
     title: the machine facts of an infra agent's report (inventory.agent_json), read before the local probe
     class: extra

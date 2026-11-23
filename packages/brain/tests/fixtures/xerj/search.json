@@ -1,0 +1,30 @@
+{
+  "took": 41,
+  "timed_out": false,
+  "hits": {
+    "total": {"value": 37, "relation": "eq"},
+    "max_score": 14.2,
+    "hits": [
+      {"_index": "bxalpha-docs", "_id": "src/wal/segment.rs#rotate", "_score": 14.2,
+       "_source": {"ax_path": "src/wal/segment.rs", "ax_locator": "code:118:rotate", "kind": "function",
+                   "name": "rotate", "impl": "pub fn rotate(&mut self) -> io::Result<()> {\n    self.file.sync_all()?;",
+                   "line": 118, "start_line": 118},
+       "match_line": 119,
+       "fields": {"_passage": [{"text": "pub fn rotate(&mut self) -> io::Result<()> {\n    self.file.sync_all()?;"}]}},
+      {"_index": "bxalpha-docs", "_id": "src/wal/mod.rs#code", "_score": 9.87,
+       "_source": {"ax_path": "src/wal/mod.rs", "ax_locator": "code", "start_line": 1},
+       "fields": {"_passage": ["//! The write-ahead log: segments are fsynced on rotation."]}},
+      {"_index": "bxalpha-docs", "_id": "src/wal/segment.rs#Segment", "_score": 7.5,
+       "_source": {"ax_path": "src/wal/segment.rs", "ax_locator": "code:40:Segment", "kind": "struct",
+                   "name": "Segment", "impl": "pub struct Segment {", "line": 40, "start_line": 40}},
+      {"_index": "bxalpha-docs", "_id": "docs/durability.md#2", "_score": 3.1,
+       "_source": {"ax_path": "docs/durability.md", "ax_locator": "section:2", "start_line": 12, "title": "Rotation"}},
+      {"_index": "bxalpha-docs", "_id": "README.md#code", "_score": 1.2,
+       "_source": {"ax_path": "README.md", "ax_locator": "code", "start_line": 1}}
+    ]
+  },
+  "_xerj": {
+    "embed_mode": "lexical",
+    "hints": [{"code": "lexical_embedder", "reason": "This is a keyword search, and this node's embedder is lexical feature hashing (embed_mode: lexical, the default), so semantic and hybrid search would also match shared words, not meaning."}]
+  }
+}

@@ -536,7 +536,10 @@ update, the ADRs and specs to re-read, the tests to run (one `pytest` line) and 
 items that deliver those features and the decisions pending on them. Without a code index it works at the file level,
 a Python symbol looked up by the AST, and says so on its second line. `--backend gitnexus|cbm` names the code index.
 `brain code-map` resolves each active CodeRef to its GitNexus node and reports the coverage: symbols and files with a
-CodeRef.
+CodeRef. xerj is an opt-in third backend, never a default: `brain index --backend xerj` indexes a `git archive`
+snapshot of each declared repo, the adapter's search returns its ranked rows, and its node is a stack started and
+stopped by `brain index --backend xerj --serve|--stop` (feedback off, lexical, no autostart;
+[`docs/code-index.md`](docs/code-index.md) « xerj »).
 `brain impact --markdown` prints the checklist as a PR body's section (tasks ticked by hand, every text escaped);
 the cockpit's Health tab shows the impact of the branch it runs from (its Impact view); a project's `overlays:` (another
 repo's store read with its own, read-only) are walked too.
