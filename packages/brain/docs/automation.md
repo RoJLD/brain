@@ -16,7 +16,7 @@ Each gesture has:
   already did when the catalogue was written;
 - **its conditions**: what must hold at any level. A level changes who confirms, never the conditions: an archive at
   `auto` still needs the PRs merged and the worktree clean, a clone pull stays fast-forward only;
-- **where it runs**: `session` (an agent's session, under the guard's conditions), `terminal` (the owner's terminal),
+- **where it runs**: `session` (an agent's session, under the conditions above), `terminal` (the owner's terminal),
   `elevated` (their elevated terminal), `harness` (Claude Code's own confirmation: the Brain cannot raise it);
 - **its floor category**, for a gesture of the floor (AUTO-1, below), else none;
 - **its commands**: the owner's gestures of `brain.gestures.GESTURES` it covers (each one is in exactly one entry), or
@@ -37,21 +37,26 @@ of the three (unknown, or unreadable), when it is above the gesture's ceiling, a
 
 The catalogue is version 1 (`brain.gestures.CATALOGUE_V`, the `v` of `--json`). Within it a gesture may be added; an
 id is never renamed, never reused, and leaves only to `RETIRED`. `tests/test_gestures.py` pins the ids 0.7.0
-publishes. A reader of a config that names an id this engine does not know ignores that id with a warning, so an older
-engine reads a newer config; an unknown level reads `manual`.
+publishes. The automation config (S2, `wi-brain-automation-config`) is to ignore an id this engine does not know,
+with a warning, so that an older engine reads a newer config; an unknown level reads `manual` (`effective`, now).
 
 No guard reads the catalogue yet: the `automation` section of `config.json` (S2), the guards that enforce a level (S3),
 the Settings page (S4) and the ask answered from the queue (S5) are their own items, which read these ids.
 
 ## The gestures
 
+The Commands column is each gesture's `commands`, the engine's commands that run it; a gesture the app runs (an
+archive, Remote Control, a merge, a workflow) or the owner does outside the engine has none. Its conditions are in
+`brain automation list`. No guard sees an archive call itself, only the Remote Control off before it (the guard's
+archive case, `wi-brain-guard-rc-archive`).
+
 | Id | Runs | Ceiling | Default | Floor | Commands |
 |---|---|---|---|---|---|
-| `engine-clone-pull` | session | auto | auto | | `brain refresh` (fast-forward only, on the clean default branch) |
-| `session-archive` | session | auto | ask | | the app's archive, under the guard's archive case |
-| `handover-remote-control` | session | auto | ask | | the app's Remote Control, under the guard's hand-over cases |
-| `merge-go` | harness | ask | ask | | the owner's words in the session that merges |
-| `workflow-launch` | harness | ask | ask | | the owner's opt-in to a workflow |
+| `engine-clone-pull` | session | auto | auto | | `brain refresh` (and `brain release apply`, after an install) |
+| `session-archive` | session | auto | ask | | |
+| `handover-remote-control` | session | auto | ask | | |
+| `merge-go` | harness | ask | ask | | |
+| `workflow-launch` | harness | ask | ask | | |
 | `release-tag` | terminal | ask | ask | | `brain release tag` |
 | `release-apply` | terminal | ask | ask | | `brain release apply` |
 | `installer-apply` | terminal | ask | manual | | `install.ps1 -Apply` |

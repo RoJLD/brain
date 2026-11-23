@@ -2,6 +2,7 @@
 session by the owner guard, through guard.sh's pre-filter, and by the command line where it gates it; the runbook's
 table lists each. A gesture added to the list without its refusals fails here. The tests run as owner Ada."""
 
+import dataclasses
 import json
 import re
 from pathlib import Path
@@ -218,6 +219,10 @@ def test_the_catalogue_is_well_formed():
         assert gestures.LEVELS.index(a.default) <= gestures.LEVELS.index(a.ceiling), a.id   # its default fits
         assert a.runs in gestures.RUNS and a.label, a.id
         assert a.floor == "" or a.floor in gestures.FLOOR, a.id
+        # where it runs bounds it (review of #310): the elevated terminal is the floor's, the harness's own
+        # confirmation is never raised by the Brain
+        assert a.runs != "elevated" or a.floor == "elevated", a.id
+        assert a.runs != "harness" or a.ceiling in ("manual", "ask"), a.id
 
 
 def test_the_ids_are_stable():
@@ -280,6 +285,9 @@ def test_effective_fails_closed(level, expected):
 def test_an_unknown_gesture_reads_manual():
     assert gestures.automation("no-such-gesture") is None
     assert gestures.effective(None, "auto") == "manual"
+    assert gestures.effective("engine-clone-pull", "auto") == "manual"   # an id, not its entry (review of #310)
+    floor = gestures.automation("vault-open")
+    assert gestures.effective(dataclasses.replace(floor, ceiling="auto"), "auto") == "manual"   # the floor wins
     assert gestures.effective(gestures.automation("engine-clone-pull"), "auto") == "auto"
 
 
@@ -297,6 +305,9 @@ def test_the_catalogue_data():
     assert [g["id"] for g in data["gestures"]] == [a.id for a in gestures.CATALOGUE]
     assert all(g["source"] == "default" for g in data["gestures"])
     assert all(g["level"] == "manual" for g in data["gestures"] if g["locked"])
+    levels = {g["id"]: g["level"] for g in data["gestures"]}
+    assert levels == {a.id: a.default for a in gestures.CATALOGUE}   # its level is its default, never its ceiling
+    assert levels["session-archive"] == "ask" and levels["usage-allow"] == "manual"
     assert data["floor"] == list(gestures.FLOOR) and data["retired"] == list(gestures.RETIRED)
 
 

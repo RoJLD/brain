@@ -132,12 +132,14 @@ CATALOGUE: tuple[Automation, ...] = (
                 "on its remote's default branch, no tracked change, no merge, rebase, cherry-pick or revert in "
                 "progress, no file the remote brings that it ignores"),
                commands=("brain refresh",),
-               note="brain refresh fast-forwards it since 0.6.1 (engine.clone; --no-clone skips it once)"),
+               note="brain refresh fast-forwards it since 0.6.1 (engine.clone; --no-clone skips it once); brain "
+                    "release apply (release-apply's gesture) does too, after an install"),
     Automation("session-archive", "archive a finished session", "session", "auto", "ask",
-               ("the guard's archive case (wi-brain-guard-rc-archive): a session the caller started, its turn "
-                "finished, Remote Control off first",
-                "its PRs merged and its worktree clean (the definition of done: a hook cannot see them)"),
-               note="today the app's approval card asks; the guard's conditions hold at every level"),
+               ("Remote Control off first, under the guard's archive case (wi-brain-guard-rc-archive): a session "
+                "the caller started, its turn finished",
+                "its PRs merged and its worktree clean (the definition of done)"),
+               note="today the app's approval card asks; no guard sees the archive call itself, only the Remote "
+                    "Control off before it (S3's guard is where a level is held)"),
     Automation("handover-remote-control", "Remote Control at a coordinators' hand-over", "session", "auto", "ask",
                ("on for the coordinator the caller started to succeed it, live or starting, detached",
                 "off on the caller itself once its hand-over note is written and its successor detached"),
@@ -171,7 +173,8 @@ CATALOGUE: tuple[Automation, ...] = (
     # The floor (AUTO-1): shown locked, refused above manual whatever config.json says
     Automation("handover-root", "mark a coordinators' chain root", "terminal", "manual", "manual",
                floor="security-settings", commands=("brain handover root",),
-               note="it lets a session switch Remote Control"),
+               note="it lets a session switch Remote Control, so the catalogue locks it as security-settings; the "
+                    "owner guard's category for it is override (a lift by BRAIN_GUARD_ALLOW still passes it)"),
     Automation("remote-control", "Remote Control outside a hand-over", "harness", "manual", "manual",
                floor="security-settings"),
     Automation("permission-mode", "a session's permission mode", "harness", "manual", "manual",
@@ -207,16 +210,19 @@ CATALOGUE: tuple[Automation, ...] = (
 
 
 def automation(gesture_id: str) -> Automation | None:
-    """The catalogue's gesture ``gesture_id``, None when it has none (an unknown id: a config that names it is ignored
-    with a warning, so an older engine reads a newer config)."""
+    """The catalogue's gesture ``gesture_id``, None when it has none (an unknown id: the automation config of
+    wi-brain-automation-config is to ignore it with a warning, so that an older engine reads a newer config)."""
     return next((a for a in CATALOGUE if a.id == gesture_id), None)
 
 
 def effective(a: Automation | None, level) -> str:
     """The level ``a`` runs at when ``level`` is asked (AUTO-1, fail closed): ``manual`` for an unknown gesture, a
     level that is not one of :data:`LEVELS` (unknown or unreadable), one above the gesture's ceiling, and any level of a
-    floor gesture; else ``level``."""
-    if a is None or a.floor or level not in LEVELS or LEVELS.index(level) > LEVELS.index(a.ceiling):
+    floor gesture; else ``level``. ``a`` is an :class:`Automation` (:func:`automation`'s); anything else (an id, None)
+    reads manual too."""
+    if not isinstance(a, Automation) or a.floor or level not in LEVELS:
+        return "manual"
+    if LEVELS.index(level) > LEVELS.index(a.ceiling):
         return "manual"
     return level
 
