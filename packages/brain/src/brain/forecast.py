@@ -49,6 +49,16 @@ An item may be part of several milestones (wi-brain-forecast-two-parents): its r
 (``milestone``: the first of its milestones that is not of kind wave, an era included), its wave (``wave``: the first of
 kind wave) and every one (``parents``), additive keys of ``FORMAT`` 1. « (no milestone) » counts the open items with no
 thematic milestone, a wave's alone included; a milestone's own range reads its members (``Store.milestone_items``).
+
+What the scheduler knows is kept (wi-brain-forecast-starts-critical, ``MODEL_V`` 3, additive keys of ``FORMAT`` 1):
+each dated item's ``start`` (p10-p90 days and dates), its drawn ``hours`` and its ``critical`` index per group it is a
+member of (its milestones, its wave, ``*`` the backlog, ``""`` no milestone): the share of futures in which it lies on
+the chain that sets that group's finish (Van Slyke 1963). The chain of a future is followed back from the group's last
+item to end, each link what let the next one start (``by``: ``now``, ``gate``, ``dependency``, or ``lane``, the item
+whose end freed the lane it waited for); a group's ``chain`` is its most frequent one, with each item's index, the
+share of futures it was that chain and the share whose finish the milestone's own gate set. ``past``: the ledger's
+first session, done day and active hours of each done or doing member of an open milestone (the past bars of the
+cockpit's item level). ``brain forecast --critical [<milestone>]`` prints the chains (``critical_lines``).
 """
 
 from __future__ import annotations
@@ -70,7 +80,8 @@ from . import __version__, config, cost, diffs, graph, paths, projects, ranking,
 from . import gates as gate_data
 
 FORMAT = 1            # the JSON's layout
-MODEL_V = 2           # the method's version: a snapshot says which one made it (2: declared gates)
+MODEL_V = 3           # the method's version: a snapshot says which one made it (2: declared gates; 3: the starts,
+#                       the criticality index and the chains, the past; additive keys, FORMAT 1 kept)
 RUNS = 1000
 STATUS_RUNS = 300     # brain status' futures
 SEED = 1              # the default seed: the same inputs give the same numbers
@@ -420,10 +431,13 @@ def gather(p: projects.Project, led: cost.Ledger, now: datetime) -> dict:
         row["score"] = round(value / max(effort, 0.25), 4)
         items.append(row)
     milestones = []
+    wplan = waves.build(st.nodes, st.edges)
     for m in st.of_type("Milestone"):
         if m.get("status") in ("reached", "dropped"):
             continue
-        members = [i for i in st.milestone_items(m["id"]) if status.get(i) != "dropped"]
+        # a wave's members are the items in it now (carried in counted, carried out not: brain.waves), as the Tree's
+        of = wplan.items_of(m["id"]) if waves.kind(m) == waves.WAVE else st.milestone_items(m["id"])
+        members = [i for i in of if status.get(i) != "dropped"]
         trig = str((m.get("props") or {}).get("trigger") or "")
         gs = prepared(m.get("props") or {})
         milestones.append({"id": m["id"], "title": " ".join(str(m.get("title") or "").split())[:120],
@@ -432,6 +446,7 @@ def gather(p: projects.Project, led: cost.Ledger, now: datetime) -> dict:
                            "gates": gs})
     reached = [{"id": m["id"], "reached": str((m.get("props") or {}).get("reached") or "")[:10]}
                for m in st.of_type("Milestone") if m.get("status") == "reached"]
+    past = _past(led, status, {i for m in milestones for i in m["members"]})
     tests = cost.backtests(led, "active_s")
     ratios: dict[str, list[float]] = {"*": sorted(round(t["ratio"], 4) for t in tests if t["ratio"] > 0)}
     usd_tests = cost.backtests(led)
@@ -452,10 +467,25 @@ def gather(p: projects.Project, led: cost.Ledger, now: datetime) -> dict:
     model = {"project": p.name, "now": now.astimezone(timezone.utc).isoformat(timespec="minutes"),
              "items": items, "deferred": deferred, "milestones": milestones, "reached": reached,
              "ratios": ratios, "usd_ratios": usd_ratios, "history": len(pool), "capacity": cap,
-             "keep": keep_rate(work), "delays_h": delays, "action_delays_h": act_delays, "flow": fl}
+             "keep": keep_rate(work), "delays_h": delays, "action_delays_h": act_delays, "flow": fl, "past": past}
     model["inputs"] = {"store_commit": commit, "store_digest": _store_digest(store), "model_digest": _digest(model),
                        "settings_digest": _digest(settings())}
     return model
+
+
+def _past(led: cost.Ledger, status: dict[str, str], ids: set[str]) -> dict[str, dict]:
+    """{item: {first, done, hours, sessions}}: what the ledger saw of each done or doing item of ``ids`` (the open
+    milestones' members): the day of its first session, its done day (props.done, else its last session's), its
+    active hours and its sessions; the item level's past bars read it (wi-brain-tui-trajectories-items)."""
+    out = {}
+    for nid in sorted(ids):
+        it = led.items.get(nid)
+        if status.get(nid) not in ("done", "doing") or not it or not it.sessions:
+            continue
+        out[nid] = {"first": it.first_start[:10], "done": it.done_day if status[nid] == "done" else "",
+                    "hours": round(sum(sh * (r.get("active_s") or 0) for r, sh in it.sessions) / 3600, 2),
+                    "sessions": len(it.sessions)}
+    return out
 
 
 def gate_kind(why: str) -> str:
@@ -601,8 +631,12 @@ def simulate(model: dict, runs: int = RUNS, seed: int = SEED) -> dict:
               if m.get("gates") and m["id"] not in plan["milestones"]}
     groups = {"*": list(range(len(tasks))), "": [k for k, t in enumerate(tasks) if not t["milestone"]],
               **{m: [k for k, t in enumerate(tasks) if t["id"] in ids] for m, ids in members.items()}}
-    out = {"finish": {t["id"]: [] for t in tasks}, "runs": 0, "plan": plan,
-           "work": {g: {"hours": [], "usd": []} for g in groups}, "mgate": {m: [] for m in mgates}}
+    out = {"finish": {t["id"]: [] for t in tasks}, "start": {t["id"]: [] for t in tasks},
+           "hours": {t["id"]: [] for t in tasks}, "runs": 0, "plan": plan,
+           "work": {g: {"hours": [], "usd": []} for g in groups}, "mgate": {m: [] for m in mgates},
+           "mgate_by": {m: [] for m in mgates},
+           "groups": groups, "chains": {g: Counter() for g in groups}, "path_id": {}, "links": [],
+           "gated": Counter(), "on_chain": {g: Counter() for g in groups}}
     if not tasks or not any(h > 0 for h in hist):
         return out
     for f in range(runs):
@@ -635,51 +669,153 @@ def simulate(model: dict, runs: int = RUNS, seed: int = SEED) -> dict:
             lag.append(wait)
             dollars.append(math.exp(usd[k][0] + usd[k][1] * z) * usd_factor.get(t["class"], usd_factor.get("*", 1.0))
                            if usd[k] else 0.0)
-        done = _schedule(d, kept, release, deps, dependents, cal.lanes, lag, cal, waits)
+        trace: dict = {}
+        done = _schedule(d, kept, release, deps, dependents, cal.lanes, lag, cal, waits, trace)
         for k, t in enumerate(tasks):
             out["finish"][t["id"]].append(round(cal.t(done[k]), 4) if kept[k] else None)
+            out["start"][t["id"]].append(round(cal.t(trace["start"][k]), 4) if kept[k] else None)
+            out["hours"][t["id"]].append(round(d[k], 4) if kept[k] else None)
         for m, gs in mgates.items():
-            rels, lags = [0.0], [0.0]
+            rels, lags = [(0.0, -1)], [0.0]   # (release, the item it counts from or -1)
             for g in gs:
                 rel, lg = gate_data.draw(g, grng, delays)
+                src = -1
                 if g.get("after"):   # a calendar from an item's end: that item's finish in this future, plus the count
                     fin = (out["finish"].get(g["after"]) or [None])[-1] if g["after"] in idx else None
                     rel, lg = (fin or 0.0) + lg, 0.0
-                rels.append(rel)
+                    src = idx[g["after"]] if fin is not None else -1
+                rels.append((rel, src))
                 lags.append(lg)
-            out["mgate"][m].append((max(rels), max(lags)))
+            rel, src = max(rels, key=lambda r: (r[0], r[1] >= 0))   # a tie: the item's end sets it
+            out["mgate"][m].append((rel, max(lags)))
+            out["mgate_by"][m].append(src)
+        _chains(out, groups, done, kept, trace, tasks)
         for g, ks in groups.items():
             out["work"][g]["hours"].append(sum(d[k] for k in ks if kept[k]))
             out["work"][g]["usd"].append(sum(dollars[k] for k in ks if kept[k]))
         out["runs"] += 1
+    _tally(out, [t["id"] for t in tasks])
+    del out["path_id"], out["links"], out["mgate_by"]
     return out
+
+
+def _tally(out: dict, ids: list[str]) -> None:
+    """The futures' chains by the items' ids, each counted by its items (whatever its links were in each future)
+    with its links' most frequent labels; each item's count on its groups' chains (``on_chain``)."""
+    for g, chains in out["chains"].items():
+        on, total, labels = out["on_chain"][g], Counter(), {}
+        for (pid, by), n in chains.items():
+            total[pid] += n
+            labels.setdefault(pid, Counter())[by] += n
+        for pid, n in total.items():
+            for k in out["links"][pid]:
+                on[ids[k]] += n
+        out["chains"][g] = Counter({(tuple(ids[k] for k in out["links"][pid]), labels[pid].most_common(1)[0][0]): n
+                                    for pid, n in total.items()})
+
+
+def _chains(out: dict, groups: dict[str, list[int]], done: list[float], kept: list[bool], trace: dict,
+            tasks: list[dict]) -> None:
+    """One future's critical chains: for each group, its last item to finish and, followed back through ``pred``,
+    the items whose ends set it (members of the group or not: a lane another milestone's item held counts), counted
+    per chain of task indices and what each link was in that future, in ``chains`` (``links``: a chain's items by its
+    number; ``on_chain`` sums them per item once the futures are done, and the links' labels are the most frequent
+    of the chain's). A milestone whose own gate is released after its items' end (and its lag) has its finish set by
+    that gate: by the chain of the item a calendar counts from (``mgate_by``), else no chain in that future
+    (``gated``)."""
+    pred, by = trace["pred"], trace["by"]
+    fin = [x if kept[k] else -1.0 for k, x in enumerate(done)]
+    paths: dict[int, tuple[int, tuple[str, ...]]] = {}   # an end -> its chain: groups ending on one item share it
+    seen: dict[int, tuple[tuple[int, ...], int]] = {}   # an item walked -> (a chain through it, its place there)
+    for g, ks in groups.items():
+        if not ks:
+            continue
+        end = max(ks, key=fin.__getitem__)    # ks ascend: a tie goes to the first in priority order
+        if fin[end] < 0:
+            continue
+        end = _gated_end(out, g, end, fin, tasks)
+        if end < 0:
+            out["gated"][g] += 1
+            continue
+        key = paths.get(end)
+        if key is None:   # once per end and future: a chain is hashed once, then counted by its number
+            path = _walk(end, pred, seen, len(tasks))
+            pid = out["path_id"].setdefault(path, len(out["path_id"]))
+            if pid == len(out["links"]):
+                out["links"].append(path)
+            key = paths[end] = (pid, tuple(by[k] for k in path))
+        out["chains"][g][key] += 1
+
+
+def _gated_end(out: dict, g: str, end: int, fin: list[float], tasks: list[dict]) -> int:
+    """The item whose chain set group ``g``'s finish in this future: its last item to end, unless its own gate is
+    released later (and its lag): then the item that gate's calendar counts from (``mgate_by``), or -1 (no chain)."""
+    gate = (out["mgate"].get(g) or [None])[-1]
+    if gate is None or gate[0] <= out["finish"][tasks[end]["id"]][-1] + gate[1]:
+        return end
+    src = ((out.get("mgate_by") or {}).get(g) or [-1])[-1]
+    return src if src >= 0 and fin[src] >= 0 else -1
+
+
+def _walk(end: int, pred: list[int], seen: dict[int, tuple[tuple[int, ...], int]], n: int) -> tuple[int, ...]:
+    """The chain to ``end``, first item first: ``pred`` followed back until an item a chain already walked in this
+    future (``seen``, its head then shared) or one that waited on nothing; ``seen`` gains its new items."""
+    walk, k = [], end
+    while k >= 0 and k not in seen and len(walk) <= n:   # pred goes back in time: never a loop, bounded all the same
+        walk.append(k)
+        k = pred[k]
+    head = seen[k][0][:seen[k][1] + 1] if k >= 0 and k in seen else ()
+    path = head + tuple(reversed(walk))
+    for i in range(len(head), len(path)):
+        seen[path[i]] = (path, i)
+    return path
 
 
 def _schedule(dur: list[float], kept: list[bool], release: list[float], deps: list[list[int]],
               dependents: list[list[int]], lanes: int, lag: list[float] | None = None,
-              cal: _Calendar | None = None, waits: dict[int, list[tuple[int, float]]] | None = None) -> list[float]:
+              cal: _Calendar | None = None, waits: dict[int, list[tuple[int, float]]] | None = None,
+              trace: dict | None = None) -> list[float]:
     """The event queue: each item's finish in a lane's work hours. The items are given in priority order, so an
     item's index is its rank; an item left out is satisfied at once and holds no lane. ``lag``: calendar days an item
     still waits once all its dependencies are done (a Go/NoGo's answer); ``waits``: an item -> (a later item, calendar
-    days it waits from that item's end: a calendar gate counted from it). Both turned into work hours by ``cal``."""
+    days it waits from that item's end: a calendar gate counted from it). Both turned into work hours by ``cal``.
+
+    ``trace`` (a dict, filled): ``start`` each item's start in work hours, ``pred`` the item whose end let it start
+    (-1: none) and ``by`` what that was (``BY``): ``now`` ready at once, ``gate`` released by a gate (``pred``: the
+    item whose end it counts from, a Go/NoGo's lag after its last dependency or a calendar from an item; -1 for one
+    absolute, a DDR's delay or a calendar day), ``dependency`` the last of its dependencies to end, ``lane`` the item
+    whose end freed the lane it waited for (the capacity). Followed back from an item, ``pred`` is the chain that set
+    its finish (wi-brain-forecast-starts-critical)."""
     waits = waits or {}
     n = len(dur)
     left = [sum(1 for d in deps[k] if kept[d]) for k in range(n)]
     done = [0.0] * n
+    start = [0.0] * n
+    pred = [-1] * n
+    by = ["now"] * n
+    since = [0.0] * n            # when an item joined the ready queue
+    cause: list[tuple[str, int]] = [("now", -1)] * n
+    src = [-1] * n               # the item whose end set an item's release (-1: an absolute gate, or none)
+    freed = -1                   # the item whose end freed the last lane
     ready: list[int] = []
     waiting: list[tuple[float, int]] = []
     running: list[tuple[float, int]] = []
 
-    def gate(k: int, at: float) -> float:
+    def gate(k: int, at: float, after: int = -1) -> float:   # ``after``: the dependency that ended at ``at``
         if lag and cal and lag[k]:
-            return max(release[k], cal.w(cal.t(at) + lag[k]))
+            held = cal.w(cal.t(at) + lag[k])
+            if after >= 0 and held >= release[k]:
+                src[k] = after
+            return max(release[k], held)
         return release[k]
 
     release = list(release)
 
     def ended(k: int, at: float) -> None:   # the calendars counted from k's end start at ``at``
         for j, days in waits.get(k, ()):
-            release[j] = max(release[j], cal.w(cal.t(at) + days)) if cal else release[j]
+            held = cal.w(cal.t(at) + days) if cal else release[j]
+            if held > release[j]:
+                release[j], src[j] = held, k if kept[k] else -1   # an item left out ends at once: from now
 
     for k in range(n):
         if not kept[k]:
@@ -694,6 +830,9 @@ def _schedule(dur: list[float], kept: list[bool], release: list[float], deps: li
             k = heapq.heappop(ready)
             heapq.heappush(running, (now + dur[k], k))
             free -= 1
+            start[k] = now
+            # it waited in the queue: the lane's end let it start; else what made it ready
+            by[k], pred[k] = ("lane", freed) if now > since[k] and freed >= 0 else cause[k]
         t_run = running[0][0] if running else math.inf
         t_rel = waiting[0][0] if waiting else math.inf
         if t_run == math.inf and t_rel == math.inf:
@@ -702,15 +841,23 @@ def _schedule(dur: list[float], kept: list[bool], release: list[float], deps: li
             now, k = heapq.heappop(running)
             done[k] = now
             free += 1
+            freed = k
             ended(k, now)
             for j in dependents[k]:
                 left[j] -= 1
                 if kept[j] and not left[j]:
-                    release[j] = gate(j, now)
-                    heapq.heappush(waiting, (release[j], j)) if release[j] > now else heapq.heappush(ready, j)
+                    release[j] = gate(j, now, k)
+                    if release[j] > now:
+                        heapq.heappush(waiting, (release[j], j))
+                    else:
+                        since[j], cause[j] = now, ("dependency", k)
+                        heapq.heappush(ready, j)
         else:
             now, k = heapq.heappop(waiting)
+            since[k], cause[k] = now, ("gate", src[k])
             heapq.heappush(ready, k)
+    if trace is not None:
+        trace.update(start=start, pred=pred, by=by)
     return done
 
 
@@ -777,11 +924,18 @@ def summarize(model: dict, sim: dict, runs: int, seed: int, snapshots: list[dict
     n_runs = sim["runs"]
     by_id = {i["id"]: i for i in model["items"]}
     deferred_ids = {i["id"] for i in model["deferred"]}
+    member_of: dict[str, list[str]] = {}
+    for g, ks in (sim.get("groups") or {}).items():
+        for k in ks:
+            member_of.setdefault(plan["dated"][k]["id"], []).append(g)
     items = []
     for t in plan["dated"]:
         f = [x for x in sim["finish"][t["id"]] if x is not None]
         q = quantiles(f) if f else None
         dates = _dates(now, q) if q else None
+        s = [x for x in (sim.get("start") or {}).get(t["id"]) or () if x is not None]
+        qs = quantiles(s) if s else None
+        h = [x for x in (sim.get("hours") or {}).get(t["id"]) or () if x is not None]
         items.append({"id": t["id"], "priority": t["priority"] + ("?" if t["proposed"] and t["priority"] else ""),
                       "milestone": t["milestone"], "wave": t.get("wave") or "",
                       "parents": list(t.get("parents") or ([t["milestone"]] if t["milestone"] else [])),
@@ -789,7 +943,11 @@ def summarize(model: dict, sim: dict, runs: int, seed: int, snapshots: list[dict
                       "kept": round(len(f) / n_runs, 3) if n_runs else None, "days": q,
                       "dates": dates, "ddr": t["ddr"], "action": t.get("action") or [],
                       "gates": [g["label"] for g in t.get("gates") or [] if not g.get("passed")],
-                      "due": t.get("due") or "", "late": bool(t.get("due") and dates and dates["p80"] > t["due"])})
+                      "due": t.get("due") or "", "late": bool(t.get("due") and dates and dates["p80"] > t["due"]),
+                      "start": {"days": qs, "dates": _dates(now, qs)} if qs else None,
+                      "hours": quantiles(h) if h else None,
+                      "critical": {g: round(sim["on_chain"][g][t["id"]] / n_runs, 3) if n_runs else 0.0
+                                   for g in sorted(member_of.get(t["id"], ()))} if "on_chain" in sim else {}})
 
     def block(ids: list[str], gate: list | None = None, held: str = "") -> dict:
         """The range of ``ids``; when one of them cannot be dated, none (the gate holds the whole group) and the
@@ -810,13 +968,14 @@ def summarize(model: dict, sim: dict, runs: int, seed: int, snapshots: list[dict
                            "undated": [i for i in open_ids if i in plan["undated"]],
                            "deferred": [i for i in m["members"] if i in deferred_ids], "durations": m["durations"],
                            "gates": [g["label"] for g in m.get("gates") or [] if not g.get("passed")],
-                           "held": held, **block(open_ids, gate, held), "work": _work(sim, m["id"])})
+                           "held": held, **block(open_ids, gate, held), "work": _work(sim, m["id"]),
+                           "chain": _chain(sim, m["id"])})
     loose = [i["id"] for i in model["items"] if not i["milestone"]]
     no_ms = {"open": len(loose), "dated": sum(1 for i in loose if i in sim["finish"]), **block(loose),
-             "work": _work(sim, "")}
+             "work": _work(sim, ""), "chain": _chain(sim, "")}
     every = [i["id"] for i in model["items"]]
     back = {"open": len(every), "dated": len(plan["dated"]), "undated": len(plan["undated"]), **block(every),
-            "work": _work(sim, "*")}
+            "work": _work(sim, "*"), "chain": _chain(sim, "*")}
     back["frozen"] = back.pop("part", None) or {k: back[k] for k in ("days", "dates", "shown")}
     if model["flow"].get("growing"):
         back.update(days=None, dates=None, shown="growing")
@@ -853,7 +1012,22 @@ def summarize(model: dict, sim: dict, runs: int, seed: int, snapshots: list[dict
                       "history": model["history"]},
             "flow": model["flow"], "gates": gates, "deferred": deferred, "quota": quota_pace(),
             "not_modelled": list(NOT_MODELLED), "backlog": back, "no_milestone": no_ms, "milestones": milestones,
-            "items": items}
+            "items": items, "past": dict(sorted((model.get("past") or {}).items()))}
+
+
+def _chain(sim: dict, g: str) -> dict | None:
+    """Group ``g``'s most frequent critical chain: its items from the first to start to the last to end, what each
+    one waited on (``by``: now, gate, dependency, lane), each one's criticality index for the group (``index``), the
+    share of futures it was exactly that chain (``share``) and the share whose finish the group's own gate set
+    (``gated``). None without futures or a chain."""
+    runs, chains = sim.get("runs"), (sim.get("chains") or {}).get(g)
+    gated = round((sim.get("gated") or {}).get(g, 0) / runs, 3) if runs else 0.0
+    if not runs or not chains:
+        return {"items": [], "by": [], "index": [], "share": 0.0, "gated": gated} if runs and gated else None
+    (ids, by), n = max(chains.items(), key=lambda kv: (kv[1], kv[0]))
+    on = sim["on_chain"][g]
+    return {"items": list(ids), "by": list(by), "index": [round(on[i] / runs, 3) for i in ids],
+            "share": round(n / runs, 3), "gated": gated}
 
 
 def _declared(model: dict) -> list[dict]:
@@ -1109,6 +1283,129 @@ def render(res: dict, show_items: bool = False) -> list[str]:
         for u in res["gates"]["undated"]:
             lines.append(f"  {u['id']:<42} not dated: {u['why']}")
     return lines
+
+
+# --- the critical chains (wi-brain-forecast-starts-critical) ---
+
+BACKLOG = "*"           # the whole backlog's group in the futures (its chain: backlog.chain)
+CHAIN_SHOWN = 4         # a chain's items a line names before « … »
+
+
+def _short_id(nid: str, project: str) -> str:
+    pre = f"wi-{project}-"
+    return nid[len(pre):] if project and nid.startswith(pre) else nid
+
+
+def bound(chain: dict | None) -> str:
+    """What a chain says of its group's finish: 'capacity-bound' (its links are mostly lanes another item freed),
+    'dependency-bound' (mostly depends_on, or a gate counted from the item before: a Go/NoGo's lag, a calendar from
+    an item), 'one item' (a chain of one), '' without one."""
+    if not chain or not chain.get("items"):
+        return ""
+    links = chain["by"][1:]
+    lane, dep = links.count("lane"), links.count("dependency") + links.count("gate")
+    if not links:
+        return "one item"
+    return "capacity-bound" if lane >= dep else "dependency-bound"
+
+
+def chain_text(chain: dict | None, project: str = "", res: dict | None = None, limit: int = CHAIN_SHOWN) -> str:
+    """« a 41 % → b 38 % → … (+3) · capacity-bound: 2 lanes, 2.7 h/day · this chain in 12 % of futures »; its own
+    gate when it set the finish in most futures; '' without a chain."""
+    if not chain:
+        return ""
+    if not chain.get("items"):
+        return f"its own gate sets its finish in {chain.get('gated', 0):.0%} of futures"
+    names = [f"{_short_id(i, project)} {x:.0%}" for i, x in zip(chain["items"], chain["index"], strict=True)]
+    head = " → ".join(names[:limit]) + (f" → … (+{len(names) - limit})" if len(names) > limit else "")
+    kind = bound(chain)
+    cap = (res or {}).get("capacity") or {}
+    if kind == "capacity-bound" and cap.get("lanes") and cap.get("hours"):
+        kind += f": {cap['lanes']['p50']:.0f} lane(s), {cap['hours']['p50']:.1f} h/day"
+    tail = [kind] if kind else []
+    if chain["by"] and chain["by"][0] == "gate":
+        tail.append("after a gate")
+    tail.append(f"this chain in {chain['share']:.0%} of futures")
+    if chain.get("gated"):
+        tail.append(f"its own gate sets the finish in {chain['gated']:.0%}")
+    return " · ".join([head, *tail])
+
+
+def group_of(res: dict, ref: str) -> tuple[str, dict] | None:
+    """(group id, its block) for ``ref``: a milestone's id, the same without its ``ms-<project>-`` prefix, ``*`` or
+    ``backlog`` (the whole backlog), ``-`` (no milestone); None when the forecast has no such group."""
+    if ref in (BACKLOG, "backlog"):
+        return BACKLOG, res.get("backlog") or {}
+    if ref in ("-", "(no milestone)"):
+        return "", res.get("no_milestone") or {}
+    ms = {m["id"]: m for m in res.get("milestones") or []}
+    for mid in (ref, f"ms-{res.get('project')}-{ref}", f"ms-{ref}"):
+        if mid in ms:
+            return mid, ms[mid]
+    return None
+
+
+def critical_lines(res: dict, ref: str | None = None) -> list[str]:
+    """``brain forecast --critical``: each dated group's critical chain (the backlog first, then the milestones by
+    their median); with ``ref`` one group's chain and its items, each with its criticality index, its start and its
+    finish p10-p90, the items outside the group marked."""
+    head = (f"brain forecast {res.get('project') or ''} --critical: "
+            f"{str(res.get('as_of') or '').replace('T', ' ')[:16]} UTC, {res.get('runs', 0)} futures, "
+            f"{label(res).upper()}")
+    return [head, *(_every_chain(res) if ref is None else _one_chain(res, ref))]
+
+
+def _every_chain(res: dict) -> list[str]:
+    """Each group's chain, the backlog first, then the milestones by their median."""
+    p = res.get("project") or ""
+    out = ["  the chain of each group (most futures): criticality index, share of futures in which the item lies on "
+           "the chain that sets the group's finish (Van Slyke 1963)"]
+    rows = [("backlog", (res.get("backlog") or {}).get("chain"))]
+    ms = sorted((m for m in res.get("milestones") or [] if m.get("chain")),
+                key=lambda m: ((m.get("days") or (m.get("part") or {}).get("days") or {}).get("p50", math.inf),
+                               m["id"]))
+    rows += [(m["id"], m["chain"]) for m in ms]
+    width = max([len(r[0]) for r in rows] + [14])
+    out += [f"  {g:<{width}} {chain_text(c, p, res)}" for g, c in rows if c]
+    return out if len(out) > 1 else [*out, "  no chain: nothing simulated"]
+
+
+def _one_chain(res: dict, ref: str) -> list[str]:
+    """One group's chain, its members by their index (◆ on the chain), then the items of other groups on it."""
+    p = res.get("project") or ""
+    found = group_of(res, ref)
+    if found is None:
+        raise ForecastError(f"--critical {ref}: no such milestone in the forecast (an id, its short name, backlog or -)")
+    gid, block = found
+    chain = block.get("chain")
+    name = {BACKLOG: "backlog", "": "(no milestone)"}.get(gid, gid)
+    out = [f"  {name}: {chain_text(chain, p, res) or 'no chain: nothing simulated'}"]
+    by = {i["id"]: i for i in res.get("items") or []}
+    members = [i for i in res.get("items") or [] if gid in (i.get("critical") or {})]
+    on = set((chain or {}).get("items") or [])
+    out.append("  ◆ on its chain · criticality index · start and end p10–p90 (d)")
+    for i in sorted(members, key=lambda i: (-(i["critical"].get(gid) or 0), i["id"])):
+        out.append(_critical_row(i, gid, i["id"] in on, p))
+    return out + _outside(chain, gid, by, p)
+
+
+def _outside(chain: dict | None, gid: str, by: dict[str, dict], project: str) -> list[str]:
+    """The items of other groups on a group's chain (a lane they held, a dependency outside it), named in one line."""
+    outside = [nid for nid in (chain or {}).get("items") or []
+               if nid not in by or gid not in (by[nid].get("critical") or {})]
+    if not outside:
+        return []
+    names = ", ".join(_short_id(x, project) for x in outside[:CHAIN_SHOWN]) + (
+        ", …" if len(outside) > CHAIN_SHOWN else "")
+    return [f"  and {len(outside)} item(s) of other groups on its chain: {names}"]
+
+
+def _critical_row(it: dict, gid: str, on: bool, project: str) -> str:
+    st, dt = (it.get("start") or {}).get("dates"), it.get("dates")
+    when = (f"start {_md(st['p10'])}–{_md(st['p90'])}" if st else "start -") + (
+        f", end {_md(dt['p10'])}–{_md(dt['p90'])}" if dt else "")
+    crit = f"{(it.get('critical') or {}).get(gid, 0):.0%}"
+    return f"  {'◆' if on else ' '} {_short_id(it['id'], project):<40} {it.get('priority') or '-':<4} {crit:>5}  {when}"
 
 
 # --- brain queue: what a day of waiting costs (wi-brain-queue-priority) ---

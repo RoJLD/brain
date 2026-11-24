@@ -263,12 +263,12 @@ foreign one is never written here.
 | `memory.load_state` | `memory-sync/state.json` | truth-local | through `brain.stateio` (the 3-way base) |
 | `cockpit.snapshot_of`, `sessions.snapshot` | `sessions/<id>.json` | truth-local | read-only here, `{}` is right; its writer, the Stop hook (`capture.stop`), through `brain.stateio` |
 | `sessions.read_report` | `sessions/<id>.report.json` | truth-local | read-only here; `sessions.write_report` through `brain.stateio` |
-| `sessions.watch_state` | `budget/<session>.json` | truth-local, one session's life | read-only here; its writer, the budget hook's Python (`budget.check`), through `brain.stateio` |
+| `sessions.watch_state` | `budget/<session>.json` | truth-local, one session's duration | read-only here; its writer, the budget hook's Python (`budget.check`), through `brain.stateio` |
 | `sessions.app_meta` | the desktop app's session file | foreign, read only | `{}` is right: never written |
 | `codemap.read` | `code-map/<project>.json` | derived (local) | `{}` is right: rebuilt |
 | `codeindex.read_record` | `code-index.json` | derived (local) | `{}` is right: rebuilt |
 | `cbm.read_record` | `code-index/cbm/record.json` | derived (local) | `{}` is right: rebuilt (`brain index --backend cbm`) |
-| `forecast.load_latest` | `forecast/<project>/latest.json` | derived (local) | `{}` is right: rebuilt |
+| `forecast.load_latest` | `forecast/<project>/latest.json` | derived (local) | `{}` is right: rebuilt. Its layout is `forecast` (1), its method `code.model`: model 3 (0.7.0) adds `start`, `hours` and `critical` per item, `chain` per milestone and on `backlog` and `no_milestone`, and `past`, all additive: an older engine reads it without them, and the cockpit reads a model-2 file with its finish bands alone and no `crit.` |
 | `quota.load_status` | the quota forecast | derived (local) | `{}` is right: rebuilt |
 | `update._read_cache` | `update.json` | derived (local) | `{}` is right: the tags are asked again |
 | `net.blocked`, `net.failed` | `net/breakers.json` | truth-local | through `brain.stateio`; losing it costs one timeout per service |

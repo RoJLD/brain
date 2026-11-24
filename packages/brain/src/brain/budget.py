@@ -64,7 +64,7 @@ from pathlib import Path
 from . import paths, stateio, transcript, usage
 
 DIR = "budget"
-STATE_V = 1  # <session>.json's v (brain.stateio: truth-local, one session's life)
+STATE_V = 1  # <session>.json's v (brain.stateio: truth-local, one session's duration)
 STEPS = (80, 100)
 MASTER_STEPS = (70, 80, 90, 100)  # a master's (ST-3)
 CHILD_K = 22_000  # the context a child costs its master when the family gives too few starts to measure (16k-28k)

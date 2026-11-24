@@ -2,6 +2,8 @@
 the honesty bar of §4.4 (PSY-2), its reproducible JSON (§6), the brain status line and the Monday snapshot (PSY-5)."""
 
 import json
+import random
+from collections import Counter
 from datetime import datetime, timezone
 
 import pytest
@@ -142,7 +144,9 @@ def test_an_item_in_a_wave_and_a_thematic_milestone_keeps_both(project):
     loose = sorted(i["id"] for i in model["items"] if not i["milestone"])
     assert "wi-p2" in loose and "wi-p1" not in loose and res["no_milestone"]["open"] == len(loose)
     ms = {m["id"]: m for m in res["milestones"]}
-    assert ms["wave-s9"]["open"] == 2 and ms["ms-x"]["open"] == 2   # wi-p1 counted in both
+    assert ms["ms-x"]["open"] == 2   # wi-p1 counted in both
+    # a wave's members are the items in it now (wi-brain-forecast-starts-critical): wi-carry, carried in, counts
+    assert ms["wave-s9"]["open"] == 3 and "wave-s9" in out["wi-carry"]["critical"]
     # the slip of a day of waiting reads every milestone of the item: the tightest one sets it
     fc = {"milestones": [{"id": "ms-x", "days": {"p50": 30.0}}, {"id": "wave-s9", "days": {"p50": 5.0}}],
           "items": [{"id": "wi-p1", "milestone": "ms-x", "parents": ["ms-x", "wave-s9"], "days": {"p50": 4.0}}]}
@@ -286,3 +290,199 @@ def test_cli_forecast_and_the_monday_snapshot(project, capsys):
     assert len(snaps) == 1 and snaps[0]["project"] == name and snaps[0]["milestones"]
     with pytest.raises(SystemExit):
         cli.main(["--root", root, "forecast", "--runs", "0"])
+
+
+# --- wi-brain-forecast-starts-critical: the starts, the criticality index and the chains (MODEL_V 3) ---
+
+def test_the_scheduler_traces_what_each_start_waited_on():
+    # one lane: 0 at once; 2 after its dependency 0; 1 released by a gate at 5 h
+    trace = {}
+    done = forecast._schedule([2.0, 2.0, 2.0], [True] * 3, [0.0, 5.0, 0.0], [[], [], [0]], [[2], [], []], 1,
+                              trace=trace)
+    assert done == [2.0, 7.0, 4.0]
+    assert trace == {"start": [0.0, 5.0, 2.0], "pred": [-1, -1, 0], "by": ["now", "gate", "dependency"]}
+    # two items and one lane: the second waits for the lane the first frees
+    trace = {}
+    forecast._schedule([2.0, 3.0], [True, True], [0.0, 0.0], [[], []], [[], []], 1, trace=trace)
+    assert trace["start"] == [0.0, 2.0] and trace["pred"] == [-1, 0] and trace["by"] == ["now", "lane"]
+    # no trace asked: the finishes alone, as before
+    assert forecast._schedule([1.0], [True], [0.0], [[]], [[]], 1) == [1.0]
+
+
+def test_a_gate_counted_from_an_items_end_keeps_the_chain_going_through_that_item():
+    # a Go/NoGo's lag after the dependency: wi-1 waits 2 days after wi-0's end, so wi-0's end sets its start
+    cal = forecast._Calendar(random.Random(1), [4.0], 1)
+    trace = {}
+    forecast._schedule([8.0, 2.0], [True, True], [0.0, 0.0], [[], [0]], [[1], []], 1, [0.0, 2.0], cal, trace=trace)
+    assert trace["pred"] == [-1, 0] and trace["by"] == ["now", "gate"]
+    assert forecast._walk(1, trace["pred"], {}, 2) == (0, 1)
+    assert forecast.bound({"items": ["a", "b"], "by": trace["by"]}) == "dependency-bound"
+    # a calendar from an item's end (wi-2 waits 5 days from wi-0's end): wi-0 again
+    trace = {}
+    forecast._schedule([2.0, 2.0, 2.0], [True] * 3, [0.0] * 3, [[], [], [0, 1]], [[2], [2], []], 1,
+                       [0.0] * 3, cal, {0: [(2, 5.0)]}, trace=trace)
+    assert trace["pred"][2] == 0 and trace["by"][2] == "gate"
+    # an absolute gate (a DDR's delay, a calendar day) still heads its chain: « after a gate »
+    trace = {}
+    forecast._schedule([2.0, 2.0], [True, True], [0.0, 5.0], [[], [0]], [[1], []], 1, [0.0, 0.0], cal, trace=trace)
+    assert trace["pred"][1] == -1 and trace["by"][1] == "gate"
+    # an item left out: the calendar counted from it runs from now, no chain through it
+    trace = {}
+    forecast._schedule([2.0, 2.0], [False, True], [0.0, 0.0], [[], [0]], [[1], []], 1, [0.0, 0.0], cal,
+                       {0: [(1, 1.0)]}, trace=trace)
+    assert trace["pred"][1] == -1 and trace["by"][1] == "gate"
+
+
+def test_a_lagged_go_no_go_puts_its_dependency_on_the_milestones_chain():
+    m = model(n=2)
+    m["items"][1]["deps"] = ["wi-0"]
+    m["items"][1]["gates"] = [{"label": "go/no-go", "kind": "decision", "decision": True}]
+    m["delays_h"] = [48.0]
+    m["milestones"][0]["members"] = ["wi-1"]
+    res = forecast.run(m, 50, seed=2)
+    items = {i["id"]: i for i in res["items"]}
+    chain = next(x for x in res["milestones"] if x["id"] == "ms-a")["chain"]
+    assert chain["items"] == ["wi-0", "wi-1"] and chain["by"][1] == "gate"
+    assert items["wi-0"]["critical"]["*"] == 1.0 and forecast.bound(chain) == "dependency-bound"
+    assert "after a gate" not in forecast.chain_text(chain)
+
+
+def test_a_chains_labels_are_its_most_frequent_not_its_first():
+    out = {"finish": {"wi-0": [], "wi-1": []}, "mgate": {}, "chains": {"*": Counter()}, "on_chain": {"*": Counter()},
+           "gated": Counter(), "path_id": {}, "links": []}
+    tasks = [{"id": "wi-0"}, {"id": "wi-1"}]
+    for head in ("now", "gate", "gate"):   # the same two items; its head released by a gate in 2 futures of 3
+        forecast._chains(out, {"*": [0, 1]}, [1.0, 2.0], [True, True], {"pred": [-1, 0], "by": [head, "dependency"]},
+                         tasks)
+    assert sum(out["chains"]["*"].values()) == 3 and len(out["links"]) == 1
+    forecast._tally(out, ["wi-0", "wi-1"])
+    assert out["chains"]["*"] == Counter({(("wi-0", "wi-1"), ("gate", "dependency")): 3})
+    assert out["on_chain"]["*"] == Counter({"wi-0": 3, "wi-1": 3})
+    chain = forecast._chain({"runs": 3, **out}, "*")
+    assert chain["by"] == ["gate", "dependency"] and chain["share"] == 1.0
+    assert "after a gate" in forecast.chain_text(chain)
+
+
+def test_a_milestones_calendar_from_an_item_takes_that_items_chain():
+    out = {"finish": {"wi-0": [1.0], "wi-1": [3.0]}, "mgate": {"ms-a": [(8.0, 0.0)]}, "mgate_by": {"ms-a": [1]},
+           "chains": {"ms-a": Counter()}, "on_chain": {"ms-a": Counter()}, "gated": Counter(), "path_id": {},
+           "links": []}
+    forecast._chains(out, {"ms-a": [0]}, [1.0, 3.0], [True, True], {"pred": [-1, -1], "by": ["now", "now"]},
+                     [{"id": "wi-0"}, {"id": "wi-1"}])
+    assert not out["gated"]["ms-a"] and out["links"] == [(1,)] and sum(out["chains"]["ms-a"].values()) == 1
+
+
+def _chain_model(lanes=4):
+    m = model(n=4, capacity={"days": [{"day": "2026-11-02", "hours": 8.0, "lanes": lanes}], "since": "2026-11-02"})
+    a, b, c, d = m["items"]
+    b["deps"], c["deps"] = ["wi-0"], ["wi-1"]          # a known chain: wi-0 → wi-1 → wi-2
+    d["hours"] = {"p25": 0.05, "median": 0.1, "p75": 0.15}   # wi-3 alone, far shorter
+    return m
+
+
+def test_a_known_chain_gets_index_one_and_is_the_milestones_chain():
+    res = forecast.run(_chain_model(), 200, seed=3)
+    items = {i["id"]: i for i in res["items"]}
+    assert [items[k]["critical"]["ms-a"] for k in ("wi-0", "wi-1", "wi-2", "wi-3")] == [1.0, 1.0, 1.0, 0.0]
+    assert set(items["wi-0"]["critical"]) == {"ms-a", "*"}   # every group it is a member of
+    chain = next(m for m in res["milestones"] if m["id"] == "ms-a")["chain"]
+    assert chain == {"items": ["wi-0", "wi-1", "wi-2"], "by": ["now", "dependency", "dependency"],
+                     "index": [1.0, 1.0, 1.0], "share": 1.0, "gated": 0.0}
+    assert res["backlog"]["chain"]["items"] == chain["items"] and forecast.bound(chain) == "dependency-bound"
+    # each item's start: after its dependency's end, as p10-p90 days and dates; its drawn hours
+    s0, s1 = items["wi-0"]["start"], items["wi-1"]["start"]
+    assert s0["days"]["p90"] == 0.0 and s1["days"]["p10"] > 0 and set(s1["dates"]) == {"p10", "p50", "p80", "p90"}
+    assert s1["days"]["p50"] <= items["wi-1"]["days"]["p50"] and items["wi-3"]["hours"]["p90"] < 1.0
+    assert res["code"]["model"] == forecast.MODEL_V == 3 and res["forecast"] == forecast.FORMAT == 1
+
+
+def test_one_lane_makes_the_chain_capacity_bound():
+    m = model(n=3, capacity={"days": [{"day": "2026-11-02", "hours": 8.0, "lanes": 1}], "since": "2026-11-02"})
+    res = forecast.run(m, 100, seed=1)
+    chain = res["backlog"]["chain"]
+    assert chain["items"] == ["wi-0", "wi-1", "wi-2"] and chain["by"] == ["now", "lane", "lane"]
+    assert forecast.bound(chain) == "capacity-bound"
+    text = forecast.chain_text(chain, "demo", res)
+    assert text.startswith("wi-0 100% → wi-1 100% → wi-2 100%") and "capacity-bound: 1 lane(s)" in text
+
+
+def test_a_milestone_whose_own_gate_sets_its_finish_has_no_chain_in_that_future():
+    out = {"finish": {"wi-0": [1.0]}, "mgate": {"ms-a": [(9.0, 0.0)]}, "chains": {"ms-a": Counter()},
+           "on_chain": {"ms-a": Counter()}, "gated": Counter()}
+    forecast._chains(out, {"ms-a": [0]}, [1.0], [True], {"pred": [-1], "by": ["now"]}, [{"id": "wi-0"}])
+    assert out["gated"]["ms-a"] == 1 and not out["chains"]["ms-a"]
+    sim = {"runs": 1, **out}
+    assert forecast._chain(sim, "ms-a") == {"items": [], "by": [], "index": [], "share": 0.0, "gated": 1.0}
+    assert "its own gate sets its finish in 100%" in forecast.chain_text(forecast._chain(sim, "ms-a"))
+
+
+def test_the_new_keys_are_additive_and_an_older_result_still_reads():
+    res = forecast.run(_chain_model(), 50, seed=1)
+    old_item = {"id", "priority", "milestone", "wave", "parents", "status", "basis", "kept", "days", "dates", "ddr",
+                "action", "gates", "due", "late"}
+    assert old_item <= set(res["items"][0]) and {"start", "hours", "critical"} <= set(res["items"][0])
+    assert "chain" in res["milestones"][0] and "chain" in res["backlog"] and "past" in res
+    # a model-2 result (no start, critical, chain): the readers degrade, never fail
+    for it in res["items"]:
+        for k in ("start", "hours", "critical"):
+            it.pop(k)
+    for blk in (*res["milestones"], res["backlog"], res["no_milestone"]):
+        blk.pop("chain")
+    lines = forecast.critical_lines(res)
+    assert lines[-1] == "  no chain: nothing simulated"
+    assert "no chain" in "\n".join(forecast.critical_lines(res, "ms-a"))
+    assert forecast.waiting(res, ["wi-0"])["items"]
+
+
+def test_critical_lines_name_a_milestone_by_its_id_or_short_name():
+    res = forecast.run(_chain_model(), 50, seed=1)
+    assert forecast.group_of(res, "ms-a")[0] == "ms-a" and forecast.group_of(res, "backlog")[0] == "*"
+    assert forecast.group_of(res, "-")[0] == "" and forecast.group_of(res, "nope") is None
+    one = forecast.critical_lines(res, "ms-a")
+    assert one[1].startswith("  ms-a: wi-0 100% → wi-1 100% → wi-2 100%")
+    assert any(x.startswith("  ◆ wi-0") for x in one) and any(x.startswith("    wi-3") for x in one)
+    every = forecast.critical_lines(res)
+    assert any(x.startswith("  backlog") for x in every) and any(x.startswith("  ms-a") for x in every)
+    with pytest.raises(forecast.ForecastError):
+        forecast.critical_lines(res, "nope")
+
+
+def test_the_past_keeps_the_ledgers_first_session_and_done_day(project):
+    m = forecast.gather(project, ledger(project), NOW)
+    assert m["past"] == {}   # no done or doing member of an open milestone has a session here
+    led = ledger(project)
+    it = cost.Item("wi-h1", "demo", "Build H1", "done", "", "", "build", {"done": "2026-10-30"})
+    it.sessions = [(rows()[0], 1.0)]
+    led.items["wi-h1"] = it
+    past = forecast._past(led, {"wi-h1": "done", "wi-p1": "todo"}, {"wi-h1", "wi-p1"})
+    assert past == {"wi-h1": {"first": "2026-10-30", "done": "2026-10-30", "hours": 1.0, "sessions": 1}}
+
+
+def test_cli_forecast_critical(project, capsys):
+    saved = {f"p/{r['session_id']}.jsonl": r for r in rows()}
+    for r in saved.values():
+        r["folder"] = str(project.root)
+    usage.save(saved)
+    root = str(project.root)
+    assert cli.main(["--root", root, "forecast", "--runs", "30", "--no-scan", "--critical"]) == 0
+    out = capsys.readouterr().out
+    assert "--critical:" in out and "Van Slyke" in out and "  backlog" in out
+    assert cli.main(["--root", root, "forecast", "--runs", "30", "--no-scan", "--critical", "backlog"]) == 0
+    assert "  backlog: " in capsys.readouterr().out
+    assert cli.main(["--root", root, "forecast", "--runs", "30", "--no-scan", "--critical", "ms-nope"]) == 2
+    assert "no such milestone" in capsys.readouterr().err
+
+
+def test_an_item_of_another_milestone_holding_the_lane_lies_on_the_chain_outside_the_group():
+    m = model(n=3, capacity={"days": [{"day": "2026-11-02", "hours": 8.0, "lanes": 1}], "since": "2026-11-02"})
+    m["items"][0].update(priority="P0", milestone="ms-b")   # served first, in the one lane, but not ms-a's
+    m["milestones"] = [{"id": "ms-a", "title": "A", "members": ["wi-1", "wi-2"], "done": 0, "durations": []},
+                       {"id": "ms-b", "title": "B", "members": ["wi-0"], "done": 0, "durations": []}]
+    res = forecast.run(m, 50, seed=2)
+    chain = next(x for x in res["milestones"] if x["id"] == "ms-a")["chain"]
+    assert chain["items"] == ["wi-0", "wi-1", "wi-2"] and chain["by"] == ["now", "lane", "lane"]
+    w0 = next(i for i in res["items"] if i["id"] == "wi-0")
+    assert "ms-a" not in w0["critical"] and w0["critical"]["ms-b"] == 1.0
+    lines = forecast.critical_lines(res, "ms-a")
+    assert lines[-1] == "  and 1 item(s) of other groups on its chain: wi-0"
+    assert not any(x.startswith("  ◆ wi-0") for x in lines)
