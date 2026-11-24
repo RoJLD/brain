@@ -7,7 +7,8 @@ gathered without a model is gathered here, at zero token:
 - ``brain review prep [PR | BASE..HEAD] [--item ID]`` writes the packet: the diff, the touched files at the head, the
   scout's output (``brain audit --diff``), the lenses chosen from the touched surfaces, the invariants and failure
   modes to test (brain.failuremodes: the brief's section, from the diff and the item's), and a README that says how
-  to run them;
+  to run them; with the procedure lens, the pairs of texts at or above ``overlap.warn`` that a touched file takes
+  part in (brain.overlap, read from the checkout's files), so that lens sees a rule or a note restated elsewhere;
 - ``brain review stamp HEAD --findings N --fixed M [--contested K] [--note FILE]`` records that the review ran on that
   head, with its counts (the error score's record, wi-brain-review-error-score);
 - ``brain review rounds PR`` lists the review rounds of a PR from its stamps (one stamp per head reviewed) and says
@@ -32,7 +33,7 @@ from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
 
-from . import failuremodes, paths
+from . import failuremodes, overlap, paths
 
 FOLDER = "reviews"
 MAX_FILE = 400_000   # a touched file larger than this is listed, not copied
@@ -197,6 +198,8 @@ def prep(repo: Path, target: str = "", out: Path | None = None, scout: bool = Tr
                failure_modes=section)
     if p.standards:
         p.lenses.append("standards")
+    if "procedure" in p.lenses:   # the texts a touched rule, procedure or note restates (wi-brain-rule-overlap)
+        p.notes += overlap.review_notes(repo, files)
     for f in files:
         r = subprocess.run(["git", "show", f"{head}:{f}"], cwd=repo, capture_output=True)
         if r.returncode:   # deleted at the head

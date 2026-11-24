@@ -339,6 +339,16 @@
         "strict": {"type": "boolean", "description": "The owner's opt-in to the one writer's rules: true, brain check and brain refresh fail (exit 1) on a stale view on the default branch, and brain audit --write, coverage --write, features render --write, decision view --write and modules --write refuse an engine other than engine.pin (unless --force); default false: a stale view on the default branch is a warning, and those writers write with any engine. brain views --write holds its own output to the strict rules either way."}
       }
     },
+    "overlap": {
+      "type": "object", "additionalProperties": false,
+      "description": "The overlap check of brain check: a rule, procedure or memory note restated in another, by entity-neutral 8-word shingles (brain.overlap, docs/overlap.md). A warning, never an error.",
+      "properties": {
+        "roots": {"type": "array", "items": {"type": "string", "minLength": 1}, "description": "The Markdown texts compared, as globs relative to the brain's root. Default: <source>/rules/**/*.md, <source>/procedures/**/*.md and <memory>/**/*.md (config.json source and memory). A rendered copy (a plugin's skills or rules, AGENTS.md) is no root: it repeats its source by design."},
+        "exclude": {"type": "array", "items": {"type": "string", "minLength": 1}, "description": "Globs of the files under the roots left out, relative to the brain's root. Default: **/MEMORY.md (the memory's index of one-line pointers)."},
+        "warn": {"type": "number", "minimum": 0, "maximum": 100, "description": "The warning level, in percent: a pair of units whose shared shingles are at least this share of the smaller unit's is a warning of brain check. Default 20."},
+        "min_shingles": {"type": "integer", "minimum": 1, "description": "A unit (a ## section, or a file without one) with fewer shingles is not scored. Default 10 (about 17 words)."}
+      }
+    },
     "hints": {
       "type": "object", "additionalProperties": false,
       "description": "The opt-in hooks that hint, never refuse: brain render --target claude (brain sync) registers each only when it is true.",

@@ -7,7 +7,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from .. import docjoin, public
+from .. import docjoin, overlap, public
 from ._common import _project, _scope, _store, root_of
 from ._stores import _check_store, _each_store, _merge_marks, _registry_scope, _registry_too, check_registry
 
@@ -21,7 +21,8 @@ USAGE = """\
                         views.strict; one views: line on another branch; a warning outside git; brain views,
                         docs/views.md), members.yaml and the owner-decides answers' signatures (brain identity:
                         warnings, errors under config.json identity.require_signed; nothing without members.yaml,
-                        docs/identity.md), then research_graph check (given
+                        docs/identity.md), a text of the brain restating another (config.json overlap: a warning,
+                        docs/overlap.md), then research_graph check (given
                         the project's other repos' checkouts, where the anchors of their Doc, Test and Workflow nodes are read); --all: every
                         project's, then the registry
                         (its keys, repos, stacks, code_index), the tier registry (every capability and stack declares
@@ -72,6 +73,8 @@ def _cmd_check(args, root: Path) -> int:
         print("== registry")
         rc = check_registry(root, _registry_scope(root)) or rc
         for line in docjoin.check_lines(root, _project(args, root).name):   # a document under docgraph/ the join leaves out (wi-brain-docgraph-read)
+            print(f"warning: {line}")
+        for line in overlap.check_lines(root):   # a text restated in another (wi-brain-rule-overlap)
             print(f"warning: {line}")
     return rc
 
