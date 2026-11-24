@@ -12,7 +12,10 @@ cursor on the same key, and the sessions read again redraw it when the session o
 tui.json with the tab's view. Under 120 columns a milestone's row drops its bar.
 
 Trajectories keys: ``[`` a finer scale, ``]`` a coarser one (days a cell, ``planbands.SCALES``), ``←``/``→`` pan a week,
-Enter a milestone's detail; a refresh keeps the scale, the pan and the cursor's row.
+``z`` or Enter on a milestone's, an era's or a wave's row its item level (wi-brain-tui-trajectories-items: its items as
+Gantt lanes, ``planbands.item_chart``), where ``c`` marks the critical chain with ``◆`` (and the heading says it),
+Enter opens an item's detail (on the heading, the milestone's), ``Z`` or Escape goes back to the milestones (Escape
+there: the cockpit's own back); a refresh keeps the level, the chain's mark, the scale, the pan and the cursor's row.
 """
 
 from __future__ import annotations
@@ -69,7 +72,9 @@ class TrajView(OptionList):
 
     BINDINGS = [Binding("left_square_bracket", "scale(-1)", "Finer", key_display="["),
                 Binding("right_square_bracket", "scale(1)", "Coarser", key_display="]"),
-                Binding("left", "pan(-1)", "Earlier", show=False), Binding("right", "pan(1)", "Later", show=False)]
+                Binding("left", "pan(-1)", "Earlier", show=False), Binding("right", "pan(1)", "Later", show=False),
+                Binding("z", "zoom_in", "Items"), Binding("Z", "zoom_out", "Milestones", key_display="Z"),
+                Binding("c", "chain", "Critical chain"), Binding("escape", "out", "Back", show=False)]
 
     def __init__(self, **kw) -> None:
         super().__init__(**kw)
@@ -78,15 +83,27 @@ class TrajView(OptionList):
         self.panel: dict | None = None
         self.rows: dict[str, dict] = {}
         self.at: str | None = None        # the row to put the cursor on at the next draw (Enter on a Tree milestone)
+        self.level: str | None = None     # the milestone row whose items are shown (z, Enter); None: the milestones
+        self.chain_on = False             # c: the critical chain marked
 
     def _width(self) -> int:
         return max(60, (self.scrollable_content_region.width or self.size.width or cockpit.NARROW_COLUMNS) - 1)
 
+    def _cells(self) -> int:
+        w = self._width()
+        return planbands.item_cells(w) if self.level else planbands.cells(w)
+
     def show(self, panel: dict | None) -> None:
-        """The rows of ``panel`` at the frame's width, the cursor on the same row (or on ``at``)."""
+        """The rows of ``panel`` at the frame's width (the item level of ``level``, when its row is still there), the
+        cursor on the same row (or on ``at``)."""
         self.panel = panel
+        if self.level and _level_of(panel, self.level) is None:   # gone from the forecast: back to the milestones
+            self.at, self.level = self.at or self.level, None
         key = self.at or _option_id(self)
-        options, self.rows = traj_options(panel, self._width(), self.scale, self.pan_at)
+        if self.level:
+            options, self.rows = item_options(panel, self.level, self._width(), self.scale, self.pan_at, self.chain_on)
+        else:
+            options, self.rows = traj_options(panel, self._width(), self.scale, self.pan_at)
         self.clear_options()
         self.add_options(options)
         index = next((k for k, o in enumerate(options) if key and o.id == key), None)
@@ -94,26 +111,60 @@ class TrajView(OptionList):
             index = next((k for k, o in enumerate(options) if not o.disabled), None)
         self.highlighted = index
         self.at = None
-        self.border_subtitle = planbands.legend(planviews.words())
+        words = planviews.words()
+        self.border_subtitle = planbands.item_legend(words, self.chain_on) if self.level else planbands.legend(words)
 
     def action_scale(self, step: int) -> None:
-        old = self.scale or planbands.default_scale(planbands.cells(self._width()))
+        old = self.scale or planbands.default_scale(self._cells())
         self.scale = planbands.zoom(old, step)
         self.pan_at = planbands.rescaled(self.pan_at, old, self.scale)
         self.show(self.panel)
 
     def action_pan(self, step: int) -> None:
-        scale = self.scale or planbands.default_scale(planbands.cells(self._width()))
+        scale = self.scale or planbands.default_scale(self._cells())
         self.pan_at = planbands.pan(self.pan_at, scale, step)
         self.show(self.panel)
 
+    def action_zoom_in(self) -> None:
+        """z: the highlighted milestone's, era's or wave's items."""
+        r = self.rows.get(_option_id(self) or "")
+        if not self.level and r and r["kind"] in MILESTONE_KINDS and _level_of(self.panel, r["key"]) is not None:
+            self.level = r["key"]
+            self.show(self.panel)
+
+    def action_zoom_out(self) -> None:
+        """Z: back to the milestones, the cursor on the row zoomed."""
+        if self.level:
+            self.at, self.level = self.level, None
+            self.show(self.panel)
+
+    def action_out(self) -> None:
+        """Escape: out of the item level, else the cockpit's own back (the search, a full view, the overview)."""
+        if self.level:
+            self.action_zoom_out()
+        else:
+            self.app.action_back()
+
+    def action_chain(self) -> None:
+        """c: the critical chain marked (◆) on the item level, its line in the heading; again: unmarked."""
+        if self.level:
+            self.chain_on = not self.chain_on
+            self.show(self.panel)
+
     def on_option_list_option_selected(self, event: OptionList.OptionSelected) -> None:
-        """Enter on a milestone's, an era's or a wave's row: its detail."""
+        """Enter on a milestone's, an era's or a wave's row: its items; on an item, its detail; on the item level's
+        heading, the milestone's detail."""
         event.stop()
         r = self.rows.get(event.option.id or "")
-        if r and r["kind"] in MILESTONE_KINDS:
+        if not r:
+            return
+        if r["kind"] == "item":
+            self.app.open_detail("frontier", {"id": r["id"], "project": r["project"]})
+        elif r["kind"] in MILESTONE_KINDS and self.level:
             self.app.open_detail("milestones", {"id": r["id"], "project": r["project"], "done": r.get("done", 0),
                                                 "items": r.get("items", 0), "title": r.get("title", "")})
+        elif r["kind"] in MILESTONE_KINDS:
+            self.action_zoom_in()
 
 
 def _option_id(view: OptionList) -> str | None:
@@ -140,6 +191,39 @@ def traj_options(panel: dict | None, width: int, scale: float | None, offset: in
             rows[r["key"]] = r
     if not groups:
         options.append(Option(Text("not read yet"), disabled=True))
+    return options, rows
+
+
+def _level_of(panel: dict | None, key: str) -> dict | None:
+    """The item level of the row ``key`` (``<project>:<milestone>``), None when the forecast has none."""
+    for g in (panel or {}).get("projects") or []:
+        lv = ((g.get("bands") or {}).get("levels") or {}).get(key)
+        if lv is not None:
+            return lv
+    return None
+
+
+def item_options(panel: dict | None, key: str, width: int, scale: float | None, offset: int,
+                 chain: bool) -> tuple[list[Option], dict]:
+    """The item level's options: its heading (Enter: the milestone's detail), the chain's line when marked, the dates'
+    row, then its groups and items (a chain's item bold when marked); {key: row}."""
+    lv = _level_of(panel, key)
+    if lv is None:
+        return [Option(Text("not read yet"), disabled=True)], {}
+    g = next(g for g in (panel or {}).get("projects") or [] if key in ((g.get("bands") or {}).get("levels") or {}))
+    b = g.get("bands") or {}
+    head_row = {"key": key, "kind": lv["kind"], "id": lv["id"], "project": lv["project"], "done": lv.get("done", 0),
+                "items": lv.get("items", 0), "title": lv.get("title", "")}
+    options = [Option(Text(planbands.level_heading(lv, b.get("heading", ""))), id=key)]
+    rows = {key: head_row}
+    head, drawn = planbands.item_chart(lv, b.get("as_of"), width, scale, offset, chain=chain)
+    options += [Option(Text(x), disabled=True) for x in head]
+    for r, text in drawn:
+        if r["kind"] == "group":
+            options.append(Option(Text(text, style="bold"), disabled=True))
+            continue
+        options.append(Option(Text(text, style="bold" if chain and r.get("on_chain") else ""), id=r["key"]))
+        rows[r["key"]] = r
     return options, rows
 
 
@@ -239,7 +323,8 @@ class PlanTreeApp:
 
     def _open_milestone(self, data: dict) -> None:
         if data.get("key") in band_keys(self.cockpit.snapshot()["panels"].get("plan")):
-            self._q("#traj", TrajView).at = data["key"]
+            view = self._q("#traj", TrajView)
+            view.at, view.level = data["key"], None   # its row among the milestones, out of an item level
             self.action_set_view("trajectories")
             return
         self.open_detail("milestones", {"id": data["id"], "project": data["project"], "done": data.get("done", 0),

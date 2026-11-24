@@ -64,7 +64,10 @@ def test_the_override_cannot_lift_it_not_even_all(work, brain_home, monkeypatch)
 def test_the_category_is_never_grantable(work):
     cats = permissions.default_categories()
     assert "security-settings" in {c.name for c in cats}
-    assert permissions.never_rule("mcp__ccd_session_mgmt__set_remote_control", cats) == "security-settings"
+    assert permissions.never_rule("mcp__x__set_remote_control", cats) == "security-settings"
+    # the exact rule of the app's own server is guard-bounded (GUARD_BOUNDED, test_guards_archive), its text is not
+    assert permissions.never_rule("mcp__ccd_session_mgmt__set_remote_control", cats) == ""
+    assert permissions.never_category("mcp__ccd_session_mgmt__set_remote_control", cats) == "security-settings"
     assert permissions.never_rule("mcp__ccd_session_mgmt__set_session_permission_mode", cats) == "security-settings"
     assert permissions.never_category("turn on Remote Control for the session", cats) == "security-settings"
     assert permissions.never_category("switch it to bypassPermissions", cats) == "security-settings"

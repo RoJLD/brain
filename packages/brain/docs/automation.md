@@ -47,8 +47,9 @@ the Settings page (S4) and the ask answered from the queue (S5) are their own it
 
 The Commands column is each gesture's `commands`, the engine's commands that run it; a gesture the app runs (an
 archive, Remote Control, a merge, a workflow) or the owner does outside the engine has none. Its conditions are in
-`brain automation list`. No guard sees an archive call itself, only the Remote Control off before it (the guard's
-archive case, `wi-brain-guard-rc-archive`).
+`brain automation list`. The guard holds `session-archive`'s and `handover-remote-control`'s conditions
+(`brain.guards.archive` and `remote_control`, docs/guards.md « The archive case »): an owner's allow rule lifts the
+app's card inside them, and only there (`wi-brain-coordinator-handover-no-prompt`); the engine's default stays `ask`.
 
 | Id | Runs | Ceiling | Default | Floor | Commands |
 |---|---|---|---|---|---|

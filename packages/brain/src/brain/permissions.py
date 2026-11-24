@@ -108,7 +108,8 @@ NEVER = (
     # A session's Remote Control and permission mode (wi-brain-guard-session-settings): the guards refuse the desktop
     # app's tools that change them, and BRAIN_GUARD_ALLOW cannot lift that refusal (brain.guards.UNLIFTED). No allow
     # rule grants it either: Remote Control's three exceptions are the guard's own checks (brain.guards.remote_control,
-    # wi-brain-guard-rc-archive), never a permission.
+    # wi-brain-guard-rc-archive), never a permission; the one rule of GUARD_BOUNDED only lifts the app's card inside
+    # them.
     ("security-settings", r"\bsecurity[ -]settings?\b|(?<![a-z])remote[ _-]?control\b|\bpermission[ _-]?modes?\b",
      r"\bsecurity[ -]settings?\b|(?<![a-z])remote[ _-]?control(?![a-z])|(?<![a-z])permission[ _-]?modes?(?![a-z])|"
      r"set_session_permission_mode|\bbypass ?permissions\b|\bt[ée]l[ée]commande\b|\bmode de permission"),
@@ -264,9 +265,194 @@ def never_category(text: str, cats: list[Category] | None = None) -> str:
     return ""
 
 
+# The allow rules a guard bounds (wi-brain-coordinator-handover-no-prompt; the owner's answer of 2026-11-18): the exact
+# text, the desktop app's own server, no wildcard. Remote Control at a coordinators' hand-over (brain.gestures
+# handover-remote-control, ceiling auto) is security-settings by its name, but brain.guards.remote_control refuses every
+# call outside its three cases, never lifted (UNLIFTED), and fails closed (an error, guard.sh without Python): the rule
+# only lifts the app's card inside them. Any other text naming Remote Control stays never grantable.
+GUARD_BOUNDED = {
+    "mcp__ccd_session_mgmt__set_remote_control": "brain.guards.remote_control: its three cases, every other call refused",
+}
+
+
+# The tools an allow rule lifts the app's card on only behind a guard (F3 of the review of
+# wi-brain-coordinator-handover-no-prompt): {tool: the guard's case}. Where the PreToolUse hooks Claude Code runs on this
+# machine do not send the tool to that guard (a locked floor's managed hooks, written by brain floor lock --apply before
+# the guard knew the tool; an installed plugin older than the engine), an allow rule covering it would let every call
+# through: it is withheld (:func:`withheld`), rendered as expired so that install.ps1 -Apply takes it out, and flagged
+# by brain permissions check, brain check and brain doctor.
+GUARD_REQUIRED = {
+    "mcp__ccd_session_mgmt__set_remote_control": "brain.guards.remote_control",
+    "mcp__ccd_session_mgmt__archive_session": "brain.guards.archive",
+}
+
+
+def guard_covers(text: str) -> list[str]:
+    """The tools of :data:`GUARD_REQUIRED` an allow rule's text lets through: the tool itself, its server
+    (``mcp__ccd_session_mgmt``, ``mcp__ccd_session_mgmt__*``) or a wildcard that matches it, with any specifier
+    (``Tool(*)``: an MCP tool takes none, so the rule is read as the tool's, fail closed)."""
+    import fnmatch
+    p = parse(text)
+    if not p:
+        return []
+    tool = p[0]
+    return [t for t in GUARD_REQUIRED if t == tool or t.startswith(tool + "__") or fnmatch.fnmatchcase(t, tool)]
+
+
+def guard_unseen(tool: str) -> str:
+    """'' when the PreToolUse hooks Claude Code runs on this machine send ``tool`` to the guard (``guard.sh tool``, or
+    its managed copy), else why not: with a floor lock (brain.floor.read_lock), its managed settings alone (their
+    allowManagedHooksOnly keeps the plugin's hooks from running); else the core plugin as Claude Code installed it
+    (``<claude home>/plugins/installed_plugins.json``: an install at user scope, every install's hooks; neither the
+    plugin disabled nor every hook off, disableAllHooks, in the user settings). What cannot be read is unseen: the
+    rule waits (fail closed). A project's own settings that turn the hooks off (disableAllHooks, GUARD_OFF) or disable
+    the plugin (enabledPlugins, brain.guards._plugin_off) are the guards' to refuse under config.json
+    guards.owner_strict, not read here."""
+    from . import floor
+    lock = floor.read_lock()
+    if lock is not None:
+        if lock.get("error"):
+            return f"the floor lock cannot be read ({lock['error']})"
+        f = Path(str(lock.get("managed") or floor.managed_file()))
+        why = _hooks_why(f, tool, managed=True)
+        return f"{why}: run brain floor lock --apply (elevated) with this engine" if why else ""
+    return _managed_off(floor.managed_dir()) or _plugin_unseen(tool)
+
+
+def _plugin_unseen(tool: str) -> str:
+    """:func:`guard_unseen` with no floor lock: the core plugin as Claude Code installed it."""
+    names = config.claude(config.load())
+    key = f"{names['plugin']}@{names['marketplace']}"
+    home = claude_home()
+    folders = _plugin_installs(home, key)
+    if isinstance(folders, str):
+        return folders
+    off = _user_off(home, key)
+    if off:
+        return off
+    why = next((w for w in (_hooks_why(d / "hooks" / "hooks.json", tool) for d in folders) if w), "")
+    return f"{why}: update the plugin {key} (install.ps1 -Apply)" if why else ""
+
+
+def _plugin_installs(home: Path, key: str) -> list[Path] | str:
+    """The install folders of the plugin ``key`` (installed_plugins.json), one at user scope among them, else why
+    not."""
+    missing = f"the plugin {key} is not installed in {home / 'plugins'} (installed_plugins.json)"
+    try:
+        data = json.loads((home / "plugins" / "installed_plugins.json").read_text(encoding="utf-8"))
+        installs = data["plugins"][key]
+        folders = [Path(str(i["installPath"])) for i in installs]
+        user = any(str(i.get("scope") or "user") == "user" for i in installs)
+    except (OSError, ValueError, KeyError, TypeError, AttributeError):
+        return missing
+    if not folders:
+        return missing
+    return folders if user else f"the plugin {key} is installed for some projects only (no user scope)"
+
+
+def _user_off(home: Path, key: str) -> str:
+    """Why the user settings keep the plugin's hooks from running (the plugin disabled, disableAllHooks), else ''."""
+    try:
+        data = json.loads((home / "settings.json").read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return ""
+    if not isinstance(data, dict):
+        return ""
+    enabled = data.get("enabledPlugins")
+    if isinstance(enabled, dict) and enabled.get(key) is False:
+        return f"the plugin {key} is disabled in {home / 'settings.json'}"
+    if data.get("disableAllHooks") is True:
+        return f"every hook is off in {home / 'settings.json'} (disableAllHooks)"
+    return ""
+
+
+def _managed_off(folder: Path) -> str:
+    """Why Claude Code's managed settings (``managed-settings.json`` and ``managed-settings.d/*.json`` in ``folder``)
+    keep the plugin's hooks from running with no floor lock (``disableAllHooks``, ``allowManagedHooksOnly``), else
+    ''. A file that cannot be read says so: unseen."""
+    files = [folder / "managed-settings.json", *sorted((folder / "managed-settings.d").glob("*.json"))]
+    for f in files:
+        if not f.is_file():
+            continue
+        try:
+            data = json.loads(f.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            return f"{f} cannot be read"
+        for key in ("disableAllHooks", "allowManagedHooksOnly"):
+            if isinstance(data, dict) and data.get(key) is True:
+                return f"{f} sets {key}: the plugin's hooks do not run"
+    return ""
+
+
+def _runs_guard(h, managed: bool) -> bool:
+    """Whether a hook runs the guard's tool hook: ``guard.sh" tool``, or (managed) its copy's args ending ``guard
+    tool`` (brain.floorlock._managed_hook)."""
+    if not isinstance(h, dict):
+        return False
+    if managed:
+        args = h.get("args")
+        return isinstance(args, list) and [str(a) for a in args[-2:]] == ["guard", "tool"]
+    return bool(re.search(r"/hooks/guard\.sh\"?\s+tool\s*$", str(h.get("command") or "")))
+
+
+def _hooks_why(f: Path, tool: str, managed: bool = False) -> str:
+    """'' when the hooks file ``f`` has a PreToolUse group whose matcher matches ``tool`` whole (a bare name or a
+    regex, Claude Code's; empty or * matches all) and that runs the guard's tool hook (:func:`_runs_guard`), else why
+    not."""
+    try:
+        groups = json.loads(f.read_text(encoding="utf-8"))["hooks"].get("PreToolUse") or []
+    except (OSError, ValueError, KeyError, TypeError, AttributeError):
+        return f"{f} cannot be read"
+    for g in groups if isinstance(groups, list) else []:
+        if not isinstance(g, dict) or not any(_runs_guard(h, managed) for h in g.get("hooks") or []):
+            continue
+        m = str(g.get("matcher") or "")
+        try:
+            if m in ("", "*") or re.fullmatch(m, tool):
+                return ""
+        except re.error:
+            continue
+    return f"{f} sends {tool} to no guard (its PreToolUse matchers)"
+
+
+def withheld(text: str) -> str:
+    """Why an allow rule is withheld on this machine (:data:`GUARD_REQUIRED`: a tool it covers that no guard sees
+    here), else ''."""
+    for t in guard_covers(text):
+        why = guard_unseen(t)
+        if why:
+            return f"{t} needs {GUARD_REQUIRED[t]}, which does not see it here: {why}"
+    return ""
+
+
+def unguarded(model: Model, ctx: Context | None = None, scope: str = "") -> list[str]:
+    """Each live allow rule withheld on this machine (:func:`withheld`), as an error: brain permissions check, brain
+    check and brain doctor flag it, since a settings file that already holds it lets the tool through unguarded until
+    a render takes it out. The rules that apply here: with ``scope``, those the scope renders in ``ctx`` (the user
+    render's ``withheld``); else every rule but another machine's or profile's (``ctx`` this machine's: the project,
+    tenant and session levels are rendered into this machine's repos and sessions too). Machine-dependent: a machine
+    without the core plugin installed flags a global rule."""
+    ctx = ctx or context(model)
+    levels = ClaudeCode.scopes.get(scope) if scope else None
+    out, seen = [], set()
+    for r in model.live():
+        here = (r.level in levels and ctx.applies(r)) if levels else \
+            (r.level in ("tenant", "project", "session") or ctx.applies(r))
+        if here and r.verdict == "allow" and r.text not in seen and guard_covers(r.text):
+            seen.add(r.text)
+            why = withheld(r.text)
+            if why:
+                out.append(f"{r.where}: allow {r.text} is withheld on this machine ({why}); a render takes it out of "
+                           "the settings")
+    return out
+
+
 def never_rule(text: str, cats: list[Category] | None = None) -> str:
     """The never-grantable category an allow rule falls in: its text names one, or its pattern matches one of a
-    category's commands (Bash(gh repo edit *), PowerShell(Register-Scheduled*), Bash(schtask* *)); else ''."""
+    category's commands (Bash(gh repo edit *), PowerShell(Register-Scheduled*), Bash(schtask* *)); else ''. A rule of
+    :data:`GUARD_BOUNDED`, exactly, falls in none: its guard bounds it."""
+    if text in GUARD_BOUNDED:
+        return ""
     cats = cats if cats is not None else default_categories()
     cat = never_category(text, cats)
     if cat:
@@ -608,6 +794,10 @@ def rule_errors(rule: Rule, cats: list[Category]) -> list[str]:
     why = broad(rule.text)
     if why:
         out.append(f"{rule.where}: allow {rule.text} is too broad ({why}): grant a narrow rule")
+    if guard_covers(rule.text) and rule.level not in ClaudeCode.scopes["user"]:
+        out.append(f"{rule.where}: allow {rule.text} lets {', '.join(guard_covers(rule.text))} through, which waits for "
+                   "the guard on each machine (GUARD_REQUIRED): only the user levels (engine, global, profile, "
+                   f"machine), rendered per machine by install.ps1, may hold it, not {rule.level}")
     return out
 
 
@@ -751,13 +941,21 @@ def _load_into(model: Model, f: Path | None) -> None:
             model.errors.append(f"{r.where}: while {r.while_}: no such item in the registered projects' stores")
 
 
-def check(root: Path | None = None) -> list[str]:
+def check(root: Path | None = None, machine: bool = True) -> list[str]:
     """What is wrong in the hierarchy (brain check --all, brain permissions check): [] when there is no file and
-    allow-rules.txt is clean. In read mode a newer brain's keys are notes on stderr, not errors."""
+    allow-rules.txt is clean. In read mode a newer brain's keys are notes on stderr, not errors. Plus, depending on
+    this machine, the allow rules withheld here (:func:`unguarded`: no guard sees their tool): errors with
+    ``machine``, else warnings on stdout (brain check: a repo's check stays the same on every machine, and the render
+    withholds the rule anyway; round 2 of the review)."""
     model = load(root)
     for note in model.notes:
         print(f"brain: note: {note}", file=sys.stderr)
-    return model.errors
+    held = unguarded(model)
+    if not machine:
+        for w in held:
+            print(f"warning: permissions: {w}")
+        return model.errors
+    return model.errors + held
 
 
 # --- a context: the levels that apply to one project, machine and session --------------------------------------
@@ -1071,6 +1269,8 @@ def wanted(model: Model, ctx: Context, scope: str, adapter: Adapter | None = Non
     out: dict[str, list[str]] = {v: [] for v in VERDICTS}
     for r in model.live():
         if r.level in adapter.scopes[scope] and ctx.applies(r):
+            if r.verdict == "allow" and guard_covers(r.text) and withheld(r.text):
+                continue   # no guard sees its tool here: expired_rules takes it out (GUARD_REQUIRED)
             for t in adapter.translate(r.text):
                 if t not in out[r.verdict]:
                     out[r.verdict].append(t)
@@ -1084,7 +1284,8 @@ def expired_rules(model: Model, ctx: Context, scope: str, adapter: Adapter | Non
     want = wanted(model, ctx, scope, adapter)
     out: dict[str, list[str]] = {v: [] for v in VERDICTS}
     for r in model.rules:
-        if r.level in adapter.scopes[scope] and ctx.applies(r) and model.expired(r):
+        gone = model.expired(r) or (r.verdict == "allow" and guard_covers(r.text) and bool(withheld(r.text)))
+        if r.level in adapter.scopes[scope] and ctx.applies(r) and gone:
             out[r.verdict] += [t for t in adapter.translate(r.text) if t not in want[r.verdict] and t not in out[r.verdict]]
     return out
 
@@ -1281,7 +1482,8 @@ def explain(model: Model, ctx: Context, text: str) -> dict:
              if keys & set(atoms(r.text))]
     plugin = config.claude(config.load())["plugin"]   # the core plugin, whose guards these are
     return {"rule": text, "declared": sorted(decls, key=lambda d: LEVELS.index(d["level"])),
-            "never": never_category(text, model.categories), "broad": broad(text) if parse(text) else "",
+            "never": never_rule(text, model.categories) if parse(text) else never_category(text, model.categories),
+            "guard_bounded": GUARD_BOUNDED.get(text, ""), "broad": broad(text) if parse(text) else "",
             "call": decide(model, ctx, text), "guards": f"the {plugin} guards judge the call apart from the rules: "
             "no allow rule lifts their deny (brain.guards)"}
 

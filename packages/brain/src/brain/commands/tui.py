@@ -17,7 +17,7 @@ USAGE_ORDER = 540   # its usage lines' place in brain --help's epilog
 USAGE = """\
   brain tui [--project P | --all | --scope REF] [--refresh 2s] [--probe 5m] [--hours 24] [--plain]
             [--sort PANEL:KEY]... [--filter PANEL:FIELD=VALUE]... [--search TEXT] [--tab NAME] [--tz local|utc]
-            [--view NAME] [--axis milestones|waves] [--reset]
+            [--view NAME] [--axis milestones|waves] [--zoom MILESTONE] [--reset]
             [--once [--quick]] [--json]
                  the cockpit, read-only and at zero token: sessions (project, task, step n/m of its plan, state,
                  model, effort, context and tokens), {owner}'s queue, alerts, milestones, the frontier by priority,
@@ -47,7 +47,10 @@ USAGE = """\
                  its cards; the settings: its pages); --view NAME that view of it (4 milestones: list, tree: the
                  WBS from the graph and the last brain forecast's latest.json, never recomputed, trajectories: the
                  Gantt as p10-p90 bands of the same forecast, with the median and the 6-week horizon; [ ] its scale
-                 and left/right its pan in the app), --axis the tree's
+                 and left/right its pan in the app; z or Enter a row's items as Gantt lanes, a wave's by lot, each
+                 with its past bar from its first session to its done day, its start-to-finish band, est. h and
+                 crit., its criticality index, c marking the critical chain, Z or Escape back; --zoom MILESTONE
+                 prints that item level, the chain marked), --axis the tree's
                  (milestones: era > milestone > item, waves: era > wave > lot > item, a pending wave's lots by round
                  as brain wave plan cuts them, each item's PR and live session; g in the app, f its P0 and P1 items
                  alone). The project selector
@@ -125,7 +128,7 @@ def cmd_tui(args, root: Path) -> int:
         snap = cp.snapshot()
         print(json.dumps(snap, ensure_ascii=False, indent=1, sort_keys=True) if args.json
               else "\n".join(cockpit.render(snap, views=views, search=args.search, tz=args.tz, tab=args.tab,
-                                                 root=root, view=args.view, axis=args.axis)))
+                                                 root=root, view=args.view, axis=args.axis, zoom=args.zoom)))
         return 1 if _failed_reads(snap) else 0
     try:   # one interactive cockpit per machine (brain.shutdown); --once, --json and --detail read beside it
         with shutdown.single_instance("cockpit", "brain tui"):
@@ -155,12 +158,15 @@ def _interactive(args, cp, saved: dict, views: dict, settings: dict) -> int:
             return tui.run(cp, refresh=args.refresh, probe=args.probe, views=views, search=args.search,
                            settings=settings, tab=tab, tabs=tabs, columns=columns)
     return cockpit.watch(cp, args.refresh, args.probe, views=views, search=args.search, tz=settings["tz"], tab=args.tab,
-                         view=args.view, axis=args.axis)
+                         view=args.view, axis=args.axis, zoom=args.zoom)
 
 
 def _check_view(args) -> None:
     """--view names a view of --tab; --axis is the milestones tab's tree's, and alone it asks for that tree (--tab
-    milestones --view tree). Refused otherwise (exit 2)."""
+    milestones --view tree); --zoom the trajectories' item level, in the text view (--once or --plain), and alone it
+    asks for that view. Refused otherwise (exit 2)."""
+    if args.zoom:
+        _check_zoom(args)
     if args.axis:
         if args.axis not in cockpit.tab_axes(args.tab or "milestones"):
             raise SystemExit(f"brain tui: --axis {args.axis}: the milestones tab's tree only")
@@ -168,6 +174,16 @@ def _check_view(args) -> None:
     if args.view and (not args.tab or args.view not in cockpit.TABS[args.tab]["views"]):
         raise SystemExit(f"brain tui: --view {args.view}: needs --tab, and one of its views "
                          f"({', '.join(cockpit.TABS[args.tab]['views']) if args.tab else 'none without --tab'})")
+
+
+def _check_zoom(args) -> None:
+    """--zoom: the milestones tab's trajectories, in the text view; it sets that tab and view."""
+    if args.axis or (args.tab or "milestones") != "milestones" or (args.view or "trajectories") != "trajectories":
+        raise SystemExit("brain tui: --zoom: the milestones tab's trajectories only (--tab milestones --view "
+                         "trajectories)")
+    if not (args.once or args.plain):
+        raise SystemExit("brain tui: --zoom: the text view's (--once or --plain); z or Enter on a row in the app")
+    args.tab, args.view = "milestones", "trajectories"
 
 
 def _asked_view(args, saved: dict | None) -> dict:
@@ -252,6 +268,11 @@ def register(sub, ctx) -> None:
                     help="the milestones tab's tree: era > milestone > item (default) or era > wave > lot > item (a "
                          "pending wave's lots by round as brain wave plan cuts them, each item's PR and live session; "
                          "f in the app: its P0 and P1 items alone); alone, it means --tab milestones --view tree")
+    tu.add_argument("--zoom", metavar="MILESTONE",
+                    help="with --once or --plain, the milestones tab's trajectories at the item level of a milestone, "
+                         "an era or a wave (its id, its short name or its name in the chart): each item's past bar, "
+                         "start-to-finish band, est. h and criticality index, the critical chain marked; alone, it "
+                         "means --tab milestones --view trajectories")
     tu.add_argument("--tz", choices=cockpit.TZS,
                     help="the times shown: this machine's timezone (local, the interactive default) or UTC; --once "
                          "and --json keep the recorded UTC times unless it is given")

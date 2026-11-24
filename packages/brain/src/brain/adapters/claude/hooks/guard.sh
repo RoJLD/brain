@@ -123,6 +123,25 @@ refuse_floor() {
   printf '{"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"deny","permissionDecisionReason":"brain guard: the locked floor is on (config.json floor) and the guards cannot run (%s), so they refuse every call they would judge: run brain update (or the installer, install.ps1 -Apply), then retry."}}\n' "$why"
 }
 
+# session_tool KIND JSON WHY: while the guards cannot run, the desktop app's Remote Control and permission-mode tools
+# are refused and its archive_session asks the owner's card (wi-brain-coordinator-handover-no-prompt): the owner's
+# allow rules lift the app's card on set_remote_control and archive_session, which only the guard bounds. One JSON line
+# on stdout, or nothing (exit 1) for any other call.
+session_tool() {
+  [ "$1" = "tool" ] || return 1
+  local settings='"tool_name"[[:space:]]*:[[:space:]]*"mcp__[^"]*__set_(remote_control|session_permission_mode)"'
+  local archive='"tool_name"[[:space:]]*:[[:space:]]*"mcp__ccd_session_mgmt__archive_session"'
+  local why=${3//\\/\\\\}
+  why=${why//\"/\\\"}
+  if [[ $2 =~ $settings ]]; then
+    printf '{"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"deny","permissionDecisionReason":"brain guard: the guards cannot run (%s), so a session'"'"'s Remote Control and permission mode are refused: run brain update (or the installer, install.ps1 -Apply)."}}\n' "$why"
+  elif [[ $2 =~ $archive ]]; then
+    printf '{"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"ask","permissionDecisionReason":"brain guard: the guards cannot run (%s), so archive_session asks the owner'"'"'s card: run brain update (or the installer, install.ps1 -Apply)."}}\n' "$why"
+  else
+    return 1
+  fi
+}
+
 [ "${BASH_SOURCE[0]}" = "$0" ] || return 0
 # A locked machine (brain floor lock) runs the guard's system copy from Claude Code's managed settings, whose
 # allowManagedHooksOnly keeps this plugin hook from running at all; where they are not in force (an HKLM policy or
@@ -172,5 +191,6 @@ why="no Python 3 found (BRAIN_PYTHON, <BRAIN_HOME>/venv, python3, python)"
 [ -n "$brain_py" ] && [ "$brain_py" = "${BRAIN_PYTHON:-}" ] && why="$why; BRAIN_PYTHON chose it: fix or unset BRAIN_PYTHON"
 selftime_bash "hook guard ${1:-} [cannot run]" 1
 if floor_on; then refuse_floor "$why"; exit 0; fi
+session_tool "${1:-}" "$input" "$why" && exit 0
 commits_or_pushes "${1:-}" "$input" && refuse_cannot_run "$why"
 exit 0

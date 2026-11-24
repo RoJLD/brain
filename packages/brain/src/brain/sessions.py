@@ -148,6 +148,32 @@ def app_meta(host_id: str) -> dict:
     return pick(data) if isinstance(data, dict) else {}
 
 
+def app_work(host_id: str) -> dict | None:
+    """What a session leaves open, from its own app file (the guard's archive case, brain.guards.archive):
+    ``{prs: [(repo, number, state)], cwd}``, each PR's state as the app last saw it, upper case (OPEN, MERGED, CLOSED;
+    '' when missing, and an entry that is not a mapping is ('', '', '')), ``cwd`` its folder ('' when missing),
+    ``folders`` its cwd and, when the file has one, its ``worktreePath`` (the folder the app removes); None
+    when the file cannot be read, names another id, or its prs is not a list. Only these keys are read, never a text."""
+    f = app_file(host_id)
+    try:
+        data = json.loads(f.read_text(encoding="utf-8")) if f else None
+    except (OSError, ValueError):
+        return None
+    if not isinstance(data, dict) or data.get("sessionId") != host_id:
+        return None
+    prs = data.get("prs")
+    prs = [] if prs is None else prs
+    if not isinstance(prs, list):
+        return None
+    out = [(str(p.get("repo") or ""), str(p.get("prNumber") or ""), str(p.get("state") or "").upper())
+           if isinstance(p, dict) else ("", "", "") for p in prs]
+    cwd, wt = data.get("cwd"), data.get("worktreePath")
+    folders = [cwd if isinstance(cwd, str) else ""]
+    if wt is not None:   # the worktree the app removes, when it says so: checked too
+        folders.append(wt if isinstance(wt, str) else "")
+    return {"prs": out, "cwd": folders[0], "folders": list(dict.fromkeys(folders))}
+
+
 def _stat(f: Path) -> list | None:
     try:
         st = f.stat()
@@ -184,14 +210,21 @@ def _picked(f: Path, st: list, cache: dict) -> dict | None:
     return {"stat": st, "meta": pick(data)}
 
 
-def app_index() -> dict[str, dict] | None:
+def app_cache() -> Path:
+    """The picked keys of the app's files, by file and stat (:func:`app_index`): a session may write it, so the guards
+    never read it (``cached=False``) and refuse a session's write into it (brain.guards.app_files)."""
+    return paths.brain_home() / "cache" / "sessions-app.json"
+
+
+def app_index(cached: bool = True) -> dict[str, dict] | None:
     """{host_id: picked keys} of every session the app has on this machine; None when the app is not here. A file is
-    parsed again only when its size or mtime changed (``<BRAIN_HOME>/cache/sessions-app.json``)."""
+    parsed again only when its size or mtime changed (:func:`app_cache`); ``cached=False`` (the guards) parses every
+    file and neither reads nor writes the cache."""
     dirs = app_dirs()
     if not dirs:
         return None
-    cache_f = paths.brain_home() / "cache" / "sessions-app.json"
-    cache = _read_json(cache_f)
+    cache_f = app_cache()
+    cache = _read_json(cache_f) if cached else None
     cache = cache if isinstance(cache, dict) else {}
     fresh = {}
     for f in (f for d in dirs for f in sorted(d.glob("local_*.json"))):   # sorted: children started together keep
@@ -200,7 +233,7 @@ def app_index() -> dict[str, dict] | None:
         hit = _picked(f, st, cache) if st else None
         if hit:
             fresh[str(f)] = hit
-    if fresh != cache:
+    if cached and fresh != cache:
         _write_json(cache_f, fresh)
     return {h["meta"]["host_id"]: h["meta"] for h in fresh.values() if h["meta"].get("host_id")}
 
