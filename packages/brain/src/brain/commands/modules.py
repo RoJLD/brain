@@ -7,14 +7,14 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from .. import modulemap, modules, skew
+from .. import modulemap, modules, presets, skew
 from ._common import _project, _store, _store_label
 from ._stores import _module_view
 
 ORDER = 30   # its place in brain --help's list of commands (brain.commands)
 USAGE_ORDER = 40   # its usage lines' place in brain --help's epilog
 USAGE = """\
-  brain modules [--write] [--force] [--check] [--diff [REF]] [--json]   the module map: each open item's
+  brain modules [--write] [--force] [--check] [--diff [REF]] [--personas] [--json]   the module map: each open item's
                  props.module (and props.modules_secondary) against the store's modules.yaml (a store without one
                  reads the registry config.json modules.store names); the view notes/modules_graph.md (beside the
                  store's board when it is not in notes/; per module its phase, status, items done and open, and
@@ -22,11 +22,17 @@ USAGE = """\
                  brick, the documents read and their divergences; for a map, the realisations and their gaps),
                  written by brain sync; --check: the open items with no module, or a module the registry does not
                  know, the imported entries' fields and the map's (the modules, capabilities, projects and paths it
-                 names; a wanted module with nothing that builds it) (exit 1),
+                 names; a wanted module with nothing that builds it; personas.yaml beside the registry: its
+                 version, shape, and the bricks and modules it names) (exit 1),
                  then, as warnings, the features and done items with none and a dormant wanted module (brain check
                  warns of all of it);
                  --diff: what changed in the registry since its version at REF (default HEAD): modules added and
                  removed, document fields and hand fields changed;
+                 --personas: the two checks of each preset of personas.yaml: its set closed under the map's hard
+                 dependencies (open, incomplete while a module's are unclassified, or closed), and a preset without
+                 AI pulling no AI module nor a distribution that ships one (exit 1 when one is open or violated;
+                 from a store that reads another's registry, the file beside that registry; never with --check or
+                 --diff; --json: {problems, presets});
                  under config.json views.strict, another engine than engine.pin writes nothing (--force)
 """
 
@@ -34,6 +40,8 @@ USAGE = """\
 def cmd_modules(args, root: Path) -> int:
     """brain modules (brain.modules): the view printed, written with --write; --check: the module map's problems;
     --diff: what changed in the registry since a git ref."""
+    if args.personas and (args.check or args.diff is not None):   # never one silently dropped for the other
+        raise SystemExit("brain modules: --personas runs alone: run --check or --diff apart")
     store = _store(args, root)
     if not modules.applies(store, root):
         raise SystemExit(_no_registry(root, store))
@@ -43,6 +51,8 @@ def cmd_modules(args, root: Path) -> int:
         view = _module_view(_project(args, root), root, store)
         print(f"view: {view} " + ("written" if modules.write(root, store, _store_label(root, store), view)
                                   else "unchanged"))
+    if args.personas:
+        return _personas(args, root, store)
     if args.diff is not None or args.check:
         return _report(args, root, store)
     if args.json:
@@ -50,6 +60,26 @@ def cmd_modules(args, root: Path) -> int:
     elif not args.write:
         print(modules.render(store, _store_label(root, store), root), end="")
     return 0
+
+
+def _personas(args, root: Path, store: Path) -> int:
+    """brain modules --personas: the two checks of each preset (brain.presets), text or --json {problems, presets};
+    exit 1 when personas.yaml is refused or a preset is open or violated. A store that reads another's registry
+    (config.json modules.store) checks the file of the store that keeps it: brain check says its faults once, on
+    that store, but an explicit run never passes on a file it skipped."""
+    owner, read = store, ""
+    if not (store / modules.REGISTRY).is_file():
+        found_at = modules.lookup(store, root)
+        if found_at is not None:
+            read, owner = found_at
+    found, wrong = presets.report(owner, root), presets.problems(owner, root)
+    failed = bool(wrong) or any(presets.failed(r) for r in found)
+    if args.json:
+        print(json.dumps({"problems": wrong, "presets": found}, indent=1, ensure_ascii=False))
+        return 1 if failed else 0
+    head = [f"{presets.FILE} of {read} (the registry this store reads)"] if read else []
+    print("\n".join(head + wrong + presets.lines(found)))
+    return 1 if failed else 0
 
 
 def _no_registry(root: Path, store: Path) -> str:
@@ -92,7 +122,8 @@ def _diff(args, root: Path, store: Path) -> None:
 
 def _problems(root: Path, store: Path) -> list[str]:
     """What brain modules --check refuses: the imported entries', the map's (brain.modulemap), the open items'."""
-    return modules.registry_problems(store, root) + modulemap.problems(store, root) + modules.problems(store, root)
+    return (modules.registry_problems(store, root) + modulemap.problems(store, root) + presets.problems(store, root)
+            + modules.problems(store, root))
 
 
 def _check(args, root: Path, store: Path) -> int:
@@ -102,7 +133,7 @@ def _check(args, root: Path, store: Path) -> int:
         print(json.dumps(found, indent=1))
         return 1 if found else 0
     print("\n".join(found) or "module map: every open item placed")
-    for line in modules.warnings(store, root) + modulemap.warnings(store, root):   # told, never counted
+    for line in modules.warnings(store, root) + modulemap.warnings(store, root) + presets.warnings(store, root):
         print(f"warning: {line}")
     return 1 if found else 0
 
@@ -118,9 +149,13 @@ def register(sub, ctx) -> None:
     mo.add_argument("--diff", nargs="?", const="HEAD", default=None, metavar="REF",
                     help="what changed in the registry since its version at the git ref REF (default HEAD): the "
                          "modules added and removed, the document fields and the hand fields changed")
+    mo.add_argument("--personas", action="store_true",
+                    help="the two checks of each preset of personas.yaml beside the registry: closed under the hard "
+                         "dependencies, and no AI module for a preset without AI (exit 1 when one fails)")
     mo.add_argument("--json", action="store_true", help="the map as JSON (each module's counts, the problems); with "
                                                         "--check, the problems; with --diff, the changes; with both, "
-                                                        "one object {diff, problems}")
+                                                        "one object {diff, problems}; with --personas, "
+                                                        "{problems, presets}")
 
 
 run = cmd_modules

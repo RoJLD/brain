@@ -93,6 +93,7 @@ SCHEMAS = {
     "catalogue": (f"{SRC}/schemas/catalogue.schema.json",),   # a module catalogue, catalogue/v1 (brain.catalogue)
     "reference": (f"{SRC}/schemas/reference.schema.json",),   # a repo's docs/reference.yaml (brain.reference)
     "notes": (f"{SRC}/schemas/notes.schema.json",),   # a note's front matter in the notes home (brain.knowledge)
+    "personas": (f"{SRC}/schemas/personas.schema.json",),   # a store's personas.yaml, its presets (brain.presets)
     "packs": (f"{SRC}/templates/generic/packs.yaml",),
     "projects": (f"{SRC}/templates/generic/projects.yaml",),
     "template": (f"{SRC}/templates/generic/template.yaml",

@@ -16,8 +16,8 @@ from pathlib import Path
 
 from .. import (alerts, bundles, classes, codeindex, config, crossstore, decisions, defaults, docsgraph, features,
                 gates, graph, links, lint, markers, milestones, modulemap, modules, neutral, ownerwaits, permissions,
-                pins, projects, public, readme, records, reference, render, scopes, sizing, skew, specs, stacks, tidy,
-                tiers, vault, views, waves)
+                pins, presets, projects, public, readme, records, reference, render, scopes, sizing, skew, specs,
+                stacks, tidy, tiers, vault, views, waves)
 from ..inventory import AuditError
 from ._common import _now, _on_main, _project, _queue_changed, _repos, _scope, _store_label
 from .features import _features_view
@@ -32,7 +32,8 @@ def _module_view(project: projects.Project, root: Path, store: Path) -> str:
 
 def _module_warnings(project: projects.Project, root: Path, store: Path, stale: views.Stale) -> list[str]:
     """brain check's lines on the module map: an open item it does not place, a feature or a done item with no module
-    (wi-brain-module-backfill), an imported entry's fields (wi-brain-module-registry-import); its view, when stale,
+    (wi-brain-module-backfill), an imported entry's fields (wi-brain-module-registry-import), personas.yaml's and its
+    open or violated presets (wi-brain-sigma-personas, brain.presets); its view, when stale,
     joins ``stale``. A store without a registry of its own reads the one config.json modules.store names; a key that
     names none is a warning here."""
     if not modules.applies(store, root):
@@ -42,8 +43,10 @@ def _module_warnings(project: projects.Project, root: Path, store: Path, stale: 
     view = _module_view(project, root, store)
     if modules.stale(root, store, _store_label(root, store), view):
         stale.add(view, "brain sync (or brain modules --write)")
-    found = modules.registry_problems(store, root) + modulemap.problems(store, root) + modules.problems(store, root)
-    return [f"module map: {line}" for line in found + modules.warnings(store, root) + modulemap.warnings(store, root)]
+    found = (modules.registry_problems(store, root) + modulemap.problems(store, root) + presets.problems(store, root)
+             + modules.problems(store, root))
+    told = modules.warnings(store, root) + modulemap.warnings(store, root) + presets.warnings(store, root)
+    return [f"module map: {line}" for line in found + told]
 
 
 def _write_module_view(project: projects.Project, root: Path, store: Path) -> None:

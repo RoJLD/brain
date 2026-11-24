@@ -1,0 +1,24 @@
+# personas.yaml as brain 0.7.0 reads it (brain.presets): invented presets of an invented platform, every key of v1.
+v: 1
+source: [{ref: "the platform's packaging document, section 5", date: 2026-10-23, section: "5"}]
+imported: 2026-11-24
+expand: {skip_status: [proposed], skip_placement: ["set aside"]}
+note: "Invented for the engine's tests."
+personas:
+  - id: tea-drinker
+    name: The tea drinker
+    kind: persona
+    audience: "Anyone with a kettle"
+    bricks: [K]
+    modules: []
+    optional: {bricks: [P], modules: [P12]}
+    distributions: [kettle]
+    ai: false
+    topology: "One kitchen"
+    realm: [PRIVATE]
+    description: "Tea, no oracle."
+    note: "The documents say K (or K + P)."
+  - id: brewer
+    name: The brewer
+    kind: preset
+    modules: [P2]

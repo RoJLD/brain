@@ -138,6 +138,63 @@ the map's gaps (a wanted module with no realisation, a lab realisation with no t
 Vn, with no product realisation for a module of the tree) and the declared dependencies still to classify;
 `brain modules --json` gains `map` (each entry's map fields) and `map_problems`.
 
+## Presets and personas
+
+A preset is a set of modules and distributions an installer offers; a persona is a preset the platform's documents
+describe (since 0.7.0, `brain.presets`). The presets of a registry live beside it, in `personas.yaml` (the format
+`schemas/personas.schema.json`, `v: 1`):
+
+```yaml
+v: 1
+source: [{ref: "the packaging document, section 5", date: 2026-10-23}]
+imported: 2026-11-24
+expand: {skip_status: [proposed], skip_placement: ["set aside"]}
+personas:
+  - {id: tea-drinker, name: The tea drinker, audience: "Anyone with a kettle", bricks: [K], modules: [P2],
+     optional: {bricks: [Q]}, distributions: [kettle], ai: false, topology: "One kitchen", realm: [PRIVATE],
+     description: "Tea, no oracle.", note: "The documents say K (or K + Q)."}
+```
+
+- `bricks`: each gives every module of the registry with that brick, except those whose `status` or `placement`
+  `expand` skips (`skip_status` defaults to `[proposed]`; `skip_placement` lists the platform's own words for a
+  module set aside, none by default). `modules`: each taken alone, whatever its status.
+- `optional`: bricks and modules the preset may add; the preset is checked twice, without and with them (the
+  variant `+Q`).
+- `distributions`: what the preset downloads, as the map's `ships_in` names them.
+- `ai`: whether the preset uses AI. `false` asks for the second check below; absent (the documents do not say), it
+  does not run.
+- `kind` (`persona`, the default, or `preset`, written by hand), `name`, `audience`, `topology`, `realm`,
+  `description` and `note` are the documents' words, kept as the import read them. A persona file is written by an
+  import session, with the documents it read (`source`) and the day (`imported`); a correction goes through the
+  documents and a new import, never a hand edit.
+
+`brain modules --check` (exit 1) and `brain check` (a warning) refuse, on the store that keeps the registry: a `v`
+above 1 (alone: the other keys are not judged), a file that is not a mapping, the schema's errors (an unknown key at
+the top or in a preset is a newer brain's: a note in read mode, an error in strict mode, CI), a preset id given
+twice, a brick that is no module's brick, a module the registry does not know, a source dated after the import or a
+day that is not one.
+
+`brain modules --personas [--json]` runs two checks on each preset (and its optional variant). Run from a store
+that reads another's registry (`config.json` `modules.store`), it checks the file beside that registry and names its
+store (`personas.yaml of <project>:<store>`), while `brain check` says its faults once, on the store that keeps it.
+It runs alone: with `--check` or `--diff` it is refused, rather than one of them silently dropped. Its two checks:
+
+1. **Closed under the hard dependencies.** Every `depends_on` of its modules, direct or through a module it pulls,
+   is in its set: `open` names each one missing and the modules that need it. A soft dependency (`uses`) is never
+   pulled. A module whose dependencies the map has not classified (an entry without the map, or a `declared`
+   dependency in neither `depends_on` nor `uses`) is listed « to classify », and the set is `incomplete` rather than
+   `closed`: the check never passes on what it cannot see.
+2. **No AI without AI.** A preset whose `ai` is false pulls no AI module (`ai: true` in the map), lists no
+   distribution that ships one (an AI distribution: a live realisation of an AI module `ships_in` it), and none of
+   its modules is shipped by AI distributions only: `violated` names each. A module no live realisation ships, and a
+   listed distribution no realisation ships in, are shown, never counted.
+
+It exits 1 when a preset is open or violated, or the file is refused; `--json` gives `{problems, presets}`, each
+variant with its `modules`, `closure`, `missing`, `unclassified`, `distributions`, `unknown_distributions`, `no_ai`
+and, when that check ran, `ai_modules`, `ai_distributions`, `only_ai` and `unshipped`. `brain modules --check` and
+`brain check` warn of each fault of an open or violated preset, never failing on it: a gap goes back to the
+documents (the brain never settles it).
+
 ## An item's module
 
 ```bash

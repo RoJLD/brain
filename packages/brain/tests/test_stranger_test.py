@@ -107,7 +107,7 @@ def test_the_newer_data_reaches_every_file_of_a_format(st, tmp_path):
     assert '"cpu_s":0.4' in (ledger / "exec-2026-11.jsonl").read_text(encoding="utf-8")
     # the formats it reached no file of fail the step: the rollback would test nothing of them
     assert not step["ok"] and "reached no file: ar v1, ddr v1, members v1, modules v1, packs v1, permissions v1, " \
-        "projects v1, readme v1, reference v1, sr v1, standards v1" in step["out"]
+        "personas v1, projects v1, readme v1, reference v1, sr v1, standards v1" in step["out"]
 
 
 def test_the_newer_data_reaches_the_module_registry(st, tmp_path):

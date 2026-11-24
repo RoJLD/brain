@@ -294,7 +294,8 @@ def where(root: Path, home: Path) -> dict[str, list[Path]]:
             "readme": found(root, "readme.yaml"), "sr": found(root, "records/sr/*/*.yaml"),
             "standards": found(root, "standards/*.yaml"), "template": [], "status": [], "docgraph": [],
             "catalogue": [], "reference": found(root, "docs/reference.yaml"),
-            "modules": found(root, "notes/graph/modules.yaml"), "notes": []}
+            "modules": found(root, "notes/graph/modules.yaml"), "notes": [],
+            "personas": found(root, "notes/graph/personas.yaml")}
 
 
 NOT_STORED = ("template", "status", "docgraph", "catalogue", "notes")
@@ -571,6 +572,8 @@ def upgrade(work: Path, env: dict, scripts: Path, prev: tuple[str, str], head: t
     (root / "docs").mkdir(exist_ok=True)   # the reference's prose (wi-brain-reference-arc42): opt-in, by hand too
     shutil.copyfile(fixture("reference", "older"), root / "docs" / "reference.yaml")
     shutil.copyfile(fixture("modules", "older"), root / "notes" / "graph" / "modules.yaml")   # written by hand
+    # the registry's presets (brain.presets, 0.7.0): an import writes them; an engine before 0.7.0 never reads them
+    shutil.copyfile(fixture("personas", "older"), root / "notes" / "graph" / "personas.yaml")
     (root / "standards").mkdir(exist_ok=True)   # a local standards catalog (brain.standards): opt-in too
     shutil.copyfile(fixture("standards", "older"), root / "standards" / "local.yaml")
     with (root / "boundary.yaml").open("a", encoding="utf-8", newline="\n") as fh:    # the template has no rule
