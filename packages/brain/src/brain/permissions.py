@@ -108,7 +108,8 @@ NEVER = (
     # A session's Remote Control and permission mode (wi-brain-guard-session-settings): the guards refuse the desktop
     # app's tools that change them, and BRAIN_GUARD_ALLOW cannot lift that refusal (brain.guards.UNLIFTED). No allow
     # rule grants it either: Remote Control's three exceptions are the guard's own checks (brain.guards.remote_control,
-    # wi-brain-guard-rc-archive), never a permission.
+    # wi-brain-guard-rc-archive), never a permission; the one rule of GUARD_BOUNDED only lifts the app's card inside
+    # them.
     ("security-settings", r"\bsecurity[ -]settings?\b|(?<![a-z])remote[ _-]?control\b|\bpermission[ _-]?modes?\b",
      r"\bsecurity[ -]settings?\b|(?<![a-z])remote[ _-]?control(?![a-z])|(?<![a-z])permission[ _-]?modes?(?![a-z])|"
      r"set_session_permission_mode|\bbypass ?permissions\b|\bt[ée]l[ée]commande\b|\bmode de permission"),
@@ -264,9 +265,22 @@ def never_category(text: str, cats: list[Category] | None = None) -> str:
     return ""
 
 
+# The allow rules a guard bounds (wi-brain-coordinator-handover-no-prompt; the owner's answer of 2026-11-18): the exact
+# text, the desktop app's own server, no wildcard. Remote Control at a coordinators' hand-over (brain.gestures
+# handover-remote-control, ceiling auto) is security-settings by its name, but brain.guards.remote_control refuses every
+# call outside its three cases, never lifted (UNLIFTED), and fails closed (an error, guard.sh without Python): the rule
+# only lifts the app's card inside them. Any other text naming Remote Control stays never grantable.
+GUARD_BOUNDED = {
+    "mcp__ccd_session_mgmt__set_remote_control": "brain.guards.remote_control: its three cases, every other call refused",
+}
+
+
 def never_rule(text: str, cats: list[Category] | None = None) -> str:
     """The never-grantable category an allow rule falls in: its text names one, or its pattern matches one of a
-    category's commands (Bash(gh repo edit *), PowerShell(Register-Scheduled*), Bash(schtask* *)); else ''."""
+    category's commands (Bash(gh repo edit *), PowerShell(Register-Scheduled*), Bash(schtask* *)); else ''. A rule of
+    :data:`GUARD_BOUNDED`, exactly, falls in none: its guard bounds it."""
+    if text in GUARD_BOUNDED:
+        return ""
     cats = cats if cats is not None else default_categories()
     cat = never_category(text, cats)
     if cat:

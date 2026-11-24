@@ -42,7 +42,10 @@ on Windows, else bash (TERMINAL_TOOL), in its cwd, else the session's. Nine guar
   once its hand-over note is in <BRAIN_HOME>/handover/ (a successor with no transcript yet counts as starting for
   HANDOVER_START_S after its app file's createdAt; a chain root the owner marked, brain handover root, hands over
   without a name; brain handover root and a write into its file are the owner's); each one passes logged as
-  decision allowed with its case.
+  decision allowed with its case. The desktop app's archive_session (wi-brain-coordinator-handover-no-prompt,
+  archive) passes without the owner's card, under their allow rule, only for a finished session the caller started or
+  its predecessor at a hand-over, with no child blocking, its PRs merged or closed and its folder clean (logged allowed
+  with its case, child or predecessor); any other call, and an error, gets ask: the card no allow rule lifts.
 - ``power`` (wi-brain-power-guard, TOPO-2): no act on a machine or the cluster: machine (shutdown, reboot, sleep,
   Stop-Computer, systemctl and loginctl power verbs, boot arming by bcdedit, efibootmgr or ipmitool), node (the verbs
   but reads of the platform's node lifecycle CLIs, config.json's power.node_clis, a kubectl-<name> one as kubectl
@@ -1971,6 +1974,29 @@ def successors(caller: str, index: dict, meta, now: float | None = None) -> list
     return [h for h, m in sorted(index.items()) if m.get("parent") == caller and ok(meta(h))]
 
 
+def app_caller(payload: dict):
+    """(the caller's app id, the app's index, its :func:`app_reader`) for a hook's payload, else why not (a str): the
+    app's files absent, the payload's transcript in none or in two of them, the environment's app id another, or the
+    caller's own file unreadable or naming another transcript. Read from the desktop app's own files only."""
+    from . import sessions
+    index = sessions.app_index()
+    if index is None:
+        return "the desktop app's session files are not on this machine"
+    sid = str(payload.get("session_id") or "")
+    callers = [h for h, m in index.items() if sid and m.get("session") == sid]
+    if len(callers) != 1:
+        return "this session is not in the desktop app's session files"
+    caller = callers[0]
+    own = sessions.here()["host_id"]
+    if own and own != caller:
+        return "this session's app id and its transcript's disagree"
+    meta = app_reader(index)
+    me = meta(caller)
+    if not me or me.get("session") != sid:
+        return "this session's own app file cannot be read, or names another transcript"
+    return caller, index, meta
+
+
 def remote_control(payload: dict, now: float | None = None) -> tuple[str | None, str]:
     """(case, why) for a set_remote_control call: ``archive`` (off on a finished session the caller started),
     ``handover-on`` (on for the coordinator the caller started to succeed it) or ``handover-off`` (off on the caller
@@ -1987,18 +2013,11 @@ def remote_control(payload: dict, now: float | None = None) -> tuple[str | None,
     if not isinstance(enabled, bool) or not isinstance(target, str) or not target.strip():
         return None, "its session_id or enabled cannot be read"
     target = target.strip()
-    index = sessions.app_index()
-    if index is None:
-        return None, "the desktop app's session files are not on this machine"
-    sid = str(payload.get("session_id") or "")
-    callers = [h for h, m in index.items() if sid and m.get("session") == sid]
-    if len(callers) != 1:
-        return None, "this session is not in the desktop app's session files"
-    caller = callers[0]
-    own = sessions.here()["host_id"]
-    if own and own != caller:
-        return None, "this session's app id and its transcript's disagree"
-    meta = app_reader(index)
+    found = app_caller(payload)
+    if isinstance(found, str):
+        return None, found
+    caller, index, meta = found
+    me = meta(caller)
 
     def mine(m: dict) -> bool:
         return bool(m) and m.get("parent") == caller
@@ -2008,10 +2027,6 @@ def remote_control(payload: dict, now: float | None = None) -> tuple[str | None,
 
     def successor_state(m: dict) -> tuple[str, str]:
         return successor_state_of(m, now)
-
-    me = meta(caller)
-    if not me or me.get("session") != sid:
-        return None, "this session's own app file cannot be read, or names another transcript"
 
     def handover() -> str:   # '' when the caller is a coordinator at its handover, else why not
         return handover_why(caller, me, meta, now)
@@ -2051,6 +2066,111 @@ def remote_control(payload: dict, now: float | None = None) -> tuple[str | None,
     if st not in RC_FINISHED:
         return None, f"{target} is {st}, not finished"
     return "archive", f"off on {target}, a finished session it started, before archiving it"
+
+
+# The archive case (wi-brain-coordinator-handover-no-prompt; the owner's answer of 2026-11-18): the owner's allow rule
+# for archive_session lifts the app's approval card; this guard holds it to the coordinator's family. A call passes
+# (nothing printed) only for a finished session the caller started, or for the caller's predecessor at a hand-over,
+# with no child left blocking, its PRs merged or closed and its folder clean (the app removes its worktree); any other
+# call, and an error, gets permissionDecision ask: the card, which the allow rule cannot lift.
+ARCHIVE_TOOL = re.compile(r"^mcp__ccd_session_mgmt__archive_session$")   # the desktop app's own server only
+PR_DONE = ("MERGED", "CLOSED")   # the app's prs[].state that leave no work open; any other, or none, is open
+GIT_STATUS_S = 10                # git status in the target's folder, at most
+ARCHIVE_BOUND = ("a finished session this one started, or its predecessor at a hand-over, with no child blocking, its "
+                 "PRs merged or closed and its folder clean")
+
+
+def folder_why(cwd) -> str:
+    """'' when a session's folder holds no change git sees, or is gone (its worktree removed), else why not. git runs
+    by its path (:func:`_run`) with its file-system monitor and untracked cache off and no optional lock: the status
+    starts no monitor and writes no index."""
+    if not isinstance(cwd, str) or not cwd.strip():
+        return "its folder cannot be read from its app file"
+    if not os.path.isabs(cwd):
+        return f"its folder {json.dumps(cwd[:200], ensure_ascii=False)} is not an absolute path"
+    if not os.path.lexists(cwd):
+        return ""
+    if not os.path.isdir(cwd):
+        return f"{cwd} is not a folder"
+    env = {**os.environ, "GIT_OPTIONAL_LOCKS": "0", "GIT_TERMINAL_PROMPT": "0"}
+    try:
+        r = _run(["git", "-c", "core.fsmonitor=false", "-c", "core.untrackedCache=false", "status", "--porcelain",
+                  "--untracked-files=normal"], cwd, timeout=GIT_STATUS_S, env=env)
+    except (OSError, subprocess.SubprocessError, ValueError):
+        return f"git status cannot run in {cwd}"
+    if r.returncode:
+        return f"{cwd} is not a checkout git can read"
+    n = len([line for line in r.stdout.splitlines() if line.strip()])
+    return f"{cwd} has {n} uncommitted change(s) the archive would remove with its worktree" if n else ""
+
+
+def archive(payload: dict, now: float | None = None) -> tuple[str | None, str]:
+    """(case, why) for an archive_session call: ``child`` (a finished session the caller started, not a coordinator)
+    or ``predecessor`` (the Brain coordinator or chain root that started the caller, whose live detached coordinator
+    successor the caller is: brain handover check's predecessor line), else None and why it is neither. Both need the
+    target finished (idle or ended), none of its children blocking (each archived or detached: the app archives a
+    finished one with it), every PR of its app file merged or closed, and its folder clean or gone (:func:`folder_why`).
+    Read from the desktop app's own files and git, as :func:`remote_control`; what cannot be read is no pass."""
+    from . import sessions, succession
+    target = (payload.get("tool_input") or {}).get("session_id")
+    if not isinstance(target, str) or not sessions.HOST_RE.match(target.strip()):
+        return None, "its session_id is not another session's app id (local_<uuid>): a session's own archive is the " \
+                     "owner's"
+    target = target.strip()
+    found = app_caller(payload)
+    if isinstance(found, str):
+        return None, found
+    caller, index, meta = found
+    if target == caller:
+        return None, "a session's own archive is the owner's"
+    me, node = meta(caller), meta(target)
+    if not node:
+        return None, f"{target} is not in the desktop app's session files"
+    if node.get("archived"):
+        return None, f"{target} is archived already"
+    if node.get("parent") == caller:
+        case = "child"
+        if _coordinator(node, titles=True):
+            return None, f"{target} is a coordinator: its own successor archives it at the hand-over"
+    elif target == me.get("parent"):
+        case = "predecessor"
+        if not (_coordinator(node) or chain_root(target, node)):
+            return None, (f"{target}, which started this session, is not a Brain coordinator (the name its starter "
+                          "gave it) nor a chain root the owner marked")
+        if caller not in successors(target, index, meta, now):
+            return None, (f"this session is not {target}'s successor (a Brain coordinator by name it started, live "
+                          "and detached)")
+    else:
+        return None, f"{target} was not started by this session, nor is it the coordinator that started it"
+    st = sessions.state_of(node, {}, now)
+    if st not in RC_FINISHED:
+        return None, f"{target} is {st}, not finished"
+    blocking = [c["id"] for c in succession.children(target, index, meta, now) if c["verdict"] == "blocking"]
+    if blocking:
+        return None, (f"{target} has {len(blocking)} child session(s) neither archived nor detached, which the archive "
+                      f"would take with it or which still work: {', '.join(blocking[:5])}")
+    work = sessions.app_work(target)
+    if work is None:
+        return None, f"{target}'s app file cannot be read again"
+    left = [p for p in work["prs"] if p[2] not in PR_DONE]
+    if left:
+        named = ", ".join(f"{r or '?'}#{n or '?'} ({s or 'no state'})" for r, n, s in left[:5])
+        return None, f"{target} has {len(left)} PR(s) neither merged nor closed: {named}"
+    why = folder_why(work["cwd"])
+    if why:
+        return None, why
+    what = "a finished session it started" if case == "child" else "its predecessor, at the hand-over"
+    return case, f"{target}, {what}: no child blocking, its PRs merged or closed, its folder clean or gone"
+
+
+def archive_ask(why: str) -> dict:
+    """The hook's output for an archive_session call outside :func:`archive`'s cases: ask, the app's card, which no
+    allow rule lifts."""
+    cfg = config.load()
+    reason = (f"{config.claude(cfg)['plugin']} guard: archive_session is left to {config.owner(cfg)}'s approval: "
+              f"{why}. Without a card it passes only for {ARCHIVE_BOUND}.")
+    return {"hookSpecificOutput": {"hookEventName": "PreToolUse", "permissionDecision": "ask",
+                                   "permissionDecisionReason": " ".join(reason.split("\n"))}}
 
 
 def _is_usage_allow(target) -> bool:
@@ -4116,6 +4236,16 @@ def main(stdin=None, stdout=None) -> int:
             except Exception as exc:   # an error is no exception: the call goes on to its refusal
                 _log("owner", exc)
                 case, rc_why = None, "the session tree or the ledger could not be read"
+        is_archive, archive_case, archive_why = ARCHIVE_TOOL.match(str(payload.get("tool_name") or "")), None, ""
+        if is_archive:
+            try:
+                archive_case, archive_why = archive(payload)
+                if archive_case and not _record(payload, "owner", "session-archive", "allowed", archive_why,
+                                                case=archive_case):
+                    archive_case, archive_why = None, "the pass could not be logged in the guards ledger"
+            except Exception as exc:   # an error is no pass: the card
+                _log("owner", exc)
+                archive_case, archive_why = None, "the session tree, the session's work or the ledger could not be read"
         for guard, check, reason, request in refusals(payload):
             if case and check == "security-settings":   # one of the three exceptions, logged above
                 continue
@@ -4138,6 +4268,10 @@ def main(stdin=None, stdout=None) -> int:
                 "environment.")
             (stdout or sys.stdout).write(json.dumps({"hookSpecificOutput": {
                 "hookEventName": "PreToolUse", "permissionDecision": "deny", "permissionDecisionReason": reason}}) + "\n")
+            return 0
+        if is_archive and not archive_case:
+            _record(payload, "owner", "session-archive", "asked", archive_why, case="outside")   # logged too
+            (stdout or sys.stdout).write(json.dumps(archive_ask(archive_why)) + "\n")
             return 0
         notes = []
         note = heredoc_note(payload)
@@ -4173,6 +4307,12 @@ def main(stdin=None, stdout=None) -> int:
                     "hookEventName": "PreToolUse", "permissionDecision": "deny",
                     "permissionDecisionReason": "brain guard: a session's Remote Control or permission mode is the "
                                                 "owner's; the guard failed, so it refuses (ledger/errors.log)"}}) + "\n")
+            elif ARCHIVE_TOOL.match(str(p.get("tool_name") or "")):
+                (stdout or sys.stdout).write(json.dumps({"hookSpecificOutput": {
+                    "hookEventName": "PreToolUse", "permissionDecision": "ask",
+                    "permissionDecisionReason": "brain guard: archive_session passes without the owner's card only "
+                                                "inside its conditions; the guard failed, so the card asks "
+                                                "(ledger/errors.log)"}}) + "\n")
         except Exception:
             pass
     return 0

@@ -148,6 +148,28 @@ def app_meta(host_id: str) -> dict:
     return pick(data) if isinstance(data, dict) else {}
 
 
+def app_work(host_id: str) -> dict | None:
+    """What a session leaves open, from its own app file (the guard's archive case, brain.guards.archive):
+    ``{prs: [(repo, number, state)], cwd}``, each PR's state as the app last saw it, upper case (OPEN, MERGED, CLOSED;
+    '' when missing, and an entry that is not a mapping is ('', '', '')), ``cwd`` its folder ('' when missing); None
+    when the file cannot be read, names another id, or its prs is not a list. Only these keys are read, never a text."""
+    f = app_file(host_id)
+    try:
+        data = json.loads(f.read_text(encoding="utf-8")) if f else None
+    except (OSError, ValueError):
+        return None
+    if not isinstance(data, dict) or data.get("sessionId") != host_id:
+        return None
+    prs = data.get("prs")
+    prs = [] if prs is None else prs
+    if not isinstance(prs, list):
+        return None
+    out = [(str(p.get("repo") or ""), str(p.get("prNumber") or ""), str(p.get("state") or "").upper())
+           if isinstance(p, dict) else ("", "", "") for p in prs]
+    cwd = data.get("cwd")
+    return {"prs": out, "cwd": cwd if isinstance(cwd, str) else ""}
+
+
 def _stat(f: Path) -> list | None:
     try:
         st = f.stat()
