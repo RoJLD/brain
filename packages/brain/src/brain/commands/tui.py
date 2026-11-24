@@ -50,7 +50,9 @@ USAGE = """\
                  and left/right its pan in the app; z or Enter a row's items as Gantt lanes, a wave's by lot, each
                  with its past bar from its first session to its done day, its start-to-finish band, est. h and
                  crit., its criticality index, c marking the critical chain, Z or Escape back; --zoom MILESTONE
-                 prints that item level, the chain marked), --axis the tree's
+                 prints that item level, the chain marked; path: the order of the milestones from their items' live
+                 dependencies, ranks in lanes, mutual waits as knots, as brain milestone path draws it; left/right
+                 its milestone of a row in the app), --axis the tree's
                  (milestones: era > milestone > item, waves: era > wave > lot > item, a pending wave's lots by round
                  as brain wave plan cuts them, each item's PR and live session; g in the app, f its P0 and P1 items
                  alone). The project selector
@@ -261,9 +263,8 @@ def register(sub, ctx) -> None:
                          "(default: the last one shown, else the overview); with --once or --plain, print its panels "
                          "alone (the overview: its cards)")
     tu.add_argument("--view", metavar="NAME",
-                    help="with --tab, that view of it (the milestones tab: list, tree, trajectories); with --once or "
-                         "--plain, "
-                         "print that view's panels alone")
+                    help="with --tab, that view of it (the milestones tab: list, tree, trajectories, path); with "
+                         "--once or --plain, print that view's panels alone")
     tu.add_argument("--axis", choices=("milestones", "waves"),
                     help="the milestones tab's tree: era > milestone > item (default) or era > wave > lot > item (a "
                          "pending wave's lots by round as brain wave plan cuts them, each item's PR and live session; "

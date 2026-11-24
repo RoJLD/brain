@@ -82,7 +82,9 @@ view, and ``--view tree [--axis waves]`` prints it (``render``). Its Trajectorie
 §3.3) is the ``traj`` frame of the same panel: each milestone's, era's and wave's p10-p90 as a band with its median
 (brain.planbands), and ``--view trajectories`` prints it; its item level (wi-brain-tui-trajectories-items, §3.4: a
 row's items as Gantt lanes, their past bars, their criticality index and the critical chain) is computed with it and
-``--view trajectories --zoom <milestone>`` prints it.
+``--view trajectories --zoom <milestone>`` prints it. Its Path view (wi-brain-milestone-order, UX-12) is the ``path``
+frame of the same panel: the order of the milestones derived from their items' dependencies, a declared order winning,
+the mutual waits as knots (``milestone_layers``, brain.planpath), and ``--view path`` prints it.
 Each table's columns can be chosen (``columns``, ``cells``: shown or hidden, their order, the longest a title may be;
 ``EXTRA_COLUMNS``, hidden by default) and are kept in ``tui.json``; ``palette`` is the command palette's entries, in data.
 
@@ -117,12 +119,13 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 from . import (__version__, alerts, audit, config, decisions, defaults, digest, forecast, paths, perf, plan,
-               planbands, planviews, plugin_panels, projects, queue, quiet, ranking, resume, review, sessions, stateio,
-               status, transcript, usage)
+               planbands, planpath, planviews, plugin_panels, projects, queue, quiet, ranking, resume, review, sessions,
+               stateio, status, transcript, usage)
 
 PANELS = ("sessions", "queue", "alerts", "milestones", "frontier", "audit", "health", "digest")
 # a frame drawn from another panel's data, not a read of its own: the health tab's fourth (exec) and its Impact view
-FRAMES = {"exec": "health", "impact": "health", "traj": "plan"}   # traj: the Milestones tab's Trajectories
+# traj and path: the Milestones tab's Trajectories and Path
+FRAMES = {"exec": "health", "impact": "health", "traj": "plan", "path": "plan"}
 FILE_PANELS = {"graph": ("queue", "milestones", "frontier", "plan"), "forecast": ("plan",)}
 # a panel's modes beyond its list, its axes as data (spec-brain-cockpit-ux2 §5, UX-11 to UX-13): the plan panel's Tree
 # (brain.planviews); a new axis is a new entry (priority, project, person), a saved unknown one falls back to the default
@@ -544,7 +547,16 @@ def _plan_of(st: resume.Store, fc: dict | None, project: str, root: Path | None 
     from . import lots   # here: brain.lots reaches brain.detail, which imports this module
     at_once = lots.caps_in_force(root, project)["at_once"]
     tree = planviews.collect(st, fc, project, at_once)
-    return {**tree, "bands": planbands.collect(st, fc, project, tree["trees"])}   # a wave's items in the Tree's lots
+    return {**tree, "bands": planbands.collect(st, fc, project, tree["trees"]),   # a wave's items in the Tree's lots
+            "path": milestone_layers(st, fc, project)}
+
+
+def milestone_layers(st: resume.Store, fc: dict | None, project: str = "", history: bool = False) -> dict:
+    """The order of one project's milestones (wi-brain-milestone-order, UX-12; brain.planpath.layers): the ranks, the
+    weighted arcs derived from their items' dependencies (a declared depends_on between two milestones wins), the knots
+    (mutual waits) and the longest chain of p50 work; ``history`` counts the done pairs too. Shared by the Path view,
+    ``brain milestone path`` and the HTML views; its JSON is versioned (``v``)."""
+    return planpath.layers(st, fc, project, history)
 
 
 class Cockpit:
@@ -1162,6 +1174,19 @@ HELP = {
              "read": "when a graph file or the forecast changes",
              "detail": "brain tui --once --tab milestones --view trajectories [--zoom <milestone>]; brain forecast "
                        "--critical [<milestone>]"},
+    "path": {"what": "Path, the order of the milestones: the ranks left to right (rank 1 waits on no other milestone), "
+                     "the milestones of a rank in parallel, each with its items done out of its live items and its "
+                     "p50; an arc A ─▶ B when an item of B still waits on an item of A (both open), a declared "
+                     "brain item link B depends_on A winning over a derived arc the other way; ↳ after X an arc over "
+                     "a rank; a mutual wait as a knot ⟦a ⇄ b⟧ to settle (brain milestone path --check); ◆ the "
+                     "longest chain of p50 work (critical); the milestones of no arc last. Under 120 columns, a "
+                     "tree: each milestone with those that wait on it, a repeat ↗. Keys: ←/→ the milestone of the "
+                     "row, Enter its detail (a knot's: its pairs and how to settle it).",
+             "from": "the graph (the thematic Milestone nodes, part_of, depends_on between items and between "
+                     "milestones) and <BRAIN_HOME>/forecast/<project>/latest.json for the p50 and the work hours "
+                     "(brain.planpath)",
+             "read": "when a graph file or the forecast changes",
+             "detail": "brain tui --once --tab milestones --view path; brain milestone path [--check] [--json]"},
     "milestones": {"what": "Each pending milestone: its items done out of its live items, and how many are reached.",
                    "from": "the graph: the Milestone nodes and the part_of edges (brain.status.milestones)",
                    "read": "when a graph file changes",
@@ -1348,7 +1373,7 @@ def axis_of(panel: str, saved: str | None = None) -> str:
 LANGS = ("en", "fr")
 TITLES = {"sessions": "Sessions", "alerts": "Alerts", "milestones": "Milestones", "frontier": "Frontier",
           "audit": "Audit debt", "health": "Stacks and index", "digest": "Digest", "exec": "Exec times",
-          "impact": "This branch's impact", "plan": "Milestones", "traj": "Milestones"}
+          "impact": "This branch's impact", "plan": "Milestones", "traj": "Milestones", "path": "Milestones"}
 QUEUE_TITLES = {"en": ("{name}'s queue", "My queue"), "fr": ("File de {name}", "Ma file")}  # (named, unnamed)
 _VOWELS = "aeiouyàâäéèêëîïôöûùü"
 _settings_cache: dict = {}
@@ -1802,7 +1827,7 @@ def heading(name: str, panel: dict | None) -> str:
     lines = {"sessions": session_lines, "queue": queue_lines, "alerts": alert_lines, "milestones": milestone_lines,
              "frontier": frontier_lines, "audit": audit_lines, "health": health_lines, "exec": exec_lines,
              "impact": impact_lines}
-    if name in ("plan", "traj"):
+    if name in ("plan", "traj", "path"):
         return _plan_heading(name, panel)
     if name == "digest":
         return title("digest") if panel else f"{title('digest')}: not probed yet"
@@ -1819,6 +1844,8 @@ def _plan_heading(name: str, panel: dict | None) -> str:
     one = groups[0] if len(groups) == 1 else {}
     if name == "plan":
         return f"{title('plan')} · Tree" + (f" · {one['forecast']}" if one.get("forecast") else "")
+    if name == "path":
+        return f"{title('path')} · Path" + (f" · {planpath.heading(one['path'])}" if one.get("path") else "")
     head = (one.get("bands") or {}).get("heading")
     return f"{title('traj')} · Trajectories" + (f" · {head}" if head else "")
 
@@ -1834,7 +1861,8 @@ VIEW_LABELS = {"cards": {"en": "Cards", "fr": "Cartes"}, "grid": {"en": "Grid", 
                "digest": {"en": "Digest", "fr": "Digest"},
                "list": {"en": "List", "fr": "Liste"}, "frames": {"en": "Frames", "fr": "Cadres"},
                "pages": {"en": "Pages", "fr": "Pages"}, "impact": {"en": "Impact", "fr": "Impact"},
-               "tree": {"en": "Tree", "fr": "Arbre"}, "trajectories": {"en": "Trajectories", "fr": "Trajectoires"}}
+               "tree": {"en": "Tree", "fr": "Arbre"}, "trajectories": {"en": "Trajectories", "fr": "Trajectoires"},
+               "path": {"en": "Path", "fr": "Chemin"}}
 
 
 def _alerts_open(panels: dict) -> str:
@@ -1945,7 +1973,8 @@ TABS = {
                  "views": {"list": ("frontier",)}, "card": _frontier_card},
     "milestones": {"key": "4", "label": {"en": "Milestones", "fr": "Jalons"},
                    "question": {"en": "Where are we going, and when?", "fr": "Où va-t-on, et quand ?"},
-                   "views": {"list": ("milestones",), "tree": ("plan",), "trajectories": ("traj",)},
+                   "views": {"list": ("milestones",), "tree": ("plan",), "trajectories": ("traj",),
+                             "path": ("path",)},
                    "card": _milestones_card},
     "ideas": {"key": "5", "label": {"en": "Ideas", "fr": "Idées"},
               "question": {"en": "What waits upstream?", "fr": "Qu'est-ce qui attend en amont ?"},
@@ -2134,7 +2163,8 @@ def render(snap: dict, width: int = WIDTH, views: dict[str, dict] | None = None,
                         ("plan", planviews.lines(p.get("plan"), axis_of("plan", axis), width,
                                                  working=planviews.sessions_of(p.get("sessions")))),
                         ("traj", planbands.zoom_lines(p.get("plan"), zoom, width) if zoom else
-                         planbands.lines(p.get("plan"), width))):
+                         planbands.lines(p.get("plan"), width)),
+                        ("path", planpath.lines(p.get("plan"), width))):
         if name in _printed(tab, view):
             out += ["", *lines, *(_line("  ", s, width) for s in states(name, snap, v(name), search, tz))]
     return out + _plugged_text(snap, width, views, search, tz, tab)
