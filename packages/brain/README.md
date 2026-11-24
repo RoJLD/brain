@@ -177,10 +177,21 @@ at the 6-week horizon with `▸` where it goes on (no date beyond it: the order 
 `⧗` calendar, `⚙` hardware, `⇢` another project), why a milestone is not dated (its dated part's band alone), then « (no
 milestone) » and the backlog's flow (no band while it grows faster than it empties), the notes wrapped rather than
 cut. `[` `]` change the days a cell, `←`/`→` pan a week up to the horizon, Enter opens a milestone's detail; the legacy
-console gets ASCII and words. `--tab NAME` starts on a
+console gets ASCII and words. Its fourth view, Path, is the order of the milestones (`brain.planpath`,
+`brain.tui_path`, `cockpit.milestone_layers`; UX-12): no edge links two milestones by default, so an arc A ─▶ B is
+derived when an item of B still waits on an item of A (both open), weighted by its pairs of items, and a declared
+`brain item link B depends_on A` wins over a derived arc the other way. The ranks run left to right (rank 1 waits on no
+other milestone), the milestones of a rank in parallel on their rows, each with its items done out of its live items
+and its p50, « ↳ after X » for an arc over a rank; a mutual wait (a strongly connected component) is one knot
+`⟦a ⇄ b⟧` to settle, `◆` marks the longest chain of p50 work (the forecast's work hours, the critical chain), and the
+milestones of no arc come last. Under 120 columns it is a tree: each milestone with those that wait on it, a repeat
+`↗`. `←`/`→` pick the milestone of a row, Enter opens its detail (a knot's: its pairs each way and how to settle it).
+`brain milestone path [--check] [--json] [--history]` prints the same path, `--check` lists the knots (exit 1 while one
+is left), `--json` is its data (`v` 1, read by the PERT and HTML views later), `--history` counts the done pairs too.
+`--tab NAME` starts on a
 tab, and with `--once` or `--plain` prints its panels alone (the overview: its cards); `--view NAME` one view of it and
 `--axis` the tree's: `brain tui --once --tab milestones --view tree --axis waves`, `brain tui --once --tab milestones
---view trajectories`.
+--view trajectories`, `brain tui --once --tab milestones --view path`.
 Under 120 columns or 30 rows the bar is reduced to its numbers (`0 1 Ada's queue 3 2 3 4 8`), the cards take
 one column, the grid is not offered and the health frames stack. The last tab and each tab's view are kept
 in `<BRAIN_HOME>/tui.json`.

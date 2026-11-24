@@ -1,14 +1,15 @@
 """``brain milestone``: open items attached to no milestone: proposals, the owner's validation, new milestones (ADR
-2026-11-01: always propose, never attach alone).
+2026-11-01: always propose, never attach alone); and ``path``, the order of the milestones (brain.planpath, UX-12).
 """
 
 from __future__ import annotations
 
+import shutil
 import sys
 from pathlib import Path
 
-from .. import config, decisions, graph, milestones
-from ._common import _kv, _now, _project, _queue_changed, _scope, _store, _text
+from .. import config, decisions, forecast, graph, milestones, planpath, resume, status
+from ._common import _kv, _now, _print_json, _project, _queue_changed, _scope, _store, _text
 
 ORDER = 50   # its place in brain --help's list of commands (brain.commands)
 USAGE_ORDER = 50   # its usage lines' place in brain --help's epilog
@@ -22,6 +23,12 @@ USAGE = """\
   brain milestone add ID --title T --trigger TR [--item ID]... [--parent MS] --why W [--option "A: c"]... [--ddr D]
                  a new milestone through the decision queue: the first run asks {owner}, the same command once the
                  creation is chosen writes the Milestone and its items' part_of edges
+  brain milestone path [--check] [--json] [--history] [--width N]   the order of the milestones (UX-12): an arc A -> B
+                 when an item of B still waits on an item of A (both open; --history: the done pairs too), weighted by
+                 its pairs, a declared depends_on between two milestones winning; the ranks left to right, the
+                 milestones of a rank in parallel with their p50 (the last brain forecast's), the mutual waits as
+                 knots, the longest chain of p50 work marked; --check lists each knot, its pairs each way and how to
+                 settle it (exit 1 while one is left); --json the data (v 1, the Path view's and the PERT view's)
 """
 
 
@@ -41,6 +48,8 @@ def cmd_milestone(args, root: Path) -> int:
                 print(f"== {p.name}: {store}")
                 _milestone_suggest(args, p.root, store)
         return 0
+    if args.milestone_cmd == "path":
+        return _milestone_path(args, root)
     store = _store(args, root)
     try:
         if args.milestone_cmd == "suggest":
@@ -76,6 +85,25 @@ def _milestone_suggest(args, root: Path, store: Path) -> int:
     print(f"suggest: {len(rows)} open item(s) attached to no milestone, {sum(1 for r in rows if r.proposed)} "
           f"proposed already, {new} new suggestion(s){tail}")
     return 0
+
+
+def _milestone_path(args, root: Path) -> int:
+    """brain milestone path (brain.planpath): the project's graph, every store read as one (as the cockpit reads it),
+    and its last forecast; --check exits 1 while a knot is left."""
+    p = _project(args, root)
+    st = resume.Store.load(Path(args.store).resolve()) if getattr(args, "store", None) else status._store(p)
+    lay = planpath.layers(st, forecast.load_latest(p.name), p.name, history=args.history)
+    found = planpath.problems(lay) if args.check else []
+    if args.json:
+        _print_json(lay)
+    elif args.check:
+        print("\n".join(found) if found else f"path: no mutual wait ({planpath.heading(lay)})")
+    else:
+        width = args.width or (shutil.get_terminal_size((planpath.WIDE, 30)).columns if sys.stdout.isatty()
+                               else planpath.WIDE)
+        print("\n".join([f"Milestones · Path · {p.name}: {planpath.heading(lay)}",
+                         *planpath.text(lay, max(40, width))]))
+    return 1 if args.check and lay["knots"] else 0
 
 
 def _milestone_add(args, root: Path, store: Path) -> int:
@@ -130,6 +158,15 @@ def register(sub, ctx) -> None:
     mp.add_argument("--set", action="append", help=f"ID=MS: {who}'s milestone for an item instead of its proposal, "
                                                    "or for an item without one (repeatable)")
     mp.add_argument("--write", action="store_true", help="write the edges and clear the proposals")
+    mpa = mi.add_parser("path", help="the order of the milestones from their items' dependencies (a declared one "
+                                     "wins): ranks, parallel lanes, mutual waits as knots, the longest p50 chain")
+    mpa.add_argument("--check", action="store_true", help="list the mutual waits (knots), their pairs each way and "
+                                                          "how to settle them; exit 1 while one is left")
+    mpa.add_argument("--json", action="store_true", help="the data: ranks, nodes, arcs, knots, chain (v 1)")
+    mpa.add_argument("--history", action="store_true", help="count the done pairs too: the order the work took, not "
+                                                            "only what still waits")
+    mpa.add_argument("--width", type=int, help="the columns drawn (default: the terminal's; lanes from 120, a tree "
+                                               "under)")
     mn = mi.add_parser("add", help=f"a new milestone through the decision queue: asks {who}, then (same command, "
                                    "once the creation is chosen) writes it and its items' part_of edges")
     mn.add_argument("id", help="the milestone id (ms-...)")

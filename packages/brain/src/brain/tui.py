@@ -25,12 +25,14 @@ Keys (the footer shows those of the focused panel, ? lists them all):
            choice, shows its plan run, then applies on y, each command logged as the owner's
   ctrl+pageup, ctrl+pagedown    the previous and the next tab (a click on the bar too, its tooltips name each tab)
   v        the tab's next view (the overview: its cards, its grid, its digest; 4 milestones: its list, its Tree, its
-           Trajectories); a click on its word in the toolbar too
+           Trajectories, its Path); a click on its word in the toolbar too
   g        in the Milestones Tree (brain.tui_plan): the next axis, era > milestone > item or era > wave > lot > item;
            there f the P0 and P1 items alone, ←/→ fold and unfold, Enter opens an item's detail or a milestone's row in
            Trajectories
   [ ]      in the Milestones Trajectories (the Gantt as bands): a finer or a coarser scale; ←/→ pan a week, Enter a
            milestone's detail
+  ←/→      in the Milestones Path (brain.tui_path, the order of the milestones in lanes by rank): the milestone of the
+           row; Enter its detail, a knot's pairs and how to settle it (a tree under 120 columns)
   Enter    on a card, its tab, already filtered as the card says (a click too); the arrows move between the cards
   p        the project selector: global (every registered project) or one project
   /        search every table (each word, case ignored); Enter keeps it, Escape clears it
@@ -101,6 +103,7 @@ from .tui_screens import (
     ResultScreen,
     ViewScreen,
 )
+from .tui_path import PathApp, PathView
 from .tui_plan import PlanTree, PlanTreeApp, TrajView
 from .tui_settings import SETTING_ACTIONS, SettingsFrame, SettingsTab
 from .tui_side import DetailBeside, DetailPane
@@ -114,7 +117,7 @@ PANEL_ACTIONS = ("tab", "next_tab", "prev_tab", "next_view", "set_view", "back",
                  "columns", "plan_axis", "plan_urgent")  # the panels' keys, off while a dialog or a detail is on top
 # every panel and frame, as the grid places them (open alerts: a whole row, L11); the plugged projects' panels after them
 EVERY_FRAME = ("sessions", "alerts", "queue", "milestones", "frontier", "audit", "health", "digest", "exec", "impact",
-               "plan", "traj", "settings")
+               "plan", "traj", "path", "settings")
 CARD_COLUMNS = 3
 STATUS_COLUMNS = 100  # narrower, the global bar keeps its width for the search: the subtitle has the times
 
@@ -173,7 +176,7 @@ class SearchInput(Input):
     BINDINGS = [Binding("escape", "app.clear_search", "Clear")]
 
 
-class CockpitApp(DetailBeside, PaletteAndColumns, SettingsTab, PlanTreeApp, App):
+class CockpitApp(DetailBeside, PaletteAndColumns, SettingsTab, PlanTreeApp, PathApp, App):
     TITLE = update.title(None)  # the installed version; the newer one once the background check answers
     ESCAPE_TO_MINIMIZE = False  # Escape's steps are action_back's: the search before a full view
     CSS = """
@@ -303,6 +306,8 @@ class CockpitApp(DetailBeside, PaletteAndColumns, SettingsTab, PlanTreeApp, App)
                         yield PlanTree(id=name, classes="panel")
                     elif name == "traj":  # its Trajectories, the Gantt as bands (brain.tui_plan)
                         yield TrajView(id=name, classes="panel")
+                    elif name == "path":  # its Path, the order of the milestones (brain.tui_path)
+                        yield PathView(id=name, classes="panel")
                     elif name in cockpit.COLUMNS:
                         kind = ViewTable if name in cockpit.SORTS else DataTable
                         yield kind(id=name, classes="panel", zebra_stripes=True, cursor_type="row")
@@ -385,6 +390,8 @@ class CockpitApp(DetailBeside, PaletteAndColumns, SettingsTab, PlanTreeApp, App)
             self.call_after_refresh(self._draw_plan, self.cockpit.snapshot()["panels"].get("plan"))
         if "traj" in shown:  # the same: its chart fits its width
             self.call_after_refresh(self._draw_traj, self.cockpit.snapshot()["panels"].get("plan"))
+        if "path" in shown:  # the same: its lanes fit its width (a tree under 120 columns)
+            self.call_after_refresh(self._draw_path, self.cockpit.snapshot()["panels"].get("plan"))
         self.refresh_bindings()
 
     def _alerts_row(self) -> None:
@@ -694,8 +701,8 @@ class CockpitApp(DetailBeside, PaletteAndColumns, SettingsTab, PlanTreeApp, App)
             panel = panels.get(source)
             widget = self._q(f"#{name}")
             widget.border_title = self._title(name, cockpit.heading(name, panel))
-            if name in ("plan", "traj"):
-                (self._draw_plan if name == "plan" else self._draw_traj)(panel)
+            if name in ("plan", "traj", "path"):
+                {"plan": self._draw_plan, "traj": self._draw_traj, "path": self._draw_path}[name](panel)
                 continue
             if name in cockpit.COLUMNS:
                 self._fill(widget, name, panel, snap)

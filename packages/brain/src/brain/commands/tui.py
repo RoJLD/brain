@@ -47,7 +47,9 @@ USAGE = """\
                  its cards; the settings: its pages); --view NAME that view of it (4 milestones: list, tree: the
                  WBS from the graph and the last brain forecast's latest.json, never recomputed, trajectories: the
                  Gantt as p10-p90 bands of the same forecast, with the median and the 6-week horizon; [ ] its scale
-                 and left/right its pan in the app), --axis the tree's
+                 and left/right its pan in the app; path: the order of the milestones from their items' live
+                 dependencies, ranks in lanes, mutual waits as knots, as brain milestone path draws it; left/right
+                 its milestone of a row in the app), --axis the tree's
                  (milestones: era > milestone > item, waves: era > wave > lot > item, a pending wave's lots by round
                  as brain wave plan cuts them, each item's PR and live session; g in the app, f its P0 and P1 items
                  alone). The project selector
@@ -245,9 +247,8 @@ def register(sub, ctx) -> None:
                          "(default: the last one shown, else the overview); with --once or --plain, print its panels "
                          "alone (the overview: its cards)")
     tu.add_argument("--view", metavar="NAME",
-                    help="with --tab, that view of it (the milestones tab: list, tree, trajectories); with --once or "
-                         "--plain, "
-                         "print that view's panels alone")
+                    help="with --tab, that view of it (the milestones tab: list, tree, trajectories, path); with "
+                         "--once or --plain, print that view's panels alone")
     tu.add_argument("--axis", choices=("milestones", "waves"),
                     help="the milestones tab's tree: era > milestone > item (default) or era > wave > lot > item (a "
                          "pending wave's lots by round as brain wave plan cuts them, each item's PR and live session; "
