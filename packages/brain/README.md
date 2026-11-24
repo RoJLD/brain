@@ -176,11 +176,19 @@ forecast dates, sorted by its median, `▒` from p10 to p80, `░` from p80 to p
 at the 6-week horizon with `▸` where it goes on (no date beyond it: the order only); after it the gates (`◆` go/no-go,
 `⧗` calendar, `⚙` hardware, `⇢` another project), why a milestone is not dated (its dated part's band alone), then « (no
 milestone) » and the backlog's flow (no band while it grows faster than it empties), the notes wrapped rather than
-cut. `[` `]` change the days a cell, `←`/`→` pan a week up to the horizon, Enter opens a milestone's detail; the legacy
-console gets ASCII and words. `--tab NAME` starts on a
+cut. `[` `]` change the days a cell, `←`/`→` pan a week up to the horizon; the legacy console gets ASCII and words.
+`z` or Enter on a row opens its item level, the Gantt lanes: its items (a wave's by lot, as the Tree cuts them, the
+others in the order the forecast's scheduler serves them, then the undated and the done ones), each with its past bar
+`━` from its first session to its done day (the forecast's `past`, from the cost ledger), its start-to-finish band
+(`░` from its start's p10 to its median and from its end's p80 to its p90, `▒` between, `█` its end's median), its
+est. h (a done item: its actual hours) and its `crit.`, the share of futures in which it lies on the chain that sets
+the row's finish (`brain forecast --critical`); `c` marks that chain with `◆` and puts it in the heading, Enter opens
+an item's detail (on the heading, the milestone's), `Z` or Escape goes back. A forecast written before model 3 keeps
+no start: its finish bands alone, no `crit.`. `--tab NAME` starts on a
 tab, and with `--once` or `--plain` prints its panels alone (the overview: its cards); `--view NAME` one view of it and
 `--axis` the tree's: `brain tui --once --tab milestones --view tree --axis waves`, `brain tui --once --tab milestones
---view trajectories`.
+--view trajectories`, and `--zoom <milestone>` its item level: `brain tui --once --tab milestones --view trajectories
+--zoom wave-s7`.
 Under 120 columns or 30 rows the bar is reduced to its numbers (`0 1 Ada's queue 3 2 3 4 8`), the cards take
 one column, the grid is not offered and the health frames stack. The last tab and each tab's view are kept
 in `<BRAIN_HOME>/tui.json`.
@@ -629,6 +637,17 @@ one's own pace), another project's item (`<project>:<id>`), a machine with its r
 forecast` draws each one, and reads the owner's pending blocking DDRs and pending action DDRs as gates of the items
 they name; `brain check` warns on a trigger that names a duration with no gate, on an `after_external` that does not
 resolve and on a `due` date without its `due_source`; `brain queue` ends with what each gate holds.
+
+`brain forecast --critical [<milestone>]` prints the critical chains its futures found: for each group (the backlog,
+each milestone, era and wave), the chain of items whose ends set its finish in the most futures, each item with its
+criticality index (the share of futures in which it lies on that chain, Van Slyke 1963), whether the chain is
+capacity-bound (its links are lanes other items held) or dependency-bound (depends_on, or a gate counted from the
+item before it: a Go/NoGo's lag after its dependency, a calendar from an item's end; « after a gate » when its first
+item waited on an absolute one, a DDR's answer or a calendar day), and the share of futures it was that
+chain; with a milestone (its id, its short name, `backlog` or `-`), its items' index, start and end p10–p90 and the
+items of other groups on its chain. Its `--json` (and `latest.json`) carries the same as additive keys of format 1
+(model 3): per item `start`, `hours` and `critical`, per group `chain`, and `past`, the ledger's first session and
+done day of each done or doing member of an open milestone.
 
 Before it, `brain wave close-merged X.Y.Z [--repo NAME]... [--repo-dir D]... [--since REF] [--until REF] [--write]
 [--json]` closes the items the merged PRs deliver (brain.closemerged, zero token, git only): the PRs merged on each
