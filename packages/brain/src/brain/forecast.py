@@ -431,10 +431,13 @@ def gather(p: projects.Project, led: cost.Ledger, now: datetime) -> dict:
         row["score"] = round(value / max(effort, 0.25), 4)
         items.append(row)
     milestones = []
+    wplan = waves.build(st.nodes, st.edges)
     for m in st.of_type("Milestone"):
         if m.get("status") in ("reached", "dropped"):
             continue
-        members = [i for i in st.milestone_items(m["id"]) if status.get(i) != "dropped"]
+        # a wave's members are the items in it now (carried in counted, carried out not: brain.waves), as the Tree's
+        of = wplan.items_of(m["id"]) if waves.kind(m) == waves.WAVE else st.milestone_items(m["id"])
+        members = [i for i in of if status.get(i) != "dropped"]
         trig = str((m.get("props") or {}).get("trigger") or "")
         gs = prepared(m.get("props") or {})
         milestones.append({"id": m["id"], "title": " ".join(str(m.get("title") or "").split())[:120],

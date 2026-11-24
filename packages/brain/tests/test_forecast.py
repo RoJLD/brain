@@ -143,7 +143,9 @@ def test_an_item_in_a_wave_and_a_thematic_milestone_keeps_both(project):
     loose = sorted(i["id"] for i in model["items"] if not i["milestone"])
     assert "wi-p2" in loose and "wi-p1" not in loose and res["no_milestone"]["open"] == len(loose)
     ms = {m["id"]: m for m in res["milestones"]}
-    assert ms["wave-s9"]["open"] == 2 and ms["ms-x"]["open"] == 2   # wi-p1 counted in both
+    assert ms["ms-x"]["open"] == 2   # wi-p1 counted in both
+    # a wave's members are the items in it now (wi-brain-forecast-starts-critical): wi-carry, carried in, counts
+    assert ms["wave-s9"]["open"] == 3 and "wave-s9" in out["wi-carry"]["critical"]
     # the slip of a day of waiting reads every milestone of the item: the tightest one sets it
     fc = {"milestones": [{"id": "ms-x", "days": {"p50": 30.0}}, {"id": "wave-s9", "days": {"p50": 5.0}}],
           "items": [{"id": "wi-p1", "milestone": "ms-x", "parents": ["ms-x", "wave-s9"], "days": {"p50": 4.0}}]}

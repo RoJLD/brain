@@ -176,11 +176,19 @@ forecast dates, sorted by its median, `▒` from p10 to p80, `░` from p80 to p
 at the 6-week horizon with `▸` where it goes on (no date beyond it: the order only); after it the gates (`◆` go/no-go,
 `⧗` calendar, `⚙` hardware, `⇢` another project), why a milestone is not dated (its dated part's band alone), then « (no
 milestone) » and the backlog's flow (no band while it grows faster than it empties), the notes wrapped rather than
-cut. `[` `]` change the days a cell, `←`/`→` pan a week up to the horizon, Enter opens a milestone's detail; the legacy
-console gets ASCII and words. `--tab NAME` starts on a
+cut. `[` `]` change the days a cell, `←`/`→` pan a week up to the horizon; the legacy console gets ASCII and words.
+`z` or Enter on a row opens its item level, the Gantt lanes: its items (a wave's by lot, as the Tree cuts them, the
+others in the order the forecast's scheduler serves them, then the undated and the done ones), each with its past bar
+`━` from its first session to its done day (the forecast's `past`, from the cost ledger), its start-to-finish band
+(`░` from its start's p10 to its median and from its end's p80 to its p90, `▒` between, `█` its end's median), its
+est. h (a done item: its actual hours) and its `crit.`, the share of futures in which it lies on the chain that sets
+the row's finish (`brain forecast --critical`); `c` marks that chain with `◆` and puts it in the heading, Enter opens
+an item's detail (on the heading, the milestone's), `Z` or Escape goes back. A forecast written before model 3 keeps
+no start: its finish bands alone, no `crit.`. `--tab NAME` starts on a
 tab, and with `--once` or `--plain` prints its panels alone (the overview: its cards); `--view NAME` one view of it and
 `--axis` the tree's: `brain tui --once --tab milestones --view tree --axis waves`, `brain tui --once --tab milestones
---view trajectories`.
+--view trajectories`, and `--zoom <milestone>` its item level: `brain tui --once --tab milestones --view trajectories
+--zoom wave-s7`.
 Under 120 columns or 30 rows the bar is reduced to its numbers (`0 1 Ada's queue 3 2 3 4 8`), the cards take
 one column, the grid is not offered and the health frames stack. The last tab and each tab's view are kept
 in `<BRAIN_HOME>/tui.json`.

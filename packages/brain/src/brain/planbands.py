@@ -19,6 +19,25 @@ gets ASCII and words (UX-13).
 
 ``collect(st, fc, project)`` gives the rows the Textual view (brain.tui_plan ``TrajView``) and the text twin
 (``lines``: ``brain tui --once --tab milestones --view trajectories``) draw with ``chart``, from the same function.
+
+The item level (wi-brain-tui-trajectories-items, §3.4; ``z`` or Enter on a row, ``--zoom <milestone>`` in the text
+twin): a milestone's, an era's or a wave's items as Gantt lanes, a wave's in its lots (as the Tree's waves axis cuts
+them, brain.lots), the others in the scheduler's order (the forecast's), then the items it cannot date and the done
+ones. Each item's row:
+
+  ``past``    left of ``│``, at the same scale: its actual bar ``━`` from its first session to its done day (or to the
+              forecast's day while doing), from the forecast's ``past`` (the cost ledger's); done before the window,
+              « ✓ <day> »;
+  future      its start-to-finish band: ``░`` from its start's p10 to its median and from its finish's p80 to its p90,
+              ``▒`` from its start's median to its finish's p80, ``█`` its finish's median (a model-2 forecast keeps
+              no start: its finish band alone, as a milestone's); « ┄┄ undated: why » when the forecast cannot date it;
+  ``est. h``  its drawn hours p10-p90 (a done item: its actual hours, « act »);
+  ``crit.``   its criticality index for the scope (forecast ``critical``): the share of futures in which it lies on
+              the chain that sets the scope's finish; ``◆`` marks the scope's most frequent chain (``c`` in the app,
+              always in the text twin), whose line the heading carries.
+
+``levels(st, fc, project, trees, rows)`` gives each banded row's level; ``item_chart`` draws one, ``zoom_lines`` is
+its text twin.
 """
 
 from __future__ import annotations
@@ -138,10 +157,12 @@ def _backlog(fc: dict, project: str) -> dict:
     return row
 
 
-def collect(st, fc: dict | None, project: str) -> dict:
+def collect(st, fc: dict | None, project: str, trees: dict | None = None) -> dict:
     """One project's bands: the heading, the forecast's day, its milestones' rows (the reached and dropped ones of
-    the graph left out), « (no milestone) » and the backlog. No forecast: no rows, the heading says how to get one."""
-    out = {"project": project, "heading": heading(fc), "as_of": (fc or {}).get("as_of"), "rows": [], "tail": []}
+    the graph left out), « (no milestone) » and the backlog, and each row's item level (``levels``: a wave's lots
+    from ``trees``, the Tree's, planviews.collect's). No forecast: no rows, the heading says how to get one."""
+    out = {"project": project, "heading": heading(fc), "as_of": (fc or {}).get("as_of"), "rows": [], "tail": [],
+           "levels": {}}
     if not fc:
         return out
     plan = waves.Plan(st.nodes)
@@ -150,6 +171,7 @@ def collect(st, fc: dict | None, project: str) -> dict:
             if (st.nodes.get(m.get("id")) or {}).get("status") not in ("reached", "dropped")]
     out["rows"] = sorted(rows, key=_order)
     out["tail"] = [r for r in (_no_milestone(fc, project, undated),) if r["open"]] + [_backlog(fc, project)]
+    out["levels"] = levels(st, fc, project, trees, out["rows"])
     return out
 
 
@@ -265,7 +287,7 @@ def row_text(r: dict, n: int, scale: float, offset: int = 0, plain: bool = False
 def legend(plain: bool = False) -> str:
     m = WORDS if plain else GLYPHS
     return (f"{m['inner']} p10–p80 · {m['outer']} p80–p90 · {m['median']} median · {m['beyond']} beyond "
-            f"{forecast.HORIZON_DAYS // 7} weeks · [ ] scale · ←/→ pan · Enter detail")
+            f"{forecast.HORIZON_DAYS // 7} weeks · [ ] scale · ←/→ pan · z or Enter its items")
 
 
 def chart(group: dict, width: int, scale: float | None = None, offset: int = 0,
@@ -302,4 +324,259 @@ def lines(panel: dict | None, width: int = planviews.WIDE, scale: float | None =
         out.append("  no project read yet")
     if drawn:
         out.append(f"  {legend(plain)}")
+    return out
+
+
+# --- the item level (wi-brain-tui-trajectories-items) ---
+
+LABEL_W = 34         # an item's state, short id and priority
+PAST_W = 10          # the past cells left of the « │ »
+EST_W, CRIT_W = 9, 5
+RIGHT_W = 1 + EST_W + 1 + CRIT_W + 2
+PAST = {"glyph": "━", "word": "~"}
+CHAIN = {"glyph": "◆", "word": "*"}
+UNDATED = {"glyph": "┄", "word": "-"}
+LEVEL_KINDS = ("milestone", "era", "wave")
+
+
+def _short_item(nid: str, project: str) -> str:
+    pre = f"wi-{project}-"
+    return nid[len(pre):] if project and nid.startswith(pre) else nid
+
+
+def _ids(nodes: list[dict]) -> list[str]:
+    """The ids of the item nodes under ``nodes``, depth first, in their order."""
+    out = []
+    for n in nodes:
+        if n.get("kind") == "item" and n.get("id"):
+            out.append(n["id"])
+        out += _ids(n.get("children") or [])
+    return out
+
+
+def _find(nodes: list[dict], key: str) -> dict | None:
+    for n in nodes:
+        if n.get("key") == key:
+            return n
+        hit = _find(n.get("children") or [], key)
+        if hit:
+            return hit
+    return None
+
+
+def _groups(st, row: dict, trees: dict) -> tuple[str, list[tuple[str, list[str]]]]:
+    """(how the items are grouped, [(a group's name, its item ids)]): a pending wave's lots from the Tree's waves axis
+    (brain.lots, the items in it now), then its other items; else every item through its sub-milestones, one group."""
+    if row["kind"] == planviews.WAVE:
+        node = _find(trees.get("waves") or [], row["key"])
+        if node is not None:
+            lots = [(c["name"], _ids(c["children"])) for c in node["children"] if c.get("kind") == "lot"]
+            rest = _ids([c for c in node["children"] if c.get("kind") != "lot"])
+            return ("lot" if lots else "order"), lots + ([("", rest)] if rest else [])
+    return "order", [("", list(st.milestone_items(row["id"])))]
+
+
+def _item_row(st, f: dict, nid: str, project: str, mid: str, past: dict, why: str | None, on_chain: bool) -> dict:
+    n = st.nodes.get(nid) or {}
+    props = n.get("props") or {}
+    status = str(n.get("status") or "")
+    prio = str(props.get("priority") or "") or (f"{props['priority_proposed']}?" if props.get("priority_proposed")
+                                                 else "")
+    done = str(props.get("done") or "")[:10] if status == "done" else ""
+    return {"key": f"{project}:{nid}", "kind": "item", "id": nid, "project": project,
+            "name": _short_item(nid, project), "title": str(n.get("title") or ""), "state": status, "priority": prio,
+            "days": f.get("days"), "start": (f.get("start") or {}).get("days"), "hours": f.get("hours"),
+            "critical": (f.get("critical") or {}).get(mid), "undated": why, "on_chain": on_chain,
+            "past": {"first": past.get("first") or "", "done": done or past.get("done") or "",
+                     "hours": past.get("hours")}}
+
+
+def _level(st, fc: dict, row: dict, trees: dict) -> dict:
+    """One row's item level: its groups' rows (a group's name, then its items), its done items last."""
+    project, mid = row["project"], row["id"]
+    items = {i["id"]: i for i in fc.get("items") or [] if i.get("id")}
+    rank = {i["id"]: k for k, i in enumerate(fc.get("items") or []) if i.get("id")}   # the scheduler's order
+    why = {u["id"]: u.get("why") or "" for u in (fc.get("gates") or {}).get("undated") or [] if u.get("id")}
+    past = fc.get("past") or {}
+    chain = next((m for m in fc.get("milestones") or [] if m.get("id") == mid), {}).get("chain")
+    on = set((chain or {}).get("items") or ())
+    by, groups = _groups(st, row, trees)
+    rows, done = [], []
+    for name, ids in groups:
+        dated, rest = [], []
+        for nid in ids:
+            status = (st.nodes.get(nid) or {}).get("status")
+            if status == "dropped":
+                continue
+            r = _item_row(st, items.get(nid) or {}, nid, project, mid, past.get(nid) or {}, why.get(nid), nid in on)
+            (done if status == "done" else dated if nid in items else rest).append(r)
+        if by == "order":
+            dated.sort(key=lambda r: (rank.get(r["id"], math.inf), r["id"]))
+        rest.sort(key=lambda r: (r["undated"] is None, r["id"]))
+        if dated or rest:
+            if name:
+                rows.append({"key": f"{row['key']}:{name}", "kind": "group", "name": name})
+            rows += dated + rest
+    if done:
+        done.sort(key=lambda r: (r["past"]["done"], r["id"]), reverse=True)
+        rows.append({"key": f"{row['key']}:done", "kind": "group", "name": f"✓ {len(done)} done"})
+        rows += done
+    return {"key": row["key"], "id": mid, "project": project, "name": row["name"], "kind": row["kind"],
+            "title": row.get("title", ""), "done": row.get("done", 0), "items": row.get("items", 0), "by": by,
+            "chain": chain, "chain_text": forecast.chain_text(chain, project, fc), "rows": rows}
+
+
+def levels(st, fc: dict | None, project: str, trees: dict | None, rows: list[dict]) -> dict[str, dict]:
+    """{a banded row's key: its item level}, for each milestone, era and wave of ``rows`` (``collect``'s)."""
+    if not fc:
+        return {}
+    return {r["key"]: _level(st, fc, r, trees or {}) for r in rows if r["kind"] in LEVEL_KINDS}
+
+
+def level_heading(lv: dict, fc_heading: str) -> str:
+    grouped = "grouped by lot" if lv["by"] == "lot" else "in the scheduler's order"
+    return f"{lv['project']} › {lv['name']} › items · {grouped} · {fc_heading}"
+
+
+def _day(text: str):
+    try:
+        return datetime.fromisoformat(str(text)[:10]).date()
+    except ValueError:
+        return None
+
+
+def _item_cell(a: float, b: float, d: dict, s: dict | None) -> str:
+    """A future cell of an item: its finish's median, its start-to-finish core, its tails; a forecast with no start:
+    its finish band alone (``_cell``)."""
+    if not s:
+        return _cell(a, b, d)
+    if a <= d["p50"] < b:
+        return "median"
+    if a < d["p80"] and b > s["p50"]:
+        return "inner"
+    if (a < s["p50"] and b > s["p10"]) or (a < d["p90"] and b > d["p80"]):
+        return "outer"
+    return ""
+
+
+def item_band(r: dict, n: int, scale: float, offset: int = 0, plain: bool = False) -> str:
+    """An item's ``n`` future cells: its start-to-finish band, ``▸`` past the horizon; « ┄┄ undated: why » when the
+    forecast cannot date it."""
+    days = r.get("days")
+    if not days:
+        if r.get("undated") is not None and r.get("state") != "done":
+            text = f"{UNDATED['word' if plain else 'glyph'] * 2} undated: {forecast.gate_kind(r['undated'])}"
+            return text[:n].ljust(n)
+        return " " * n
+    marks = WORDS if plain else GLYPHS
+    h, out = _horizon(), []
+    for k in range(n):
+        a = (offset + k) * scale
+        if a >= h:
+            first = k == 0 or a - scale < h
+            out.append(marks["beyond"] if first and days["p90"] > h else " ")
+            continue
+        kind = _item_cell(a, a + scale, days, r.get("start"))
+        out.append(marks[kind] if kind else " ")
+    return "".join(out)
+
+
+def past_cells(r: dict, as_of: str | None, scale: float, plain: bool = False) -> str:
+    """The ``PAST_W`` cells before the forecast's day: the item's actual bar from its first session to its done day
+    (to the forecast's day while it is doing), « ✓ <day> » when it ended before the window."""
+    now = _as_of(as_of)
+    p = r.get("past") or {}
+    first, done = _day(p.get("first") or ""), _day(p.get("done") or "")
+    if now is None or not (first or done):
+        return " " * PAST_W
+    today = now.date()
+    end = done or (today if r.get("state") == "doing" else None)
+    tick = "done:" if plain else "✓"
+    if first is None or end is None:
+        return (f"{tick} {planviews._md(done.isoformat())}" if done else "").rjust(PAST_W)[:PAST_W]
+    lo, hi = (first - today).days, (end - today).days + 1       # days from the forecast's day, [lo, hi)
+    if hi <= -PAST_W * scale:
+        return f"{tick} {planviews._md(end.isoformat())}".rjust(PAST_W)[:PAST_W]
+    mark = PAST["word" if plain else "glyph"]
+    return "".join(mark if (j - PAST_W) * scale < hi and (j - PAST_W + 1) * scale > lo else " "
+                   for j in range(PAST_W))
+
+
+def _est(r: dict) -> str:
+    if r.get("state") == "done":
+        h = (r.get("past") or {}).get("hours")
+        return f"{h:.1f} act" if h is not None else "-"
+    q = r.get("hours")
+    return f"{q['p10']:.1f}–{q['p90']:.1f}" if q else "-"
+
+
+def _crit(r: dict) -> str:
+    return f"{r['critical']:.0%}" if r.get("critical") is not None and r.get("state") != "done" else "-"
+
+
+def item_cells(width: int) -> int:
+    """The item level's future cells at ``width`` columns."""
+    return max(MIN_CELLS, width - LABEL_W - 1 - PAST_W - 1 - RIGHT_W)
+
+
+def item_text(r: dict, n: int, scale: float, offset: int, as_of: str | None, plain: bool, chain: bool) -> str:
+    """One row of the item level: a group's name alone, or an item's label, past, future and columns."""
+    if r["kind"] == "group":
+        return r["name"].replace("✓", "done:") if plain else r["name"]
+    state = r["state"][:5] if plain else planviews.STATES.get(r["state"], "?")
+    label = f"{state} {r['name']} {r['priority'] or '-'}"
+    if len(label) > LABEL_W:
+        label = label[:LABEL_W - 1] + "…"
+    mark = CHAIN["word" if plain else "glyph"] if chain and r.get("on_chain") else " "
+    return (f"{label:<{LABEL_W}} {past_cells(r, as_of, scale, plain)}{'|' if plain else '│'}"
+            f"{item_band(r, n, scale, offset, plain)} {_est(r):>{EST_W}} {_crit(r):>{CRIT_W}} {mark}").rstrip()
+
+
+def item_legend(plain: bool = False, chain: bool = True) -> str:
+    m, p, c = (WORDS, PAST["word"], CHAIN["word"]) if plain else (GLYPHS, PAST["glyph"], CHAIN["glyph"])
+    return (f"{p} past · {m['outer']} start p10–p50, end p80–p90 · {m['inner']} start p50 to end p80 · {m['median']} "
+            f"end median · {c} critical chain{'' if chain else ': c'} · crit. its index · Z or Escape back")
+
+
+def item_chart(lv: dict, as_of: str | None, width: int, scale: float | None = None, offset: int = 0,
+               plain: bool | None = None, chain: bool = True) -> tuple[list[str], list[tuple[dict, str]]]:
+    """(the head lines: the chain's line when ``chain``, the dates' row; [(row, its text)]) of one item level at
+    ``width`` columns."""
+    plain = planviews.words() if plain is None else plain
+    n = item_cells(width)
+    scale = scale or default_scale(n)
+    n = min(n, max(1, last(scale) + 1 - offset))   # nothing is drawn past the horizon's cell
+    head = [f"critical (most futures): {lv['chain_text']}"] if chain and lv.get("chain_text") else []
+    head.append(f"{'item':<{LABEL_W}} {'past':>{PAST_W}}{'|' if plain else '│'}{ticks(as_of, n, scale, offset)} "
+                f"{'est. h':>{EST_W}} {'crit.':>{CRIT_W}}")
+    return head, [(r, item_text(r, n, scale, offset, as_of, plain, chain)) for r in lv.get("rows") or []]
+
+
+def find_level(bands: dict, project: str, ref: str) -> dict | None:
+    """A project's level of ``ref``: a row's key, a milestone's id, its name in the chart or its short id."""
+    lvs = bands.get("levels") or {}
+    named = [k for k, lv in lvs.items() if ref in (lv["name"], lv["id"])]
+    for key in (ref, f"{project}:{ref}", *named, *(f"{project}:{pre}{ref}" for pre in (f"ms-{project}-", "ms-"))):
+        if key in lvs:
+            return lvs[key]
+    return None
+
+
+def zoom_lines(panel: dict | None, ref: str, width: int = planviews.WIDE, plain: bool | None = None) -> list[str]:
+    """The text twin of the item level (``brain tui --once --tab milestones --view trajectories --zoom
+    <milestone>``): each project's level of ``ref``, the chain marked."""
+    plain = planviews.words() if plain is None else plain
+    out, found = ["Milestones · Trajectories · items"], False
+    for g in (panel or {}).get("projects") or []:
+        b = g.get("bands") or {}
+        lv = find_level(b, g["project"], ref)
+        if lv is None:
+            continue
+        found = True
+        out.append(f"  {level_heading(lv, b.get('heading', ''))}")
+        head, rows = item_chart(lv, b.get("as_of"), width - 2, None, 0, plain, chain=True)
+        out += [f"  {x}" for x in head] + [f"  {t}" for _, t in rows]
+        out.append(f"  {item_legend(plain)}")
+    if not found:
+        out.append(f"  {ref}: no milestone, era or wave of that id in the forecast's rows (brain forecast)")
     return out
