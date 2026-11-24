@@ -7,5 +7,6 @@ section: Added
   on each preset: its set closed under the map's hard dependencies (`open`, or `incomplete` while a module's
   dependencies are unclassified, never a silent pass), and a preset without AI pulling no AI module nor a
   distribution that ships one (`violated`; the map's `ships_in` says which distributions ship which modules). Exit 1
-  when a preset is open or violated; `brain modules --check` and `brain check` warn of each fault (docs/modules.md,
-  « Presets and personas »).
+  when a preset is open or violated (run from a store that reads another's registry, `config.json` `modules.store`,
+  it checks the file beside that registry); `brain modules --check` and `brain check` warn of each fault
+  (docs/modules.md, « Presets and personas »).

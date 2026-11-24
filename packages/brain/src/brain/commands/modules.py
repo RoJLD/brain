@@ -30,7 +30,8 @@ USAGE = """\
                  removed, document fields and hand fields changed;
                  --personas: the two checks of each preset of personas.yaml: its set closed under the map's hard
                  dependencies (open, incomplete while a module's are unclassified, or closed), and a preset without
-                 AI pulling no AI module nor a distribution that ships one (exit 1 when one is open or violated);
+                 AI pulling no AI module nor a distribution that ships one (exit 1 when one is open or violated;
+                 from a store that reads another's registry, the file beside that registry);
                  under config.json views.strict, another engine than engine.pin writes nothing (--force)
 """
 
@@ -60,13 +61,21 @@ def cmd_modules(args, root: Path) -> int:
 
 def _personas(args, root: Path, store: Path) -> int:
     """brain modules --personas: the two checks of each preset (brain.presets), text or --json {problems, presets};
-    exit 1 when personas.yaml is refused or a preset is open or violated."""
-    found, wrong = presets.report(store, root), presets.problems(store, root)
+    exit 1 when personas.yaml is refused or a preset is open or violated. A store that reads another's registry
+    (config.json modules.store) checks the file of the store that keeps it: brain check says its faults once, on
+    that store, but an explicit run never passes on a file it skipped."""
+    owner, read = store, ""
+    if not (store / modules.REGISTRY).is_file():
+        found_at = modules.lookup(store, root)
+        if found_at is not None:
+            read, owner = found_at
+    found, wrong = presets.report(owner, root), presets.problems(owner, root)
     failed = bool(wrong) or any(presets.failed(r) for r in found)
     if args.json:
         print(json.dumps({"problems": wrong, "presets": found}, indent=1, ensure_ascii=False))
         return 1 if failed else 0
-    print("\n".join(wrong + presets.lines(found)))
+    head = [f"{presets.FILE} of {read} (the registry this store reads)"] if read else []
+    print("\n".join(head + wrong + presets.lines(found)))
     return 1 if failed else 0
 
 

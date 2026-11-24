@@ -174,7 +174,9 @@ the top or in a preset is a newer brain's: a note in read mode, an error in stri
 twice, a brick that is no module's brick, a module the registry does not know, a source dated after the import or a
 day that is not one.
 
-`brain modules --personas [--json]` runs two checks on each preset (and its optional variant):
+`brain modules --personas [--json]` runs two checks on each preset (and its optional variant). Run from a store
+that reads another's registry (`config.json` `modules.store`), it checks the file beside that registry and names its
+store (`personas.yaml of <project>:<store>`), while `brain check` says its faults once, on the store that keeps it:
 
 1. **Closed under the hard dependencies.** Every `depends_on` of its modules, direct or through a module it pulls,
    is in its set: `open` names each one missing and the modules that need it. A soft dependency (`uses`) is never

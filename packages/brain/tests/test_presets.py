@@ -169,6 +169,24 @@ def test_another_store_reading_the_registry_does_not_check_the_file_twice(tmp_pa
     assert presets.problems(prog_store, lab) == ["x: brick Z is the brick of no module of modules.yaml"]
 
 
+def test_personas_run_from_a_store_reading_the_registry_checks_the_owners_file(tmp_path, monkeypatch, capsys):
+    """An explicit brain modules --personas never passes on the file it skipped: run from the store that reads the
+    registry (modules.store), it checks the file beside that registry and names its store."""
+    from test_modules import _programme
+    lab, lab_store, prog_store, _ = _programme(tmp_path, monkeypatch, "prog")
+    (prog_store / presets.FILE).write_text("v: 1\npersonas: [{id: x, name: X, bricks: [Z]}]\n", encoding="utf-8")
+    assert cli.main(["modules", "--personas"]) == 1   # lab, the default project: prog's file refused
+    out = capsys.readouterr().out
+    assert out.startswith("personas.yaml of prog:notes/graph (the registry this store reads)\n")
+    assert "x: brick Z is the brick of no module of modules.yaml" in out and "no personas.yaml" not in out
+    assert cli.main(["modules", "--personas", "--json"]) == 1
+    assert json.loads(capsys.readouterr().out)["problems"] == ["x: brick Z is the brick of no module of modules.yaml"]
+    (prog_store / presets.FILE).write_text("v: 1\npersonas: [{id: k, name: K, bricks: [K], ai: false}]\n",
+                                           encoding="utf-8")
+    assert cli.main(["modules", "--personas"]) == 0
+    assert "k (K): " in capsys.readouterr().out
+
+
 @pytest.mark.parametrize("which", ["older", "newer"])
 def test_the_fixtures_are_read_in_read_mode(tmp_path, monkeypatch, which):
     monkeypatch.setenv("BRAIN_STRICT", "0")
