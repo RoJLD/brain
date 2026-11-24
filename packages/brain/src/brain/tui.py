@@ -29,8 +29,10 @@ Keys (the footer shows those of the focused panel, ? lists them all):
   g        in the Milestones Tree (brain.tui_plan): the next axis, era > milestone > item or era > wave > lot > item;
            there f the P0 and P1 items alone, ←/→ fold and unfold, Enter opens an item's detail or a milestone's row in
            Trajectories
-  [ ]      in the Milestones Trajectories (the Gantt as bands): a finer or a coarser scale; ←/→ pan a week, Enter a
-           milestone's detail
+  [ ]      in the Milestones Trajectories (the Gantt as bands): a finer or a coarser scale; ←/→ pan a week
+  z Z      there z (or Enter) on a milestone's, an era's or a wave's row: its items as Gantt lanes (a wave's by lot),
+           each with its past bar, its start-to-finish band, est. h and crit. (its criticality index); c marks the
+           critical chain with ◆, Enter an item's detail (on the heading, the milestone's), Z or Escape back
   ←/→      in the Milestones Path (brain.tui_path, the order of the milestones in lanes by rank): the milestone of the
            row; Enter its detail, a knot's pairs and how to settle it (a tree under 120 columns)
   Enter    on a card, its tab, already filtered as the card says (a click too); the arrows move between the cards

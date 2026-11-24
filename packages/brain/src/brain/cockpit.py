@@ -80,9 +80,11 @@ backlog's WBS read from the graph and the forecast's latest.json (brain.planview
 axes are data (``MODES``: era > milestone > item, ``g`` era > wave > item), the axis kept in tui.json with the tab's
 view, and ``--view tree [--axis waves]`` prints it (``render``). Its Trajectories view (wi-brain-tui-trajectories-bands,
 §3.3) is the ``traj`` frame of the same panel: each milestone's, era's and wave's p10-p90 as a band with its median
-(brain.planbands), and ``--view trajectories`` prints it. Its Path view (wi-brain-milestone-order, UX-12) is the
-``path`` frame of the same panel: the order of the milestones derived from their items' dependencies, a declared
-order winning, the mutual waits as knots (``milestone_layers``, brain.planpath), and ``--view path`` prints it.
+(brain.planbands), and ``--view trajectories`` prints it; its item level (wi-brain-tui-trajectories-items, §3.4: a
+row's items as Gantt lanes, their past bars, their criticality index and the critical chain) is computed with it and
+``--view trajectories --zoom <milestone>`` prints it. Its Path view (wi-brain-milestone-order, UX-12) is the ``path``
+frame of the same panel: the order of the milestones derived from their items' dependencies, a declared order winning,
+the mutual waits as knots (``milestone_layers``, brain.planpath), and ``--view path`` prints it.
 Each table's columns can be chosen (``columns``, ``cells``: shown or hidden, their order, the longest a title may be;
 ``EXTRA_COLUMNS``, hidden by default) and are kept in ``tui.json``; ``palette`` is the command palette's entries, in data.
 
@@ -544,7 +546,8 @@ def _plan_of(st: resume.Store, fc: dict | None, project: str, root: Path | None 
     plan`` gives them, brain.lots.caps_in_force) and its bands (brain.planbands)."""
     from . import lots   # here: brain.lots reaches brain.detail, which imports this module
     at_once = lots.caps_in_force(root, project)["at_once"]
-    return {**planviews.collect(st, fc, project, at_once), "bands": planbands.collect(st, fc, project),
+    tree = planviews.collect(st, fc, project, at_once)
+    return {**tree, "bands": planbands.collect(st, fc, project, tree["trees"]),   # a wave's items in the Tree's lots
             "path": milestone_layers(st, fc, project)}
 
 
@@ -1160,11 +1163,17 @@ HELP = {
                      "horizon (no date there: the order only); then the gates (◆ go/no-go, ⧗ calendar, ⚙ hardware, ⇢ "
                      "another project), why a milestone is not dated (its dated part's band alone), « (no milestone) » "
                      "and the backlog's flow (no band while it grows faster than it empties). UNCALIBRATED until "
-                     "judged. Keys: [ ] the scale, ←/→ pan a week, Enter a milestone's detail.",
+                     "judged. z or Enter on a row: its items as Gantt lanes (a wave's by lot, the others in the "
+                     "scheduler's order): each one's past bar ━ from its first session to its done day, its "
+                     "start-to-finish band (░ start p10-p50 and end p80-p90, ▒ start p50 to end p80, █ its end's "
+                     "median), its est. h and its crit., the share of futures in which it lies on the chain that sets "
+                     "the row's finish; c marks that chain with ◆, Enter an item's detail, Z or Escape back. Keys: "
+                     "[ ] the scale, ←/→ pan a week.",
              "from": "<BRAIN_HOME>/forecast/<project>/latest.json, never recomputed, and the graph for the eras and "
                      "waves (brain.planbands)",
              "read": "when a graph file or the forecast changes",
-             "detail": "brain tui --once --tab milestones --view trajectories; brain forecast"},
+             "detail": "brain tui --once --tab milestones --view trajectories [--zoom <milestone>]; brain forecast "
+                       "--critical [<milestone>]"},
     "path": {"what": "Path, the order of the milestones: the ranks left to right (rank 1 waits on no other milestone), "
                      "the milestones of a rank in parallel, each with its items done out of its live items and its "
                      "p50; an arc A ─▶ B when an item of B still waits on an item of A (both open), a declared "
@@ -2118,13 +2127,13 @@ def bar_status(changed: str | None, probe_in: float | None, probing: bool = Fals
 
 def render(snap: dict, width: int = WIDTH, views: dict[str, dict] | None = None, search: str = "",
            tz: str | None = None, tab: str | None = None, root: Path | None = None, view: str | None = None,
-           axis: str | None = None) -> list[str]:
+           axis: str | None = None, zoom: str | None = None) -> list[str]:
     """The text view: every panel, one after the other; ``views`` (each table panel's view, {} its defaults) and
     ``search`` narrow the sessions, the queue and the frontier (None: everything, in the panels' order); ``tz``
     shows the header's times in that timezone (None: as recorded, UTC); ``tab`` prints that tab's panels and frames
     alone (``view``: that view's alone), the overview's cards for the overview, the settings' pages for the settings
-    (those of the brain at ``root``); ``axis`` the Tree's (``MODES``, its default when None). The header names the
-    installed version."""
+    (those of the brain at ``root``); ``axis`` the Tree's (``MODES``, its default when None); ``zoom`` a milestone's
+    item level in the Trajectories (brain.planbands ``zoom_lines``). The header names the installed version."""
     p = snap["panels"]
 
     def stamp(iso):
@@ -2153,7 +2162,8 @@ def render(snap: dict, width: int = WIDTH, views: dict[str, dict] | None = None,
                         ("impact", impact_lines(p.get("health"), width)),
                         ("plan", planviews.lines(p.get("plan"), axis_of("plan", axis), width,
                                                  working=planviews.sessions_of(p.get("sessions")))),
-                        ("traj", planbands.lines(p.get("plan"), width)),
+                        ("traj", planbands.zoom_lines(p.get("plan"), zoom, width) if zoom else
+                         planbands.lines(p.get("plan"), width)),
                         ("path", planpath.lines(p.get("plan"), width))):
         if name in _printed(tab, view):
             out += ["", *lines, *(_line("  ", s, width) for s in states(name, snap, v(name), search, tz))]
@@ -2277,10 +2287,10 @@ def states(name: str, snap: dict, view: dict | None = None, search: str = "", tz
 
 def watch(cp: Cockpit, refresh_s: float = REFRESH_S, probe_s: float = PROBE_S, out=None, ticks: int = 0,
           views: dict[str, dict] | None = None, search: str = "", tz: str | None = None,
-          tab: str | None = None, view: str | None = None, axis: str | None = None) -> int:
+          tab: str | None = None, view: str | None = None, axis: str | None = None, zoom: str | None = None) -> int:
     """The text view redrawn in place when a panel changed (``brain tui --plain``, or no tui extra); Ctrl-C quits.
-    ``views``, ``search``, ``tz``, ``tab``, ``view`` and ``axis`` as ``render``'s. ``ticks``: stop after that many
-    (tests)."""
+    ``views``, ``search``, ``tz``, ``tab``, ``view``, ``axis`` and ``zoom`` as ``render``'s. ``ticks``: stop after
+    that many (tests)."""
     out = out or sys.stdout
     next_probe, n = 0.0, 0
     try:
@@ -2292,7 +2302,7 @@ def watch(cp: Cockpit, refresh_s: float = REFRESH_S, probe_s: float = PROBE_S, o
                 width = max(min(os.get_terminal_size(out.fileno()).columns, 160), 60) if out.isatty() else WIDTH
                 out.write(("\x1b[2J\x1b[H" if out.isatty() else "")
                           + "\n".join(render(cp.snapshot(), width, views, search, tz, tab,
-                                              getattr(cp, "root", None), view, axis)) + "\n")
+                                              getattr(cp, "root", None), view, axis, zoom)) + "\n")
                 out.flush()
             n += 1
             if ticks and n >= ticks:

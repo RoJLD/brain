@@ -12,8 +12,10 @@ from ._common import _scope, _whole
 
 ORDER = 180   # its place in brain --help's list of commands (brain.commands)
 USAGE_ORDER = 530   # its usage lines' place in brain --help's epilog
+CHAINS = "\0every"   # --critical alone: every group's chain
 USAGE = """\
-  brain forecast [--project P | --all] [--runs N] [--seed S] [--items] [--no-scan] [--json]   when each milestone
+  brain forecast [--project P | --all] [--runs N] [--seed S] [--items] [--critical [M]] [--no-scan] [--json]
+                 when each milestone
                  and the whole backlog will be done: a Monte Carlo of futures (a shared estimate error from the
                  backtests, a lognormal per item from its p25-p75, the capacity of past days, the proposals' keep rate,
                  the owner's answer and action delays, the gates written on the nodes (props.gate: calendar, count,
@@ -21,8 +23,13 @@ USAGE = """\
                  default score; an alert when an item's p80 passes its due date), p10-p90
                  under the honesty bar: uncalibrated until 5 reached milestones are judged, no date beyond 6 weeks,
                  none for a backlog that grows faster than it empties, the deferred items and the inflow apart; --items
-                 per item p10 . p50 . p80 . p90; --json reproducible (seed, input digests, code version); every run
-                 keeps <BRAIN_HOME>/forecast/<project>/latest.json (brain status --quick reads it)
+                 per item p10 . p50 . p80 . p90; --critical each group's critical chain (the items whose ends set
+                 its finish in the most futures, each with its criticality index: the share of futures in which it
+                 lies on that chain; capacity- or dependency-bound), --critical M one milestone's (an id, its short
+                 name, backlog or -) with its items' index, start and end; --json reproducible (seed, input digests,
+                 code version; per item its start, hours and critical, per group its chain, the past of the done and
+                 doing items); every run keeps <BRAIN_HOME>/forecast/<project>/latest.json (brain status --quick
+                 reads it)
 """
 
 
@@ -48,9 +55,25 @@ def cmd_forecast(args, root: Path) -> int:
         out.append(res)
     if args.json:
         print(forecast.as_json(out[0] if len(out) == 1 and not args.all else out))
+    elif args.critical is not None and out:
+        return _critical(out, None if args.critical == CHAINS else args.critical)
     else:
         print("\n\n".join("\n".join(forecast.render(res, args.items)) for res in out))
     return 0 if out else 1
+
+
+def _critical(out: list[dict], ref: str | None) -> int:
+    """--critical: each forecast's chains; with a milestone, the projects that have it (none of them: exit 2)."""
+    text = []
+    for res in out:
+        try:
+            text.append("\n".join(forecast.critical_lines(res, ref)))
+        except forecast.ForecastError as exc:
+            print(f"brain forecast {res['project']}: {exc}", file=sys.stderr)
+    if not text:
+        return 2
+    print("\n\n".join(text))
+    return 0
 
 
 def register(sub, ctx) -> None:
@@ -62,6 +85,10 @@ def register(sub, ctx) -> None:
                                                                     "same inputs and seed give the same numbers")
     fo.add_argument("--items", action="store_true", help="each item's p10 . p50 . p80 . p90, and why the others are "
                                                          "not dated")
+    fo.add_argument("--critical", nargs="?", const=CHAINS, metavar="MILESTONE",
+                    help="each group's critical chain and its items' criticality index (the share of futures in "
+                         "which each lies on it); with a milestone (an id, its short name, backlog or -): its chain "
+                         "and every item's index, start and end; --json keeps the whole result")
     fo.add_argument("--no-scan", action="store_true", help="read the token ledger as it is, without scanning the "
                                                           "transcripts that changed")
     fo.add_argument("--json", action="store_true", help="the result with its seed, input digests and code version")
