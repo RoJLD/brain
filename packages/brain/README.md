@@ -717,6 +717,9 @@ brain adr target [--needs] [--json]            # the one-way-door ADRs against t
                                                # (docs/adr-target.md: Scope, Target compatibility; advisory)
 brain adr revisit [--all] [--today D] [--json] # the ADRs whose Revisit if is already met or lapsed: a node closed,
                                                # a wave closed, a day past, a config key changed (docs/revisit.md)
+brain graphs [--project P | --all] [--json]    # every graph in one list: each store's layers (counts, written or
+                                               # generated, last commit), the catalogue's layers it lacks, the code
+                                               # index, docgraph documents, the source files (docs/graphs.md)
 brain spec show REF [--section N | --toc] [--json]   # a Spec node, a Doc id (doc:<repo>:<path>::<key>) or a path
 brain journal last [N] [--titles] [--json]     # the last N dated entries (default 1; 0: all)
 ```
