@@ -14,14 +14,18 @@ ORDER = 230   # its place in brain --help's list of commands (brain.commands)
 USAGE_ORDER = 270   # its usage lines' place in brain --help's epilog
 USAGE = """\
   brain render [--target claude|agents|cursor|gemini|antigravity|grok|hermes] [--project P] [--repo DIR] [--out DIR]
-                 [--write | --check] [--force] [--json]   the neutral source (source/: rules with scope and id,
-                 procedures, MCP servers, packs) written as an agent's own files: claude, the marketplace and its
+                 [--home] [--write | --check] [--force] [--json]   the neutral source (source/: rules with scope and
+                 id, procedures, MCP servers, packs) written as an agent's own files: claude, the marketplace and its
                  plugins in the brain's repo (byte for byte the hand-written step 1; no marker, brain check refuses a
                  hand edit); agents, the project's AGENTS.md (its chain flattened: global, ancestors, its CLAUDE.md
                  last) and .agents/skills; cursor, gemini, antigravity, grok and hermes, the base plus each tool's MCP
                  settings (JSON merged, never replaced); no flag: the plan; --write: into the brain's and the
                  project's repo (never a production checkout, never the home folder; --force replaces a file it did
-                 not write); --check: exit 1 when an output is not current; --out: a dry render into a folder
+                 not write); --check: exit 1 when an output is not current; --out: a dry render into a folder;
+                 --home: the target's home-folder file alone, whatever the project (cursor: ~/.cursor/mcp.json, the
+                 machine-wide MCP servers, those of the packs without projects), planned with the entries it adds
+                 or changes, merged by --home --write (mcpServers entries only, the rest kept, atomic; a file it
+                 cannot read is refused, never overwritten; a second run writes nothing)
 """
 
 
@@ -29,6 +33,8 @@ def cmd_render(args, root: Path) -> int:
     """``brain render``: the neutral source written as an agent's own files (brain.render). The brain is the one with
     the neutral source (--root, the repo here, else config.json's); the project is --project, else the one here."""
     base = neutral.brain_root(Path(args.root).resolve() if args.root else None)
+    if args.home:
+        return _render_home(args, base)
     obj = getattr(args, "project_obj", None)
     if obj is None and args.target != "claude":
         here = projects.for_root(paths.find_root())
@@ -45,6 +51,18 @@ def cmd_render(args, root: Path) -> int:
                        force=args.force, as_json=args.json)
 
 
+def _render_home(args, base: Path) -> int:
+    """``brain render --home``: the machine-wide servers are every project's, so no project to name and no repo
+    written; --repo is refused (exit 2)."""
+    if args.repo:
+        print("brain render: --home writes the home folder only: --repo has no use there", file=sys.stderr)
+        return 2
+    if args.write and not args.out and skew.refuse(base, "render", args.force):   # another engine than the pin
+        return 1
+    return render.main(base, args.target, out=Path(args.out).resolve() if args.out else None, do_write=args.write,
+                       check=args.check, force=args.force, as_json=args.json, home=True)
+
+
 def register(sub, ctx) -> None:
     rd = sub.add_parser("render", help="the neutral source (source/) written as an agent's own files: claude (the "
                                        "marketplace, byte for byte), agents (AGENTS.md, .agents/skills), cursor, "
@@ -54,6 +72,9 @@ def register(sub, ctx) -> None:
                                                                  "default: the one here)")
     rd.add_argument("--repo", help="the project's checkout to write into, a worktree of it (default: its root)")
     rd.add_argument("--out", help="render into this folder instead: a dry run to look at")
+    rd.add_argument("--home", action="store_true",
+                    help="the target's home-folder file alone, whatever the project (cursor: ~/.cursor/mcp.json, "
+                         "the machine-wide MCP servers): the plan, then --home --write merges it")
     rdm = rd.add_mutually_exclusive_group()
     rdm.add_argument("--write", action="store_true", help="write what is not current, remove stray files")
     rdm.add_argument("--check", action="store_true", help="exit 1 when an output is not current")

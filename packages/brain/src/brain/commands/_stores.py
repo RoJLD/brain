@@ -482,7 +482,7 @@ def check_registry(root: Path | None, projs: list[projects.Project], every: bool
     edges between stores (brain.crossstore): one whose end is in no store is an error with ``every`` (check --all,
     which checks every store: that store's own check refuses it too), else a warning. The projects the brain reads
     and never writes are counted. Exit code 1 on an error."""
-    errors = projects.check(root) + config.check(root) + permissions.check(root)
+    errors = projects.check(root) + config.check(root) + permissions.check(root, machine=False)
     from .. import plugins
     from . import _registry
     errors += plugins.check(root, _registry.register_all(argparse.ArgumentParser().add_subparsers(),

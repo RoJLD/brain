@@ -98,27 +98,36 @@ def _documented(u: inventory.Unit, rf: inventory.RepoFacts, docs: dict, shims: d
     """cmd.documented: a console script named as a word, or its module, or its file (a package.json bin: also the
     README of its package); a command module by dotted path, -m, file path or backticked stem, or through a shim
     script of it that the docs name (the hook capture.sh runs capture.py, which runs brain.capture)."""
-    t = rf.tree
     if u.name in rf.console:
-        target = rf.console[u.name]
-        if u.name in docs["words"] or target in docs["dotted"] or _named(docs["files"], target):
-            return True
-        base = target.rsplit("/", 1)[-1]
-        if "." in base and re.search(rf"(?<![\w.-]){re.escape(base)}(?![\w-])", docs["text"]):
-            return True
-        pkg = posixpath.dirname(rf.bins.get(u.name, ""))
-        return bool(pkg) and f"{pkg}/README.md" in rf.docs
-    root = rf.root_of.get(u.path, "")
-    if u.name in docs["dotted"] or _named(docs["files"], u.path) or u.name.split(".")[-1] in docs["ticks"] \
-            or (root and _named(docs["files"], u.path[len(root) + 1:])):
+        return _script_documented(u, rf, docs)
+    return _module_named(u, rf, docs) or any(_shim_named(rf.tree, s, docs) for s in shims.get(u.path, []))
+
+
+def _script_documented(u: inventory.Unit, rf: inventory.RepoFacts, docs: dict) -> bool:
+    """A console script: its name as a word, its module, its file (or the file's name in the text), or the README
+    of the package whose package.json bin it is."""
+    target = rf.console[u.name]
+    if u.name in docs["words"] or target in docs["dotted"] or _named(docs["files"], target):
         return True
-    for s in shims.get(u.path, []):
-        folder, stem_ = posixpath.dirname(s), posixpath.basename(s).rsplit(".", 1)[0]
-        same = [p for p in t.files if posixpath.dirname(p) == folder and posixpath.basename(p).rsplit(".", 1)[0]
-                == stem_]
-        if any(_named(docs["files"], p) for p in same):
-            return True
-    return False
+    base = target.rsplit("/", 1)[-1]
+    if "." in base and re.search(rf"(?<![\w.-]){re.escape(base)}(?![\w-])", docs["text"]):
+        return True
+    pkg = posixpath.dirname(rf.bins.get(u.name, ""))
+    return bool(pkg) and f"{pkg}/README.md" in rf.docs
+
+
+def _module_named(u: inventory.Unit, rf: inventory.RepoFacts, docs: dict) -> bool:
+    """A command module by dotted path, file path (from the repo or from its package root) or backticked stem."""
+    root = rf.root_of.get(u.path, "")
+    return bool(u.name in docs["dotted"] or _named(docs["files"], u.path) or u.name.split(".")[-1] in docs["ticks"]
+                or (root and _named(docs["files"], u.path[len(root) + 1:])))
+
+
+def _shim_named(t: inventory.Tree, shim: str, docs: dict) -> bool:
+    """The docs name a file of the shim's folder with the shim's stem (capture.sh for the shim capture.py)."""
+    folder, stem_ = posixpath.dirname(shim), posixpath.basename(shim).rsplit(".", 1)[0]
+    same = [p for p in t.files if posixpath.dirname(p) == folder and posixpath.basename(p).rsplit(".", 1)[0] == stem_]
+    return any(_named(docs["files"], p) for p in same)
 
 
 def _parsers_added(text: str) -> list[str]:
@@ -227,20 +236,65 @@ def measure(p: projects.Project, cfgs: list[projects.Repo], trees: dict[str, inv
     moved = _moved(p)
     registered = _repo_tokens(p, cfgs)   # before the filter: a repo of the project not cloned here is registered
     cfgs = [c for c in cfgs if c.name in trees]
+    feats, featured = _features(p, cfgs, trees, featured)
+    facts = {c.name: inventory.collect(trees[c.name], c.name, c.lang, c.roots, c.waive) for c in cfgs}
+    idx = inventory.Index.build(facts)
+    tops = idx.top_packages()
+    missing = _classify(cfgs, facts, idx)
+    stores = inventory.code_stores(facts, _store_refs(p, cfgs))
+    mod_evidence = _mod_evidence(cfgs, facts, idx, tops)
+    refs = _code_refs(stores, facts, registered)
+    if layered is None:
+        layered = _layered(stores, facts)
+    if linked is None:
+        linked = _linked_stores(p, cfgs, trees)
+    if coverage is None:
+        coverage = _coverage(cfgs, linked, trees)
+    out_repos = []
+    for c in cfgs:
+        if only is not None and c.name not in only:
+            continue
+        ctx = {"rf": facts[c.name], "idx": idx, "store": linked.get(c.name), "cache": {}, "cfg": c,
+               "features": feats["features"], "trees": trees, "project": p, "moved": moved, "stale": stale,
+               "flabel": feats["flabel"], "fhome": feats["fhome"], "fpublic": feats["fpublic"],
+               "fstrict": feats["fstrict"], "coverage": coverage.get(c.name),
+               "mod_ev": {path: v for (r, path), v in mod_evidence.items() if r == c.name}}
+        out_repos.append(_repo_result(c, facts[c.name], idx, tops, mod_evidence, facts, refs.dangling.get(c.name, []),
+                                      sorted(set(refs.unregistered.get(c.name, []))), refs.covered, layered,
+                                      missing.get(c.name, []), (extra_dirs or {}).get(c.name, set()), ctx))
+    return {"name": p.name, "root": str(p.root), "repos": out_repos, "counts": _sum(out_repos), "facts": facts,
+            "mod_evidence": mod_evidence, "layered": layered, "linked": linked, "featured": featured,
+            "coverage": coverage}
+
+
+def _features(p: projects.Project, cfgs: list[projects.Repo], trees: dict[str, inventory.Tree],
+              featured: bool | None) -> tuple[dict, bool]:
+    """What the feature checks read (:func:`_feature_model`): the model (an empty one when ``featured`` is true and
+    no store gives one, None when it is false), its store's folder, the repos that hold it, the public repos and
+    whether only their render passes; and ``featured`` itself (when None: whether a store has the Feature type)."""
     fm, flabel, fhome = _feature_model(p, cfgs, trees)
     fpublic, fstrict = _public_repos(p, cfgs) if fm is not None else (set(), False)
     if featured is None:
         featured = fm is not None
-    fm = (fm or features.Model()) if featured else None
-    facts = {c.name: inventory.collect(trees[c.name], c.name, c.lang, c.roots, c.waive) for c in cfgs}
-    idx = inventory.Index.build(facts)
-    tops = idx.top_packages()
+    return {"features": (fm or features.Model()) if featured else None, "flabel": flabel, "fhome": fhome,
+            "fpublic": fpublic, "fstrict": fstrict}, featured
+
+
+def _seeds(cfgs: list[projects.Repo], facts: dict[str, inventory.RepoFacts]) -> dict[str, list[str]]:
+    """The closure's seeds by repo: its declared entries, else every console script of a production repo."""
     seeds = {}
     for c in cfgs:
         if c.entry is not None:
             seeds[c.name] = list(c.entry)
         elif c.production:
             seeds[c.name] = [f"script:{n}" for n in facts[c.name].console]
+    return seeds
+
+
+def _classify(cfgs: list[projects.Repo], facts: dict[str, inventory.RepoFacts], idx: inventory.Index) -> dict:
+    """The production closure from the seeds: each unit's class (entry, prod) and chain set on its repo's facts, and
+    a production repo that no entry reaches marked no_entry; returns the seeds that name nothing, by repo."""
+    seeds = _seeds(cfgs, facts)
     reached, missing = inventory.closure(facts, seeds, idx)
     hit_repos = {r for r, _ in reached}
     for c in cfgs:
@@ -248,76 +302,99 @@ def measure(p: projects.Project, cfgs: list[projects.Repo], trees: dict[str, inv
         rf = facts[c.name]
         # conservative: a production repo (listed, or with declared entries) that no entry reaches is all production
         rf.no_entry = (c.production or c.entry is not None) and not seeded and c.name not in hit_repos
-        for u in rf.units:
-            got = reached.get((c.name, u.path))
-            if rf.no_entry:
-                u.cls, u.chain = "prod", "no entry declared"
-            elif got:
-                u.cls, u.chain = ("entry" if got[0] <= 1 else "prod"), _chain(got)
-    stores = inventory.code_stores(facts, _store_refs(p, cfgs))
-    mod_evidence: dict[tuple[str, str], tuple[str, list]] = {}
+        _classify_units(rf, c.name, reached)
+    return missing
+
+
+def _classify_units(rf: inventory.RepoFacts, name: str, reached: dict) -> None:
+    for u in rf.units:
+        got = reached.get((name, u.path))
+        if rf.no_entry:
+            u.cls, u.chain = "prod", "no entry declared"
+        elif got:
+            u.cls, u.chain = ("entry" if got[0] <= 1 else "prod"), _chain(got)
+
+
+def _mod_evidence(cfgs: list[projects.Repo], facts: dict[str, inventory.RepoFacts], idx: inventory.Index,
+                  tops: set) -> dict[tuple[str, str], tuple[str, list]]:
+    """Each unit's test evidence by (repo, path) (inventory.unit_evidence, which also sets each repo's evidence and
+    reach on its facts)."""
+    out: dict[tuple[str, str], tuple[str, list]] = {}
     for c in cfgs:
         for path, got in inventory.unit_evidence(facts[c.name], idx, tops).items():
-            mod_evidence[(c.name, path)] = got
-    covered: dict[str, set] = {}
-    unregistered: dict[str, list] = {}
-    dangling: dict[str, list] = {}
+            out[(c.name, path)] = got
+    return out
+
+
+@dataclass
+class _Refs:
+    """What the active CodeRefs of a project's code stores say (:func:`_code_refs`): the files they cover, by the
+    repo that holds them; by store repo, the repos they name that no tree here measures (another project's, or one
+    not cloned here) and the coderef.dangling findings."""
+    covered: dict[str, set] = field(default_factory=dict)
+    unregistered: dict[str, list] = field(default_factory=dict)
+    dangling: dict[str, list] = field(default_factory=dict)
+
+    def dangle(self, repo: str, cid: str, why: str, fix: str) -> None:
+        self.dangling.setdefault(repo, []).append(finding(repo, "coderef.dangling", cid, why, fix))
+
+
+def _code_refs(stores: list, facts: dict[str, inventory.RepoFacts], registered: set[str] | None) -> _Refs:
+    refs = _Refs()
     for st in stores:
         for cid, status in st.code_refs:
-            if status != "active":
-                continue
-            try:
-                repo, path, sym = inventory.parse_code_ref(cid)
-            except ValueError as exc:
-                dangling.setdefault(st.repo, []).append(finding(st.repo, "coderef.dangling", cid,
-                                                                f"malformed CodeRef id: {exc}", "fix the id"))
-                continue
-            target = facts.get(repo.lower())
-            if target is None and (registered is None or repo.lower() in registered):   # another project's repo,
-                # one not cloned here, or a registry that does not tell
-                unregistered.setdefault(st.repo, []).append(repo)
-                continue
-            if target is None:   # no project registers it: nothing will ever measure it (P0, ruleset 11)
-                dangling.setdefault(st.repo, []).append(finding(
-                    st.repo, "coderef.dangling", cid, f"{repo} is a repo no project registers (projects.yaml repos:)",
+            if status == "active":
+                _code_ref(refs, st, cid, facts, registered)
+    return refs
+
+
+def _code_ref(refs: _Refs, st, cid: str, facts: dict[str, inventory.RepoFacts], registered: set[str] | None) -> None:
+    """One active CodeRef of the store ``st``: malformed; in a repo no tree here holds (registered elsewhere, or a
+    registry that does not tell: not measured); in a repo no project registers (P0, ruleset 11); or the file it
+    covers, dangling when the file or its symbol is gone."""
+    try:
+        repo, path, sym = inventory.parse_code_ref(cid)
+    except ValueError as exc:
+        refs.dangle(st.repo, cid, f"malformed CodeRef id: {exc}", "fix the id")
+        return
+    target = facts.get(repo.lower())
+    if target is None and (registered is None or repo.lower() in registered):   # another project's repo,
+        # one not cloned here, or a registry that does not tell
+        refs.unregistered.setdefault(st.repo, []).append(repo)
+        return
+    if target is None:   # no project registers it: nothing will ever measure it (P0, ruleset 11)
+        refs.dangle(st.repo, cid, f"{repo} is a repo no project registers (projects.yaml repos:)",
                     f"point it at a registered repo (code:<repo>:<path>), register the repo in a project's repos:, "
-                    f"or retire it (status: retired) in {st.repo}/{st.path}"))
-                continue
-            t = target.tree
-            file = f"src/{path}" if t.has(f"src/{path}") else path
-            covered.setdefault(target.name, set()).add(file)
-            why = ""
-            if not t.has(file):
-                why = f"neither src/{path} nor {path} in {target.name}"
-            elif sym:
-                ok = inventory.has_symbol(t, file, sym)
-                why = "" if ok else f"{file} does not parse" if ok is None else f"{sym} is not defined in {file}"
-            if why:
-                dangling.setdefault(st.repo, []).append(finding(
-                    st.repo, "coderef.dangling", cid, why,
-                    f"point it at the moved code, or retire it (status: retired) in {st.repo}/{st.path}"))
-    if layered is None:
-        layered = {name for st in stores if st.code_layer for name in facts if f"repo-{name}" in st.repo_nodes}
-    if linked is None:
-        linked = _linked_stores(p, cfgs, trees)
-    if coverage is None:
-        coverage = {c.name: testcov.load(trees[linked[c.name][2]], linked[c.name][0], c.name)
-                    for c in cfgs if c.name in linked and linked[c.name][2] in trees}
-    out_repos = []
-    for c in cfgs:
-        rf = facts[c.name]
-        if only is not None and c.name not in only:
-            continue
-        ctx = {"rf": rf, "idx": idx, "store": linked.get(c.name), "cache": {}, "cfg": c, "features": fm, "trees": trees,
-               "project": p, "moved": moved, "stale": stale,
-               "flabel": flabel, "fhome": fhome, "fpublic": fpublic, "fstrict": fstrict, "coverage": coverage.get(c.name),
-               "mod_ev": {path: v for (r, path), v in mod_evidence.items() if r == c.name}}
-        out_repos.append(_repo_result(c, rf, idx, tops, mod_evidence, facts, dangling.get(c.name, []),
-                                      sorted(set(unregistered.get(c.name, []))), covered, layered,
-                                      missing.get(c.name, []), (extra_dirs or {}).get(c.name, set()), ctx))
-    return {"name": p.name, "root": str(p.root), "repos": out_repos, "counts": _sum(out_repos), "facts": facts,
-            "mod_evidence": mod_evidence, "layered": layered, "linked": linked, "featured": featured,
-            "coverage": coverage}
+                    f"or retire it (status: retired) in {st.repo}/{st.path}")
+        return
+    t = target.tree
+    file = f"src/{path}" if t.has(f"src/{path}") else path
+    refs.covered.setdefault(target.name, set()).add(file)
+    why = _gone(t, target.name, file, path, sym)
+    if why:
+        refs.dangle(st.repo, cid, why,
+                    f"point it at the moved code, or retire it (status: retired) in {st.repo}/{st.path}")
+
+
+def _gone(t: inventory.Tree, repo: str, file: str, path: str, sym: str) -> str:
+    """Why a CodeRef's file or symbol is not in its repo's tree ('' when both are there)."""
+    if not t.has(file):
+        return f"neither src/{path} nor {path} in {repo}"
+    if not sym:
+        return ""
+    ok = inventory.has_symbol(t, file, sym)
+    return "" if ok else f"{file} does not parse" if ok is None else f"{sym} is not defined in {file}"
+
+
+def _layered(stores: list, facts: dict[str, inventory.RepoFacts]) -> set[str]:
+    """The repos whose node a code store with a code layer holds (repo-<name>)."""
+    return {name for st in stores if st.code_layer for name in facts if f"repo-{name}" in st.repo_nodes}
+
+
+def _coverage(cfgs: list[projects.Repo], linked: dict, trees: dict[str, inventory.Tree]) -> dict:
+    """Each repo's coverage summary (brain.testcov), read from the store that takes its links."""
+    return {c.name: testcov.load(trees[linked[c.name][2]], linked[c.name][0], c.name)
+            for c in cfgs if c.name in linked and linked[c.name][2] in trees}
 
 
 def _feature_model(p: projects.Project, cfgs: list[projects.Repo],
