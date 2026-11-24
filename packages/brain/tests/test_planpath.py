@@ -147,7 +147,7 @@ def test_a_mutual_wait_is_a_knot_with_its_pairs_each_way(st):
     assert node["hours"] == 10.0
     text = "\n".join(planpath.problems(lay))
     assert "knot d ⇄ e: a mutual wait (rank 1)" in text and "wi-d1 waits on wi-e1" in text
-    assert "brain item link ms-demo-e depends_on ms-demo-d" in text
+    assert "settle: declare e first (brain item link ms-demo-d depends_on ms-demo-e: it overrules d before e" in text
 
 
 def test_the_ranks_place_a_milestone_after_its_longest_chain(st):
@@ -186,8 +186,33 @@ def test_tarjan_finds_a_longer_cycle_and_a_declared_order_both_ways_is_a_knot(st
     assert members == [("ms-demo-a", "ms-demo-b", "ms-demo-c"), ("ms-demo-d", "ms-demo-e"),
                        ("ms-demo-g", "ms-demo-h")]
     gh = next(k for k in lay["knots"] if "ms-demo-g" in k["members"])
-    assert gh["declared"] and "a declared order is part of it" in "\n".join(planpath.knot_lines(gh, "demo"))
+    text = "\n".join(planpath.knot_lines(gh, "demo"))
+    assert gh["declared"] and "a declared order is part of it" in text and "brain item unlink" in text
     assert lay["overruled"] == []
+    abc = next(k for k in lay["knots"] if "ms-demo-a" in k["members"])
+    settle = planpath.knot_lines(abc, "demo")[-1]   # the one arc whose other order unties the three: c before a
+    assert "brain item link ms-demo-c depends_on ms-demo-a" in settle and "--check again" not in settle
+    with (store / "edges" / "work.yaml").open("a", encoding="utf-8") as f:
+        f.write("- {from: ms-demo-c, to: ms-demo-a, type: depends_on}\n")   # following it unties the knot
+    lay = planpath.layers(resume.Store.load(store), FC, "demo")
+    assert not any("ms-demo-a" in k["members"] for k in lay["knots"])
+
+
+def test_the_counts_through_sub_milestones_match_the_store(st, store):
+    parts = planpath._part_index(st)
+    for mid in planpath.on_path(st):
+        assert planpath._items_of(st, parts, mid) == st.milestone_items(mid)
+
+
+def test_a_cell_never_overflows_its_column_in_words(st, monkeypatch):
+    monkeypatch.setenv("TERM", "linux")
+    lay = planpath.layers(st, FC, "demo")
+    for n in lay["nodes"]:
+        n.update(name="a-very-long-milestone-name", state="reached")
+    lay["chain"] = [n["id"] for n in lay["nodes"]]
+    g = planpath.grid(lay, 66, columns=130)   # 3 ranks of 22 columns
+    assert g["mode"] == "lanes" and g["col"] == 22
+    assert all(len(line) < 22 for row in g["rows"] for _, cell in row for line in cell)
 
 
 def test_the_lanes_from_120_columns(st):
@@ -221,7 +246,7 @@ def test_the_legacy_console_gets_words(st, monkeypatch):
 
 def test_a_knot_too_large_for_its_cell_shows_its_count():
     x = {"kind": "knot", "name": " ⇄ ".join(f"milestone-{i}" for i in range(9))}
-    assert planpath._name(x, False, 20) == "⟦9 milestones⟧"
+    assert planpath._name(x, False, 20) == "⟦milestone-0+8⟧" and planpath._name(x, False, 5) == "⟦9⟧"
     assert planpath._name(x, False) .startswith("⟦milestone-0 ⇄ milestone-1")
 
 
@@ -241,6 +266,8 @@ def test_the_cockpit_s_plan_panel_carries_the_layers(st):
     assert cockpit.plan_view("path") and cockpit.VIEW_LABELS["path"]["fr"] == "Chemin" and "path" in cockpit.HELP
     text = planpath.lines(panel, 120)
     assert text[0] == "Milestones · Path" and text[1].startswith("  10 milestone(s)") and text[2].startswith("  rank 1")
+    assert planpath.lines(panel, cockpit.WIDTH)[2].startswith("  rank 1")   # the text view's 118: a 120-column screen
+    assert planpath.lines(panel, 100)[2].startswith("  ├── ")
     two = planpath.lines({"projects": [{"project": "demo", "path": lay}, {"project": "acme", "error": "gone"}]}, 120)
     assert "  demo: 10 milestone(s)" in two[1] and two[-1] == "  acme: error: gone"
     assert planpath.lines(None) == ["Milestones · Path", "  no project read yet"]

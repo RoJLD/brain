@@ -14,9 +14,10 @@ No edge links two milestones by default, so the order is derived from their item
   (declare an order, or cut the items).
 
 ``layers`` gives the ranks (rank 1: nothing before it; a node's rank is the longest chain of arcs before it, plus
-one), the weighted arcs, the knots, the milestones of no arc (``unlinked``) and the chain to the latest p50 (``chain``:
-from the linked milestone whose p50 is latest, back through the predecessor whose p50 is latest at each step; without
-a forecast, the longest chain of ranks). It is a public contract (``V``; ADR of wi-brain-milestone-order):
+one), the weighted arcs, the knots, the milestones of no arc (``unlinked``) and the longest chain of p50 work
+(``chain``, the critical one: the path whose open milestones' p50 work hours, the forecast's ``work.hours.p50``, add up
+to the most, a knot's summed, ``chain_hours`` that sum; without the forecast's hours, the longest chain by its
+milestones and ``chain_hours`` null). It is a public contract (``V``; ADR of wi-brain-milestone-order):
 ``brain milestone path --json`` prints it, the Path view and its text twin draw it, and the PERT view
 (wi-brain-tui-pert-view) and the HTML views read it; the readers ignore the keys they do not know.
 
@@ -168,8 +169,31 @@ def _short(mid: str, project: str) -> str:
     return planviews._short(mid, project)
 
 
-def _milestone(st: resume.Store, m: dict, fc: dict | None, project: str) -> dict:
-    live = [i for i in st.milestone_items(m["id"]) if st.status(i) != "dropped"]
+def _part_index(st: resume.Store) -> dict[str, list[str]]:
+    """{node: what is part_of it}, from one pass over the edges."""
+    out: dict[str, list[str]] = {}
+    for e in st.edges:
+        if e.get("type") == "part_of":
+            out.setdefault(e["to"], []).append(e["from"])
+    return out
+
+
+def _items_of(st: resume.Store, parts: dict[str, list[str]], mid: str) -> list[str]:
+    """The work items part of a milestone, through its sub-milestones (``resume.Store.milestone_items``, on the index:
+    a scan of the edges per milestone took seconds on a real graph)."""
+    out, seen, stack = set(), {mid}, [mid]
+    while stack:
+        for child in parts.get(stack.pop(), ()):
+            if child not in seen:
+                seen.add(child)
+                stack.append(child)
+                if (st.nodes.get(child) or {}).get("type") == "WorkItem":
+                    out.add(child)
+    return sorted(out)
+
+
+def _milestone(st: resume.Store, m: dict, fc: dict | None, project: str, parts: dict[str, list[str]]) -> dict:
+    live = [i for i in _items_of(st, parts, m["id"]) if st.status(i) != "dropped"]
     props = m.get("props") or {}
     p50, hours, why = _forecast(m["id"], fc)
     return {"id": m["id"], "name": _short(m["id"], project), "title": str(m.get("title") or ""),
@@ -204,7 +228,8 @@ def layers(st: resume.Store, fc: dict | None, project: str = "", history: bool =
     ms = on_path(st)
     arcs, overruled = _arcs(st, ms, history)
     node_of, knots = _knots(arcs)
-    rows = {mid: {**_milestone(st, ms[mid], fc, project), "node": node_of.get(mid, "")} for mid in sorted(ms)}
+    parts = _part_index(st)
+    rows = {mid: {**_milestone(st, ms[mid], fc, project, parts), "node": node_of.get(mid, "")} for mid in sorted(ms)}
     nodes = _nodes(rows, knots, arcs, node_of)
     _rank(nodes)
     ranks = _ranks(nodes)
@@ -332,10 +357,34 @@ def knot_lines(k: dict, project: str = "") -> list[str]:
         pairs = ", ".join(f"{x} waits on {y}" for x, y in a["items"][:4]) + (" …" if len(a["items"]) > 4 else "")
         out.append(f"  {_short(a['from'], project)} before {_short(a['to'], project)}: {what}"
                    + (f" ({pairs})" if pairs else ""))
-    a, b = k["members"][0], k["members"][1]
-    out.append(f"  settle: declare an order (brain item link {b} depends_on {a}: {_short(a, project)} first), or cut "
-               "an item's depends_on, or move an item to the other milestone")
+    out.append(_settle(k, project))
     return out
+
+
+def _breaks(k: dict, arc: dict) -> bool:
+    """Whether declaring the other order of ``arc`` (it overrules ``arc``) leaves the knot's milestones with no cycle."""
+    succ: dict[str, set[str]] = {}
+    for a in k["arcs"]:
+        if a is not arc:
+            succ.setdefault(a["from"], set()).add(a["to"])
+    succ.setdefault(arc["to"], set()).add(arc["from"])
+    return all(len(c) == 1 for c in _sccs(sorted(k["members"]), succ))
+
+
+def _settle(k: dict, project: str) -> str:
+    """How to settle a knot: overrule its weakest derived arc (the fewest pairs) by declaring the other order, or cut
+    that arc's pairs; a knot of more than two may need it again (--check says what is left)."""
+    derived_ = [a for a in k["arcs"] if not a["declared"]]
+    if not derived_:
+        return ("  settle: the knot is declared both ways: brain item unlink one of the milestones' depends_on, so "
+                "one order is left")
+    ranked = sorted(derived_, key=lambda a: (a["pairs"], a["from"], a["to"]))
+    weak = next((a for a in ranked if _breaks(k, a)), ranked[0])
+    a, b = weak["from"], weak["to"]
+    more = "" if _breaks(k, weak) else "; then --check again: one order does not untie it"
+    return (f"  settle: declare {_short(b, project)} first (brain item link {a} depends_on {b}: it overrules "
+            f"{_short(a, project)} before {_short(b, project)}, {weak['pairs']} pair(s)), or cut those pairs' "
+            f"depends_on, or move an item to the other milestone{more}")
 
 
 # --- the drawing, shared by the Path view and its text twin ---
@@ -364,8 +413,10 @@ def _name(x: dict, plain: bool, room: int = 0) -> str:
     parts = x["name"].split(" ⇄ ")
     if room:
         each = (room - len(lo) - len(hi) - len(mid) * (len(parts) - 1)) // len(parts)
-        if each < 4:   # too many to name in the cell: their count (the tail and the detail name them)
-            return _fit(f"{lo}{len(parts)} milestones{hi}", room)
+        if each < 4:   # too many to name in the cell: the first and how many more (the tail and the detail name them)
+            more = f"+{len(parts) - 1}"
+            first = room - len(lo) - len(hi) - len(more)
+            return lo + _fit(parts[0], first) + more + hi if first >= 4 else _fit(f"{lo}{len(parts)}{hi}", room)
         parts = [_fit(p, each) for p in parts]
     return lo + mid.join(parts) + hi
 
@@ -440,7 +491,7 @@ def _cell(x: dict, next_rank: list[str], three: bool, ctx: dict) -> tuple[str, l
     arrow = _sym(plain)["arrow"]
     more = any(t in next_rank for t in x["after_this"])
     room = col - 1 - (len(arrow) + 2 if more else 0)
-    one = _label(x, ctx["chain"], plain, room)
+    one = _fit(_label(x, ctx["chain"], plain, room), room)   # a long mark (words: « * reached ») never overflows
     if more:
         one = one + " " + ("-" if plain else "─") * (room - len(one)) + arrow
     cell = [one, "  " + _fit(_when(x), col - 3)]
@@ -534,7 +585,9 @@ def lines(panel: dict | None, width: int = WIDE, plain: bool | None = None) -> l
             continue
         lay = g.get("path") or {}
         out.append(f"  {g['project']}: {heading(lay)}" if len(groups) > 1 else f"  {heading(lay)}")
-        out += ["  " + line for line in text(lay, width - 2, plain, columns=width)]
+        # the text view's width is its screen's less the frame (brain.cockpit WIDTH 118 on 120 columns): lanes from
+        # WIDE screen columns, as in the app
+        out += ["  " + line for line in text(lay, width - 2, plain, columns=width + 2)]
     if not groups:
         out.append("  no project read yet")
     return out

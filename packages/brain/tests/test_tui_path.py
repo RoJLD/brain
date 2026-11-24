@@ -7,7 +7,7 @@ from test_planpath import EDGES, FC, NODES
 from test_tui_plan import PlanCockpit, _run  # skipped with test_tui, without Textual: first
 
 from brain import planpath, planviews, resume, tui
-from brain.tui_path import PathView, lane_text, path_options
+from brain.tui_path import PathView, lane_text, path_options, picked_col
 from brain.tui_screens import ResultScreen
 
 
@@ -80,6 +80,10 @@ def test_the_options_and_a_lanes_row_marked(store):
     marked = lane_text(rows["demo:0"], 1)
     assert any(s.style == "reverse" for s in marked.spans) and "a 1/2" in marked.plain
     assert not any(s.style == "reverse" for s in lane_text(rows["demo:0"], None).spans)
+    second = rows["demo:1"]   # the knot, g, and an empty third rank: the picked rank 3 falls back to the first
+    assert picked_col(second, 2) == 0 and picked_col(second, 1) == 1
+    shown = next(s for s in lane_text(second, picked_col(second, 2)).spans if s.style == "reverse")
+    assert shown.start == 0   # the cell shown reversed is the one Enter opens
     two = {"projects": [*plan["projects"], {"project": "acme", "error": "OSError: gone"}]}
     options, _, _ = path_options(two, 140, 140)
     assert str(options[0].prompt).startswith("demo: 10 milestone(s)") and str(options[-1].prompt) == (

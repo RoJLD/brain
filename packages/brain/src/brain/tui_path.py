@@ -62,7 +62,7 @@ class PathView(OptionList):
         for oid in {old, here} - {None}:
             r = self.rows.get(oid or "")
             if r and r["mode"] == "lanes":
-                self.replace_option_prompt(oid, lane_text(r, self.col if oid == here else None))
+                self.replace_option_prompt(oid, lane_text(r, picked_col(r, self.col) if oid == here else None))
 
     def on_option_list_option_highlighted(self, event: OptionList.OptionHighlighted) -> None:
         event.stop()
@@ -91,10 +91,8 @@ class PathView(OptionList):
             return None
         if r["mode"] == "tree":
             return r["project"], r["node"]
-        cells = r["cells"]
-        k = self.col if self.col < len(cells) and cells[self.col][0] else next(
-            (i for i, (nid, _) in enumerate(cells) if nid), None)
-        return (r["project"], cells[k][0]) if k is not None else None
+        k = picked_col(r, self.col)
+        return (r["project"], r["cells"][k][0]) if k is not None else None
 
     def on_option_list_option_selected(self, event: OptionList.OptionSelected) -> None:
         """Enter: the picked milestone's detail; a knot's pairs and how to settle it."""
@@ -123,6 +121,15 @@ def _option_id(view: OptionList) -> str | None:
     if view.highlighted is None or view.highlighted >= view.option_count:
         return None
     return view.get_option_at_index(view.highlighted).id
+
+
+def picked_col(r: dict, col: int) -> int | None:
+    """The rank a lanes row's picked cell is in: ``col`` when that cell holds a node, else the row's first that does
+    (the one shown reversed is the one Enter opens)."""
+    cells = r["cells"]
+    if col < len(cells) and cells[col][0]:
+        return col
+    return next((i for i, (nid, _) in enumerate(cells) if nid), None)
 
 
 def lane_text(r: dict, col: int | None) -> Text:
