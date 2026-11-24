@@ -14,7 +14,10 @@ import subprocess
 import pytest
 from brain import guards, permissions, sessions
 from test_guards import PLUGIN, decide
-from test_guards_remote_control import CLI, E, F, G, K, R, RC, X, call, lab, rows  # noqa: F401 (lab: a fixture)
+import test_guards_remote_control as rclab
+from test_guards_remote_control import CLI, E, F, G, K, R, RC, X, call, rows
+
+lab = rclab.lab   # its fixture, the same invented sessions
 
 ARCHIVE = "mcp__ccd_session_mgmt__archive_session"
 
@@ -54,7 +57,7 @@ def asked(lab, p, why):
 
 
 def git(cwd, *args):
-    subprocess.run(["git", *args], cwd=cwd, check=True, capture_output=True,
+    subprocess.run(["git", *args], cwd=cwd, check=True, capture_output=True, timeout=60,
                    env={**os.environ, "GIT_AUTHOR_NAME": "a", "GIT_AUTHOR_EMAIL": "a@x", "GIT_COMMITTER_NAME": "a",
                         "GIT_COMMITTER_EMAIL": "a@x"})
 

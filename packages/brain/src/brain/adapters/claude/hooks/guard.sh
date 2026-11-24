@@ -134,7 +134,7 @@ session_tool() {
   local why=${3//\\/\\\\}
   why=${why//\"/\\\"}
   if [[ $2 =~ $settings ]]; then
-    printf '{"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"deny","permissionDecisionReason":"brain guard: the guards cannot run (%s), so a session'"'"'s Remote Control and permission mode are refused: run brain update (or the installer, install.ps1 -Apply), then retry."}}\n' "$why"
+    printf '{"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"deny","permissionDecisionReason":"brain guard: the guards cannot run (%s), so a session'"'"'s Remote Control and permission mode are refused: run brain update (or the installer, install.ps1 -Apply)."}}\n' "$why"
   elif [[ $2 =~ $archive ]]; then
     printf '{"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"ask","permissionDecisionReason":"brain guard: the guards cannot run (%s), so archive_session asks the owner'"'"'s card: run brain update (or the installer, install.ps1 -Apply)."}}\n' "$why"
   else

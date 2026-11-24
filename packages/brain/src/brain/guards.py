@@ -2111,7 +2111,7 @@ def archive(payload: dict, now: float | None = None) -> tuple[str | None, str]:
     target finished (idle or ended), none of its children blocking (each archived or detached: the app archives a
     finished one with it), every PR of its app file merged or closed, and its folder clean or gone (:func:`folder_why`).
     Read from the desktop app's own files and git, as :func:`remote_control`; what cannot be read is no pass."""
-    from . import sessions, succession
+    from . import sessions
     target = (payload.get("tool_input") or {}).get("session_id")
     if not isinstance(target, str) or not sessions.HOST_RE.match(target.strip()):
         return None, "its session_id is not another session's app id (local_<uuid>): a session's own archive is the " \
@@ -2123,44 +2123,57 @@ def archive(payload: dict, now: float | None = None) -> tuple[str | None, str]:
     caller, index, meta = found
     if target == caller:
         return None, "a session's own archive is the owner's"
-    me, node = meta(caller), meta(target)
+    node = meta(target)
     if not node:
         return None, f"{target} is not in the desktop app's session files"
     if node.get("archived"):
         return None, f"{target} is archived already"
-    if node.get("parent") == caller:
-        case = "child"
-        if _coordinator(node, titles=True):
-            return None, f"{target} is a coordinator: its own successor archives it at the hand-over"
-    elif target == me.get("parent"):
-        case = "predecessor"
-        if not (_coordinator(node) or chain_root(target, node)):
-            return None, (f"{target}, which started this session, is not a Brain coordinator (the name its starter "
-                          "gave it) nor a chain root the owner marked")
-        if caller not in successors(target, index, meta, now):
-            return None, (f"this session is not {target}'s successor (a Brain coordinator by name it started, live "
-                          "and detached)")
-    else:
-        return None, f"{target} was not started by this session, nor is it the coordinator that started it"
-    st = sessions.state_of(node, {}, now)
-    if st not in RC_FINISHED:
-        return None, f"{target} is {st}, not finished"
-    blocking = [c["id"] for c in succession.children(target, index, meta, now) if c["verdict"] == "blocking"]
-    if blocking:
-        return None, (f"{target} has {len(blocking)} child session(s) neither archived nor detached, which the archive "
-                      f"would take with it or which still work: {', '.join(blocking[:5])}")
-    work = sessions.app_work(target)
-    if work is None:
-        return None, f"{target}'s app file cannot be read again"
-    left = [p for p in work["prs"] if p[2] not in PR_DONE]
-    if left:
-        named = ", ".join(f"{r or '?'}#{n or '?'} ({s or 'no state'})" for r, n, s in left[:5])
-        return None, f"{target} has {len(left)} PR(s) neither merged nor closed: {named}"
-    why = folder_why(work["cwd"])
-    if why:
+    case, why = _archive_family(caller, target, node, index, meta, now)
+    if case:
+        why = _archive_left(target, node, index, meta, now)
+    if not case or why:
         return None, why
     what = "a finished session it started" if case == "child" else "its predecessor, at the hand-over"
     return case, f"{target}, {what}: no child blocking, its PRs merged or closed, its folder clean or gone"
+
+
+def _archive_family(caller: str, target: str, node: dict, index: dict, meta, now) -> tuple[str | None, str]:
+    """(``child`` or ``predecessor``, '') when ``target`` (its app file ``node``) is of the caller's family, else
+    (None, why not)."""
+    if node.get("parent") == caller:
+        if _coordinator(node, titles=True):
+            return None, f"{target} is a coordinator: its own successor archives it at the hand-over"
+        return "child", ""
+    if target != meta(caller).get("parent"):
+        return None, f"{target} was not started by this session, nor is it the coordinator that started it"
+    if not (_coordinator(node) or chain_root(target, node)):
+        return None, (f"{target}, which started this session, is not a Brain coordinator (the name its starter gave "
+                      "it) nor a chain root the owner marked")
+    if caller not in successors(target, index, meta, now):
+        return None, (f"this session is not {target}'s successor (a Brain coordinator by name it started, live and "
+                      "detached)")
+    return "predecessor", ""
+
+
+def _archive_left(target: str, node: dict, index: dict, meta, now) -> str:
+    """'' when ``target`` leaves nothing behind (finished, no child blocking, its PRs merged or closed, its folder
+    clean or gone), else what it leaves."""
+    from . import sessions, succession
+    st = sessions.state_of(node, {}, now)
+    if st not in RC_FINISHED:
+        return f"{target} is {st}, not finished"
+    blocking = [c["id"] for c in succession.children(target, index, meta, now) if c["verdict"] == "blocking"]
+    if blocking:
+        return (f"{target} has {len(blocking)} child session(s) neither archived nor detached, which the archive would "
+                f"take with it or which still work: {', '.join(blocking[:5])}")
+    work = sessions.app_work(target)
+    if work is None:
+        return f"{target}'s app file cannot be read again"
+    left = [p for p in work["prs"] if p[2] not in PR_DONE]
+    if left:
+        named = ", ".join(f"{r or '?'}#{n or '?'} ({s or 'no state'})" for r, n, s in left[:5])
+        return f"{target} has {len(left)} PR(s) neither merged nor closed: {named}"
+    return folder_why(work["cwd"])
 
 
 def archive_ask(why: str) -> dict:
