@@ -682,7 +682,7 @@ def test_install_adds_the_user_scope_and_never_removes(tmp_path, render, apply):
     fake = tmp_path / "python.cmd"
     payload = {"ok": '{"allow": ["Bash(brain up)", "Bash(BRAIN up)", "Bash(make test)"], "ask": ["Bash(git push *)"], '
                      '"deny": ["Bash(gh repo delete *)"], "expired": {"allow": ["Bash(mine)"], "ask": [], "deny": []}, '
-                     '"errors": []}',
+                     '"withheld": ["rules[3]: allow T is withheld on this machine"], "errors": []}',
                "error": '{"allow": [], "ask": [], "deny": [], "errors": ["rules[0]: too broad"]}'}.get(render)
     code = {"error": 1, "old": 2, "crash": 1}.get(render, 0)   # old: argparse's exit; crash: a traceback, no JSON
     fake.write_text(f"@echo off\r\n{'echo ' + payload if payload else ''}\r\nexit /b {code}\r\n", encoding="utf-8")
@@ -707,6 +707,7 @@ def test_install_adds_the_user_scope_and_never_removes(tmp_path, render, apply):
         return
     assert "allow    Bash(make test) in" in res.stdout and "deny     Bash(gh repo delete *) in" in res.stdout
     assert "expired  allow Bash(mine): taken out of" in res.stdout   # declared expired: the only rule it removes
+    assert "withheld rules[3]: allow T is withheld on this machine" in res.stdout   # no guard sees it: said (F3)
     if not apply:
         assert after["permissions"] == before
         return

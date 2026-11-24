@@ -221,7 +221,8 @@ six optional steps, in the order they must run, for a machine where the telemetr
 the personal brain: it takes effect at the bundle's apply, and it is what gives the next step's settings their
 header), Claude Code's OTLP export and its `otelHeadersHelper` (`brain ipc claude-settings`: the exact lines and the
 helper's export checked; `install.ps1 -Apply` writes them, never a session), the sovereign bundle (`brain bundle plan
-sovereign`, then `apply`), `brain health ipc`, and Cursor's MCP server (`brain render --target cursor`); each needs the
+sovereign`, then `apply`), `brain health ipc`, and Cursor's MCP server (`brain render --target cursor --home`, then
+`--home --write` in the owner's terminal: `~/.cursor/mcp.json` merged once per machine); each needs the
 ones before it, so stop at the first that fails. `brain init` prints the same steps among its next ones. Each wizard
 is the brain's own commands,
 never a hidden edit: Enter asks its choice when it has one (and the folder of a new brain, an absolute path), then
@@ -716,6 +717,9 @@ brain adr target [--needs] [--json]            # the one-way-door ADRs against t
                                                # (docs/adr-target.md: Scope, Target compatibility; advisory)
 brain adr revisit [--all] [--today D] [--json] # the ADRs whose Revisit if is already met or lapsed: a node closed,
                                                # a wave closed, a day past, a config key changed (docs/revisit.md)
+brain graphs [--project P | --all] [--json]    # every graph in one list: each store's layers (counts, written or
+                                               # generated, last commit), the catalogue's layers it lacks, the code
+                                               # index, docgraph documents, the source files (docs/graphs.md)
 brain spec show REF [--section N | --toc] [--json]   # a Spec node, a Doc id (doc:<repo>:<path>::<key>) or a path
 brain journal last [N] [--titles] [--json]     # the last N dated entries (default 1; 0: all)
 ```
@@ -1955,6 +1959,9 @@ run no Claude Code hook (`brain.mcpguards`), and every answer passes the secret 
 launches it) or, with `--http`, Streamable HTTP on a loopback address only, each request carrying the machine's token
 (`brain ipc token --init` makes it once; only `brain ipc otel-headers` prints it, for Claude Code's OTLP export).
 `packages/brain/container/` defines its image (a user that is not root, the port published on 127.0.0.1 only).
+Cursor gets it by a command, never a hand edit: `brain render --target cursor --home --write` merges the machine-wide
+servers (those of the packs without projects) into `~/.cursor/mcp.json`, its `mcpServers` entries only, atomically,
+refusing a file it cannot read ([`docs/mcp.md`](docs/mcp.md), « stdio »).
 Nothing runs it on its own: a service or a remote endpoint is the owner's decision. `brain health ipc` checks every
 local service the Brain starts: loopback only, the token where the service can check one (the collector's is opt-in,
 config.json `ipc.require_token`, its export's header given by `brain ipc otel-headers`), no container as root

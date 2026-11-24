@@ -150,6 +150,10 @@ def test_the_owners_steps_stay_plans_and_the_others_plan_before_they_apply():
         ws["local-claude-export"].owner
     assert "ipc.require_token: [otel-collector]" in ws["local-require-token"].owner
     assert ws["local-health"].reads and ws["local-health"].words("plan") == ["brain", "health", "ipc"]
+    cursor = ws["local-cursor"]   # wi-brain-render-user-mcp: the home folder's file, by a command of the owner's
+    assert cursor.words("plan") == ["brain", "render", "--target", "cursor", "--home"]
+    assert "brain render --target cursor --home --write" in cursor.owner
+    cli.build_parser().parse_args(cursor.words("plan")[1:] + ["--write"])
     assert all(any(n.startswith("optional") for n in ws[i].notes) for i in LOCAL_IDS)   # each says it may be skipped
 
 

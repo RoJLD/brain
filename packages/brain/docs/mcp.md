@@ -106,6 +106,32 @@ newlines). Nothing is exposed. A client's configuration, Cursor's `~/.cursor/mcp
 {"mcpServers": {"brain": {"command": "brain", "args": ["mcp", "serve"]}}}
 ```
 
+That file is never edited by hand: a server of a pack without `projects` in the neutral source (`source/packs.yaml`,
+`source/mcp.yaml`) is machine-wide, the same in every repo, and `brain render` merges it into the home folder's file
+by a command (`wi-brain-render-user-mcp`):
+
+```bash
+brain render --target cursor --home            # the plan: ~/.cursor/mcp.json and each entry it adds or changes
+brain render --target cursor --home --write    # merged: the mcpServers entries only, every other key kept
+brain render --target cursor --home --check    # exit 1 while the file is not current
+```
+
+- **Behind its flag.** `--write` alone never writes the home folder: the plan of `brain render --target cursor` names
+  `~/.cursor/mcp.json` among the repo's files, and says that `--home --write` merges it. `--home` needs no project
+  (the machine-wide servers are every project's) and takes no `--repo`; `--out DIR` renders it into `DIR/home`.
+- **Merged.** Only the source's entries under `mcpServers` are set; every other server and key stays, with its
+  values, its key order, the file's indentation, line endings and byte order mark. An entry it changes keeps its
+  place, a new one comes last; an entry equal in another key order is the same.
+- **Atomic.** The file is written to a temporary file beside it, then renamed over it: Cursor reads the old file or
+  the new one, never half of it. A symbolic link stays one (its target is written), and the file is read again just
+  before the write.
+- **Refused, never overwritten.** A file that is not UTF-8 or not JSON (a comment, a trailing comma), holds a key
+  twice, is not an object, or whose `mcpServers` is not an object is left as it is: `--home` exits 1 and says why.
+- **Idempotent.** A second run writes nothing, and the file keeps its bytes and its modification time.
+
+`brain check` and `brain sync` never read the home folder. A repo's own `.cursor/mcp.json` is still rendered by
+`brain render --target cursor --write` in a worktree of it, by a PR.
+
 ### HTTP on loopback, with the machine's token
 
 `brain mcp serve --http [--host 127.0.0.1] [--port 8791]` speaks Streamable HTTP: a `POST /mcp` per message (or

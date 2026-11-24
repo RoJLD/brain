@@ -577,10 +577,20 @@ def doctor(root: Path | None, quick: bool = False, doc: dict | None = None) -> d
         "facts": facts,
         "sources": sourced,
         "identity": ident,
-        "warnings": ch.warnings + warnings + provider_errors,
+        "warnings": ch.warnings + warnings + provider_errors + _unguarded(root),
         "errors": errors,
     }
     return doc
+
+
+def _unguarded(root: Path | None) -> list[str]:
+    """The allow rules withheld on this machine because no guard sees their tool (brain.permissions.unguarded), as
+    doctor's warnings; never raised."""
+    from . import permissions
+    try:
+        return [f"permissions: {e}" for e in permissions.unguarded(permissions.load(root))]
+    except Exception as exc:   # the doctor reports, it never breaks
+        return [f"permissions: the allow rules a guard bounds cannot be checked ({type(exc).__name__})"]
 
 
 # Text views.
