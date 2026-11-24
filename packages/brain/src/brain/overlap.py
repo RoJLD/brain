@@ -17,21 +17,20 @@ are not text.
 
 **Neutral words.** Words are runs of letters, digits, ``-`` and ``_``, lowercased; a word that holds a digit (a date,
 a PR number, a version), an id of three parts or more (``wi-brain-x``, ``adr-2026-...``) or one of the brain's entity
-names (the owner, the projects of its registry, the terms of ``public.deny`` and what brain.denylist derives) is
-dropped; a compound word is then split at its ``-`` and ``_``, so ``zero-token`` reads as ``zero token``.
+names of one word (the owner, the projects of its registry, the terms of ``public.deny`` and what brain.denylist
+derives; a name of several words would drop common words) is dropped; a compound word is then split at its ``-`` and ``_``, so ``zero-token`` reads as ``zero token``.
 
 **The score** of a pair is its **containment**: the shared shingles over the smaller unit's, so a note restated
 inside a longer rule scores high although the rule says more (agency-agents scores Jaccard, the shared shingles over
 the union, which a long text dilutes; :func:`pairs` gives both). A unit of fewer than ``overlap.min_shingles``
 shingles (default 10, about 17 words) is not scored: a heading's one-liner shares a phrase by chance. A pair at or
-above ``overlap.warn`` (a percentage, default 20, agency-agents' own warning level; calibrated in
+above ``overlap.warn`` (a percentage, default 20, agency-agents' level, set on Jaccard there; calibrated in
 docs/overlap.md) is a warning of ``brain check``; this slice never makes it an error.
 The review packet's procedure lens names the pairs a PR's touched files take part in (brain.review).
 """
 
 from __future__ import annotations
 
-import fnmatch
 import re
 from dataclasses import dataclass
 from pathlib import Path
@@ -99,8 +98,9 @@ def settings(cfg: config.Config) -> dict:
 
 
 def entities(cfg: config.Config) -> set[str]:
-    """The brain's entity names, lowercased words: the owner, the registry's projects, public.deny and its derived
-    terms. What cannot be read adds nothing."""
+    """The brain's entity names that are one word, lowercased: the owner, the registry's projects, public.deny and its
+    derived terms. A name of several words (a path, ``owner/repo``, the placeholder « the owner ») is left out: its
+    pieces are common words. What cannot be read adds nothing."""
     names: set[str] = set()
     try:
         names.add(config.owner(cfg))
@@ -112,7 +112,12 @@ def entities(cfg: config.Config) -> set[str]:
         names.update(projects.load(cfg.root))
     except Exception:   # noqa: BLE001
         pass
-    return {w for n in names if isinstance(n, str) for w in _WORD.findall(n.lower())}
+    out = set()
+    for n in names:
+        ws = _WORD.findall(n.lower()) if isinstance(n, str) else []
+        if len(ws) == 1 and ws[0].strip("-_"):
+            out.add(ws[0].strip("-_"))
+    return out
 
 
 def words(text: str, neutral: set[str] = frozenset()) -> list[str]:
@@ -145,17 +150,35 @@ def units(rel: str, text: str, neutral: set[str] = frozenset()) -> list[Unit]:
     return out
 
 
+def _glob(root: Path, pattern: str) -> set[Path]:
+    """What ``pattern`` names: relative to ``root``, or from its own anchor when absolute (config.json ``memory`` or
+    ``source`` may be an absolute path); a pattern pathlib refuses names nothing."""
+    p = Path(pattern)
+    base, pat = (Path(p.anchor), p.relative_to(p.anchor).as_posix()) if p.is_absolute() else (root, pattern)
+    pat = pat + "/*" if pat == "**" or pat.endswith("/**") else pat   # a folder's '**': every file under it
+    try:
+        return {f.resolve() for f in base.glob(pat)}
+    except (ValueError, OSError):
+        return set()
+
+
+def rel_name(f: Path, root: Path) -> str:
+    """``f`` relative to ``root`` in posix form, or its absolute posix path when outside it."""
+    try:
+        return f.relative_to(root.resolve()).as_posix()
+    except ValueError:
+        return f.as_posix()
+
+
 def files(root: Path, opts: dict) -> list[Path]:
-    """The Markdown files under ``opts``' roots, less its exclusions, each once, sorted."""
+    """The Markdown files under ``opts``' roots, less its exclusions (both globs read alike: ``**`` is zero or more
+    folders, ``*`` stays within one), each once, sorted."""
     found: set[Path] = set()
-    for glob in opts["roots"]:
-        found.update(p for p in root.glob(glob) if p.is_file() and p.suffix.lower() == ".md")
-    out = []
-    for p in sorted(found):
-        rel = p.relative_to(root).as_posix()
-        if not any(fnmatch.fnmatch(rel, g) or fnmatch.fnmatch(rel, g.removeprefix("**/")) for g in opts["exclude"]):
-            out.append(p)
-    return out
+    for g in opts["roots"]:
+        found |= {f for f in _glob(root, g) if f.is_file() and f.suffix.lower() == ".md"}
+    for g in opts["exclude"]:
+        found -= _glob(root, g)
+    return sorted(found)
 
 
 def corpus(root: Path, cfg: config.Config | None = None, opts: dict | None = None) -> list[Unit]:
@@ -166,10 +189,10 @@ def corpus(root: Path, cfg: config.Config | None = None, opts: dict | None = Non
     out: list[Unit] = []
     for f in files(root, opts):
         try:
-            text = f.read_text(encoding="utf-8")
+            text = f.read_text(encoding="utf-8-sig")   # a BOM is no text
         except (OSError, UnicodeDecodeError):
             continue
-        out += units(f.relative_to(root).as_posix(), text, neutral)
+        out += units(rel_name(f, root), text, neutral)
     return out
 
 

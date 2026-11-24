@@ -201,3 +201,54 @@ def test_the_procedure_lens_is_given_the_pairs_a_touched_file_takes_part_in(make
     assert "procedure" in p.lenses and len(notes) == 1
     assert "memory/lab/release.md:1 and source/rules/global.md:" in notes[0] and notes[0].endswith("(procedure lens)")
     assert notes[0] in (review.folder_for(head) / "README.md").read_text(encoding="utf-8")
+
+
+# --- the review's fixes -----------------------------------------------------------------------------------------------
+
+def test_an_exclusion_reads_its_glob_as_the_roots_do(lab):
+    put(lab, "memory/archive/old.md", note(RELEASE))
+    put(lab, "memory/archive/deep/older.md", note(OTHER))
+    cfg = config.load(lab)
+    cfg.data["overlap"] = {"exclude": ["memory/archive/**/*.md", "**/MEMORY.md"]}
+    names = [overlap.rel_name(p, lab) for p in overlap.files(lab, overlap.settings(cfg))]
+    assert names == ["source/procedures/plots/SKILL.md", "source/rules/global.md"]   # the folder's own and deeper
+    cfg.data["overlap"] = {"exclude": ["memory/*.md"]}   # '*' stays within one folder, as in a root
+    names = [overlap.rel_name(p, lab) for p in overlap.files(lab, overlap.settings(cfg))]
+    assert "memory/archive/old.md" in names and "memory/lab/MEMORY.md" in names
+
+
+def test_an_absolute_memory_folder_is_read_and_named_by_its_path(lab, tmp_path):
+    outside = tmp_path / "notes-elsewhere"
+    put(outside, "lab/release.md", note(RELEASE))
+    put(lab, "config.json", json.dumps({"v": 1, "identity": {"owner": "Ada"}, "memory": outside.as_posix()}))
+    found = overlap.findings(lab)
+    assert len(found) == 1 and {found[0].a.path, found[0].b.path} == {
+        (outside / "lab" / "release.md").resolve().as_posix(), "source/rules/global.md"}
+
+
+def test_only_a_one_word_entity_name_is_neutral(lab):
+    put(lab, "config.json", json.dumps({"v": 1, "public": {"deny": {"paths": ["C:/Users/someone"],
+                                                                     "repos": ["ada/core-notes", "Zeta"]}}}))
+    names = overlap.entities(config.load(lab))
+    assert "zeta" in names and not {"the", "owner", "c", "users", "someone", "ada", "core"} & names
+
+
+def test_a_bom_is_no_text(lab):
+    (lab / "memory" / "lab").mkdir(parents=True, exist_ok=True)
+    (lab / "memory" / "lab" / "bom.md").write_bytes(("\ufeff" + note(RELEASE)).encode("utf-8"))
+    p = overlap.findings(lab)[0]
+    assert "memory/lab/bom.md:1" in (p.a.name, p.b.name) and p.containment == 100.0
+
+
+def test_brain_check_warns_at_a_root_several_projects_share_and_with_all(lab, monkeypatch, capsys):
+    from brain.commands import check
+    seen = []
+    monkeypatch.setattr(check, "_each_store", lambda *a, **k: seen.append(k.get("scope")) or 0)
+    monkeypatch.setattr(check, "_scope", lambda *a, **k: ["lab", "side"])   # two projects at this root
+    put(lab, "memory/lab/release.md", note(RELEASE))
+    args = cli.build_parser().parse_args(["--root", str(lab), "check"])
+    assert check._cmd_check(args, lab) == 0 and seen == [["lab", "side"]]
+    args = cli.build_parser().parse_args(["--root", str(lab), "check", "--all"])
+    assert check._cmd_check(args, lab) == 0 and seen[-1] is None
+    out = capsys.readouterr().out
+    assert out.count("warning: overlap: memory/lab/release.md:1 and source/rules/global.md:6") == 2

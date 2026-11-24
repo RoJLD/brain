@@ -7,7 +7,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from .. import docjoin, overlap, public
+from .. import docjoin, neutral, overlap, public
 from ._common import _project, _scope, _store, root_of
 from ._stores import _check_store, _each_store, _merge_marks, _registry_scope, _registry_too, check_registry
 
@@ -63,18 +63,18 @@ def cmd_check(args, root: Path) -> int:
 
 def _cmd_check(args, root: Path) -> int:
     _merge_marks(root, "brain refresh regenerates them")
-    if args.all:
-        return _each_store(args, root, sync=False, check=True)
-    scope = _scope(args, root, root_shared=True)
-    if len(scope) > 1:   # the projects that share this root
-        return _each_store(args, root, sync=False, check=True, scope=scope)
-    rc = _check_store(args, root, _store(args, root))
-    if _registry_too(args, root):   # a brain's own root: its own data too, as refresh checks it
-        print("== registry")
-        rc = check_registry(root, _registry_scope(root)) or rc
-        for line in docjoin.check_lines(root, _project(args, root).name):   # a document under docgraph/ the join leaves out (wi-brain-docgraph-read)
-            print(f"warning: {line}")
-        for line in overlap.check_lines(root):   # a text restated in another (wi-brain-rule-overlap)
+    scope = [] if args.all else _scope(args, root, root_shared=True)
+    if args.all or len(scope) > 1:   # every project, or the projects that share this root
+        rc = _each_store(args, root, sync=False, check=True, **({"scope": scope} if scope else {}))
+    else:
+        rc = _check_store(args, root, _store(args, root))
+        if _registry_too(args, root):   # a brain's own root: its own data too, as refresh checks it
+            print("== registry")
+            rc = check_registry(root, _registry_scope(root)) or rc
+            for line in docjoin.check_lines(root, _project(args, root).name):   # a document under docgraph/ the join leaves out (wi-brain-docgraph-read)
+                print(f"warning: {line}")
+    if neutral.applies(root):   # a text of the brain restated in another, whatever the branch (wi-brain-rule-overlap)
+        for line in overlap.check_lines(root):
             print(f"warning: {line}")
     return rc
 
