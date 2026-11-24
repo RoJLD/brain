@@ -64,9 +64,12 @@
                    brain's permissions.yaml global, profile and machine levels for this host, read from brain
                    permissions render --level user --json and added to permissions.allow / ask / deny in settings.json
                    when missing; it takes out only an expired rule permissions.yaml declares (until past, while an item
-                   now closed), never another one. allow-rules.txt alone when the brain command cannot run (a first
-                   plan, -SkipCommand without a venv, an installed command older than brain permissions); an error in
-                   permissions.yaml or any other failure of the command stops -Apply (brain permissions check).
+                   now closed) or one withheld because no guard sees its tool on this machine (a line withheld; its
+                   reason says the fix: a locked floor's managed hooks older than the engine, brain floor lock --apply
+                   again; the core plugin missing, disabled or older, update it; GUARD_REQUIRED in brain.permissions),
+                   never another one. allow-rules.txt alone when the brain command cannot run
+                   (a first plan, -SkipCommand without a venv, an installed command older than brain permissions); an
+                   error in permissions.yaml or any other failure of the command stops -Apply (brain permissions check).
                    settings.json is Claude Code's file: one that is not a JSON object stops the installer (fix it by
                    hand first, never replaced), one Claude Code wrote meanwhile too (run it again); each write keeps
                    the file as it was in settings.json.bak and replaces it through a temporary file
@@ -642,6 +645,8 @@ function Update-Permissions {
         $render = $null
         try { $render = ($out | Out-String) | ConvertFrom-Json } catch { $render = $null }
         if ($render -and $code -eq 0) {
+            # an allow rule whose tool no guard sees on this machine (GUARD_REQUIRED): left out, and taken out as expired
+            @($render.withheld | Where-Object { $_ }) | ForEach-Object { "withheld $_" }
             $wanted_rules = $render
             $from = 'brain permissions (allow-rules.txt, permissions.yaml)'
         } elseif ($render -and $render.errors) {

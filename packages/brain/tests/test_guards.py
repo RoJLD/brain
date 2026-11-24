@@ -644,7 +644,8 @@ def test_hooks_json_declares_the_guards():
     assert [(m["matcher"], m["hooks"][0]["command"].split()[-1]) for m in pre] == [
         ("Bash|PowerShell", "shell"), ("Edit|Write|MultiEdit|NotebookEdit", "edit"),
         ("mcp__.*scheduled[-_]?tasks?__(create|update)_scheduled_task", "tool"),
-        ("mcp__.*__set_(remote_control|session_permission_mode|setting)", "tool"),
+        ("mcp__.*__set_(remote_control|session_permission_mode|setting)|^mcp__ccd_session_mgmt__archive_session$",
+         "tool"),   # the archive case (test_guards_archive)
         ("^(Agent|Task|Workflow)$|^mcp__.+__start_session$", '"${CLAUDE_PLUGIN_ROOT}/hooks/governor.sh"'),
         ("mcp__.*terminal__run_in_terminal", "shell"),
         ("^(Read|Grep)$", '"${CLAUDE_PLUGIN_ROOT}/hooks/tokenguard.sh"'),   # the machine's token (opt-in)

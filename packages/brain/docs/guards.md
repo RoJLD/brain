@@ -3,12 +3,13 @@
 Two PreToolUse hooks of the engine's Claude Code plugin keep the owner's say over how sessions run. Both are scripts,
 not rules: they decide before the call, at zero token, and never break a session (an error lets the call through and
 goes to `<BRAIN_HOME>/ledger/errors.log`, but for a session's Remote Control or permission mode, where it refuses,
-and for a commit or push the public and secrets checks cannot judge: see « The public and secrets checks fail
+for the desktop app's `archive_session`, where it asks the owner's card, and for a commit or push the public and secrets checks cannot judge: see « The public and secrets checks fail
 closed »).
 
 | Hook | Tools | Decides |
 |---|---|---|
 | `guard.sh tool` (`brain.guards`) | `mcp__*__set_remote_control`, `mcp__*__set_session_permission_mode`, the app's `set_setting` for a Remote Control or permission key | refuses, but Remote Control's three exceptions |
+| `guard.sh tool` (`brain.guards`) | `mcp__ccd_session_mgmt__archive_session` | passes the archive case (a finished child, a hand-over's predecessor), else asks the owner's card |
 | `governor.sh` (`brain.governor`) | `mcp__*__start_session`, `Agent`, `Task`, `Workflow` | asks at WARN, refuses at CRITICAL, past a cap, or on a stale reading |
 
 Both are declared in `src/brain/adapters/claude/hooks/hooks.json`. A personal brain gets them with
@@ -590,8 +591,8 @@ Round 7 (the same classes, new spellings; on any machine with the floor on):
 `inject-rules.sh` injects the locked lines alone, after one line that says why (`brain.floor.ONLY_LINE`, the same
 words in both); the guard runs the floor's refusals, the secrets and configuration checks, the override protection
 (`check_override`: the owner guard's override category, so that no session lifts its own floor: the guards' override
-set for later sessions, `brain usage allow`, `brain handover root`, a write of the usage allow file or the chain
-roots) and the session-settings and scheduled-task tool checks; no production, power or third-party guard, nor the
+set for later sessions, `brain usage allow`, `brain handover root`, a write of the usage allow file, the chain
+roots or the desktop app's session files and their index) and the session-settings and scheduled-task tool checks; no production, power or third-party guard, nor the
 owner guard's other categories (a project whose own work they would refuse). The memory notes are not synced, either
 way, whatever `BRAIN_MEMORY_SYNC` says. `floor` is read at config.json's top level alone, by the guard and by
 `inject-rules.sh` alike (a `floor` key inside another object is not the setting). The owner sets it; how a machine
@@ -617,7 +618,10 @@ brain queue add --kind action --guard guard-0123456789 [--item ID]
 
 The owner then switches it in the app (the toolbar's Remote Control switch, the session's permission mode, or
 Settings for the default). The category is `security-settings`, never grantable: `brain permissions check` refuses an
-allow rule that names those tools, Remote Control or a permission mode, at every level. `BRAIN_GUARD_ALLOW` does not
+allow rule that names those tools, Remote Control or a permission mode, at every level, but the one rule
+`mcp__ccd_session_mgmt__set_remote_control`, exactly (`brain.permissions.GUARD_BOUNDED`): this guard refuses every
+call of that tool outside its three exceptions, so the owner's allow rule only lifts the app's card inside them
+(wi-brain-coordinator-handover-no-prompt). `BRAIN_GUARD_ALLOW` does not
 lift it, not even `all`. Refusals are in `<BRAIN_HOME>/ledger/guards-<month>.jsonl` (`"check": "security-settings"`).
 
 ### Remote Control's three exceptions
@@ -674,14 +678,74 @@ Each allowed call is logged in the guards ledger with `"decision": "allowed"`, i
 ledger does not take (no ledger, `BRAIN_CAPTURE=0`) is a refusal. Anything the guard cannot read (no app files on the
 machine, a caller it cannot identify, an input of another shape) is a refusal, and so is an error once the hook's
 JSON is read: for a session's security settings the guard fails closed, where every other guard lets the call
-through (a payload that is not JSON, which Claude Code never sends, names no tool and passes as before). Not checked, because a hook
-cannot see it: that an `archive_session` follows the `archive` case, and whether the target's PRs are merged and its
-worktree clean (the first ADR's wording); the turn being idle stands for « finished ». `set_session_permission_mode`
+through (a payload that is not JSON, which Claude Code never sends, names no tool and passes as before). The `archive` case itself checks
+the turn only (idle stands for « finished »); the `archive_session` that follows has its own case (below), which
+checks the PRs and the folder. `set_session_permission_mode`
 and the app's settings stay refused in every case.
 
-What it does not hold against: its inputs are files a session can write. A session that writes into the app's
-session files, or a note naming itself, is tampering, not drifting; the guard holds against a mistake, and the app
-still asks the owner to approve each switch unless its permission mode decides. The note is the handover's
+### The archive case
+
+The owner allows `mcp__ccd_session_mgmt__archive_session` and `mcp__ccd_session_mgmt__set_remote_control` in their
+permissions (their personal brain's `permissions.yaml`): the app's approval card no longer asks. The
+guard bounds both. `set_remote_control` keeps its three exceptions above, everything else refused. `archive_session`
+(`brain.guards.archive`) passes, logged `allowed` with its case, only in:
+
+| Case | Target | The guard checks |
+|---|---|---|
+| `child` | a session the caller started | not a coordinator (by name or title): its own successor archives it |
+| `predecessor` | the session that started the caller | a coordinator by name or a chain root; the caller is its successor (a coordinator by name it started, live and detached); the predecessor's hand-over note is written (as for `handover-off`) |
+
+and in both: the target is `idle` or `ended`, not archived; none of its children blocks (each archived or detached:
+the app archives a finished child with its parent and refuses a parent whose child works; `brain handover check`'s
+children line); every PR of its app file (`prs[].state`) is `MERGED` or `CLOSED`; each of its folders (`cwd`, and
+`worktreePath` when the file has one: the folder the app removes) is gone, or the top of a checkout (`git rev-parse
+--show-toplevel`: else git would read a parent repo that ignores it) where `git status --porcelain` shows nothing and
+git ignores nothing but caches (what `brain tidy` names before a removal: a `.env`, local data). git runs by its path,
+file-system monitor, untracked cache, hooks and submodule recursion off, no optional lock, none of the hook's `GIT_`
+variables, no system config and an empty global one (`GIT_CONFIG_NOSYSTEM`, `GIT_CONFIG_GLOBAL`; the `core.autocrlf` and
+`core.eol` git reads otherwise are carried over, so that a clean CRLF checkout stays clean), 3 s per call (five per
+folder) and 15 s for all of them (`GIT_TOTAL_S`, both folders together; past it the card asks), inside the hook's
+30 s: a hook Claude Code kills lets the call through to the allow rule. No program of the
+target repo runs: git cannot switch off a filter driver its config declares, so the guard reads that config first (a
+read runs nothing) and asks when the repo's own config declares a filter (`filter.*`), an `include` or an
+`includeIf`, or when the checkout has submodules or nested repos (`.gitmodules`, or a gitlink in its index, mode
+160000: `git status` would run git in them, under their own config). Not checked: commits on a branch
+with no PR (the branch survives the worktree's removal). Any other call (`self`, another session, an
+unreadable input), a pass the ledger does not take and an error get `permissionDecision: ask`, logged `asked` with
+the reason: the card, which no allow rule lifts. While the guards cannot run at all (`guard.sh` without a Python that
+imports brain) and the floor is off, it asks too, and refuses `set_remote_control` and `set_session_permission_mode`
+(with the floor on, it refuses all three).
+
+The allow rules wait for the guard (`brain.permissions.GUARD_REQUIRED`, fail closed): an allow rule that lets
+`set_remote_control` or `archive_session` through (the tool, its server, a wildcard, with any specifier) is withheld on
+a machine whose PreToolUse hooks do not send that tool to the guard. With a floor lock, its managed settings alone
+count (their `allowManagedHooksOnly` keeps the plugin's hooks from running): the copy `brain floor lock --apply` wrote
+before this engine has no `archive_session` in its matcher, so run it again; else the core plugin as Claude Code
+installed it (`<claude home>/plugins/installed_plugins.json`: at user scope, enabled, the user settings without
+`disableAllHooks`). What cannot be read counts as unseen. `brain permissions render` leaves a withheld rule out and
+lists it as expired, so `install.ps1 -Apply` takes it out of the settings that hold it (its line `withheld`);
+`brain permissions check` fails on it, `brain check` and `brain doctor` warn of it (a repo's check reads the same on
+every machine). Such a rule is held only at the user levels
+(engine, global, profile, machine), which each machine's installer renders for itself: a project's or tenant's
+settings are committed and read by every machine, a session's by any. The guard the plugin starts runs the engine of
+the brain's venv, which `install.ps1 -Apply` installs with the plugin and which renders these rules itself (an older
+engine refuses the Remote Control rule): going back to an older engine is the owner's, with its plugin. A project's
+own settings that turn the hooks off are not read here: under `guards.owner_strict` the guard refuses a session's
+`disableAllHooks` (`GUARD_OFF`) and its disabling the core plugin (`enabledPlugins` set false by an edit or a shell
+write into Claude Code's settings, `claude plugin disable` or `uninstall` of it: `brain.guards._plugin_off`).
+
+What it does not hold against: its inputs are files a session can write. The guard reads the app's session files
+themselves, each parsed at the call, never the index's cache (`<BRAIN_HOME>/cache/sessions-app.json`, a session
+could hide a child there), and it refuses a session's write into them, into the folders that hold them
+(`Claude-Data/<account>/claude-code-sessions`, any account folder, an existing one or a new one, and `Claude-Data`
+itself), into that cache, or into a transcript (a `.jsonl` of `<claude home>/projects/<project>/`, whose tail says
+whether a turn is finished) or a folder that would bring one (the projects' folder, a project's, what a project's
+folder holds and a session's `subagents/`: a folder copied or moved there; the memory beside the transcripts and a
+session's tool results and workflow scripts stay writable), by an edit tool or a shell write, also through a hard link (`override`, as the chain roots' file; the app
+and Claude Code write them themselves, with no tool call). That holds against a mistake: a script that writes them, a
+path built at run time (`"$(...)"`), or a note naming itself, is tampering, out of a hook's reach, and the app asked the owner to approve each
+switch until the owner's allow rules (the archive case): inside the cases the guard is now the only check, and a
+session that forges the app's files through a script passes it. The note is the handover's
 procedural mark (the ADR's « une fois sa note écrite »), not a credential. The names are chosen by the session that
 starts a child, so a session that starts a `coordinator-x` which starts a `coordinator-y` has built the mark; the
 guard checks one hop of lineage, not the whole chain back to the owner. While its note is under 6 hours old, a
