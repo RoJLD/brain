@@ -379,12 +379,12 @@ def mark_stale(cat: Catalogue, store: Path) -> None:
 
 
 def _stale_parents(cat: Catalogue, d: Doc) -> None:
-    """The sections of ``d`` whose declared parent is being edited or was committed after ``d``."""
+    """The sections of ``d`` whose declared parent is being edited or was committed after ``d``: one reason for both,
+    since the edit is a change after ``d``'s last commit once committed (the view stays the same across the commit,
+    wi-brain-docsgraph-edited-loop)."""
     for sec, parent, _ in d.parents:
         p = cat.docs.get(cat.section_of.get(parent, ""))
-        if p is not None and p.dirty:
-            d.stale.append((sec, f"its declared parent {p.path} is being edited"))
-        elif p is not None and p.last is not None and p.last > d.last:
+        if p is not None and (p.dirty or (p.last is not None and p.last > d.last)):
             d.stale.append((sec, f"its declared parent {p.path} changed after its last commit"))
 
 
@@ -430,12 +430,20 @@ def render(cat: Catalogue) -> str:
     return "\n".join(lines) + "\n"
 
 
+def today() -> str:
+    """The day an uncommitted change will be committed on, as the view writes it (this machine's local day, as git's
+    %cI dates a commit made here): the commit that follows the view in the same PR, the usual case."""
+    return datetime.now().astimezone().date().isoformat()
+
+
 def _row(d: Doc, own: str) -> str:
     """A doc's row; another repo's doc shows no last commit and no staleness (brain check says them): its checkout
-    moves on its own, and the view is a function of this repo."""
+    moves on its own, and the view is a function of this repo. A doc with uncommitted changes (a new one included)
+    shows today, the day its commit will carry (wi-brain-docsgraph-edited-loop): the word ``edited`` there turned
+    into a date once the PR merged, so the view on main was stale after every PR that touched a doc."""
     cites = len(set().union(*d.cites.values())) if d.cites else 0
     mine = d.repo == own
-    last = "-" if not mine or not d.last else ("edited" if d.dirty else d.last.date().isoformat())
+    last = "-" if not mine or not (d.last or d.dirty) else (today() if d.dirty else d.last.date().isoformat())
     stale = "exempt" if d.exempt else (str(len(d.stale)) if d.stale and mine else "")
     name = d.path if mine else f"{d.repo}: {d.path}"
     return (f"| `{name}` | {d.kind} | {last} | {d.owner or '-'} | {len(d.sections)} | {cites} | {len(d.cited_by)} | "
