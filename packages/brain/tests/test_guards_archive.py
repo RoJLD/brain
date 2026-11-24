@@ -125,7 +125,7 @@ def test_a_folder_that_is_no_checkout_asks(lab, tmp_path):
     plain = tmp_path / "plain"
     plain.mkdir()
     work(lab, K, cwd=str(plain))
-    asked(lab, arc(lab, K), f"{plain} is not a checkout git can read")
+    asked(lab, arc(lab, K), f"{plain} is not the top of a checkout git can read")
 
 
 def test_a_child_with_a_blocking_child_asks(lab, monkeypatch):
@@ -176,6 +176,7 @@ def _handed_over(lab):
     lab.put(K, parent=F, name="rc-guard", archived=True)
     lab.put(R, parent=F, name="busy", detached=True)
     work(lab, F, prs=["MERGED", "MERGED"])
+    lab.note(host=F)
 
 
 def test_the_successor_archives_its_predecessor(lab):
@@ -331,5 +332,56 @@ def test_the_two_allow_rules_pass_the_permissions_check(tmp_path, monkeypatch):
 
 def test_app_work_reads_only_the_prs_and_the_folder(lab):
     work(lab, K, prs=["merged", {"prNumber": 2}], cwd="C:/x", title="secret text")
-    assert sessions.app_work(K) == {"prs": [("acme/x", "10", "MERGED"), ("", "2", "")], "cwd": "C:/x"}
+    assert sessions.app_work(K) == {"prs": [("acme/x", "10", "MERGED"), ("", "2", "")], "cwd": "C:/x",
+                                    "folders": ["C:/x"]}
+    work(lab, K, cwd="C:/x", worktreePath="D:/wt")
+    assert sessions.app_work(K)["folders"] == ["C:/x", "D:/wt"]
     assert sessions.app_work("local_77777777-0000-4000-8000-777777777777") is None
+
+
+def test_the_predecessor_needs_its_hand_over_note(lab):
+    _handed_over(lab)
+    note = lab.note(host=F, age_s=7 * 3600)   # too old: no note counts
+    assert note.is_file()
+    asked(lab, arc(lab, F, caller=G), f"no hand-over note of {F}")
+
+
+def _repo(tmp_path, name="wt"):
+    repo = tmp_path / name
+    repo.mkdir()
+    git(repo, "init", "-q")
+    (repo / ".gitignore").write_text(".env\n__pycache__/\n", encoding="utf-8")
+    git(repo, "add", ".gitignore")
+    git(repo, "commit", "-qm", "a")
+    return repo
+
+
+def test_what_git_ignores_but_caches_asks(lab, tmp_path):
+    repo = _repo(tmp_path)
+    (repo / "__pycache__").mkdir()
+    (repo / "__pycache__" / "x.pyc").write_bytes(b"0")
+    work(lab, K, cwd=str(repo))
+    assert hook(arc(lab, K)) == (None, "")   # a cache goes with the worktree
+    (repo / ".env").write_text("A=1", encoding="utf-8")
+    asked(lab, arc(lab, K), "1 path(s) git ignores that the archive would remove with its worktree: .env")
+
+
+def test_a_folder_inside_another_checkout_asks(lab, tmp_path):
+    repo = _repo(tmp_path)
+    sub = repo / "sub"
+    sub.mkdir()
+    work(lab, K, cwd=str(sub))
+    asked(lab, arc(lab, K), f"{sub} is not the top of a checkout git can read")
+
+
+def test_the_worktree_the_app_removes_is_checked_too(lab, tmp_path):
+    repo = _repo(tmp_path)
+    (repo / "new.txt").write_text("x", encoding="utf-8")
+    work(lab, K, worktreePath=str(repo))   # cwd gone, the worktree dirty
+    asked(lab, arc(lab, K), f"{repo} has 1 uncommitted change(s)")
+
+
+def test_the_hook_outlives_its_git_calls():
+    pre = json.loads((PLUGIN / "hooks" / "hooks.json").read_text(encoding="utf-8"))["hooks"]["PreToolUse"]
+    [m] = [m for m in pre if "archive_session" in m["matcher"]]
+    assert m["hooks"][0]["timeout"] >= 30 and 3 * guards.GIT_S <= m["hooks"][0]["timeout"] / 2

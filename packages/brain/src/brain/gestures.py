@@ -138,9 +138,11 @@ CATALOGUE: tuple[Automation, ...] = (
                ("Remote Control off first, under the guard's archive case (wi-brain-guard-rc-archive): a session "
                 "the caller started, its turn finished, or the caller's predecessor at a hand-over",
                 "its PRs merged and its worktree clean (the definition of done), none of its children blocking"),
-               note="the guard's archive case (brain.guards.archive) holds the conditions: inside them an owner's "
-                    "allow rule lifts the app's card (wi-brain-coordinator-handover-no-prompt), outside them or on "
-                    "an error the guard asks; the engine's default stays ask"),
+               note="brain.guards.archive checks the family, the turn, the children, the PRs and the folder (the "
+                    "Remote Control off is set_remote_control's own case, and the app refuses an archive while it is "
+                    "on): inside them an owner's allow rule lifts the app's card "
+                    "(wi-brain-coordinator-handover-no-prompt), outside them or on an error the guard asks; the "
+                    "engine's default stays ask"),
     Automation("handover-remote-control", "Remote Control at a coordinators' hand-over", "session", "auto", "ask",
                ("on for the coordinator the caller started to succeed it, live or starting, detached",
                 "off on the caller itself once its hand-over note is written and its successor detached"),

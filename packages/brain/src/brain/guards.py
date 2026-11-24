@@ -1975,7 +1975,7 @@ def successors(caller: str, index: dict, meta, now: float | None = None) -> list
 
 
 def app_caller(payload: dict):
-    """(the caller's app id, the app's index, its :func:`app_reader`) for a hook's payload, else why not (a str): the
+    """(the caller's app id, the app's index, its :func:`app_reader`, the caller's app file) for a hook's payload, else why not (a str): the
     app's files absent, the payload's transcript in none or in two of them, the environment's app id another, or the
     caller's own file unreadable or naming another transcript. Read from the desktop app's own files only."""
     from . import sessions
@@ -1994,7 +1994,7 @@ def app_caller(payload: dict):
     me = meta(caller)
     if not me or me.get("session") != sid:
         return "this session's own app file cannot be read, or names another transcript"
-    return caller, index, meta
+    return caller, index, meta, me
 
 
 def remote_control(payload: dict, now: float | None = None) -> tuple[str | None, str]:
@@ -2016,8 +2016,7 @@ def remote_control(payload: dict, now: float | None = None) -> tuple[str | None,
     found = app_caller(payload)
     if isinstance(found, str):
         return None, found
-    caller, index, meta = found
-    me = meta(caller)
+    caller, index, meta, me = found
 
     def mine(m: dict) -> bool:
         return bool(m) and m.get("parent") == caller
@@ -2075,15 +2074,23 @@ def remote_control(payload: dict, now: float | None = None) -> tuple[str | None,
 # call, and an error, gets permissionDecision ask: the card, which the allow rule cannot lift.
 ARCHIVE_TOOL = re.compile(r"^mcp__ccd_session_mgmt__archive_session$")   # the desktop app's own server only
 PR_DONE = ("MERGED", "CLOSED")   # the app's prs[].state that leave no work open; any other, or none, is open
-GIT_STATUS_S = 10                # git status in the target's folder, at most
+GIT_S = 3   # each git call in the target's folder, at most: the three stay well inside the hook's 30 s (hooks.json),
+            # since a hook Claude Code kills lets the call through to the owner's allow rule, with no card
 ARCHIVE_BOUND = ("a finished session this one started, or its predecessor at a hand-over, with no child blocking, its "
                  "PRs merged or closed and its folder clean")
+GIT_SAFE = ("-c", "core.fsmonitor=false", "-c", "core.untrackedCache=false", "-c", "submodule.recurse=false")
+
+
+def _same(a: str, b: str) -> bool:
+    return os.path.normcase(os.path.realpath(a)) == os.path.normcase(os.path.realpath(b))
 
 
 def folder_why(cwd) -> str:
-    """'' when a session's folder holds no change git sees, or is gone (its worktree removed), else why not. git runs
-    by its path (:func:`_run`) with its file-system monitor and untracked cache off and no optional lock: the status
-    starts no monitor and writes no index."""
+    """'' when a session's folder holds no change git sees and nothing git ignores but caches (brain.tidy.lost_ignored,
+    what brain tidy names before a removal), or is gone (its worktree removed), else why not. The folder must be its
+    checkout's top (``git rev-parse --show-toplevel``): git would otherwise read a parent repo that ignores it. git runs
+    by its path (:func:`_run`) with its file-system monitor, untracked cache and submodule recursion off and no optional
+    lock, GIT_S each."""
     if not isinstance(cwd, str) or not cwd.strip():
         return "its folder cannot be read from its app file"
     if not os.path.isabs(cwd):
@@ -2094,14 +2101,35 @@ def folder_why(cwd) -> str:
         return f"{cwd} is not a folder"
     env = {**os.environ, "GIT_OPTIONAL_LOCKS": "0", "GIT_TERMINAL_PROMPT": "0"}
     try:
-        r = _run(["git", "-c", "core.fsmonitor=false", "-c", "core.untrackedCache=false", "status", "--porcelain",
-                  "--untracked-files=normal"], cwd, timeout=GIT_STATUS_S, env=env)
+        top = _run(["git", *GIT_SAFE, "rev-parse", "--show-toplevel"], cwd, timeout=GIT_S, env=env)
+        if top.returncode or not _same(top.stdout.decode("utf-8", "replace").strip(), cwd):
+            return f"{cwd} is not the top of a checkout git can read"
+        r = _run(["git", *GIT_SAFE, "status", "--porcelain", "--untracked-files=normal"], cwd, timeout=GIT_S, env=env)
     except (OSError, subprocess.SubprocessError, ValueError):
-        return f"git status cannot run in {cwd}"
+        return f"git cannot run in {cwd}"
     if r.returncode:
         return f"{cwd} is not a checkout git can read"
     n = len([line for line in r.stdout.splitlines() if line.strip()])
-    return f"{cwd} has {n} uncommitted change(s) the archive would remove with its worktree" if n else ""
+    if n:
+        return f"{cwd} has {n} uncommitted change(s) the archive would remove with its worktree"
+    return _ignored_why(cwd, env)
+
+
+def _ignored_why(cwd: str, env: dict) -> str:
+    """'' when git ignores nothing in the checkout ``cwd`` but caches and folder links (brain.tidy's own reading before
+    a removal), else what the archive would remove with it."""
+    from . import tidy
+    try:
+        r = _run(["git", *GIT_SAFE, "ls-files", "-z", "--others", "--ignored", "--exclude-standard", "--directory",
+                  "--no-empty-directory"], cwd, timeout=GIT_S, env=env)
+    except (OSError, subprocess.SubprocessError, ValueError):
+        return f"git cannot list what {cwd} ignores"
+    if r.returncode:
+        return f"git cannot list what {cwd} ignores"
+    lost = sorted(x for x in r.stdout.decode("utf-8", "replace").split("\0") if x and not tidy._regenerable(x)
+                  and not tidy._folder_link(os.path.join(cwd, x.rstrip("/"))))
+    return (f"{cwd} holds {len(lost)} path(s) git ignores that the archive would remove with its worktree: "
+            f"{', '.join(lost[:5])}") if lost else ""
 
 
 def archive(payload: dict, now: float | None = None) -> tuple[str | None, str]:
@@ -2120,7 +2148,7 @@ def archive(payload: dict, now: float | None = None) -> tuple[str | None, str]:
     found = app_caller(payload)
     if isinstance(found, str):
         return None, found
-    caller, index, meta = found
+    caller, index, meta, _ = found
     if target == caller:
         return None, "a session's own archive is the owner's"
     node = meta(target)
@@ -2152,6 +2180,9 @@ def _archive_family(caller: str, target: str, node: dict, index: dict, meta, now
     if caller not in successors(target, index, meta, now):
         return None, (f"this session is not {target}'s successor (a Brain coordinator by name it started, live and "
                       "detached)")
+    if handover_note(target, now) is None:
+        return None, (f"no hand-over note of {target} (its first app id) in {HANDOVER_DIR}/ written in the last "
+                      f"{HANDOVER_NOTE_S // 3600} h")
     return "predecessor", ""
 
 
@@ -2173,7 +2204,7 @@ def _archive_left(target: str, node: dict, index: dict, meta, now) -> str:
     if left:
         named = ", ".join(f"{r or '?'}#{n or '?'} ({s or 'no state'})" for r, n, s in left[:5])
         return f"{target} has {len(left)} PR(s) neither merged nor closed: {named}"
-    return folder_why(work["cwd"])
+    return next((why for why in map(folder_why, work["folders"]) if why), "")
 
 
 def archive_ask(why: str) -> dict:

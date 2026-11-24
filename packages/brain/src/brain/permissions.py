@@ -1295,7 +1295,8 @@ def explain(model: Model, ctx: Context, text: str) -> dict:
              if keys & set(atoms(r.text))]
     plugin = config.claude(config.load())["plugin"]   # the core plugin, whose guards these are
     return {"rule": text, "declared": sorted(decls, key=lambda d: LEVELS.index(d["level"])),
-            "never": never_category(text, model.categories), "broad": broad(text) if parse(text) else "",
+            "never": never_rule(text, model.categories) if parse(text) else never_category(text, model.categories),
+            "guard_bounded": GUARD_BOUNDED.get(text, ""), "broad": broad(text) if parse(text) else "",
             "call": decide(model, ctx, text), "guards": f"the {plugin} guards judge the call apart from the rules: "
             "no allow rule lifts their deny (brain.guards)"}
 

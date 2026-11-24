@@ -122,7 +122,7 @@
           {
             "type": "command",
             "command": "bash -p \"${CLAUDE_PLUGIN_ROOT}/hooks/guard.sh\" tool",
-            "timeout": 10
+            "timeout": 30
           }
         ]
       },

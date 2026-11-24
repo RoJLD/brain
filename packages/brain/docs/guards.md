@@ -693,16 +693,22 @@ guard bounds both. `set_remote_control` keeps its three exceptions above, everyt
 | Case | Target | The guard checks |
 |---|---|---|
 | `child` | a session the caller started | not a coordinator (by name or title): its own successor archives it |
-| `predecessor` | the session that started the caller | a coordinator by name or a chain root; the caller is its successor (a coordinator by name it started, live and detached) |
+| `predecessor` | the session that started the caller | a coordinator by name or a chain root; the caller is its successor (a coordinator by name it started, live and detached); the predecessor's hand-over note is written (as for `handover-off`) |
 
 and in both: the target is `idle` or `ended`, not archived; none of its children blocks (each archived or detached:
 the app archives a finished child with its parent and refuses a parent whose child works; `brain handover check`'s
-children line); every PR of its app file (`prs[].state`) is `MERGED` or `CLOSED`; its folder (`cwd`) is gone, or a
-checkout where `git status --porcelain` (by git's path, file-system monitor and untracked cache off, no optional
-lock, 10 s at most) shows nothing: the archive removes its worktree. Any other call (`self`, another session, an
+children line); every PR of its app file (`prs[].state`) is `MERGED` or `CLOSED`; each of its folders (`cwd`, and
+`worktreePath` when the file has one: the folder the app removes) is gone, or the top of a checkout (`git rev-parse
+--show-toplevel`: else git would read a parent repo that ignores it) where `git status --porcelain` shows nothing and
+git ignores nothing but caches (what `brain tidy` names before a removal: a `.env`, local data). git runs by its path,
+file-system monitor, untracked cache and submodule recursion off, no optional lock, 3 s per call, inside the hook's
+30 s: a hook Claude Code kills lets the call through to the allow rule. Not checked: commits on a branch with no PR
+(the branch survives the worktree's removal), and a clean filter the target repo configures, which still runs
+during `git status`. Any other call (`self`, another session, an
 unreadable input), a pass the ledger does not take and an error get `permissionDecision: ask`, logged `asked` with
 the reason: the card, which no allow rule lifts. While the guards cannot run at all (`guard.sh` without a Python that
-imports brain), it asks too, and refuses `set_remote_control` and `set_session_permission_mode`. On a machine whose
+imports brain) and the floor is off, it asks too, and refuses `set_remote_control` and `set_session_permission_mode`
+(with the floor on, it refuses all three). On a machine whose
 floor is locked, the managed copy of the hooks is the one `brain floor lock --apply` wrote: run it again after this
 update so that its matcher includes `archive_session`; until then the guard never sees that call, so the
 allow rules wait for the re-lock there.

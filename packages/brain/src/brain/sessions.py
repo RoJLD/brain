@@ -151,7 +151,8 @@ def app_meta(host_id: str) -> dict:
 def app_work(host_id: str) -> dict | None:
     """What a session leaves open, from its own app file (the guard's archive case, brain.guards.archive):
     ``{prs: [(repo, number, state)], cwd}``, each PR's state as the app last saw it, upper case (OPEN, MERGED, CLOSED;
-    '' when missing, and an entry that is not a mapping is ('', '', '')), ``cwd`` its folder ('' when missing); None
+    '' when missing, and an entry that is not a mapping is ('', '', '')), ``cwd`` its folder ('' when missing),
+    ``folders`` its cwd and, when the file has one, its ``worktreePath`` (the folder the app removes); None
     when the file cannot be read, names another id, or its prs is not a list. Only these keys are read, never a text."""
     f = app_file(host_id)
     try:
@@ -166,8 +167,11 @@ def app_work(host_id: str) -> dict | None:
         return None
     out = [(str(p.get("repo") or ""), str(p.get("prNumber") or ""), str(p.get("state") or "").upper())
            if isinstance(p, dict) else ("", "", "") for p in prs]
-    cwd = data.get("cwd")
-    return {"prs": out, "cwd": cwd if isinstance(cwd, str) else ""}
+    cwd, wt = data.get("cwd"), data.get("worktreePath")
+    folders = [cwd if isinstance(cwd, str) else ""]
+    if wt is not None:   # the worktree the app removes, when it says so: checked too
+        folders.append(wt if isinstance(wt, str) else "")
+    return {"prs": out, "cwd": folders[0], "folders": list(dict.fromkeys(folders))}
 
 
 def _stat(f: Path) -> list | None:
