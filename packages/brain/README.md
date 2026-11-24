@@ -629,6 +629,15 @@ forecast` draws each one, and reads the owner's pending blocking DDRs and pendin
 they name; `brain check` warns on a trigger that names a duration with no gate, on an `after_external` that does not
 resolve and on a `due` date without its `due_source`; `brain queue` ends with what each gate holds.
 
+`brain forecast --critical [<milestone>]` prints the critical chains its futures found: for each group (the backlog,
+each milestone, era and wave), the chain of items whose ends set its finish in the most futures, each item with its
+criticality index (the share of futures in which it lies on that chain, Van Slyke 1963), whether the chain is
+capacity-bound (its links are lanes other items held) or dependency-bound, and the share of futures it was that
+chain; with a milestone (its id, its short name, `backlog` or `-`), its items' index, start and end p10–p90 and the
+items of other groups on its chain. Its `--json` (and `latest.json`) carries the same as additive keys of format 1
+(model 3): per item `start`, `hours` and `critical`, per group `chain`, and `past`, the ledger's first session and
+done day of each done or doing member of an open milestone.
+
 Before it, `brain wave close-merged X.Y.Z [--repo NAME]... [--repo-dir D]... [--since REF] [--until REF] [--write]
 [--json]` closes the items the merged PRs deliver (brain.closemerged, zero token, git only): the PRs merged on each
 repo's default branch since the last release tag before X.Y.Z (up to its own tag once cut), each mapped to its
