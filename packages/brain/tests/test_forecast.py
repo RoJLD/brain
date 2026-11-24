@@ -2,6 +2,7 @@
 the honesty bar of §4.4 (PSY-2), its reproducible JSON (§6), the brain status line and the Monday snapshot (PSY-5)."""
 
 import json
+import random
 from collections import Counter
 from datetime import datetime, timezone
 
@@ -306,6 +307,69 @@ def test_the_scheduler_traces_what_each_start_waited_on():
     assert trace["start"] == [0.0, 2.0] and trace["pred"] == [-1, 0] and trace["by"] == ["now", "lane"]
     # no trace asked: the finishes alone, as before
     assert forecast._schedule([1.0], [True], [0.0], [[]], [[]], 1) == [1.0]
+
+
+def test_a_gate_counted_from_an_items_end_keeps_the_chain_going_through_that_item():
+    # a Go/NoGo's lag after the dependency: wi-1 waits 2 days after wi-0's end, so wi-0's end sets its start
+    cal = forecast._Calendar(random.Random(1), [4.0], 1)
+    trace = {}
+    forecast._schedule([8.0, 2.0], [True, True], [0.0, 0.0], [[], [0]], [[1], []], 1, [0.0, 2.0], cal, trace=trace)
+    assert trace["pred"] == [-1, 0] and trace["by"] == ["now", "gate"]
+    assert forecast._walk(1, trace["pred"], {}, 2) == (0, 1)
+    assert forecast.bound({"items": ["a", "b"], "by": trace["by"]}) == "dependency-bound"
+    # a calendar from an item's end (wi-2 waits 5 days from wi-0's end): wi-0 again
+    trace = {}
+    forecast._schedule([2.0, 2.0, 2.0], [True] * 3, [0.0] * 3, [[], [], [0, 1]], [[2], [2], []], 1,
+                       [0.0] * 3, cal, {0: [(2, 5.0)]}, trace=trace)
+    assert trace["pred"][2] == 0 and trace["by"][2] == "gate"
+    # an absolute gate (a DDR's delay, a calendar day) still heads its chain: « after a gate »
+    trace = {}
+    forecast._schedule([2.0, 2.0], [True, True], [0.0, 5.0], [[], [0]], [[1], []], 1, [0.0, 0.0], cal, trace=trace)
+    assert trace["pred"][1] == -1 and trace["by"][1] == "gate"
+    # an item left out: the calendar counted from it runs from now, no chain through it
+    trace = {}
+    forecast._schedule([2.0, 2.0], [False, True], [0.0, 0.0], [[], [0]], [[1], []], 1, [0.0, 0.0], cal,
+                       {0: [(1, 1.0)]}, trace=trace)
+    assert trace["pred"][1] == -1 and trace["by"][1] == "gate"
+
+
+def test_a_lagged_go_no_go_puts_its_dependency_on_the_milestones_chain():
+    m = model(n=2)
+    m["items"][1]["deps"] = ["wi-0"]
+    m["items"][1]["gates"] = [{"label": "go/no-go", "kind": "decision", "decision": True}]
+    m["delays_h"] = [48.0]
+    m["milestones"][0]["members"] = ["wi-1"]
+    res = forecast.run(m, 50, seed=2)
+    items = {i["id"]: i for i in res["items"]}
+    chain = next(x for x in res["milestones"] if x["id"] == "ms-a")["chain"]
+    assert chain["items"] == ["wi-0", "wi-1"] and chain["by"][1] == "gate"
+    assert items["wi-0"]["critical"]["*"] == 1.0 and forecast.bound(chain) == "dependency-bound"
+    assert "after a gate" not in forecast.chain_text(chain)
+
+
+def test_a_chains_labels_are_its_most_frequent_not_its_first():
+    out = {"finish": {"wi-0": [], "wi-1": []}, "mgate": {}, "chains": {"*": Counter()}, "on_chain": {"*": Counter()},
+           "gated": Counter(), "path_id": {}, "links": []}
+    tasks = [{"id": "wi-0"}, {"id": "wi-1"}]
+    for head in ("now", "gate", "gate"):   # the same two items; its head released by a gate in 2 futures of 3
+        forecast._chains(out, {"*": [0, 1]}, [1.0, 2.0], [True, True], {"pred": [-1, 0], "by": [head, "dependency"]},
+                         tasks)
+    assert sum(out["chains"]["*"].values()) == 3 and len(out["links"]) == 1
+    forecast._tally(out, ["wi-0", "wi-1"])
+    assert out["chains"]["*"] == Counter({(("wi-0", "wi-1"), ("gate", "dependency")): 3})
+    assert out["on_chain"]["*"] == Counter({"wi-0": 3, "wi-1": 3})
+    chain = forecast._chain({"runs": 3, **out}, "*")
+    assert chain["by"] == ["gate", "dependency"] and chain["share"] == 1.0
+    assert "after a gate" in forecast.chain_text(chain)
+
+
+def test_a_milestones_calendar_from_an_item_takes_that_items_chain():
+    out = {"finish": {"wi-0": [1.0], "wi-1": [3.0]}, "mgate": {"ms-a": [(8.0, 0.0)]}, "mgate_by": {"ms-a": [1]},
+           "chains": {"ms-a": Counter()}, "on_chain": {"ms-a": Counter()}, "gated": Counter(), "path_id": {},
+           "links": []}
+    forecast._chains(out, {"ms-a": [0]}, [1.0, 3.0], [True, True], {"pred": [-1, -1], "by": ["now", "now"]},
+                     [{"id": "wi-0"}, {"id": "wi-1"}])
+    assert not out["gated"]["ms-a"] and out["links"] == [(1,)] and sum(out["chains"]["ms-a"].values()) == 1
 
 
 def _chain_model(lanes=4):

@@ -104,6 +104,10 @@ def test_the_past_bar_runs_from_the_first_session_to_the_done_day():
     assert planbands.past_cells(no_first, as_of, 1.0).strip() == "✓ Nov 9"
     assert planbands.past_cells({"state": "todo", "past": {}}, as_of, 1.0) == " " * planbands.PAST_W
     assert planbands.past_cells(done, as_of, 1.0, plain=True) == "       ~~~"
+    # in words, the done tick keeps its whole day within PAST_W (the longest month-day: « Sep 13 »)
+    sep = {"state": "done", "past": {"first": "2026-09-10", "done": "2026-09-13"}}
+    assert planbands.past_cells(sep, "2026-11-24T08:00+00:00", 1.0, plain=True) == " ok Sep 13"
+    assert planbands.past_cells(sep, "2026-11-24T08:00+00:00", 1.0) == "  ✓ Sep 13"
 
 
 def test_the_chart_has_its_columns_and_marks_the_chain_when_asked(st):

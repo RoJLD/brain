@@ -640,7 +640,9 @@ resolve and on a `due` date without its `due_source`; `brain queue` ends with wh
 `brain forecast --critical [<milestone>]` prints the critical chains its futures found: for each group (the backlog,
 each milestone, era and wave), the chain of items whose ends set its finish in the most futures, each item with its
 criticality index (the share of futures in which it lies on that chain, Van Slyke 1963), whether the chain is
-capacity-bound (its links are lanes other items held) or dependency-bound, and the share of futures it was that
+capacity-bound (its links are lanes other items held) or dependency-bound (depends_on, or a gate counted from the
+item before it: a Go/NoGo's lag after its dependency, a calendar from an item's end; « after a gate » when its first
+item waited on an absolute one, a DDR's answer or a calendar day), and the share of futures it was that
 chain; with a milestone (its id, its short name, `backlog` or `-`), its items' index, start and end p10–p90 and the
 items of other groups on its chain. Its `--json` (and `latest.json`) carries the same as additive keys of format 1
 (model 3): per item `start`, `hours` and `critical`, per group `chain`, and `past`, the ledger's first session and

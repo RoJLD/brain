@@ -634,6 +634,7 @@ def simulate(model: dict, runs: int = RUNS, seed: int = SEED) -> dict:
     out = {"finish": {t["id"]: [] for t in tasks}, "start": {t["id"]: [] for t in tasks},
            "hours": {t["id"]: [] for t in tasks}, "runs": 0, "plan": plan,
            "work": {g: {"hours": [], "usd": []} for g in groups}, "mgate": {m: [] for m in mgates},
+           "mgate_by": {m: [] for m in mgates},
            "groups": groups, "chains": {g: Counter() for g in groups}, "path_id": {}, "links": [],
            "gated": Counter(), "on_chain": {g: Counter() for g in groups}}
     if not tasks or not any(h > 0 for h in hist):
@@ -675,42 +676,56 @@ def simulate(model: dict, runs: int = RUNS, seed: int = SEED) -> dict:
             out["start"][t["id"]].append(round(cal.t(trace["start"][k]), 4) if kept[k] else None)
             out["hours"][t["id"]].append(round(d[k], 4) if kept[k] else None)
         for m, gs in mgates.items():
-            rels, lags = [0.0], [0.0]
+            rels, lags = [(0.0, -1)], [0.0]   # (release, the item it counts from or -1)
             for g in gs:
                 rel, lg = gate_data.draw(g, grng, delays)
+                src = -1
                 if g.get("after"):   # a calendar from an item's end: that item's finish in this future, plus the count
                     fin = (out["finish"].get(g["after"]) or [None])[-1] if g["after"] in idx else None
                     rel, lg = (fin or 0.0) + lg, 0.0
-                rels.append(rel)
+                    src = idx[g["after"]] if fin is not None else -1
+                rels.append((rel, src))
                 lags.append(lg)
-            out["mgate"][m].append((max(rels), max(lags)))
+            rel, src = max(rels, key=lambda r: (r[0], r[1] >= 0))   # a tie: the item's end sets it
+            out["mgate"][m].append((rel, max(lags)))
+            out["mgate_by"][m].append(src)
         _chains(out, groups, done, kept, trace, tasks)
         for g, ks in groups.items():
             out["work"][g]["hours"].append(sum(d[k] for k in ks if kept[k]))
             out["work"][g]["usd"].append(sum(dollars[k] for k in ks if kept[k]))
         out["runs"] += 1
-    ids = [t["id"] for t in tasks]   # the chains by the items' ids, each item's count on its groups' chains
-    for g, chains in out["chains"].items():
-        on = out["on_chain"][g]
-        for pid, n in chains.items():
-            for k in out["links"][pid][0]:
-                on[ids[k]] += n
-        out["chains"][g] = Counter({(tuple(ids[k] for k in out["links"][pid][0]), out["links"][pid][1]): n
-                                    for pid, n in chains.items()})
-    del out["path_id"], out["links"]
+    _tally(out, [t["id"] for t in tasks])
+    del out["path_id"], out["links"], out["mgate_by"]
     return out
+
+
+def _tally(out: dict, ids: list[str]) -> None:
+    """The futures' chains by the items' ids, each counted by its items (whatever its links were in each future)
+    with its links' most frequent labels; each item's count on its groups' chains (``on_chain``)."""
+    for g, chains in out["chains"].items():
+        on, total, labels = out["on_chain"][g], Counter(), {}
+        for (pid, by), n in chains.items():
+            total[pid] += n
+            labels.setdefault(pid, Counter())[by] += n
+        for pid, n in total.items():
+            for k in out["links"][pid]:
+                on[ids[k]] += n
+        out["chains"][g] = Counter({(tuple(ids[k] for k in out["links"][pid]), labels[pid].most_common(1)[0][0]): n
+                                    for pid, n in total.items()})
 
 
 def _chains(out: dict, groups: dict[str, list[int]], done: list[float], kept: list[bool], trace: dict,
             tasks: list[dict]) -> None:
     """One future's critical chains: for each group, its last item to finish and, followed back through ``pred``,
     the items whose ends set it (members of the group or not: a lane another milestone's item held counts), counted
-    per chain of task indices in ``chains`` (``links``: what each link of a chain was, the first time it was seen;
-    ``on_chain`` sums them per item once the futures are done). A milestone whose own gate is released after its
-    items' end (and its lag) has no chain in that future: its gate set its finish (``gated``)."""
+    per chain of task indices and what each link was in that future, in ``chains`` (``links``: a chain's items by its
+    number; ``on_chain`` sums them per item once the futures are done, and the links' labels are the most frequent
+    of the chain's). A milestone whose own gate is released after its items' end (and its lag) has its finish set by
+    that gate: by the chain of the item a calendar counts from (``mgate_by``), else no chain in that future
+    (``gated``)."""
     pred, by = trace["pred"], trace["by"]
     fin = [x if kept[k] else -1.0 for k, x in enumerate(done)]
-    paths: dict[int, int] = {}   # an end -> its chain's number: groups that end on the same item share it
+    paths: dict[int, tuple[int, tuple[str, ...]]] = {}   # an end -> its chain: groups ending on one item share it
     seen: dict[int, tuple[tuple[int, ...], int]] = {}   # an item walked -> (a chain through it, its place there)
     for g, ks in groups.items():
         if not ks:
@@ -718,17 +733,28 @@ def _chains(out: dict, groups: dict[str, list[int]], done: list[float], kept: li
         end = max(ks, key=fin.__getitem__)    # ks ascend: a tie goes to the first in priority order
         if fin[end] < 0:
             continue
-        gate = (out["mgate"].get(g) or [None])[-1]
-        if gate is not None and gate[0] > out["finish"][tasks[end]["id"]][-1] + gate[1]:
+        end = _gated_end(out, g, end, fin, tasks)
+        if end < 0:
             out["gated"][g] += 1
             continue
-        pid = paths.get(end)
-        if pid is None:   # once per end and future: a chain is hashed once, then counted by its number
+        key = paths.get(end)
+        if key is None:   # once per end and future: a chain is hashed once, then counted by its number
             path = _walk(end, pred, seen, len(tasks))
-            pid = paths[end] = out["path_id"].setdefault(path, len(out["path_id"]))
+            pid = out["path_id"].setdefault(path, len(out["path_id"]))
             if pid == len(out["links"]):
-                out["links"].append((path, tuple(by[k] for k in path)))
-        out["chains"][g][pid] += 1
+                out["links"].append(path)
+            key = paths[end] = (pid, tuple(by[k] for k in path))
+        out["chains"][g][key] += 1
+
+
+def _gated_end(out: dict, g: str, end: int, fin: list[float], tasks: list[dict]) -> int:
+    """The item whose chain set group ``g``'s finish in this future: its last item to end, unless its own gate is
+    released later (and its lag): then the item that gate's calendar counts from (``mgate_by``), or -1 (no chain)."""
+    gate = (out["mgate"].get(g) or [None])[-1]
+    if gate is None or gate[0] <= out["finish"][tasks[end]["id"]][-1] + gate[1]:
+        return end
+    src = ((out.get("mgate_by") or {}).get(g) or [-1])[-1]
+    return src if src >= 0 and fin[src] >= 0 else -1
 
 
 def _walk(end: int, pred: list[int], seen: dict[int, tuple[tuple[int, ...], int]], n: int) -> tuple[int, ...]:
@@ -755,9 +781,11 @@ def _schedule(dur: list[float], kept: list[bool], release: list[float], deps: li
     days it waits from that item's end: a calendar gate counted from it). Both turned into work hours by ``cal``.
 
     ``trace`` (a dict, filled): ``start`` each item's start in work hours, ``pred`` the item whose end let it start
-    (-1: none) and ``by`` what that was (``BY``): ``now`` ready at once, ``gate`` released by a gate, ``dependency``
-    the last of its dependencies to end, ``lane`` the item whose end freed the lane it waited for (the capacity).
-    Followed back from an item, ``pred`` is the chain that set its finish (wi-brain-forecast-starts-critical)."""
+    (-1: none) and ``by`` what that was (``BY``): ``now`` ready at once, ``gate`` released by a gate (``pred``: the
+    item whose end it counts from, a Go/NoGo's lag after its last dependency or a calendar from an item; -1 for one
+    absolute, a DDR's delay or a calendar day), ``dependency`` the last of its dependencies to end, ``lane`` the item
+    whose end freed the lane it waited for (the capacity). Followed back from an item, ``pred`` is the chain that set
+    its finish (wi-brain-forecast-starts-critical)."""
     waits = waits or {}
     n = len(dur)
     left = [sum(1 for d in deps[k] if kept[d]) for k in range(n)]
@@ -767,21 +795,27 @@ def _schedule(dur: list[float], kept: list[bool], release: list[float], deps: li
     by = ["now"] * n
     since = [0.0] * n            # when an item joined the ready queue
     cause: list[tuple[str, int]] = [("now", -1)] * n
+    src = [-1] * n               # the item whose end set an item's release (-1: an absolute gate, or none)
     freed = -1                   # the item whose end freed the last lane
     ready: list[int] = []
     waiting: list[tuple[float, int]] = []
     running: list[tuple[float, int]] = []
 
-    def gate(k: int, at: float) -> float:
+    def gate(k: int, at: float, after: int = -1) -> float:   # ``after``: the dependency that ended at ``at``
         if lag and cal and lag[k]:
-            return max(release[k], cal.w(cal.t(at) + lag[k]))
+            held = cal.w(cal.t(at) + lag[k])
+            if after >= 0 and held >= release[k]:
+                src[k] = after
+            return max(release[k], held)
         return release[k]
 
     release = list(release)
 
     def ended(k: int, at: float) -> None:   # the calendars counted from k's end start at ``at``
         for j, days in waits.get(k, ()):
-            release[j] = max(release[j], cal.w(cal.t(at) + days)) if cal else release[j]
+            held = cal.w(cal.t(at) + days) if cal else release[j]
+            if held > release[j]:
+                release[j], src[j] = held, k if kept[k] else -1   # an item left out ends at once: from now
 
     for k in range(n):
         if not kept[k]:
@@ -812,7 +846,7 @@ def _schedule(dur: list[float], kept: list[bool], release: list[float], deps: li
             for j in dependents[k]:
                 left[j] -= 1
                 if kept[j] and not left[j]:
-                    release[j] = gate(j, now)
+                    release[j] = gate(j, now, k)
                     if release[j] > now:
                         heapq.heappush(waiting, (release[j], j))
                     else:
@@ -820,7 +854,7 @@ def _schedule(dur: list[float], kept: list[bool], release: list[float], deps: li
                         heapq.heappush(ready, j)
         else:
             now, k = heapq.heappop(waiting)
-            since[k], cause[k] = now, ("gate", -1)
+            since[k], cause[k] = now, ("gate", src[k])
             heapq.heappush(ready, k)
     if trace is not None:
         trace.update(start=start, pred=pred, by=by)
@@ -1264,11 +1298,12 @@ def _short_id(nid: str, project: str) -> str:
 
 def bound(chain: dict | None) -> str:
     """What a chain says of its group's finish: 'capacity-bound' (its links are mostly lanes another item freed),
-    'dependency-bound' (mostly depends_on), 'one item' (a chain of one), '' without one."""
+    'dependency-bound' (mostly depends_on, or a gate counted from the item before: a Go/NoGo's lag, a calendar from
+    an item), 'one item' (a chain of one), '' without one."""
     if not chain or not chain.get("items"):
         return ""
     links = chain["by"][1:]
-    lane, dep = links.count("lane"), links.count("dependency")
+    lane, dep = links.count("lane"), links.count("dependency") + links.count("gate")
     if not links:
         return "one item"
     return "capacity-bound" if lane >= dep else "dependency-bound"

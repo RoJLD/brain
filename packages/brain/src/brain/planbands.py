@@ -27,7 +27,7 @@ ones. Each item's row:
 
   ``past``    left of ``│``, at the same scale: its actual bar ``━`` from its first session to its done day (or to the
               forecast's day while doing), from the forecast's ``past`` (the cost ledger's); done before the window,
-              « ✓ <day> »;
+              « ✓ <day> » (« ok <day> » in words: either fits the ``PAST_W`` cells);
   future      its start-to-finish band: ``░`` from its start's p10 to its median and from its finish's p80 to its p90,
               ``▒`` from its start's median to its finish's p80, ``█`` its finish's median (a model-2 forecast keeps
               no start: its finish band alone, as a milestone's); « ┄┄ undated: why » when the forecast cannot date it;
@@ -334,6 +334,7 @@ PAST_W = 10          # the past cells left of the « │ »
 EST_W, CRIT_W = 9, 5
 RIGHT_W = 1 + EST_W + 1 + CRIT_W + 2
 PAST = {"glyph": "━", "word": "~"}
+DONE_TICK = {"glyph": "✓", "word": "ok"}   # « ok Sep 13 », 9 cells: the day fits PAST_W
 CHAIN = {"glyph": "◆", "word": "*"}
 UNDATED = {"glyph": "┄", "word": "-"}
 LEVEL_KINDS = ("milestone", "era", "wave")
@@ -503,7 +504,7 @@ def past_cells(r: dict, as_of: str | None, scale: float, plain: bool = False) ->
     first, end, done = _span(r, now.date() if now else None)
     if now is None or not (first or done):
         return " " * PAST_W
-    tick = f"{'done:' if plain else '✓'} {planviews._md(done.isoformat())}" if done else ""
+    tick = f"{DONE_TICK['word' if plain else 'glyph']} {planviews._md(done.isoformat())}" if done else ""
     if first is None or end is None:
         return tick.rjust(PAST_W)[:PAST_W]
     lo, hi = (first - now.date()).days, (end - now.date()).days + 1   # days from the forecast's day, [lo, hi)
