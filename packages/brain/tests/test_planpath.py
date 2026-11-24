@@ -190,18 +190,22 @@ def test_tarjan_finds_a_longer_cycle_and_a_declared_order_both_ways_is_a_knot(st
     assert lay["overruled"] == []
 
 
-def test_the_lanes_from_120_columns_and_the_tree_under(st):
+def test_the_lanes_from_120_columns(st):
     lay = planpath.layers(st, FC, "demo")
     wide = planpath.text(lay, 120, plain=False)
+    blob = "\n".join(wide)
     assert wide[0].startswith("rank 1") and "rank 3" in wide[0]
-    assert "─▶" in wide[1] and "a 1/2" in wide[1] and "◆ ⟦d ⇄ e⟧ 0/4" in "\n".join(wide)
-    assert any("↳ after a" in x for x in wide) and any("p50 Nov 28" in x for x in wide)
-    assert any(x.startswith("no arc: ✓ f 1/1 · k 0/1") for x in wide)
-    assert any("1 mutual wait(s) to settle: ⟦d ⇄ e⟧" in x for x in wide)
-    assert any("1 derived arc(s) overruled" in x for x in wide) and all(len(x) <= 120 for x in wide[:-3])
-    assert any("g 0/1" in x for x in wide) and any("undated" in x for x in wide)
+    assert "─▶" in wide[1] and "a 1/2" in wide[1] and "◆ ⟦d ⇄ e⟧ 0/4" in blob
+    assert "↳ after a" in blob and "p50 Nov 28" in blob and "g 0/1" in blob and "undated" in blob
+    assert "\nno arc: ✓ f 1/1 · k 0/1" in blob and "\n1 mutual wait(s) to settle: ⟦d ⇄ e⟧" in blob
+    assert "\n1 derived arc(s) overruled" in blob
+    assert max(len(x) for x in wide[:-4]) <= 120   # the drawing fits; the tail's lines are not cut
+
+
+def test_the_tree_under_120_columns(st):
+    lay = planpath.layers(st, FC, "demo")
     narrow = planpath.text(lay, 100, plain=False)
-    assert narrow[0].startswith("├── a 1/2") and any("↗ c" in x for x in narrow)   # c under a and under b
+    assert narrow[0].startswith("├── a 1/2") and "↗ c" in "\n".join(narrow)   # c under a and under b
     assert planpath.grid(lay, 100, columns=130)["mode"] == "lanes"   # the screen's columns decide
     assert planpath.grid(lay, 130, columns=100)["mode"] == "tree"
 

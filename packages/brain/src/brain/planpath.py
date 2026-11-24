@@ -178,13 +178,9 @@ def _milestone(st: resume.Store, m: dict, fc: dict | None, project: str) -> dict
             "reached": str(props.get("reached") or "")[:10]}
 
 
-def layers(st: resume.Store, fc: dict | None, project: str = "", history: bool = False) -> dict:
-    """The path of one project's milestones (see the module's doc): ``{v, project, history, as_of, milestones, arcs,
-    overruled, knots, nodes, ranks, chain, unlinked}``; ``nodes`` the path's nodes (a milestone, or a knot of
-    several), each with its ``rank``, the nodes just before it (``before``) and after it (``after_this``), those before
-    it over a rank (``after``: « ↳ after X »)."""
-    ms = on_path(st)
-    arcs, overruled = _arcs(st, ms, history)
+def _knots(arcs: list[dict]) -> tuple[dict[str, str], list[dict]]:
+    """({milestone of an arc: its node}, the knots): each strongly connected component of the arcs is a node, named by
+    its milestone alone or, of several, a knot with the arcs inside it."""
     succ: dict[str, set[str]] = {}
     for a in arcs:
         succ.setdefault(a["from"], set()).add(a["to"])
@@ -193,12 +189,21 @@ def layers(st: resume.Store, fc: dict | None, project: str = "", history: bool =
     knots = []
     for comp in _sccs(linked, succ):
         nid = knot_id(comp) if len(comp) > 1 else comp[0]
-        for m in comp:
-            node_of[m] = nid
+        node_of.update(dict.fromkeys(comp, nid))
         if len(comp) > 1:
             inside = [a for a in arcs if a["from"] in comp and a["to"] in comp]
-            knots.append({"id": nid, "members": comp, "arcs": inside,
-                          "declared": any(a["declared"] for a in inside)})
+            knots.append({"id": nid, "members": comp, "arcs": inside, "declared": any(a["declared"] for a in inside)})
+    return node_of, knots
+
+
+def layers(st: resume.Store, fc: dict | None, project: str = "", history: bool = False) -> dict:
+    """The path of one project's milestones (see the module's doc): ``{v, project, history, as_of, forecast,
+    milestones, arcs, overruled, knots, nodes, ranks, chain, chain_hours, unlinked}``; ``nodes`` the path's nodes (a
+    milestone, or a knot of several), each with its ``rank``, the nodes just before it (``before``) and after it
+    (``after_this``), those before it over a rank (``after``: « ↳ after X »)."""
+    ms = on_path(st)
+    arcs, overruled = _arcs(st, ms, history)
+    node_of, knots = _knots(arcs)
     rows = {mid: {**_milestone(st, ms[mid], fc, project), "node": node_of.get(mid, "")} for mid in sorted(ms)}
     nodes = _nodes(rows, knots, arcs, node_of)
     _rank(nodes)
@@ -212,24 +217,25 @@ def layers(st: resume.Store, fc: dict | None, project: str = "", history: bool =
             "chain": chain, "chain_hours": weight, "unlinked": [m for m in sorted(ms) if m not in node_of]}
 
 
+NODE_KEYS = ("name", "state", "done", "items", "p50", "hours", "undated", "reached")
+
+
+def _knot_node(k: dict, rows: dict[str, dict]) -> dict:
+    """A knot's node: its members' counts and p50 work summed, its p50 their latest, reached once all are."""
+    ms = [rows[m] for m in k["members"]]
+    hours = [r["hours"] for r in ms if r["hours"] is not None]
+    return {"id": k["id"], "kind": "knot", "members": k["members"], "name": " ⇄ ".join(r["name"] for r in ms),
+            "state": "reached" if all(r["state"] == "reached" for r in ms) else "pending",
+            "done": sum(r["done"] for r in ms), "items": sum(r["items"] for r in ms),
+            "p50": max(r["p50"] for r in ms), "hours": sum(hours) if hours else None,
+            "undated": "; ".join(f"{r['name']} {r['undated']}" for r in ms if r["undated"]), "reached": ""}
+
+
 def _nodes(rows: dict[str, dict], knots: list[dict], arcs: list[dict], node_of: dict[str, str]) -> dict[str, dict]:
-    """The path's nodes by id: a milestone of an arc, or a knot (its members' counts summed, its p50 their latest)."""
-    out: dict[str, dict] = {}
-    for mid, nid in node_of.items():
-        if nid == mid:
-            r = rows[mid]
-            out[nid] = {"id": nid, "kind": "milestone", "members": [mid],
-                        **{k: r[k] for k in ("name", "state", "done", "items", "p50", "hours", "undated", "reached")}}
-    for k in knots:
-        ms = [rows[m] for m in k["members"]]
-        out[k["id"]] = {"id": k["id"], "kind": "knot", "members": k["members"], "name": " ⇄ ".join(r["name"] for r in ms),
-                        "state": "reached" if all(r["state"] == "reached" for r in ms) else "pending",
-                        "done": sum(r["done"] for r in ms), "items": sum(r["items"] for r in ms),
-                        "p50": max((r["p50"] for r in ms), default=""),
-                        "hours": (sum(r["hours"] for r in ms if r["hours"] is not None)
-                                  if any(r["hours"] is not None for r in ms) else None),
-                        "undated": "; ".join(f"{r['name']} {r['undated']}" for r in ms if r["undated"]),
-                        "reached": ""}
+    """The path's nodes by id: a milestone of an arc, or a knot; each with the nodes just before and after it."""
+    out = {mid: {"id": mid, "kind": "milestone", "members": [mid], **{k: rows[mid][k] for k in NODE_KEYS}}
+           for mid, nid in node_of.items() if nid == mid}
+    out.update({k["id"]: _knot_node(k, rows) for k in knots})
     for n in out.values():
         n.update(before=set(), after_this=set(), pairs_in=0)
     for a in arcs:
@@ -401,44 +407,53 @@ def grid(lay: dict, width: int = WIDE, plain: bool | None = None, columns: int |
     X » when a row has one; a tree row is ``(node id, line)``. ``head`` the ranks' row, ``tail`` the milestones of no
     arc, the knots to settle and the legend; ``columns`` the screen's (``lanes_fit``)."""
     plain = planviews.words() if plain is None else plain
-    chain = set(lay.get("chain") or [])
-    nodes = {n["id"]: n for n in lay.get("nodes") or []}
-    names = _names(lay, plain)
     ranks = lay.get("ranks") or []
     tail = _tail(lay, plain)
     if not ranks:
         return {"mode": "lanes", "col": COL_MIN, "head": [], "rows": [], "tail": tail}
     if not lanes_fit(lay, width, columns):
-        return {"mode": "tree", "col": 0, "head": [], "rows": _tree(lay, nodes, chain, names, plain), "tail": tail}
+        return {"mode": "tree", "col": 0, "head": [], "rows": _tree(lay, plain), "tail": tail}
     col = max(COL_MIN, min(COL_MAX, width // len(ranks)))
-    s = _sym(plain)
-    dash = "-" if plain else "─"
     head = "".join(f"rank {r}".ljust(col) for r in range(1, len(ranks) + 1)).rstrip()
+    return {"mode": "lanes", "col": col, "head": [head], "rows": _lanes(lay, col, plain), "tail": tail}
+
+
+def _lanes(lay: dict, col: int, plain: bool) -> list[list[tuple[str, list[str]]]]:
+    """The lanes' rows: the row ``i`` holds the ``i``-th node of each rank; three lines when one of them has a
+    « ↳ after X », else two."""
+    ranks = lay["ranks"]
+    nodes = {n["id"]: n for n in lay.get("nodes") or []}
+    ctx = {"chain": set(lay.get("chain") or []), "names": _names(lay, plain), "plain": plain, "col": col}
     rows = []
     for i in range(max(len(r) for r in ranks)):
         cells = [nodes[ids[i]] if i < len(ids) else None for ids in ranks]
         three = any(x and x["after"] for x in cells)
-        row = []
-        for r, x in enumerate(cells):
-            if x is None:
-                row.append(("", ["", "", ""] if three else ["", ""]))
-                continue
-            more = r + 1 < len(ranks) and any(t in ranks[r + 1] for t in x["after_this"])
-            room = col - 1 - (len(s["arrow"]) + 2 if more else 0)
-            one = _label(x, chain, plain, room)
-            if more:
-                one = one + " " + dash * (room - len(one)) + s["arrow"]
-            cell = [one, "  " + _fit(_when(x), col - 3)]
-            if three:
-                cell.append("  " + _fit(_after(x, names, plain), col - 3))
-            row.append((x["id"], cell))
-        rows.append(row)
-    return {"mode": "lanes", "col": col, "head": [head], "rows": rows, "tail": tail}
+        rows.append([_cell(x, ranks[r + 1] if r + 1 < len(ranks) else [], three, ctx) if x else
+                     ("", ["", "", ""] if three else ["", ""]) for r, x in enumerate(cells)])
+    return rows
 
 
-def _tree(lay: dict, nodes: dict[str, dict], chain: set[str], names: dict[str, str], plain: bool) -> list:
+def _cell(x: dict, next_rank: list[str], three: bool, ctx: dict) -> tuple[str, list[str]]:
+    """A node's cell: its label (``─▶`` to the next rank's column when a node after it sits there), its date, and
+    (``three``) its « ↳ after X »."""
+    plain, col = ctx["plain"], ctx["col"]
+    arrow = _sym(plain)["arrow"]
+    more = any(t in next_rank for t in x["after_this"])
+    room = col - 1 - (len(arrow) + 2 if more else 0)
+    one = _label(x, ctx["chain"], plain, room)
+    if more:
+        one = one + " " + ("-" if plain else "─") * (room - len(one)) + arrow
+    cell = [one, "  " + _fit(_when(x), col - 3)]
+    if three:
+        cell.append("  " + _fit(_after(x, ctx["names"], plain), col - 3))
+    return x["id"], cell
+
+
+def _tree(lay: dict, plain: bool) -> list:
     """Each rank-1 node with the nodes that wait on it as its children, a node met again shown ``↗`` (a repeat)."""
     s = _sym(plain)
+    nodes = {n["id"]: n for n in lay.get("nodes") or []}
+    chain, names = set(lay.get("chain") or []), _names(lay, plain)
     out: list[tuple[str, str]] = []
     seen: set[str] = set()
 
@@ -458,26 +473,33 @@ def _tree(lay: dict, nodes: dict[str, dict], chain: set[str], names: dict[str, s
     return out
 
 
-def _tail(lay: dict, plain: bool) -> list[str]:
-    s = _sym(plain)
+def _loose(lay: dict, plain: bool) -> list[str]:
+    """The tail's line of the milestones of no arc."""
     rows = {m["id"]: m for m in lay.get("milestones") or []}
+    done = _sym(plain)["reached"]
     loose = [rows[m] for m in lay.get("unlinked") or []]
-    out = []
-    if loose:
-        out.append("no arc: " + " · ".join(
-            f"{s['reached'] if m['state'] == 'reached' else ''}{m['name']} {m['done']}/{m['items']}" for m in loose))
+    return ["no arc: " + " · ".join(f"{done if m['state'] == 'reached' else ''}{m['name']} {m['done']}/{m['items']}"
+                                    for m in loose)] if loose else []
+
+
+def _knots_named(lay: dict, plain: bool) -> list[str]:
+    """The tail's line of the knots to settle, each named in full."""
     knots = lay.get("knots") or []
-    if knots:
-        named = ", ".join(_name({"kind": "knot", "name": " ⇄ ".join(_short(m, lay.get("project") or "")
-                                                                    for m in k["members"])}, plain) for k in knots)
-        out.append(f"{len(knots)} mutual wait(s) to settle: {named} (brain milestone path --check)")
-    if lay.get("overruled"):
-        out.append(f"{len(lay['overruled'])} derived arc(s) overruled by a declared order")
+    project = lay.get("project") or ""
+    named = ", ".join(_name({"kind": "knot", "name": " ⇄ ".join(_short(m, project) for m in k["members"])}, plain)
+                      for k in knots)
+    return [f"{len(knots)} mutual wait(s) to settle: {named} (brain milestone path --check)"] if knots else []
+
+
+def _tail(lay: dict, plain: bool) -> list[str]:
+    """Under the path: the milestones of no arc, the knots to settle, the arcs overruled, the legend."""
+    s = _sym(plain)
+    over = [f"{len(lay['overruled'])} derived arc(s) overruled by a declared order"] if lay.get("overruled") else []
     hours = lay.get("chain_hours")
-    out.append(f"{s['chain'].strip()} the longest chain of p50 work (critical" + (f", {hours:g} h" if hours else "")
-               + f") · {s['knot'][1].strip()} a mutual wait · {s['after'].strip()} an arc over a rank"
-               + ("" if lay.get("forecast") else " · no forecast yet: brain forecast"))
-    return out
+    legend = (f"{s['chain'].strip()} the longest chain of p50 work (critical" + (f", {hours:g} h" if hours else "")
+              + f") · {s['knot'][1].strip()} a mutual wait · {s['after'].strip()} an arc over a rank"
+              + ("" if lay.get("forecast") else " · no forecast yet: brain forecast"))
+    return [*_loose(lay, plain), *_knots_named(lay, plain), *over, legend]
 
 
 def heading(lay: dict) -> str:

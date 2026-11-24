@@ -43,7 +43,7 @@ class PathView(OptionList):
         """The rows of ``panel`` at the frame's width, lanes from 120 screen columns; the cursor on the same row."""
         self.panel = panel
         key = _option_id(self)
-        options, self.rows, self.paths = path_options(panel, self._width(), self._columns(), self.col)
+        options, self.rows, self.paths = path_options(panel, self._width(), self._columns())
         self.clear_options()
         self.add_options(options)
         index = next((k for k, o in enumerate(options) if key and o.id == key), None)
@@ -140,7 +140,7 @@ def lane_text(r: dict, col: int | None) -> Text:
     return text
 
 
-def path_options(panel: dict | None, width: int, columns: int, col: int = 0) -> tuple[list[Option], dict, dict]:
+def path_options(panel: dict | None, width: int, columns: int) -> tuple[list[Option], dict, dict]:
     """The frame's options: per project its heading (with several), the ranks' row, its rows (a lanes row, or a tree
     row), its tail; ({option id: row}, {project: layers})."""
     groups = (panel or {}).get("projects") or []
@@ -150,29 +150,32 @@ def path_options(panel: dict | None, width: int, columns: int, col: int = 0) -> 
         if len(groups) > 1 or "error" in g:
             text = f"error: {g['error']}" if "error" in g else planpath.heading(lay)
             options.append(Option(Text(f"{g['project']}: {text}"), disabled=True))
-        if "error" in g or not lay:
-            continue
-        project = g["project"]
-        lays[project] = lay
-        grid = planpath.grid(lay, width, columns=columns)
-        options += [Option(Text(h), disabled=True) for h in grid["head"]]
-        for i, row in enumerate(grid["rows"]):
-            oid = f"{project}:{i}"
-            if grid["mode"] == "lanes":
-                rows[oid] = {"mode": "lanes", "project": project, "cells": row, "width": grid["col"]}
-                options.append(Option(lane_text(rows[oid], None), id=oid))
-            else:
-                nid, line = row
-                oid = f"{project}:{i}:{nid}"
-                rows[oid] = {"mode": "tree", "project": project, "node": nid}
-                options.append(Option(Text(line), id=oid))
-        if not grid["rows"]:
-            options.append(Option(Text("no arc between two milestones: no item of one waits on an item of another"),
-                                  disabled=True))
-        options += [Option(Text(t), disabled=True) for t in grid["tail"]]
+        if "error" not in g and lay:
+            lays[g["project"]] = lay
+            options += _project_options(g["project"], lay, width, columns, rows)
     if not groups:
         options.append(Option(Text("not read yet"), disabled=True))
     return options, rows, lays
+
+
+def _project_options(project: str, lay: dict, width: int, columns: int, rows: dict) -> list[Option]:
+    """One project's options (brain.planpath's grid), its rows added to ``rows``: a lanes row by its index, a tree row
+    by its index and node."""
+    grid = planpath.grid(lay, width, columns=columns)
+    options = [Option(Text(h), disabled=True) for h in grid["head"]]
+    for i, row in enumerate(grid["rows"]):
+        if grid["mode"] == "lanes":
+            oid = f"{project}:{i}"
+            rows[oid] = {"mode": "lanes", "project": project, "cells": row, "width": grid["col"]}
+            options.append(Option(lane_text(rows[oid], None), id=oid))
+        else:
+            oid = f"{project}:{i}:{row[0]}"
+            rows[oid] = {"mode": "tree", "project": project, "node": row[0]}
+            options.append(Option(Text(row[1]), id=oid))
+    if not grid["rows"]:
+        options.append(Option(Text("no arc between two milestones: no item of one waits on an item of another"),
+                              disabled=True))
+    return options + [Option(Text(t), disabled=True) for t in grid["tail"]]
 
 
 class PathApp:
