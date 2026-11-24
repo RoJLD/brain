@@ -13,8 +13,10 @@ By concern: the text patterns and a Python file's facts (brain.inventory_python)
 (brain.inventory_closure), the test evidence (brain.inventory_evidence), the code stores and their CodeRefs
 (brain.inventory_stores); this module holds the side effects, the trees, the layout and the units, and keeps every
 public name the others had here (brain.inventory.closure, Index, parse_code_ref, ...: __all__, and the private
-_norm, _parse and _load_yaml that callers read). A patch of a moved name is its module's (brain.inventory_python.facts
-for the closure's reads); ``_run_git`` and ``_read_bytes`` stay here.
+_norm, _parse and _load_yaml that callers read). Each concern module binds the names it reads from the others, so a
+patch of a moved name goes on the module whose code calls it (brain.inventory_closure.facts for the closure's reads,
+brain.inventory.facts for collect's); ``_run_git`` and ``_read_bytes`` stay here, so a patch of
+brain.inventory._run_git still reaches every git read.
 """
 
 from __future__ import annotations
