@@ -13,7 +13,8 @@ Antigravity, Grok / Hermes decided 2026-10-30; formats checked in each tool's do
   each ancestor's, then the project's own CLAUDE.md, nearest last: AGENTS.md readers take the nearest file), the
   memory and decisions pointers; ``.agents/skills/<procedure>/`` for the packs that apply to the project. Claude Code
   reads AGENTS.md only where no CLAUDE.md is (its default), so a Claude session does not get the rules twice.
-- **cursor**: the base, then ``.cursor/mcp.json`` (``${env:NAME}``; no default syntax: a default is written as is).
+- **cursor**: the base, then ``.cursor/mcp.json`` (``${env:NAME}``; no default syntax: a default is written as is);
+  in the home folder, ``~/.cursor/mcp.json`` for the machine-wide servers (:data:`HOME`), written behind ``--home``.
 - **gemini** (Gemini CLI): the base, then ``.gemini/settings.json``: ``context.fileName`` reads AGENTS.md, and
   ``mcpServers`` (``httpUrl`` for HTTP, ``url`` for SSE; ``${NAME:-default}`` kept).
 - **antigravity**: the base (Antigravity reads AGENTS.md and ``.agents/skills``), then ``.agents/mcp_config.json``
@@ -26,13 +27,18 @@ What a tool cannot carry is said in the plan, never simulated (hooks are Claude 
 merged: only the entries the source names are written, the rest of the file is left alone. A file the render would
 replace that it did not write (no marker) is ``foreign``: not written without ``--force``. ``--write`` writes into the
 brain's repo and the project's repo (never a production checkout: render a worktree of it with ``--repo``) and never
-into the home folder.
+into the home folder: ``--home`` renders a target's home-folder file alone (:data:`HOME`, wi-brain-render-user-mcp),
+planned, then merged by ``--home --write``: its ``mcpServers`` entries only, the rest of the file kept (values, key
+order, indentation, line endings), written atomically (a temporary file renamed over it, a symbolic link followed),
+a file it cannot read refused and never overwritten, and a second run writes nothing.
 """
 
 from __future__ import annotations
 
 import json
+import os
 import shutil
+import tempfile
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -351,21 +357,64 @@ def render_agents(src, project, project_root) -> Render:
     return r
 
 
-def render_cursor(src, project, project_root) -> Render:
-    r = _base(src, project, project_root, "cursor")
-    servers = {}
-    for name, s in _servers(src, project).items():
+def _cursor_servers(servers: dict[str, neutral.Server]) -> dict:
+    """Servers in Cursor's mcp.json form: ``${env:NAME}``, a default written as its value, ``type: stdio``."""
+    out = {}
+    for name, s in servers.items():
         spec = _vars({k: v for k, v in s.spec.items() if k not in ("transport", "about")}, default="value",
                      plain="${env:{name}}")
         if s.transport == "stdio":
             spec = {"type": "stdio", **spec}
-        servers[name] = spec
+        out[name] = spec
+    return out
+
+
+def _has_default(servers: dict[str, neutral.Server]) -> bool:
+    return any(d is not None for s in servers.values() for _, d in neutral.variables(s.spec))
+
+
+CURSOR_DEFAULT = "Cursor has no default in ${env:NAME}: a variable's default is written as its value"
+
+
+def render_cursor(src, project, project_root) -> Render:
+    r = _base(src, project, project_root, "cursor")
+    servers = _servers(src, project)
     if servers:
-        r.outputs.append(Output(".cursor/mcp.json", to_json(servers), "repo", "MCP servers (merged)",
+        r.outputs.append(Output(".cursor/mcp.json", to_json(_cursor_servers(servers)), "repo", "MCP servers (merged)",
                                 merge=("mcpServers",)))
-        if any(d is not None for s in _servers(src, project).values() for _, d in neutral.variables(s.spec)):
-            r.notes.append("Cursor has no default in ${env:NAME}: a variable's default is written as its value")
+        if _has_default(servers):
+            r.notes.append(CURSOR_DEFAULT)
+    home = cursor_home(src)
+    if home is not None:   # planned beside the repo's files, written only by --home --write
+        r.outputs.append(home)
     return r
+
+
+# --- the home folder (wi-brain-render-user-mcp) ---------------------------------------------------------------------
+
+def machine_servers(src: neutral.Source) -> dict[str, neutral.Server]:
+    """The machine-wide servers: those of the packs that apply to every project (no ``projects``, the owner's scope),
+    the same in every repo, so rendered once per machine into a tool's home-folder settings."""
+    out = {}
+    for p in src.packs:
+        if p.projects is None:
+            for s in p.items("mcp"):
+                out[s] = src.servers[s]
+    return out
+
+
+def cursor_home(src: neutral.Source) -> Output | None:
+    """``~/.cursor/mcp.json``: the machine-wide servers, merged under ``mcpServers``; None when there is none."""
+    servers = machine_servers(src)
+    if not servers:
+        return None
+    return Output(".cursor/mcp.json", to_json(_cursor_servers(servers)), "user", "machine-wide MCP servers (merged)",
+                  merge=("mcpServers",))
+
+
+# The targets with a home-folder file the render writes, behind --home: {target: its output}. Another tool's
+# user-level settings plug in here (an extension point); hermes's ~/.hermes/config.yaml stays lines added by hand.
+HOME = {"cursor": cursor_home}
 
 
 def render_gemini(src, project, project_root) -> Render:
@@ -461,16 +510,32 @@ ADAPTERS = {"claude": render_claude, "agents": render_agents, "cursor": render_c
 
 # --- plan, write, check -------------------------------------------------------------------------------------------
 
-def render(root: Path, target: str, project: str | None = None, project_root: Path | None = None) -> Render:
-    """The outputs of ``target`` for ``project`` (claude: the brain's marketplace, whatever the project). Raises
-    RenderError when the source has errors."""
+def render(root: Path, target: str, project: str | None = None, project_root: Path | None = None, *,
+           home: bool = False) -> Render:
+    """The outputs of ``target`` for ``project`` (claude: the brain's marketplace, whatever the project); with
+    ``home``, the target's home-folder file alone (:data:`HOME`), whatever the project. Raises RenderError when the
+    source has errors, or with ``home`` when the target writes no home-folder file."""
     if target not in ADAPTERS:
         raise RenderError(f"unknown target {target!r} ({', '.join(TARGETS)})")
+    if home and target not in HOME:
+        why = " (its ~/.hermes/config.yaml lines are added by hand: its plan prints them)" if target == "hermes" else ""
+        raise RenderError(f"--home: the {target} target writes no file in the home folder{why}; only "
+                          f"{', '.join(HOME)} does")
     src = neutral.load(root)
     errors = neutral.check(src) + name_errors(src)
     if errors:
         raise RenderError(f"{len(errors)} error(s) in the neutral source ({src.folder}):\n  " + "\n  ".join(errors))
-    return ADAPTERS[target](src, project, project_root)
+    if not home:
+        return ADAPTERS[target](src, project, project_root)
+    r = Render(target, None)
+    out = HOME[target](src)
+    if out is None:
+        r.notes.append("no machine-wide MCP server: no pack without projects names one under mcp")
+    else:
+        r.outputs.append(out)
+        if target == "cursor" and _has_default(machine_servers(src)):
+            r.notes.append(CURSOR_DEFAULT)
+    return r
 
 
 def _read(path: Path) -> str | None:
@@ -493,7 +558,7 @@ def _merged(existing: str | None, out: Output) -> tuple[str, bool]:
     try:
         data = json.loads(existing) if existing and existing.strip() else {}
     except ValueError:
-        raise RenderError(f"{out.rel}: not readable JSON, not merged (fix it or remove it)")
+        raise RenderError(f"{out.rel}: not readable JSON, not merged (fix it or remove it)") from None
     if not isinstance(data, dict):
         raise RenderError(f"{out.rel}: not a JSON object, not merged")
     want = json.loads(out.text)
@@ -512,14 +577,150 @@ def _merged(existing: str | None, out: Output) -> tuple[str, bool]:
     return json.dumps(data, indent=2, ensure_ascii=False) + "\n", same
 
 
+# --- a home-folder file: merged in its own format, written atomically (wi-brain-render-user-mcp) --------------------
+
+BOM = "﻿"
+
+
+def _no_duplicates(pairs):
+    out = {}
+    for k, v in pairs:
+        if k in out:
+            raise ValueError(f"the key {k!r} twice")
+        out[k] = v
+    return out
+
+
+def _indent(text: str):
+    """The file's indentation unit: the first indented line's (spaces or tabs), else two spaces."""
+    for line in text.splitlines()[1:]:
+        body = line.lstrip(" \t")
+        if body and body != line:
+            return line[:len(line) - len(body)]
+    return 2
+
+
+def _canon(value) -> str:
+    return json.dumps(value, sort_keys=True, ensure_ascii=False)
+
+
+def _home_text(path: Path) -> tuple[str | None, bool]:
+    """(the file's text without its byte order mark, None when there is no file; whether it had one)."""
+    try:
+        raw = path.read_bytes()
+    except FileNotFoundError:
+        return None, False
+    except OSError as exc:
+        raise RenderError(f"{path}: not readable ({exc.strerror or exc}), not merged") from None
+    try:
+        text = raw.decode("utf-8")
+    except UnicodeDecodeError:
+        raise RenderError(f"{path}: not UTF-8, not merged and never overwritten (fix it or remove it)") from None
+    return (text[1:], True) if text.startswith(BOM) else (text, False)
+
+
+def _home_node(path: Path, text: str, merge: tuple[str, ...]) -> tuple[dict, dict, dict]:
+    """(the file's data, the object that holds the merge key, the entries under it), or RenderError."""
+    try:
+        data = json.loads(text, object_pairs_hook=_no_duplicates) if text.strip() else {}
+    except ValueError as exc:
+        raise RenderError(f"{path}: not readable JSON ({exc}), not merged and never overwritten (fix it or remove "
+                          "it)") from None
+    if not isinstance(data, dict):
+        raise RenderError(f"{path}: not a JSON object, not merged")
+    node = data
+    for k in merge[:-1]:
+        node = node.setdefault(k, {})
+        if not isinstance(node, dict):
+            raise RenderError(f"{path}: {'.'.join(merge[:-1])} is not an object, not merged")
+    have = node.get(merge[-1], {})
+    if not isinstance(have, dict):
+        raise RenderError(f"{path}: {'.'.join(merge)} is not an object, not merged")
+    return data, node, have
+
+
+def _home_bytes(data: dict, text: str | None, bom: bool) -> bytes:
+    """``data`` written as the file was: its indentation, its final newline, CRLF and its byte order mark."""
+    text = text or ""
+    new = json.dumps(data, indent=_indent(text), ensure_ascii=False)
+    if not text.strip() or text.endswith("\n"):
+        new += "\n"
+    if "\r\n" in text:
+        new = new.replace("\n", "\r\n")   # a string's own newline is escaped: only the layout's lines change
+    return ((BOM if bom else "") + new).encode("utf-8")
+
+
+def home_merge(path: Path, out: Output) -> tuple[bytes | None, dict[str, str]]:
+    """(the file's bytes with the source's entries set under ``out.merge``, None when they are already there; each
+    entry's change: add, change or same). The rest of the file keeps its values, key order, indentation, line endings
+    and byte order mark. Raises RenderError for a file it will not touch: unreadable, not UTF-8, not JSON (a comment
+    included), a key twice, not an object, or its merge key not an object."""
+    text, bom = _home_text(path)
+    data, node, have = _home_node(path, text or "", out.merge)
+    want = json.loads(out.text)
+    entries = {k: "add" if k not in have else "same" if _canon(have[k]) == _canon(v) else "change"
+               for k, v in want.items()}
+    if text is not None and all(e == "same" for e in entries.values()):
+        return None, entries
+    node[out.merge[-1]] = {**have, **want}   # an entry it changes keeps its place, a new one comes last
+    return _home_bytes(data, text, bom), entries
+
+
+def _atomic_write(path: Path, data: bytes) -> None:
+    """``data`` into a temporary file beside ``path``, then renamed over it: a reader sees the old file or the new
+    one, never half of it. A symbolic link stays one (its target is written); the file's mode is kept."""
+    target = Path(os.path.realpath(path))
+    target.parent.mkdir(parents=True, exist_ok=True)
+    fd, tmp = tempfile.mkstemp(prefix=f".{target.name}.", suffix=".tmp", dir=target.parent)
+    try:
+        with os.fdopen(fd, "wb") as fh:
+            fh.write(data)
+            fh.flush()
+            os.fsync(fh.fileno())
+        if target.exists():
+            try:
+                shutil.copymode(target, tmp)
+            except OSError:
+                pass
+        os.replace(tmp, target)
+    except BaseException:
+        try:
+            os.unlink(tmp)
+        except OSError:
+            pass
+        raise
+
+
+def _home_merged(out: Output) -> bool:
+    return out.base == "user" and bool(out.merge) and not out.manual
+
+
+def _home_row(out: Output, dest: Path) -> dict:
+    """A home-folder merge's row: new, same, differs, or unreadable with why (never an error: the plan goes on)."""
+    entries: dict[str, str] = {}
+    what = out.what
+    try:
+        new, entries = home_merge(dest, out)
+        state = "new" if not dest.exists() else "same" if new is None else "differs"
+    except RenderError as exc:
+        state, what = "unreadable", str(exc)
+    return {"file": str(dest), "rel": out.rel, "base": out.base, "state": state, "what": what,
+            "merge": ".".join(out.merge), "entries": entries}
+
+
 def plan(r: Render, bases: dict[str, Path]) -> list[dict]:
     """Each output with its destination and its state: same, differs, new, foreign (a file the render did not write),
-    manual (lines the owner adds by hand), then each stray file (in a folder the render owns, not rendered)."""
+    manual (lines the owner adds by hand), unreadable (a home-folder file it will not merge: the reason in ``what``),
+    then each stray file (in a folder the render owns, not rendered). A home-folder merge's row names its entries
+    (``entries``: {name: add, change or same}); every other row's is empty."""
     rows = []
     written: set[Path] = set()
     for out in r.outputs:
         dest = bases[out.base] / out.rel
         written.add(dest.resolve())
+        if _home_merged(out):
+            rows.append(_home_row(out, dest))
+            continue
         have = _read(dest)
         if out.manual:
             state = "manual"
@@ -534,7 +735,7 @@ def plan(r: Render, bases: dict[str, Path]) -> list[dict]:
         else:
             state = "differs"
         rows.append({"file": str(dest), "rel": out.rel, "base": out.base, "state": state, "what": out.what,
-                     "merge": ".".join(out.merge)})
+                     "merge": ".".join(out.merge), "entries": {}})
     for base, folder, marked in [(b, f, False) for b, f in r.managed] + [(b, f, True) for b, f in r.marked]:
         d = bases[base] / folder
         for f in sorted(d.rglob("*")) if d.is_dir() else []:
@@ -543,13 +744,14 @@ def plan(r: Render, bases: dict[str, Path]) -> list[dict]:
             if marked and MARK not in (_read(f) or ""):
                 continue   # a file of the tool's own, or the owner's: not the render's
             rows.append({"file": str(f), "rel": f.relative_to(bases[base]).as_posix(), "base": base,
-                         "state": "stray", "what": f"in {folder}, not in the source", "merge": ""})
+                         "state": "stray", "what": f"in {folder}, not in the source", "merge": "", "entries": {}})
     return rows
 
 
 def write(r: Render, bases: dict[str, Path], *, force: bool = False, user: bool = False) -> list[dict]:
     """The plan, then each new, differing (and with ``force``, foreign) output written and each stray removed; home
-    folder outputs only with ``user`` (``--out``), manual ones never."""
+    folder outputs only with ``user`` (``--home``, or ``--out``), merged in their own format and written atomically
+    (:func:`home_merge`, read again just before), an unreadable one never; manual ones never."""
     rows = plan(r, bases)
     by_file = {(o.base, o.rel, ".".join(o.merge)): o for o in r.outputs}
     for row in rows:
@@ -565,11 +767,14 @@ def write(r: Render, bases: dict[str, Path], *, force: bool = False, user: bool 
             row["written"] = True
             continue
         out = by_file.get((row["base"], row["rel"], row["merge"]))
-        if out is None or row["state"] == "same" or (row["state"] == "foreign" and not force):
+        if out is None or row["state"] in ("same", "unreadable") or (row["state"] == "foreign" and not force):
             continue
         if row["state"] == "manual" and not user:   # a tool's own settings: the owner adds the lines
             continue
         dest = Path(row["file"])
+        if _home_merged(out):
+            _write_home(row, out, dest)
+            continue
         dest.parent.mkdir(parents=True, exist_ok=True)
         text = _merged(_read(dest), out)[0] if out.merge else out.text
         with open(dest, "w", encoding="utf-8", newline="\n") as fh:
@@ -578,9 +783,22 @@ def write(r: Render, bases: dict[str, Path], *, force: bool = False, user: bool 
     return rows
 
 
+def _write_home(row: dict, out: Output, dest: Path) -> None:
+    """A home-folder merge written: the file read again (the tool may have written it since the plan), then renamed
+    into place; RenderError when it became unreadable or the rename fails."""
+    data, row["entries"] = home_merge(dest, out)
+    if data is not None:
+        try:
+            _atomic_write(dest, data)
+        except OSError as exc:
+            raise RenderError(f"{dest}: not written ({exc.strerror or exc})") from None
+    row["written"] = data is not None
+
+
 def stale(rows: list[dict], *, bases: tuple[str, ...] = ("brain", "repo")) -> list[dict]:
     """The rows a check fails on: an output not current or a stray file, in the given bases."""
-    return [r for r in rows if r["base"] in bases and r["state"] in ("differs", "new", "foreign", "stray")]
+    return [r for r in rows if r["base"] in bases and r["state"] in ("differs", "new", "foreign", "stray",
+                                                                     "unreadable")]
 
 
 def rendered_before(rows: list[dict], r: Render, only: set[str] | None = None) -> bool:
@@ -614,6 +832,7 @@ def rendered(root: Path, project: str, project_root: Path) -> list[tuple[str, Re
     out, base = [], set()
     for t in TARGETS[1:]:
         r = ADAPTERS[t](src, project, project_root)
+        r.outputs = [o for o in r.outputs if not _home_merged(o)]   # brain check and sync never read the home folder
         rows = plan(r, bases_for(root, project_root, None))
         own = {o.rel for o in r.outputs if o.base == "repo"} - (base if t != "agents" else set())
         if t == "agents":
@@ -660,7 +879,6 @@ def registry_warnings(root: Path, projs) -> list[str]:
 
 def _production(path: Path) -> str | None:
     from . import guards
-    import os
     roots = guards.production_roots()
     return guards.in_production(str(path), roots) or guards.in_production(os.path.realpath(str(path)),
                                                                            [os.path.realpath(x) for x in roots])
@@ -672,30 +890,58 @@ def bases_for(root: Path, project_root: Path | None, out: Path | None) -> dict[s
     return {"brain": Path(root), "repo": Path(project_root or root), "user": Path.home()}
 
 
-def text_lines(r: Render, rows: list[dict], *, mode: str) -> list[str]:
+def text_lines(r: Render, rows: list[dict], *, mode: str, home: bool = False) -> list[str]:
     counts: dict[str, int] = {}
     for row in rows:
         counts[row["state"]] = counts.get(row["state"], 0) + 1
-    head = (f"render {r.target}" + (f" for {r.project}" if r.project and r.target != "claude" else "") + ": "
+    head = (f"render {r.target}" + (f" for {r.project}" if r.project and r.target != "claude" else "")
+            + (" in the home folder" if home else "") + ": "
             + ", ".join(f"{n} {s}" for s, n in sorted(counts.items())))
     out = [head]
-    for row in rows:
-        if mode == "plan" or row["state"] != "same" or row.get("written"):
-            flag = "written" if row.get("written") else row["state"]
-            where = row["file"] if row["base"] == "user" else row["rel"]
-            out.append(f"  {flag:<8} {where}" + (f"  [{row['merge']}]" if row["merge"] else "")
-                       + (f"  ({row['what']})" if row["what"] and mode == "plan" else ""))
+    out += [_row_line(row, mode) for row in rows if mode == "plan" or row["state"] != "same" or row.get("written")]
     for note in r.notes:
         out.append(f"  not rendered: {note}")
     return out
 
 
+def _row_line(row: dict, mode: str) -> str:
+    """One row of the plan: its state, its file (a home-folder one by its full path), the merge key, the entries a
+    home-folder merge adds or changes, and what it is (in the plan, and always for an unreadable file: why)."""
+    flag = "written" if row.get("written") else row["state"]
+    where = row["file"] if row["base"] == "user" else row["rel"]
+    entries = row.get("entries") or {}
+    line = f"  {flag:<8} {where}" + (f"  [{row['merge']}]" if row["merge"] else "")
+    if entries:
+        line += "  " + ", ".join(f"{k}: {v}" for k, v in entries.items())
+    if row["what"] and (mode == "plan" or row["state"] == "unreadable"):
+        line += f"  ({row['what']})"
+    return line
+
+
+def _home_hint(rows: list[dict], target: str) -> None:
+    """The home-folder files a plain plan or --write leaves: the command that merges them."""
+    waiting = [x for x in rows if x["base"] == "user" and x["state"] in ("new", "differs") and not x.get("written")]
+    if waiting:
+        print(f"  home: {len(waiting)} file(s) left alone (--write never writes the home folder): brain render "
+              f"--target {target} --home --write merges them")
+
+
+def _unreadable(rows: list[dict]) -> bool:
+    """Whether a home-folder file was refused (said, with why): --home then exits 1."""
+    bad = [x for x in rows if x["state"] == "unreadable"]
+    if bad:
+        print(f"brain render: {len(bad)} home-folder file(s) not merged, left as they are: "
+              + "; ".join(x["what"] for x in bad))
+    return bool(bad)
+
+
 def main(root: Path, target: str, *, project: str | None = None, project_root: Path | None = None,
          out: Path | None = None, do_write: bool = False, check: bool = False, force: bool = False,
-         as_json: bool = False) -> int:
-    """``brain render``: the plan, or ``--write``, or ``--check`` (exit 1 when an output is not current)."""
+         as_json: bool = False, home: bool = False) -> int:
+    """``brain render``: the plan, or ``--write``, or ``--check`` (exit 1 when an output is not current); with
+    ``home``, the same for the target's home-folder file alone (``--home``)."""
     try:
-        r = render(root, target, project, project_root)
+        r = render(root, target, project, project_root, home=home)
     except RenderError as exc:
         print(f"brain render: {exc}")
         return 1
@@ -708,24 +954,29 @@ def main(root: Path, target: str, *, project: str | None = None, project_root: P
                       "(--repo DIR), then a PR there")
                 return 1
     try:
-        rows = write(r, bases, force=force, user=out is not None) if do_write else plan(r, bases)
+        rows = write(r, bases, force=force, user=out is not None or home) if do_write else plan(r, bases)
     except RenderError as exc:
         print(f"brain render: {exc}")
         return 1
     if as_json:
-        print(json.dumps({"target": r.target, "project": r.project, "files": rows, "notes": r.notes,
+        print(json.dumps({"target": r.target, "project": r.project, "home": home, "files": rows, "notes": r.notes,
                           "manual": {o.rel: o.text for o in r.outputs if o.manual}}, ensure_ascii=False, indent=1))
     else:
-        print("\n".join(text_lines(r, rows, mode="write" if do_write else "check" if check else "plan")))
+        print("\n".join(text_lines(r, rows, mode="write" if do_write else "check" if check else "plan", home=home)))
         for o in r.outputs:
             if o.manual and not do_write:
                 print(f"  add to ~/{o.rel}:\n" + "".join(f"    {ln}\n" for ln in o.text.splitlines()), end="")
+        if not home and out is None:
+            _home_hint(rows, target)
     if check:
-        bad = stale(rows)
+        bad = stale(rows, bases=("user",) if home else ("brain", "repo"))
         if bad:
             print(f"brain render: {len(bad)} file(s) not current: brain render --target {target}"
-                  + (f" --project {project}" if project and target != "claude" else "") + " --write")
+                  + (" --home" if home else f" --project {project}" if project and target != "claude" else "")
+                  + " --write")
             return 1
+    if home and _unreadable(rows):
+        return 1
     if do_write:
         left = [x for x in rows if x["state"] == "foreign" and not x["written"]]
         if left:
