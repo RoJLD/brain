@@ -8,14 +8,22 @@ or lapsed, each with its evidence. It writes nothing and changes no schema: the 
 The triggers it reads in the « Revisit if » of each ADR still in force (no ``supersedes`` edge reaches it, its node
 not superseded; a field left TODO is skipped):
 
-- **node**: an id of the graph (an item, a milestone, a feature, a rule, a DDR) now done, reached, have, retired or
-  answered: ``met``; dropped: ``lapsed`` (what the trigger waited for will not come). A wave milestone is a ``wave``.
-- **wave**: a wave named in prose (``wave s9``, ``vague s9``, a bare ``s9``) or by the release it shipped as
-  (``0.6.0``), now reached (closed): ``met``.
-- **date**: a day (YYYY-MM-DD) after the ADR's day and now past, or a span from the ADR's day (« after a month »,
-  « in its first month », « après deux semaines ») now elapsed: ``lapsed`` (the review it promised is due).
-- **config**: a dotted key of the project's ``config.json`` (``floor.refuse``) whose value changed in git after the
-  ADR's day: ``met``, with the commit and both values.
+- **node**: an id of the graph (an item, a milestone, a feature, a rule, a DDR) now done, reached, have, retired,
+  answered, integrated or archived: ``met``; dropped: ``lapsed`` (what the trigger waited for will not come). A wave
+  milestone is a ``wave``.
+- **wave**: a wave named in prose (``wave s9``, ``vague s9``, ``(s9)``; a bare ``s9`` is not read: « an s3 bucket »)
+  or by the release it shipped as (``0.6.0``), now reached (closed): ``met``.
+- **date**: a day (YYYY-MM-DD) after the ADR's day and now reached (today included), or a span from the ADR's day
+  (« after a month », « in its first month », « après deux semaines », « au bout d'un mois ») now elapsed: ``lapsed``
+  (the review it promised is due).
+- **config**: a dotted key of the project's ``config.json`` (``floor.refuse``) whose value now differs from its value
+  on the ADR's day, as git's first-parent history holds them (a commit is dated by the day it reached the branch, a
+  merge's): ``met``, with both values and the commit that first changed it. A key that holds a mapping changes with
+  any of its sub-keys.
+
+« met » says what the trigger names is closed, never that the condition the prose states holds: an id read in a
+consequence clause (« then wi-x ») or a release a trigger had to come before is read the same. The report points to
+the ADRs to read again; the reader judges.
 
 A node, wave or key closed on or before the ADR's own day is not a trigger: the ADR was written knowing it. A node
 whose closing day is unknown is kept, its evidence says so.
@@ -52,13 +60,13 @@ CONFIG = "config.json"
 _DATE_RE = re.compile(r"(?<![\d-])(\d{4}-\d{2}-\d{2})(?![\d-])")
 _KEY_RE = re.compile(r"(?<![\w./-])([a-z_][a-z0-9_]*(?:\.[a-z_][a-z0-9_]*)+)(?![\w-])")
 _VERSION_RE = re.compile(r"(?<![\w.-])(\d+\.\d+\.\d+)(?![\w-]|\.\d)")
-_WAVE_RE = re.compile(r"(?<![\w-])(?:(?:waves?|vagues?)\s+)?(s\d{1,3})(?![\w-])")
+_WAVE_RE = re.compile(r"(?<![\w-])(?:waves?|vagues?)\s+(s\d{1,3})(?![\w-])|\((s\d{1,3})\)", re.I)
 _NUMBERS = {"a": 1, "an": 1, "one": 1, "un": 1, "une": 1, "two": 2, "deux": 2, "three": 3, "trois": 3, "four": 4,
             "quatre": 4, "five": 5, "cinq": 5, "six": 6}
 _UNIT = r"days?|weeks?|months?|years?|jours?|semaines?|mois|ans?|années?"
 _SPAN_RE = re.compile(
-    rf"(?<!\w)(?:after|in|within|dans|après|sous|au bout d['e]\s?|d'ici)\s+(?:(?:its|their|the|son|sa|ses|le|la|"
-    rf"les)\s+)?(?P<n>\d{{1,3}}|{'|'.join(_NUMBERS)})\s+(?P<u>{_UNIT})(?!\w)"
+    rf"(?<!\w)(?:(?:after|in|within|dans|après|sous|au bout de|d['’]ici)\s+|au bout d['’]\s?)(?:(?:its|their|the|"
+    rf"son|sa|ses|le|la|les)\s+)?(?P<n>\d{{1,3}}|{'|'.join(_NUMBERS)})\s+(?P<u>{_UNIT})(?!\w)"
     rf"|(?<!\w)(?:(?:in|within|during|dans|pendant|au|en)\s+(?:(?:its|their|the|son|sa|ses|le|la|les)\s+)?)?"
     rf"(?:first|premier|première)\s+(?P<u1>week|month|year|semaine|mois|année)(?!\w)", re.I)
 
@@ -118,39 +126,37 @@ def _ddr_day(root: Path, node: dict) -> str:
 
 
 class ConfigHistory:
-    """The project's config.json in git: its commits (oldest first) and each version, read in one ``git cat-file
-    --batch``."""
+    """The project's config.json along git's first-parent history (a merge dated by the day it reached the branch):
+    its commits, oldest first, and each version, read in one ``git cat-file --batch``; a version that is not a JSON
+    object is skipped, a commit without the file reads as {}."""
 
     def __init__(self, root: Path | None):
         self.root = root
-        out = actions.git(root, "log", "--format=%H %cs", "--", CONFIG, timeout=30) if root else ""
-        self.commits = [tuple(line.split(" ", 1)) for line in reversed(out.splitlines()) if " " in line]
-        self._docs = _versions(root, [sha for sha, _ in self.commits]) if self.commits else {}
-
-    def doc(self, sha: str) -> dict | None:
-        return self._docs.get(sha)
-
+        out = actions.git(root, "log", "--first-parent", "--format=%H %cs", "--", CONFIG, timeout=30) if root else ""
+        commits = [tuple(line.split(" ", 1)) for line in reversed(out.splitlines()) if " " in line]
+        docs = _versions(root, [sha for sha, _ in commits]) if commits else {}
+        self.versions = [(sha, day, docs[sha]) for sha, day in commits if docs.get(sha) is not None]
 
     def changed(self, key: str, after: str) -> Trigger | None:
-        """The first commit after the day ``after`` that changed ``key`` (a dotted path), from its value on that day;
-        None when it did not change, or when no version of the file ever had it (not a key of config.json)."""
-        before = [c for c in self.commits if c[1] <= after]
-        later = [c for c in self.commits if c[1] > after]
+        """``key`` (a dotted path) when its value now (the newest version) differs from its value on the day
+        ``after`` (the newest version on or before it), with the commit that first changed it; None when it is the
+        same, or when neither version has it (not a key of config.json)."""
+        before = [v for v in self.versions if v[1] <= after]
+        later = [v for v in self.versions if v[1] > after]
         if not later:
             return None
-        base = lookup(self.doc(before[-1][0]), key) if before else _MISSING
-        known = base is not _MISSING
-        for sha, day in later:
-            now = lookup(self.doc(sha), key)
-            known = known or now is not _MISSING
-            if now != base:
-                return Trigger("config", key, "met", day, f"{key}: {_show(base)} -> {_show(now)} in {sha[:8]} "
-                                                          f"({day}, {CONFIG})") if known else None
-        return None
+        base = lookup(before[-1][2], key) if before else _MISSING
+        now = lookup(later[-1][2], key)
+        if now == base:
+            return None
+        sha, day, _ = next(v for v in later if lookup(v[2], key) != base)
+        return Trigger("config", key, "met", day, f"{key}: {_show(base)} on the ADR's day, {_show(now)} now; first "
+                                                  f"changed in {sha[:8]} ({day}, {CONFIG})")
 
 
 def _versions(root: Path, shas: list[str]) -> dict[str, dict | None]:
-    """{commit: config.json at it, parsed} (None: absent or not a JSON object), read in one process."""
+    """{commit: config.json at it, parsed}: {} when the commit has no such file, None when it is not a JSON object;
+    read in one process."""
     prefix = actions.git(root, "rev-parse", "--show-prefix")
     spec = "".join(f"{sha}:{prefix}{CONFIG}\n" for sha in shas).encode()
     try:
@@ -174,8 +180,8 @@ def _versions(root: Path, shas: list[str]) -> dict[str, dict | None]:
             except ValueError:
                 d = None
             out[sha] = d if isinstance(d, dict) else None
-        else:
-            out[sha] = None
+        else:   # "<spec> missing": the file is not in that commit
+            out[sha] = {}
     return out
 
 
@@ -235,7 +241,7 @@ def triggers(text: str, adr_day: str, ctx: Context, own: str = "") -> list[Trigg
         if nid != own and nid in ctx.nodes:
             keep(_node(nid, ctx))
     for m in _WAVE_RE.finditer(text):
-        wid = f"wave-{m.group(1)}"
+        wid = f"wave-{(m.group(1) or m.group(2)).lower()}"
         if waves.kind(ctx.nodes.get(wid) or {}) == waves.WAVE:
             keep(_node(wid, ctx, f"{m.group(0).strip()}"))
     if ctx.plan is not None:
@@ -351,8 +357,9 @@ def _flag(rel: str, a: dict, text: str, ctx: Context, entries: list[tuple[str, d
     if not found:
         return None
     newest = max(t.day for t in found)
+    named = re.compile(rf"(?<![\w-]){re.escape(a['id'])}(?![\w-])")   # the id itself, never a prefix of another
     by = [b["id"] for _, b in entries
-          if b["id"] != a["id"] and b["day"] > a["day"] and b["day"] >= newest and a["id"] in b["text"]]
+          if b["id"] != a["id"] and b["day"] > a["day"] and b["day"] >= newest and named.search(b["text"])]
     return {"id": a["id"], "day": a["day"], "title": notes.ADR_SUFFIX_RE.sub("", a["title"]), "file": rel,
             "line": a["line"], "revisit": text, "triggers": [t.row() for t in found], "reviewed_by": by}
 

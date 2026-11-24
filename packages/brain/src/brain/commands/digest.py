@@ -17,7 +17,7 @@ USAGE_ORDER = 350   # its usage lines' place in brain --help's epilog
 USAGE = """\
   brain digest [--project P | --all | --scope REF] [--since WHEN] [--until WHEN] [--budget N] [--write] [--offline]
                  [--json] the digest: what happened in a window, newest first, from the graph (milestones reached, items
-                 closed), the ADRs, the DDRs, the SRs, gh (merged PRs; --offline skips them) and the journal; WHEN is
+                 closed), the ADRs, the Revisit-if triggers met in the window (--json: revisit), the DDRs, the SRs, gh (merged PRs; --offline skips them) and the journal; WHEN is
                  YYYY-MM-DD, today, yesterday, last-week, last-month or a reached milestone's id (default: last-week
                  to today); --budget lowers the sections from full text to one line each to counts, the journal
                  first (default 4000 tokens, 0: no limit); --write keeps it in

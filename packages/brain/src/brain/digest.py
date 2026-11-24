@@ -329,12 +329,13 @@ def gather(project: projects.Project, since: str = "last-week", until: str = "to
 
 def revisits(project: projects.Project, store: Path | None, w: Window) -> list[dict]:
     """The ADRs in force whose « Revisit if » was met or lapsed in the window, only those triggers kept
-    (brain.revisit.in_window); [] when it cannot be read."""
+    (brain.revisit.in_window), those a later ADR reviewed included (a past window reads the same later); [] when it
+    cannot be read."""
     logs = [p for p in (project.decision_logs or [project.decisions]) if p]
     if not logs:
         return []
     try:
-        rep = revisit.report(store, logs, project.root, w.until)
+        rep = revisit.report(store, logs, project.root, w.until, show_all=True)   # reviewed later: still history
     except (OSError, ValueError, graph.GraphError):
         return []
     return revisit.in_window(rep, w.since, w.until)

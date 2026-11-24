@@ -36,9 +36,11 @@ USAGE = """\
                  of the pending eras), computed from the graph; exit 0 (advisory)
   brain adr revisit [--all] [--today D] [--json]   the ADRs in force whose « Revisit if » is already met or lapsed,
                  read from their prose at zero token (docs/revisit.md): a node it names now done, reached, have,
-                 retired or answered (dropped: lapsed), a wave closed, a day or a span (« after a month ») past, a key
-                 of config.json changed in git since the ADR's day; each with its evidence. A flagged ADR that a later
-                 ADR names is reviewed and left out (--all shows it); exit 0 (a report)
+                 retired, answered, integrated or archived (dropped: lapsed), a wave closed, a day or a span (« after a
+                 month ») reached, a key of config.json whose value differs from the ADR's day; each with its
+                 evidence. A flagged ADR that a later ADR names by its id, dated on or after its newest trigger, is
+                 reviewed and left out (--all shows it); --today D: the day the dates and spans are checked against
+                 (the graph and config.json are read as they are); exit 0 (a report), 1 on a malformed --today
 """
 
 
@@ -210,9 +212,12 @@ def register(sub, ctx) -> None:
     at.add_argument("--json", action="store_true", help="stable keys: decisions, needs, findings (--needs: the "
                                                         "needs)")
     ar = ad.add_parser("revisit", help="the ADRs whose Revisit if is already met or lapsed (a node closed, a wave "
-                                       "closed, a day past, a config key changed), each with its evidence; exit 0")
-    ar.add_argument("--all", action="store_true", help="also the ADRs a later ADR already reviewed (names by id)")
-    ar.add_argument("--today", help="YYYY-MM-DD: the day the dates are checked against (default: today)")
+                                       "closed, a day past, a config key changed), each with its evidence; exit 0 "
+                                       "(1 on a malformed --today)")
+    ar.add_argument("--all", action="store_true", help="also the ADRs a later ADR already reviewed (names them by id, "
+                                                       "dated on or after their newest trigger)")
+    ar.add_argument("--today", help="YYYY-MM-DD: the day the dates and spans are checked against (default: today); "
+                                    "the graph and config.json are read as they are")
     ar.add_argument("--json", action="store_true", help="stable keys (v 1): v, today, logs, adrs, with_revisit, "
                                                         "flagged [{id, day, title, file, line, revisit, triggers "
                                                         "[{kind, ref, state, day, evidence}], reviewed_by}], "

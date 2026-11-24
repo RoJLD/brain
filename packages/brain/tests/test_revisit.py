@@ -85,6 +85,30 @@ release ships; feat-lab-saucers is have.
 **Decision.** Square still.
 
 **Revisit if.** wi-pending is done.
+
+## 2026-01-20 — A note on kettles
+
+**Context.** adr-2026-01-10-kettles-boil-at-ninety, read before its sensor came.
+
+**Decision.** x.
+
+**Revisit if.** never.
+
+## 2026-02-25 — Spoons of another set
+
+**Context.** adr-2026-01-10-spoons-by-the-dozen-2 is another ADR.
+
+**Decision.** x.
+
+**Revisit if.** never.
+
+## 2026-01-10 — Forks are steel
+
+**Context.** x.
+
+**Decision.** Steel.
+
+**Revisit if.** wi-kettle-sensor is done.
 """
 
 NODES = """\
@@ -104,6 +128,7 @@ NODES = """\
 - {id: wi-pending, type: WorkItem, status: todo, title: Pending}
 - {id: adr-2026-01-10-cups-are-blue, type: ADR, status: active, title: Cups are blue}
 - {id: adr-2026-01-11-cups-are-green, type: ADR, status: active, title: Cups are green}
+- {id: adr-2026-01-10-forks-are-steel, type: ADR, status: superseded, title: Forks are steel}
 """
 
 TODAY = "2026-03-01"
@@ -193,14 +218,17 @@ def test_a_config_key_changed_after_the_adr_day_is_met_with_its_commit(tmp_path,
     got = _flagged(_report(tmp_path, monkeypatch))[POT]
     assert set(got) == {("config", "pot.timer_s")}   # pot.size was set on the ADR's day; transcript.py is no key
     t = got[("config", "pot.timer_s")]
-    assert t["day"] == "2026-01-25" and t["evidence"].startswith("pot.timer_s: 240 -> 300 in ")
+    assert t["day"] == "2026-01-25"   # the first change; the evidence gives the value now
+    assert t["evidence"].startswith("pot.timer_s: 240 on the ADR's day, 200 now; first changed in ")
 
 
 def test_superseded_todo_and_reviewed_adrs_are_left_out(tmp_path, monkeypatch):
     rep = _report(tmp_path, monkeypatch)
     ids = set(_flagged(rep))
     assert ids == {KETTLE, MUGS, SPOONS, POT}
-    assert rep["adrs"] == 8 and rep["with_revisit"] == 7 and rep["reviewed"] == 1   # blue superseded, TODO skipped
+    # blue superseded by an edge, forks by its node's status; TODO skipped; the kettle note (dated before the sensor
+    # closed) and the spoons-2 citation (another id) review nothing
+    assert rep["adrs"] == 10 and rep["with_revisit"] == 9 and rep["reviewed"] == 1
     shown = {f["id"]: f for f in revisit.report(*_lab_again(tmp_path), TODAY, show_all=True)["flagged"]}
     assert shown[TRAYS]["reviewed_by"] == ["adr-2026-02-20-trays-looked-at-again"]
 
@@ -224,9 +252,12 @@ def test_the_cli_json_keys_and_text(tmp_path, monkeypatch, capsys):
     assert list(out["flagged"][0]["triggers"][0]) == ["kind", "ref", "state", "day", "evidence"]
     assert cli.main(["adr", "revisit", "--today", TODAY]) == 0
     text = capsys.readouterr().out
-    assert text.startswith("revisit: 8 ADR(s) in force, 7 with a Revisit if; 4 with a trigger met or lapsed")
+    assert text.startswith("revisit: 10 ADR(s) in force, 9 with a Revisit if; 4 with a trigger met or lapsed")
     assert "(--all shows them)" in text and f"- {POT} (notes/decisions.md:" in text
-    assert "    met config: pot.timer_s: 240 -> 300 in " in text
+    assert "    met config: pot.timer_s: 240 on the ADR's day, 200 now; first changed in " in text
+    assert cli.main(["adr", "revisit", "--today", TODAY, "--all", "--json"]) == 0
+    shown = {f["id"]: f["reviewed_by"] for f in json.loads(capsys.readouterr().out)["flagged"]}
+    assert shown[TRAYS] == ["adr-2026-02-20-trays-looked-at-again"] and shown[KETTLE] == []
     assert cli.main(["adr", "revisit", "--today", "March"]) == 1
     assert "YYYY-MM-DD" in capsys.readouterr().err
 
@@ -239,7 +270,7 @@ def test_resume_and_digest_carry_the_section(tmp_path, monkeypatch):
     text = resume.build(p, offline=True, budget=0, now=datetime(2026, 3, 1, 9, tzinfo=timezone.utc))
     sec = text.split("## Revisit if met or lapsed")[1].split("\n## ")[0]
     assert "4 ADR(s) in force with a trigger met or lapsed:" in sec
-    assert f"- {MUGS}: met node ddr-2026-01-12-mug-colour (+4): Mugs stay white" in sec
+    assert f"- {MUGS}: met wave wave-s3 (+4): Mugs stay white" in sec   # its newest trigger
     week = digest.gather(p, since="2026-02-09", until="2026-02-16", offline=True, today=date(2026, 3, 1))
     assert {f["id"]: [t["ref"] for t in f["triggers"]] for f in week["revisit"]} == {
         MUGS: ["wave-s2", "wave-s3"], SPOONS: ["in its first month"]}
@@ -247,6 +278,8 @@ def test_resume_and_digest_carry_the_section(tmp_path, monkeypatch):
                         today=date(2026, 3, 1), now=datetime(2026, 3, 1, tzinfo=timezone.utc))
     assert "## Revisit if met or lapsed (2 ADRs; `brain adr revisit`)" in page
     assert "  met wave: wave-s2 (Milestone) reached 2026-02-10" in page
+    later = digest.gather(p, since="2026-02-17", until="2026-02-19", offline=True, today=date(2026, 3, 1))
+    assert [f["id"] for f in later["revisit"]] == [TRAYS]   # reviewed on 2026-02-20, still in its window's history
 
 
 def test_a_project_without_a_log_or_store_reads_nothing(tmp_path):
@@ -266,3 +299,59 @@ def test_spans_count_calendar_months():
     assert revisit.add_span(date(2026, 1, 10), 2, "semaines") == date(2026, 1, 24)
     assert revisit.add_span(date(2026, 1, 10), 1, "an") == date(2027, 1, 10)
     assert revisit.add_span(date(2026, 1, 10), 3, "jours") == date(2026, 1, 13)
+
+
+def _ctx(nodes=None, today=TODAY):
+    nodes = nodes or {}
+    plan = revisit.waves.build(nodes, []) if nodes else None
+    return revisit.Context(nodes, plan, today, None, None)
+
+
+def test_french_spans_with_either_apostrophe():
+    found = revisit.triggers("au bout d'un mois ; au bout d’une semaine ; d’ici 3 jours ; au bout de deux mois",
+                             "2026-01-10", _ctx())
+    assert [(t.ref, t.day) for t in found] == [   # « au bout de deux mois » is due 2026-03-10, after TODAY
+        ("au bout d'un mois", "2026-02-10"), ("au bout d’une semaine", "2026-01-17"), ("d’ici 3 jours", "2026-01-13")]
+    later = revisit.triggers("au bout de deux mois", "2026-01-10", _ctx(today="2026-03-10"))
+    assert [(t.ref, t.day) for t in later] == [("au bout de deux mois", "2026-03-10")]   # due today: lapsed
+
+
+def test_a_bare_s_number_is_not_a_wave_but_a_named_one_is():
+    nodes = {"wave-s3": {"id": "wave-s3", "type": "Milestone", "status": "reached",
+                         "props": {"kind": "wave", "seq": 3, "reached": "2026-02-15"}}}
+    assert revisit.triggers("the logs go to an s3 bucket", "2026-01-10", _ctx(nodes)) == []
+    for said in ("Wave S3 closes", "the lot (s3) ships", "la vague s3"):
+        assert [t.ref for t in revisit.triggers(said, "2026-01-10", _ctx(nodes))] == ["wave-s3"], said
+
+
+def test_a_config_change_merged_later_is_dated_by_its_merge_and_a_broken_version_is_skipped(tmp_path, monkeypatch):
+    root = git_init(tmp_path / "cfg")
+    _commit(root, monkeypatch, "2026-01-05", {"kettle": {"max": 90}}, "start")
+    run_git(root, "switch", "-q", "-c", "topic")
+    _commit(root, monkeypatch, "2026-01-09", {"kettle": {"max": 95}}, "on a branch, the day before the ADR")
+    run_git(root, "switch", "-q", "main")
+    monkeypatch.setenv("GIT_COMMITTER_DATE", "2026-01-12T12:00:00")
+    run_git(root, "merge", "-q", "--no-ff", "-m", "merged after the ADR", "topic")
+    (root / "config.json").write_text("{not json", encoding="utf-8")
+    _commit(root, monkeypatch, "2026-01-14", None, "a broken version")
+    hist = revisit.ConfigHistory(root)
+    t = hist.changed("kettle.max", "2026-01-10")
+    assert t.day == "2026-01-12" and "90 on the ADR's day, 95 now" in t.evidence   # the broken one read as nothing
+    assert hist.changed("kettle.min", "2026-01-10") is None   # not a key of any version
+
+
+def test_a_project_outside_git_reads_its_store_and_no_config(tmp_path, monkeypatch):
+    root, store = _lab(tmp_path, monkeypatch)
+    plain = tmp_path / "plain"
+    (plain / "notes").mkdir(parents=True)
+    import shutil
+    shutil.copytree(store, plain / "notes" / "graph")
+    shutil.copytree(root / "records", plain / "records")
+    (plain / "notes" / "decisions.md").write_text(LOG, encoding="utf-8")
+    (plain / "config.json").write_text('{"pot": {"timer_s": 1}}', encoding="utf-8")
+    monkeypatch.setenv("GIT_CEILING_DIRECTORIES", str(tmp_path))
+    rep = revisit.report(plain / "notes" / "graph", [plain / "notes" / "decisions.md"], plain, TODAY)
+    got = _flagged(rep)
+    assert POT not in got   # no git: no config history
+    assert got[KETTLE][("node", "ms-first-pot")]["day"] == ""   # no git to date it: kept, said
+    assert got[KETTLE][("node", "wi-kettle-sensor")]["day"] == "2026-02-03"
