@@ -249,8 +249,24 @@ def _err(task, at, code="TypeError", where="brain.guards:check_owner"):
             "task": task, "version": "0.2.2", "code": code, "severity": "error", "details": {"where": where}}
 
 
+def _in_one_week(now: datetime, span: timedelta) -> datetime:
+    """``now``, or the minute before its ISO week starts when ``now - span`` falls in the week before (the first
+    minutes of a Monday UTC): runs written from it back over ``span`` stay inside one ISO week (perf.hook_weeks)."""
+    monday = (now - timedelta(days=now.weekday())).replace(hour=0, minute=0, second=0, microsecond=0)
+    return monday - timedelta(minutes=1) if now - span < monday else now
+
+
+def test_in_one_week_keeps_a_span_inside_one_iso_week():
+    monday = datetime(2026, 11, 16, 0, 3, tzinfo=timezone.utc)   # the flake's run, RoJLD/brain #237
+    got = _in_one_week(monday, timedelta(minutes=4))
+    assert got == datetime(2026, 11, 15, 23, 59, tzinfo=timezone.utc)
+    assert (got - timedelta(minutes=4)).isocalendar()[1] == got.isocalendar()[1]
+    tuesday = datetime(2026, 11, 17, 12, 0, tzinfo=timezone.utc)
+    assert _in_one_week(tuesday, timedelta(minutes=4)) == tuesday
+
+
 def test_perf_engine_reads_the_engine_folder_only(on, brain_home, capsys):
-    now = datetime.now(timezone.utc)
+    now = _in_one_week(datetime.now(timezone.utc), timedelta(minutes=4))   # one week of runs: (week,) below
     _write(on, "exec", [_exec("hook guard shell", now - timedelta(minutes=i), 0.7, error="TypeError" if i < 2 else "")
                         for i in range(5)] + [_exec("hook capture stop", now, 2.0)])
     _write(on, "exec-bash", [_exec("hook budget [bash]", now, 0.1)])

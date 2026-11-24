@@ -1160,9 +1160,17 @@ def closure(repos: dict[str, RepoFacts], seeds: dict[str, list[str]], idx: Index
     while queue:
         node = queue.popleft()
         depth, chain = reached[node]
-        for nxt, subs in edges(node, repos, idx, allowed[node]):
+        # in sorted order: edges() yields a node's neighbours in set order, and the first path the walk takes is the
+        # unit's chain, so an unsorted walk gives the same commit different chains under two hash seeds
+        for nxt, subs in sorted(edges(node, repos, idx, allowed[node]), key=_edge_key):
             visit(nxt, depth + 1, chain + (_label(node, idx),), subs)
     return reached, missing
+
+
+def _edge_key(edge: tuple[tuple[str, str], object]) -> tuple:
+    """A total order on :func:`edges`' items: the file, then its subcommands (ALL first, else the sorted set)."""
+    nxt, subs = edge
+    return nxt, () if subs == ALL else (1, *sorted(subs))
 
 
 # --- code stores and CodeRefs ---

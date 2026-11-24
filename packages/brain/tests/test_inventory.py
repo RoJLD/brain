@@ -233,6 +233,39 @@ def test_closure_from_a_script_seed_into_a_sibling_repo():
     assert reached[("lab", "src/lab/fam/alpha.py")][1][:3] == ("host.ps1", "cycle.ps1", "cli.run")
 
 
+# run.sh names ten scripts in reverse order, each of which names core.sh: core.sh's chain is the first path the walk
+# takes, and edges() yields run.sh's names in set order (string hashes, which PYTHONHASHSEED changes)
+FAN = {"scripts/run.sh": "".join(f"bash p{i}.sh\n" for i in reversed(range(10))),
+       **{f"scripts/p{i}.sh": "bash core.sh\n" for i in range(10)}, "scripts/core.sh": "echo ok\n"}
+CHAINS = """
+import json, sys
+sys.path.insert(0, sys.argv[1])
+from test_inventory import FAN, mem
+from brain import inventory
+rf = inventory.collect(mem(FAN), "fan")
+reached, _ = inventory.closure({"fan": rf}, {"fan": ["scripts/run.sh"]}, inventory.Index.build({"fan": rf}))
+print(json.dumps(sorted((p, d, list(c)) for (_, p), (d, c) in reached.items())))
+"""
+
+
+def test_closure_walks_each_nodes_edges_in_sorted_order():
+    rf = inventory.collect(mem(FAN), "fan")
+    reached, _ = inventory.closure({"fan": rf}, {"fan": ["scripts/run.sh"]}, inventory.Index.build({"fan": rf}))
+    assert reached[("fan", "scripts/core.sh")] == (2, ("run.sh", "p0.sh"))   # the first in sorted order, not in set
+
+
+def test_closure_chains_are_the_same_under_two_hash_seeds():
+    import os
+    import subprocess
+    import sys
+    out = []
+    for seed in ("0", "7"):
+        got = subprocess.run([sys.executable, "-c", CHAINS, str(Path(__file__).parent)], capture_output=True,
+                             text=True, env={**os.environ, "PYTHONHASHSEED": seed}, check=True, timeout=120)
+        out.append(got.stdout)
+    assert out[0] == out[1] and '"scripts/core.sh", 2, ["run.sh", "p0.sh"]' in out[0]
+
+
 ALLOC = {
     "pyproject.toml": '[tool.setuptools.packages.find]\nwhere = ["src"]\n',
     "scripts/cycle.ps1": "& $py -m lab.alloc shadow --config x\n",
