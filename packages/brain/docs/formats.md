@@ -262,7 +262,7 @@ foreign one is never written here.
 | `memory.load_state` | `memory-sync/state.json` | truth-local | through `brain.stateio` (the 3-way base) |
 | `cockpit.snapshot_of`, `sessions.snapshot` | `sessions/<id>.json` | truth-local | read-only here, `{}` is right; its writer, the Stop hook (`capture.stop`), through `brain.stateio` |
 | `sessions.read_report` | `sessions/<id>.report.json` | truth-local | read-only here; `sessions.write_report` through `brain.stateio` |
-| `sessions.watch_state` | `budget/<session>.json` | truth-local, one session's life | read-only here; its writer, the budget hook's Python (`budget.check`), through `brain.stateio` |
+| `sessions.watch_state` | `budget/<session>.json` | truth-local, one session's duration | read-only here; its writer, the budget hook's Python (`budget.check`), through `brain.stateio` |
 | `sessions.app_meta` | the desktop app's session file | foreign, read only | `{}` is right: never written |
 | `codemap.read` | `code-map/<project>.json` | derived (local) | `{}` is right: rebuilt |
 | `codeindex.read_record` | `code-index.json` | derived (local) | `{}` is right: rebuilt |
