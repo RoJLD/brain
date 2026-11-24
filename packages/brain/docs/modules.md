@@ -176,7 +176,8 @@ day that is not one.
 
 `brain modules --personas [--json]` runs two checks on each preset (and its optional variant). Run from a store
 that reads another's registry (`config.json` `modules.store`), it checks the file beside that registry and names its
-store (`personas.yaml of <project>:<store>`), while `brain check` says its faults once, on the store that keeps it:
+store (`personas.yaml of <project>:<store>`), while `brain check` says its faults once, on the store that keeps it.
+It runs alone: with `--check` or `--diff` it is refused, rather than one of them silently dropped. Its two checks:
 
 1. **Closed under the hard dependencies.** Every `depends_on` of its modules, direct or through a module it pulls,
    is in its set: `open` names each one missing and the modules that need it. A soft dependency (`uses`) is never

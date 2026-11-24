@@ -31,7 +31,8 @@ USAGE = """\
                  --personas: the two checks of each preset of personas.yaml: its set closed under the map's hard
                  dependencies (open, incomplete while a module's are unclassified, or closed), and a preset without
                  AI pulling no AI module nor a distribution that ships one (exit 1 when one is open or violated;
-                 from a store that reads another's registry, the file beside that registry);
+                 from a store that reads another's registry, the file beside that registry; never with --check or
+                 --diff; --json: {problems, presets});
                  under config.json views.strict, another engine than engine.pin writes nothing (--force)
 """
 
@@ -39,6 +40,8 @@ USAGE = """\
 def cmd_modules(args, root: Path) -> int:
     """brain modules (brain.modules): the view printed, written with --write; --check: the module map's problems;
     --diff: what changed in the registry since a git ref."""
+    if args.personas and (args.check or args.diff is not None):   # never one silently dropped for the other
+        raise SystemExit("brain modules: --personas runs alone: run --check or --diff apart")
     store = _store(args, root)
     if not modules.applies(store, root):
         raise SystemExit(_no_registry(root, store))
@@ -151,7 +154,8 @@ def register(sub, ctx) -> None:
                          "dependencies, and no AI module for a preset without AI (exit 1 when one fails)")
     mo.add_argument("--json", action="store_true", help="the map as JSON (each module's counts, the problems); with "
                                                         "--check, the problems; with --diff, the changes; with both, "
-                                                        "one object {diff, problems}")
+                                                        "one object {diff, problems}; with --personas, "
+                                                        "{problems, presets}")
 
 
 run = cmd_modules

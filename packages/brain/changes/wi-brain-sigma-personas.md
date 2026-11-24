@@ -8,5 +8,6 @@ section: Added
   dependencies are unclassified, never a silent pass), and a preset without AI pulling no AI module nor a
   distribution that ships one (`violated`; the map's `ships_in` says which distributions ship which modules). Exit 1
   when a preset is open or violated (run from a store that reads another's registry, `config.json` `modules.store`,
-  it checks the file beside that registry); `brain modules --check` and `brain check` warn of each fault
+  it checks the file beside that registry; it runs alone, refused with `--check` or `--diff`); `brain modules
+  --check` and `brain check` warn of each fault
   (docs/modules.md, « Presets and personas »).

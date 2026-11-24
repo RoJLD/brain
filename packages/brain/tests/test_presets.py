@@ -251,6 +251,14 @@ def test_brain_modules_personas_and_check(tmp_path, monkeypatch, capsys):
     assert "1 preset variant(s): 0 open or violated, 0 incomplete" in capsys.readouterr().out
 
 
+@pytest.mark.parametrize("extra", [["--check"], ["--diff"], ["--diff", "HEAD~1"]])
+def test_personas_with_check_or_diff_is_refused_never_one_dropped(tmp_path, monkeypatch, extra):
+    _lab(tmp_path, monkeypatch, REGISTRY, NODES)
+    with pytest.raises(SystemExit) as e:
+        cli.main(["modules", "--personas", *extra])
+    assert "--personas runs alone" in str(e.value.code)
+
+
 def test_the_personas_flag_takes_the_parents_flags_after_the_subcommand(tmp_path, monkeypatch, capsys):
     lab, store = _lab(tmp_path, monkeypatch, REGISTRY, NODES)
     (store / presets.FILE).write_text(PERSONAS, encoding="utf-8")
