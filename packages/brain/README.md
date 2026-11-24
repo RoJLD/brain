@@ -714,6 +714,8 @@ brain adr show REF [--titles] [--json]         # the ADR REF names (id, title, o
                                                # that decide the node REF (a rule, an item, a spec), with their text
 brain adr target [--needs] [--json]            # the one-way-door ADRs against the register of future needs
                                                # (docs/adr-target.md: Scope, Target compatibility; advisory)
+brain adr revisit [--all] [--today D] [--json] # the ADRs whose Revisit if is already met or lapsed: a node closed,
+                                               # a wave closed, a day past, a config key changed (docs/revisit.md)
 brain spec show REF [--section N | --toc] [--json]   # a Spec node, a Doc id (doc:<repo>:<path>::<key>) or a path
 brain journal last [N] [--titles] [--json]     # the last N dated entries (default 1; 0: all)
 ```

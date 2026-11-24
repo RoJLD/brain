@@ -5,7 +5,7 @@ from __future__ import annotations
 import sys
 from pathlib import Path
 
-from .. import graph, notes, pins, reads, targets
+from .. import graph, notes, pins, reads, revisit, targets
 from ._common import _print_json, _project, _read_stores, _store, _text
 
 ORDER = 80   # its place in brain --help's list of commands (brain.commands)
@@ -34,6 +34,13 @@ USAGE = """\
                  ADR decides that its target compatibility does not cite); --needs: the register of future needs it
                  reads (the planned features, the pending milestones with a trigger, the open items of later waves and
                  of the pending eras), computed from the graph; exit 0 (advisory)
+  brain adr revisit [--all] [--today D] [--json]   the ADRs in force whose « Revisit if » is already met or lapsed,
+                 read from their prose at zero token (docs/revisit.md): a node it names now done, reached, have,
+                 retired, answered, integrated or archived (dropped: lapsed), a wave closed, a day or a span (« after a
+                 month ») reached, a key of config.json whose value differs from the ADR's day; each with its
+                 evidence. A flagged ADR that a later ADR names by its id, dated on or after its newest trigger, is
+                 reviewed and left out (--all shows it); --today D: the day the dates and spans are checked against
+                 (the graph and config.json are read as they are); exit 0 (a report), 1 on a malformed --today
 """
 
 
@@ -144,6 +151,21 @@ def cmd_target(args, root: Path) -> int:
     return 0
 
 
+def cmd_revisit(args, root: Path) -> int:
+    """``brain adr revisit``: the Revisit-if triggers met or lapsed (brain.revisit)."""
+    project, store = _project(args, root), _store(args, root)
+    if args.today and not revisit._day(args.today):
+        print(f"brain: --today {args.today!r}: YYYY-MM-DD", file=sys.stderr)
+        return 1
+    logs = [p for p in (project.decision_logs or [project.decisions]) if p]
+    rep = revisit.report(store, logs, project.root, args.today or "", show_all=args.all)
+    if args.json:
+        _print_json(rep)
+    else:
+        print("\n".join(revisit.render(rep)))
+    return 0
+
+
 def register(sub, ctx) -> None:
     ad = sub.add_parser("adr", help="the project's decision log (notes/decisions.md), append-only: show, "
                                     "new").add_subparsers(
@@ -189,7 +211,19 @@ def register(sub, ctx) -> None:
     at.add_argument("--needs", action="store_true", help="the register of future needs instead")
     at.add_argument("--json", action="store_true", help="stable keys: decisions, needs, findings (--needs: the "
                                                         "needs)")
+    ar = ad.add_parser("revisit", help="the ADRs whose Revisit if is already met or lapsed (a node closed, a wave "
+                                       "closed, a day past, a config key changed), each with its evidence; exit 0 "
+                                       "(1 on a malformed --today)")
+    ar.add_argument("--all", action="store_true", help="also the ADRs a later ADR already reviewed (names them by id, "
+                                                       "dated on or after their newest trigger)")
+    ar.add_argument("--today", help="YYYY-MM-DD: the day the dates and spans are checked against (default: today); "
+                                    "the graph and config.json are read as they are")
+    ar.add_argument("--json", action="store_true", help="stable keys (v 1): v, today, logs, adrs, with_revisit, "
+                                                        "flagged [{id, day, title, file, line, revisit, triggers "
+                                                        "[{kind, ref, state, day, evidence}], reviewed_by}], "
+                                                        "reviewed, counts")
 
 
 def run(args, root: Path) -> int:
-    return {"show": cmd_show, "target": cmd_target, "pin": cmd_pin}.get(args.adr_cmd, cmd_adr)(args, root)
+    return {"show": cmd_show, "target": cmd_target, "pin": cmd_pin,
+            "revisit": cmd_revisit}.get(args.adr_cmd, cmd_adr)(args, root)

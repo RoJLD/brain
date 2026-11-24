@@ -16,8 +16,8 @@ USAGE_ORDER = 310   # its usage lines' place in brain --help's epilog
 USAGE = """\
   brain resume [--project P | --all | --scope REF] [--budget N] [--write] [--offline] [--health] [--notes DIR]...
                  the resume pack: the project's present state from the graph, records, journal and git, ordered from
-                 stable to volatile (milestones, frontier and P0/P1, decisions, open PRs, journal, hand-over notes,
-                 then the date); --budget cuts from the volatile end (default 3000 tokens, 0: no limit); --write
+                 stable to volatile (milestones, frontier and P0/P1, decisions, the ADRs whose Revisit if is met or
+                 lapsed, open PRs, journal, hand-over notes, then the date); --budget cuts from the volatile end (default 3000 tokens, 0: no limit); --write
                  keeps it in <BRAIN_HOME>/resume/<project>.md, whose age the SessionStart hook reports in one line
 """
 

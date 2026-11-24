@@ -8,7 +8,9 @@ session reads one page instead of the journals. Newest first in each section:
   1. the narrative summary of the window, when one was written beside the digest (below);
   2. the milestones reached;
   3. the items closed, done or dropped, with their PR and outcome;
-  4. the ADRs dated in the window, with their decision's first sentence;
+  4. the ADRs dated in the window, with their decision's first sentence; then the ADRs whose « Revisit if » was met
+     or lapsed in the window (brain.revisit: a node closed, a wave closed, a day past, a config key changed), each
+     with the triggers of the window and their evidence;
   5. the DDRs asked, answered, applied or archived in the window, with their state now;
   6. the merged PRs (gh; --offline skips them), less those already on a closed item's line;
   7. the session records (SR) started in the window;
@@ -46,7 +48,7 @@ from dataclasses import dataclass, field
 from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 
-from . import actions, auditrecord, cost, decisions, diffs, graph, notes, paths, projects, resume
+from . import actions, auditrecord, cost, decisions, diffs, graph, notes, paths, projects, resume, revisit
 
 BUDGET = 4000  # tokens; 0: no limit
 WIDTH = resume.WIDTH
@@ -320,8 +322,23 @@ def gather(project: projects.Project, since: str = "last-week", until: str = "to
             "summary": {"path": str(summary), "text": summary.read_text(encoding="utf-8")}
             if summary.is_file() else None,
             "milestones": miles, "items": items, "adrs": adrs(project.decisions, w),
+            "revisit": revisits(project, store, w),
             "ddrs": ddrs(project.root, w), "prs": prs, "prs_why": why, "sessions": sessions(project.root, w),
             "cost": tokens(project, w), "journal": journal(project.journal, w)}
+
+
+def revisits(project: projects.Project, store: Path | None, w: Window) -> list[dict]:
+    """The ADRs in force whose « Revisit if » was met or lapsed in the window, only those triggers kept
+    (brain.revisit.in_window), those a later ADR reviewed included (a past window reads the same later); [] when it
+    cannot be read."""
+    logs = [p for p in (project.decision_logs or [project.decisions]) if p]
+    if not logs:
+        return []
+    try:
+        rep = revisit.report(store, logs, project.root, w.until, show_all=True)   # reviewed later: still history
+    except (OSError, ValueError, graph.GraphError):
+        return []
+    return revisit.in_window(rep, w.since, w.until)
 
 
 def tokens(project: projects.Project, w: Window) -> dict:
@@ -355,10 +372,12 @@ class Part:
 # mostly retelling the closed items and the ADRs; then the DDRs (the queue has them all), the session records and
 # the PRs; the substance last: the ADRs' decisions, the items' outcomes, the narrative summary. Then the last levels.
 STEPS = (("journal", 1), ("journal", 2), ("ddrs", 1), ("sessions", 1), ("cost", 1), ("prs", 1), ("adrs", 1),
-         ("milestones", 1), ("items", 1), ("summary", 1), ("journal", 3), ("ddrs", 2), ("sessions", 2), ("cost", 2),
-         ("prs", 2), ("adrs", 2), ("milestones", 2), ("items", 2), ("summary", 2))
+         ("revisit", 1), ("milestones", 1), ("items", 1), ("summary", 1), ("journal", 3), ("ddrs", 2),
+         ("sessions", 2), ("cost", 2), ("prs", 2), ("adrs", 2), ("revisit", 2), ("milestones", 2), ("items", 2),
+         ("summary", 2))
 LABELS = {"journal": "journal", "ddrs": "DDRs", "sessions": "session records", "cost": "token cost", "prs": "PRs",
-          "adrs": "ADRs", "milestones": "milestones", "items": "items", "summary": "summary"}
+          "adrs": "ADRs", "revisit": "revisit triggers", "milestones": "milestones", "items": "items",
+          "summary": "summary"}
 
 
 def _detail(text: str, indent: str = "  ") -> list[str]:
@@ -435,6 +454,19 @@ def _adrs(rows: list[dict], where: str) -> Part | None:
         full += [row] + (_detail(first_sentence(gist, WIDTH * DETAIL_LINES)) if gist else [])
     count = [f"{_plural(len(rows), 'ADR')} from {rows[-1]['day']} to {rows[0]['day']}: {where}."]
     return Part("adrs", f"ADRs ({len(rows)}, {where})", [full, one, count], ["full", "titles", "a count"])
+
+
+def _revisit(rows: list[dict]) -> Part | None:
+    if not rows:
+        return None
+    full, one = [], []
+    for f in rows:
+        row = resume._row(f"- {f['id']}", f["title"])
+        one.append(row)
+        full += [row] + [ln for t in f["triggers"] for ln in _detail(revisit.trigger_text(t))]
+    ids = _ids("Revisit", [f["id"] for f in rows]) + ["(`brain adr revisit` has their evidence.)"]
+    return Part("revisit", f"Revisit if met or lapsed ({len(rows)} ADRs; `brain adr revisit`)", [full, one, ids],
+                ["full", "titles", "ids"])
 
 
 def _ddr_history(d: dict) -> str:
@@ -590,7 +622,8 @@ def render(project: projects.Project, data: dict, *, budget: int = BUDGET, now: 
     generated = f"Generated {now.strftime('%Y-%m-%d %H:%M')} UTC" + (f" at {head} on {branch}" if head else "") + "."
     cited = cited_prs(data["items"], actions.repo_name(project.root))
     parts = [p for p in (_summary(data), _milestones(data["milestones"]), _items(data["items"]),
-                         _adrs(data["adrs"], resume.relative(project, project.decisions)), _ddrs(data["ddrs"]),
+                         _adrs(data["adrs"], resume.relative(project, project.decisions)),
+                         _revisit(data.get("revisit") or []), _ddrs(data["ddrs"]),
                          _prs(data["prs"], data["prs_why"], cited), _sessions(data["sessions"]),
                          _cost(data.get("cost")),
                          _journal(data["journal"], resume.relative(project, project.journal))) if p]
