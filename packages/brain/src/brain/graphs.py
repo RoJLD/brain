@@ -80,10 +80,12 @@ DOCGRAPH_READ = ("brain docgraph join",)
 # --- git, read only -------------------------------------------------------------------------------------------------
 
 def _git(folder: Path, *args: str) -> str | None:
-    """git's output in ``folder``, None when git fails, times out or ``folder`` is not in a checkout."""
+    """git's output in ``folder``, None when git fails, times out or ``folder`` is not in a checkout. Never a write:
+    ``--no-optional-locks`` keeps git status from refreshing the index (and taking index.lock) under a concurrent
+    commit or pull."""
     try:
-        done = subprocess.run(["git", "-C", str(folder), *args], capture_output=True, text=True, encoding="utf-8",
-                              errors="replace", timeout=GIT_TIMEOUT)
+        done = subprocess.run(["git", "--no-optional-locks", "-C", str(folder), *args], capture_output=True,
+                              text=True, encoding="utf-8", errors="replace", timeout=GIT_TIMEOUT)
     except (OSError, subprocess.SubprocessError):
         return None
     return done.stdout if done.returncode == 0 else None
@@ -146,12 +148,12 @@ def freshness(folder: Path, names: list[str]) -> dict | None:
 
 # --- a store's layers ---------------------------------------------------------------------------------------------
 
-def _yaml_list(path: Path) -> list:
-    """A node or edge file's entries; [] when it does not parse (brain check says why)."""
+def _yaml_list(path: Path) -> list | None:
+    """A node or edge file's entries; None when it does not parse (named on the store's row; brain check says why)."""
     try:
         data = yamlio.load(path)
-    except UNREADABLE:   # a malformed file is brain check's to report, never this list's
-        return []
+    except UNREADABLE:
+        return None
     return [e for e in data if isinstance(e, dict)] if isinstance(data, list) else []
 
 
@@ -173,19 +175,26 @@ def _type_layers(schema: dict, cat: dict) -> dict[str, str]:
     return out
 
 
-def _edge_layers(cat: dict) -> dict[str, str]:
-    """edge type -> the first catalogue layer (by name) that declares it."""
-    out: dict[str, str] = {}
+def _edge_layers(cat: dict) -> dict[str, list[str]]:
+    """edge type -> the catalogue layers that declare it (several may: part_of, implemented_by)."""
+    out: dict[str, list[str]] = {}
     for la in cat.values():
         for et in la.edges:
-            out.setdefault(et, la.name)
+            out.setdefault(et, []).append(la.name)
     return out
+
+
+def _version(value):
+    """A recorded version as the contract carries it: an integer, else its text (YAML may read a date), else None."""
+    if value is None or (isinstance(value, int) and not isinstance(value, bool)):
+        return value
+    return str(value)
 
 
 def _new_layer(name: str | None, cat: dict, recorded: dict) -> dict:
     la = cat.get(name) if name else None
     data = la.data if la else {}
-    return {"name": name, "catalogue": la is not None, "version": recorded.get(name),
+    return {"name": name, "catalogue": la is not None, "version": _version(recorded.get(name)),
             "catalogue_version": la.version if la else None, "title": la.title if la else "",
             "mode": "", "generator": "", "files": [], "types": Counter(), "nodes": 0, "edges": Counter(),
             "edge_count": 0, "freshness": None, "query": list(data.get("commands") or []),
@@ -207,6 +216,7 @@ class _Tally:
         self.by_type, self.by_edge = _type_layers(schema, cat), _edge_layers(cat)
         self.found: dict[str | None, dict] = {}
         self.node_layer: dict[str, str | None] = {}
+        self.unreadable: list[str] = []
 
     def _layer(self, name: str | None, rel: str) -> dict:
         la = self.found.setdefault(name, _new_layer(name, self.cat, self.recorded))
@@ -222,10 +232,19 @@ class _Tally:
         la["nodes"] += 1
         self.node_layer[str(n.get("id"))] = name
 
+    def edge_layer(self, et: str, src: str | None, dst: str | None) -> str | None:
+        """An edge's layer: among the catalogue's layers that declare its type, its source node's, else its target
+        node's, else the first the store holds; a type no held layer declares goes to its source node's layer."""
+        declared = self.by_edge.get(et, [])
+        for end in (src, dst):
+            if end is not None and end in declared:
+                return end
+        return next((name for name in declared if name in self.found), src)
+
     def edge(self, e: dict, rel: str) -> None:
         et = str(e.get("type"))
-        own = self.by_edge.get(et)
-        la = self._layer(own if own in self.found else self.node_layer.get(str(e.get("from"))), rel)
+        name = self.edge_layer(et, self.node_layer.get(str(e.get("from"))), self.node_layer.get(str(e.get("to"))))
+        la = self._layer(name, rel)
         la["edges"][et] += 1
         la["edge_count"] += 1
 
@@ -253,16 +272,22 @@ def store_entry(store: Path, base: Path, *, read_only: bool = False) -> dict:
     if not (store / "schema.yaml").is_file() or not (store / "nodes").is_dir():
         entry["error"] = "no schema.yaml or no nodes/ (not a graph store)"
         return entry
-    schema, entry["error"] = _schema(store)
+    schema, error = _schema(store)
     cat = rg_layers.catalogue()
     recorded = _recorded(schema)
-    found = _read(store, _Tally(schema, cat, recorded))
+    tally = _Tally(schema, cat, recorded)
+    found = _read(store, tally)
     for la, fresh in zip(found, _pmap(lambda la: freshness(store, la["files"]), found), strict=True):
         la["freshness"] = fresh
-    held = {la["name"] for la in found} | set(recorded)
-    entry.update(layers=sorted(found, key=lambda la: (la["name"] is None, la["name"] or "")),
+    if tally.unreadable:
+        error = "; ".join(filter(None, [error, f"left out, not parsed: {', '.join(tally.unreadable)}"]))
+    own = schema.get("layers") if isinstance(schema.get("layers"), dict) else {}
+    held = {la["name"] for la in found} | set(recorded) | {str(n) for n in own}
+    # an overlay is another repo's store, read only: nothing is proposed to add to it
+    planned = [] if read_only else [_planned(la, store) for la in cat.values() if la.name not in held]
+    entry.update(error=error, layers=sorted(found, key=lambda la: (la["name"] is None, la["name"] or "")),
                  nodes=sum(la["nodes"] for la in found), edges=sum(la["edge_count"] for la in found),
-                 planned=[_planned(la, label) for la in cat.values() if la.name not in held])
+                 planned=planned)
     return entry
 
 
@@ -273,19 +298,29 @@ def _recorded(schema: dict) -> dict:
 
 
 def _read(store: Path, tally: _Tally) -> list[dict]:
-    """The store's node files, then its edge files, counted into ``tally``: its layers, finished."""
+    """The store's node files, then its edge files, counted into ``tally``: its layers, finished. A file that does
+    not parse is left out and named in ``tally.unreadable``."""
     for nf in sorted((store / "nodes").glob("*.yaml")):
-        for n in _yaml_list(nf):
+        for n in _entries(nf, f"nodes/{nf.name}", tally):
             tally.node(n, f"nodes/{nf.name}")
     for ef in _edge_files(store):
-        for e in _yaml_list(ef):
-            tally.edge(e, ef.relative_to(store).as_posix())
+        rel = ef.relative_to(store).as_posix()
+        for e in _entries(ef, rel, tally):
+            tally.edge(e, rel)
     return [_finish(la) for la in tally.found.values()]
 
 
-def _planned(la, label: str) -> dict:
+def _entries(path: Path, rel: str, tally: _Tally) -> list:
+    got = _yaml_list(path)
+    if got is None:
+        tally.unreadable.append(rel)
+    return got or []
+
+
+def _planned(la, store: Path) -> dict:
+    """A catalogue layer the store lacks, with the command that adds it (the store's full path: it runs anywhere)."""
     return {"name": la.name, "catalogue_version": la.version, "title": la.title,
-            "add": f"research_graph --store {label} layers add {la.name}"}
+            "add": f"research_graph --store {store.resolve().as_posix()} layers add {la.name}"}
 
 
 def _rel(path: Path, base: Path) -> str:
@@ -311,8 +346,8 @@ def code_index(project: projects.Project, root: Path) -> list[dict]:
         return []
     try:
         ix, repos = codeindex.load(root, opt_in=True)
-    except codeindex.CodeIndexError as exc:
-        return [_code_row("", "", "ERROR", str(exc))]
+    except codeindex.CodeIndexError as exc:   # the declarations are read for every project at once (brain index)
+        return [_code_row("", "", "ERROR", f"the registry's code_index declarations: {exc}")]
     mine = codeindex.of_project(repos, project.name)
     records = {"gitnexus": codeindex.read_record(), "cbm": cbm.read_record(), "xerj": xerj.read_record()}
     have = {"gitnexus": ix is not None, "cbm": cbm.installed(), "xerj": xerj.installed()}
@@ -334,10 +369,13 @@ def code_index(project: projects.Project, root: Path) -> list[dict]:
 
 def _docgraph_row(s: docjoin.Source) -> dict:
     doc = s.doc or {}
+
+    def count(key: str) -> int:   # a document whose nodes or edges is not a list counts none (its error says why)
+        value = doc.get(key)
+        return sum(1 for x in value if isinstance(x, dict)) if isinstance(value, list) else 0
     return {"name": s.name, "path": s.path, "kind": "federated", "read_only": s.read_only, "ok": s.ok,
-            "error": s.errors[0] if s.errors else "", "ref": s.ref or None,
-            "nodes": len([n for n in doc.get("nodes") or [] if isinstance(n, dict)]),
-            "edges": len([e for e in doc.get("edges") or [] if isinstance(e, dict)]), "read_by": list(DOCGRAPH_READ)}
+            "error": s.errors[0] if s.errors else "", "ref": s.ref or None, "nodes": count("nodes"),
+            "edges": count("edges"), "read_by": list(DOCGRAPH_READ)}
 
 
 def docgraph_documents(root: Path) -> list[dict]:
@@ -397,13 +435,13 @@ def sources(project: projects.Project, owns_root: bool) -> list[dict]:
 def project_entry(project: projects.Project, root: Path, read_only_docs: set[str]) -> dict:
     """One project's graphs. ``read_only_docs``: the docgraph documents left to their read project's entry."""
     owns_root = not project.shares_root_with
-    folders = [(s, False) for s in projects.stores_of(project)] + [(o, True) for o in project.overlays]
-    parts = _pmap(lambda job: job(), [lambda: _pmap(lambda f: store_entry(f[0], project.root, read_only=f[1]), folders),
-                                      lambda: code_index(project, root), lambda: sources(project, owns_root)])
+    # the files are read in this thread (the YAML memo is not shared across threads); only git runs side by side
+    stores = [store_entry(s, project.root) for s in projects.stores_of(project)]
+    stores += [store_entry(o, project.root, read_only=True) for o in project.overlays]
     docs = [d for d in docgraph_documents(project.root) if d["name"] not in read_only_docs] if owns_root else []
     return {"name": project.name, "title": project.title, "root": project.root.as_posix(), "access": "write",
-            "found": project.root.is_dir(), "stores": parts[0], "code_index": parts[1], "docgraph": docs,
-            "sources": parts[2]}
+            "found": project.root.is_dir(), "stores": stores, "code_index": code_index(project, root),
+            "docgraph": docs, "sources": sources(project, owns_root)}
 
 
 def read_only_entry(r: projects.ReadOnly, docs: list[dict]) -> dict:
@@ -421,7 +459,7 @@ def registry(root: Path, scope: list[projects.Project], every: bool) -> dict:
         for d in docgraph_documents(root):
             if d["name"] in read_only:
                 pinned.setdefault(d["name"], []).append(d)
-    out = _pmap(lambda p: project_entry(p, root, set(read_only)), scope)
+    out = [project_entry(p, root, set(read_only)) for p in scope]
     out += [read_only_entry(r, pinned.get(name, [])) for name, r in read_only.items()]
     return {"v": V, "scope": "all" if every else "project", "projects": out}
 
@@ -450,8 +488,8 @@ def _store_lines(s: dict) -> list[str]:
            + (f"; {_one(s['error'])}" if s["error"] else "")]
     out += [_layer_line(la) for la in s["layers"]]
     if s["planned"]:
-        out.append(f"    in the catalogue, not in this store: {', '.join(p['name'] for p in s['planned'])} "
-                   f"(research_graph --store {s['path']} layers add NAME)")
+        add = s["planned"][0]["add"].rsplit(" ", 1)[0] + " NAME"
+        out.append(f"    in the catalogue, not in this store: {', '.join(p['name'] for p in s['planned'])} ({add})")
     return out
 
 

@@ -28,8 +28,10 @@ cannot serve is shown on its row and never stops the list. `--project` and `--al
 ### A store's layers
 
 - **Which layer.** A node type is in the layer the store's own `schema.yaml` `layers:` names, else in the catalogue's
-  layer that holds it (`research_graph layers`), else in no layer (`name` null, shown `(no layer)`). An edge counts in
-  the catalogue's layer that declares its type when the store holds that layer, else in its source node's layer.
+  layer that holds it (`research_graph layers`), else in no layer (`name` null, shown `(no layer)`). An edge counts,
+  among the catalogue's layers that declare its type, in its source node's layer, else its target node's, else the
+  first one the store holds; a type no held layer declares counts in its source node's layer. A node or edge file
+  that does not parse is left out and named in the store's `error`.
 - **Version.** `version` is what the schema's `templates:` recorded (`null` when it did not), `catalogue_version` the
   engine's catalogue's, so a store behind the catalogue shows both.
 - **Written or generated.** `generated` when every file that holds its nodes and edges is a `_generated_*` file
@@ -39,8 +41,11 @@ cannot serve is shown on its row and never stops the list. `--project` and `--al
   changes (`uncommitted`); `null` when the store is not in a git checkout.
 - **Entries.** `query`: the catalogue's commands for the layer; `impact`: `research_graph impact <id>`, and `brain
   impact --diff` for the code layer; `read_by`: the engine's commands and cockpit panels that read it now.
-- **Planned.** The catalogue's layers the store does not hold, each with the command that adds it
-  (`research_graph --store S layers add NAME`, a plan first).
+- **Planned.** The catalogue's layers the store does not hold (no node, no `templates:` entry, no `layers:` key),
+  each with the command that adds it (`research_graph --store <the store's full path> layers add NAME`, a plan
+  first). An overlay, another repo's store, gets none.
+- **git.** Every call is read only (`git --no-optional-locks`: `git status` never refreshes the index under a
+  concurrent commit); a checkout's status is read once per run and the calls run side by side.
 
 ## The `--json` keys (v 1)
 

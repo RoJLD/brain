@@ -115,7 +115,39 @@ def test_the_schema_names_the_layer_and_its_recorded_version(tmp_path, monkeypat
     assert store["layers"][0]["freshness"] is None          # not a git checkout
     planned = {p["name"]: p for p in store["planned"]}
     assert "work" not in planned and "lessons" in planned
-    assert planned["lessons"]["add"] == "research_graph --store notes/graph layers add lessons"
+    store_path = (root / "notes" / "graph").resolve().as_posix()
+    assert planned["lessons"]["add"] == f"research_graph --store {store_path} layers add lessons"   # runs anywhere
+    over = graphs.store_entry(root / "notes" / "graph", root, read_only=True)
+    assert over["planned"] == []                             # nothing is proposed for another repo's store
+
+
+def test_an_edge_type_several_layers_declare_counts_in_its_ends_layer():
+    from research_graph import layers
+    cat = layers.catalogue()
+    shared = next(et for et, names in graphs._edge_layers(cat).items() if len(names) > 1)
+    names = graphs._edge_layers(cat)[shared]
+    tally = graphs._Tally({}, cat, {})
+    tally.found = {n: {} for n in names}
+    assert tally.edge_layer(shared, names[-1], None) == names[-1]      # its source's layer declares it
+    assert tally.edge_layer(shared, "elsewhere", names[-1]) == names[-1]  # else its target's
+    assert tally.edge_layer("an-uncatalogued-type", "work", None) == "work"   # never the no-layer bucket
+    tally.found[None] = {}
+    assert tally.edge_layer("an-uncatalogued-type", "work", None) == "work"
+
+
+def test_odd_values_never_stop_the_json(tmp_path, monkeypatch, capsys):
+    root = tmp_path / "p"
+    _store(root, schema=SCHEMA + "templates:\n  - {layer: work, version: 2026-01-01}\n",
+           nodes={"x.yaml": "- {id: wi-1, type: WorkItem, status: todo, title: W}\n"})
+    (root / "docgraph").mkdir()
+    (root / "docgraph" / "odd.json").write_text(json.dumps({"schema": docgraph.ID, "nodes": 5, "edges": True}),
+                                                encoding="utf-8")
+    reg = tmp_path / "projects.yaml"
+    reg.write_text(f"p: {{root: {root.as_posix()}}}\n", encoding="utf-8")
+    monkeypatch.setenv("BRAIN_PROJECTS", str(reg))
+    p = _json(capsys, ["--project", "p", "graphs", "--json"])["projects"][0]
+    assert p["stores"][0]["layers"][0]["version"] == "2026-01-01"
+    assert [(d["nodes"], d["edges"], d["ok"]) for d in p["docgraph"]] == [(0, 0, False)]
 
 
 def test_freshness_is_the_last_commit_and_says_uncommitted_changes(two, capsys):
@@ -142,7 +174,8 @@ def test_a_malformed_file_or_a_folder_without_a_store_never_stops_the_list(two, 
     lab, _ = two
     (lab / "notes" / "graph" / "nodes" / "bad.yaml").write_text("- {id: [unclosed\n", encoding="utf-8")
     entry = graphs.store_entry(lab / "notes" / "graph", lab)
-    assert entry["nodes"] == 5 and entry["error"] == ""
+    assert entry["nodes"] == 5 and entry["error"] == "left out, not parsed: nodes/bad.yaml"
+    (lab / "notes" / "graph" / "nodes" / "bad.yaml").unlink()
     (lab / "notes" / "graph" / "schema.yaml").write_text("node_types: [\n", encoding="utf-8")
     assert graphs.store_entry(lab / "notes" / "graph", lab)["error"].startswith("schema.yaml does not parse")
     assert "not a graph store" in graphs.store_entry(lab / "nowhere", lab)["error"]
