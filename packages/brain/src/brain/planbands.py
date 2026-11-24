@@ -391,32 +391,47 @@ def _item_row(st, f: dict, nid: str, project: str, mid: str, past: dict, why: st
                      "hours": past.get("hours")}}
 
 
+class _Reads:
+    """What a level reads of the forecast: its items, their order, why the others are not dated, the past."""
+
+    def __init__(self, fc: dict) -> None:
+        self.items = {i["id"]: i for i in fc.get("items") or [] if i.get("id")}
+        self.rank = {i["id"]: k for k, i in enumerate(fc.get("items") or []) if i.get("id")}   # the scheduler's
+        self.why = {u["id"]: u.get("why") or "" for u in (fc.get("gates") or {}).get("undated") or [] if u.get("id")}
+        self.past = fc.get("past") or {}
+
+
+def _group_rows(st, rd: _Reads, ids: list[str], row: dict, on: set[str], order: bool) -> tuple[list, list]:
+    """(a group's open rows: the dated ones, in the scheduler's order when ``order``, then the others; its done
+    rows), the dropped items left out."""
+    dated, rest, done = [], [], []
+    for nid in ids:
+        status = (st.nodes.get(nid) or {}).get("status")
+        if status == "dropped":
+            continue
+        r = _item_row(st, rd.items.get(nid) or {}, nid, row["project"], row["id"], rd.past.get(nid) or {},
+                      rd.why.get(nid), nid in on)
+        (done if status == "done" else dated if nid in rd.items else rest).append(r)
+    if order:
+        dated.sort(key=lambda r: (rd.rank.get(r["id"], math.inf), r["id"]))
+    rest.sort(key=lambda r: (r["undated"] is None, r["id"]))
+    return dated + rest, done
+
+
 def _level(st, fc: dict, row: dict, trees: dict) -> dict:
     """One row's item level: its groups' rows (a group's name, then its items), its done items last."""
     project, mid = row["project"], row["id"]
-    items = {i["id"]: i for i in fc.get("items") or [] if i.get("id")}
-    rank = {i["id"]: k for k, i in enumerate(fc.get("items") or []) if i.get("id")}   # the scheduler's order
-    why = {u["id"]: u.get("why") or "" for u in (fc.get("gates") or {}).get("undated") or [] if u.get("id")}
-    past = fc.get("past") or {}
+    rd = _Reads(fc)
     chain = next((m for m in fc.get("milestones") or [] if m.get("id") == mid), {}).get("chain")
     on = set((chain or {}).get("items") or ())
     by, groups = _groups(st, row, trees)
     rows, done = [], []
     for name, ids in groups:
-        dated, rest = [], []
-        for nid in ids:
-            status = (st.nodes.get(nid) or {}).get("status")
-            if status == "dropped":
-                continue
-            r = _item_row(st, items.get(nid) or {}, nid, project, mid, past.get(nid) or {}, why.get(nid), nid in on)
-            (done if status == "done" else dated if nid in items else rest).append(r)
-        if by == "order":
-            dated.sort(key=lambda r: (rank.get(r["id"], math.inf), r["id"]))
-        rest.sort(key=lambda r: (r["undated"] is None, r["id"]))
-        if dated or rest:
-            if name:
-                rows.append({"key": f"{row['key']}:{name}", "kind": "group", "name": name})
-            rows += dated + rest
+        open_, closed = _group_rows(st, rd, ids, row, on, by == "order")
+        done += closed
+        if open_ and name:
+            rows.append({"key": f"{row['key']}:{name}", "kind": "group", "name": name})
+        rows += open_
     if done:
         done.sort(key=lambda r: (r["past"]["done"], r["id"]), reverse=True)
         rows.append({"key": f"{row['key']}:done", "kind": "group", "name": f"✓ {len(done)} done"})
@@ -485,21 +500,25 @@ def past_cells(r: dict, as_of: str | None, scale: float, plain: bool = False) ->
     """The ``PAST_W`` cells before the forecast's day: the item's actual bar from its first session to its done day
     (to the forecast's day while it is doing), « ✓ <day> » when it ended before the window."""
     now = _as_of(as_of)
-    p = r.get("past") or {}
-    first, done = _day(p.get("first") or ""), _day(p.get("done") or "")
+    first, end, done = _span(r, now.date() if now else None)
     if now is None or not (first or done):
         return " " * PAST_W
-    today = now.date()
-    end = done or (today if r.get("state") == "doing" else None)
-    tick = "done:" if plain else "✓"
+    tick = f"{'done:' if plain else '✓'} {planviews._md(done.isoformat())}" if done else ""
     if first is None or end is None:
-        return (f"{tick} {planviews._md(done.isoformat())}" if done else "").rjust(PAST_W)[:PAST_W]
-    lo, hi = (first - today).days, (end - today).days + 1       # days from the forecast's day, [lo, hi)
+        return tick.rjust(PAST_W)[:PAST_W]
+    lo, hi = (first - now.date()).days, (end - now.date()).days + 1   # days from the forecast's day, [lo, hi)
     if hi <= -PAST_W * scale:
-        return f"{tick} {planviews._md(end.isoformat())}".rjust(PAST_W)[:PAST_W]
+        return tick.rjust(PAST_W)[:PAST_W]
     mark = PAST["word" if plain else "glyph"]
     return "".join(mark if (j - PAST_W) * scale < hi and (j - PAST_W + 1) * scale > lo else " "
                    for j in range(PAST_W))
+
+
+def _span(r: dict, today):
+    """(its first session's day, the end of its bar: its done day, or ``today`` while doing; its done day)."""
+    p = r.get("past") or {}
+    first, done = _day(p.get("first") or ""), _day(p.get("done") or "")
+    return first, done or (today if r.get("state") == "doing" else None), done
 
 
 def _est(r: dict) -> str:

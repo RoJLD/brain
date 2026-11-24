@@ -55,19 +55,25 @@ def cmd_forecast(args, root: Path) -> int:
         out.append(res)
     if args.json:
         print(forecast.as_json(out[0] if len(out) == 1 and not args.all else out))
-    elif args.critical is not None:
-        text = []
-        for res in out:   # --all: the projects that have that milestone; none of them: refused
-            try:
-                text.append("\n".join(forecast.critical_lines(res, None if args.critical == CHAINS else args.critical)))
-            except forecast.ForecastError as exc:
-                print(f"brain forecast {res['project']}: {exc}", file=sys.stderr)
-        if not text:
-            return 2
-        print("\n\n".join(text))
+    elif args.critical is not None and out:
+        return _critical(out, None if args.critical == CHAINS else args.critical)
     else:
         print("\n\n".join("\n".join(forecast.render(res, args.items)) for res in out))
     return 0 if out else 1
+
+
+def _critical(out: list[dict], ref: str | None) -> int:
+    """--critical: each forecast's chains; with a milestone, the projects that have it (none of them: exit 2)."""
+    text = []
+    for res in out:
+        try:
+            text.append("\n".join(forecast.critical_lines(res, ref)))
+        except forecast.ForecastError as exc:
+            print(f"brain forecast {res['project']}: {exc}", file=sys.stderr)
+    if not text:
+        return 2
+    print("\n\n".join(text))
+    return 0
 
 
 def register(sub, ctx) -> None:

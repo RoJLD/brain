@@ -166,12 +166,7 @@ def _check_view(args) -> None:
     milestones --view tree); --zoom the trajectories' item level, in the text view (--once or --plain), and alone it
     asks for that view. Refused otherwise (exit 2)."""
     if args.zoom:
-        if args.axis or (args.tab or "milestones") != "milestones" or (args.view or "trajectories") != "trajectories":
-            raise SystemExit("brain tui: --zoom: the milestones tab's trajectories only (--tab milestones --view "
-                             "trajectories)")
-        if not (args.once or args.plain):
-            raise SystemExit("brain tui: --zoom: the text view's (--once or --plain); z or Enter on a row in the app")
-        args.tab, args.view = "milestones", "trajectories"
+        _check_zoom(args)
     if args.axis:
         if args.axis not in cockpit.tab_axes(args.tab or "milestones"):
             raise SystemExit(f"brain tui: --axis {args.axis}: the milestones tab's tree only")
@@ -179,6 +174,16 @@ def _check_view(args) -> None:
     if args.view and (not args.tab or args.view not in cockpit.TABS[args.tab]["views"]):
         raise SystemExit(f"brain tui: --view {args.view}: needs --tab, and one of its views "
                          f"({', '.join(cockpit.TABS[args.tab]['views']) if args.tab else 'none without --tab'})")
+
+
+def _check_zoom(args) -> None:
+    """--zoom: the milestones tab's trajectories, in the text view; it sets that tab and view."""
+    if args.axis or (args.tab or "milestones") != "milestones" or (args.view or "trajectories") != "trajectories":
+        raise SystemExit("brain tui: --zoom: the milestones tab's trajectories only (--tab milestones --view "
+                         "trajectories)")
+    if not (args.once or args.plain):
+        raise SystemExit("brain tui: --zoom: the text view's (--once or --plain); z or Enter on a row in the app")
+    args.tab, args.view = "milestones", "trajectories"
 
 
 def _asked_view(args, saved: dict | None) -> dict:

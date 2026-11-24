@@ -724,18 +724,25 @@ def _chains(out: dict, groups: dict[str, list[int]], done: list[float], kept: li
             continue
         pid = paths.get(end)
         if pid is None:   # once per end and future: a chain is hashed once, then counted by its number
-            walk, k = [], end
-            while k >= 0 and k not in seen and len(walk) <= len(tasks):   # pred goes back in time: never a loop
-                walk.append(k)
-                k = pred[k]
-            head = seen[k][0][:seen[k][1] + 1] if k >= 0 and k in seen else ()   # a chain already walked
-            path = head + tuple(reversed(walk))
-            for i in range(len(head), len(path)):
-                seen[path[i]] = (path, i)
+            path = _walk(end, pred, seen, len(tasks))
             pid = paths[end] = out["path_id"].setdefault(path, len(out["path_id"]))
             if pid == len(out["links"]):
                 out["links"].append((path, tuple(by[k] for k in path)))
         out["chains"][g][pid] += 1
+
+
+def _walk(end: int, pred: list[int], seen: dict[int, tuple[tuple[int, ...], int]], n: int) -> tuple[int, ...]:
+    """The chain to ``end``, first item first: ``pred`` followed back until an item a chain already walked in this
+    future (``seen``, its head then shared) or one that waited on nothing; ``seen`` gains its new items."""
+    walk, k = [], end
+    while k >= 0 and k not in seen and len(walk) <= n:   # pred goes back in time: never a loop, bounded all the same
+        walk.append(k)
+        k = pred[k]
+    head = seen[k][0][:seen[k][1] + 1] if k >= 0 and k in seen else ()
+    path = head + tuple(reversed(walk))
+    for i in range(len(head), len(path)):
+        seen[path[i]] = (path, i)
+    return path
 
 
 def _schedule(dur: list[float], kept: list[bool], release: list[float], deps: list[list[int]],
@@ -1307,41 +1314,55 @@ def critical_lines(res: dict, ref: str | None = None) -> list[str]:
     """``brain forecast --critical``: each dated group's critical chain (the backlog first, then the milestones by
     their median); with ``ref`` one group's chain and its items, each with its criticality index, its start and its
     finish p10-p90, the items outside the group marked."""
+    head = (f"brain forecast {res.get('project') or ''} --critical: "
+            f"{str(res.get('as_of') or '').replace('T', ' ')[:16]} UTC, {res.get('runs', 0)} futures, "
+            f"{label(res).upper()}")
+    return [head, *(_every_chain(res) if ref is None else _one_chain(res, ref))]
+
+
+def _every_chain(res: dict) -> list[str]:
+    """Each group's chain, the backlog first, then the milestones by their median."""
     p = res.get("project") or ""
-    head = (f"brain forecast {p} --critical: {str(res.get('as_of') or '').replace('T', ' ')[:16]} UTC, "
-            f"{res.get('runs', 0)} futures, {label(res).upper()}")
-    if ref is None:
-        out = [head, "  the chain of each group (most futures): criticality index, share of futures in which the item "
-               "lies on the chain that sets the group's finish (Van Slyke 1963)"]
-        rows = [("backlog", (res.get("backlog") or {}).get("chain"))]
-        ms = sorted((m for m in res.get("milestones") or [] if m.get("chain")),
-                    key=lambda m: ((m.get("days") or (m.get("part") or {}).get("days") or {}).get("p50", math.inf),
-                                   m["id"]))
-        rows += [(m["id"], m["chain"]) for m in ms]
-        width = max([len(r[0]) for r in rows] + [14])
-        out += [f"  {g:<{width}} {chain_text(c, p, res)}" for g, c in rows if c]
-        if len(out) == 2:
-            out.append("  no chain: nothing simulated")
-        return out
+    out = ["  the chain of each group (most futures): criticality index, share of futures in which the item lies on "
+           "the chain that sets the group's finish (Van Slyke 1963)"]
+    rows = [("backlog", (res.get("backlog") or {}).get("chain"))]
+    ms = sorted((m for m in res.get("milestones") or [] if m.get("chain")),
+                key=lambda m: ((m.get("days") or (m.get("part") or {}).get("days") or {}).get("p50", math.inf),
+                               m["id"]))
+    rows += [(m["id"], m["chain"]) for m in ms]
+    width = max([len(r[0]) for r in rows] + [14])
+    out += [f"  {g:<{width}} {chain_text(c, p, res)}" for g, c in rows if c]
+    return out if len(out) > 1 else [*out, "  no chain: nothing simulated"]
+
+
+def _one_chain(res: dict, ref: str) -> list[str]:
+    """One group's chain, its members by their index (◆ on the chain), then the items of other groups on it."""
+    p = res.get("project") or ""
     found = group_of(res, ref)
     if found is None:
         raise ForecastError(f"--critical {ref}: no such milestone in the forecast (an id, its short name, backlog or -)")
     gid, block = found
     chain = block.get("chain")
     name = {BACKLOG: "backlog", "": "(no milestone)"}.get(gid, gid)
-    out = [head, f"  {name}: {chain_text(chain, p, res) or 'no chain: nothing simulated'}"]
+    out = [f"  {name}: {chain_text(chain, p, res) or 'no chain: nothing simulated'}"]
     by = {i["id"]: i for i in res.get("items") or []}
     members = [i for i in res.get("items") or [] if gid in (i.get("critical") or {})]
     on = set((chain or {}).get("items") or [])
     out.append("  ◆ on its chain · criticality index · start and end p10–p90 (d)")
     for i in sorted(members, key=lambda i: (-(i["critical"].get(gid) or 0), i["id"])):
         out.append(_critical_row(i, gid, i["id"] in on, p))
+    return out + _outside(chain, gid, by, p)
+
+
+def _outside(chain: dict | None, gid: str, by: dict[str, dict], project: str) -> list[str]:
+    """The items of other groups on a group's chain (a lane they held, a dependency outside it), named in one line."""
     outside = [nid for nid in (chain or {}).get("items") or []
                if nid not in by or gid not in (by[nid].get("critical") or {})]
-    if outside:   # a lane they held, or a dependency outside the group
-        names = ", ".join(_short_id(x, p) for x in outside[:CHAIN_SHOWN]) + (", …" if len(outside) > CHAIN_SHOWN else "")
-        out.append(f"  and {len(outside)} item(s) of other groups on its chain: {names}")
-    return out
+    if not outside:
+        return []
+    names = ", ".join(_short_id(x, project) for x in outside[:CHAIN_SHOWN]) + (
+        ", …" if len(outside) > CHAIN_SHOWN else "")
+    return [f"  and {len(outside)} item(s) of other groups on its chain: {names}"]
 
 
 def _critical_row(it: dict, gid: str, on: bool, project: str) -> str:
