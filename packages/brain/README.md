@@ -1439,6 +1439,14 @@ and logs only the exception's class and the note's name to `ledger/errors.log`, 
 session (`CLAUDECODE`, `CLAUDE_CODE_ENTRYPOINT` or `BRAIN_AGENT_SESSION` set): the report then says the notes were
 not read, and they stay out of the ordinary notes.
 
+### Texts restated: the overlap check
+
+`brain check`, in a brain's own root, warns when one of the brain's own texts restates another: a rule, a procedure
+step or a memory note whose 8-word runs, once ids, dates, numbers and the brain's entity names are dropped, are at
+least `overlap.warn` (20 %) of the smaller one's (`brain.overlap`, docs/overlap.md, after agency-agents' originality
+check). It is a warning, never an error; the roots, the exclusions and the levels are `config.json` `overlap` keys,
+and the review's procedure lens is given the pairs a PR's files take part in.
+
 ## Schedules and the alerts pass
 
 A project's `schedules:` entry in the registry declares the brain commands a machine's scheduler runs, `{name:
