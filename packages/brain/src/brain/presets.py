@@ -56,7 +56,7 @@ def _own(store: Path, root: Path | None) -> Path | None:
 def load(f: Path) -> tuple[dict | None, list[str]]:
     """(the document, []) or (None, [why it is no document of this format])."""
     try:
-        data = graph._yaml().safe_load(f.read_text(encoding="utf-8-sig"))
+        data = graph.load_yaml(f.read_text(encoding="utf-8-sig"))   # the one YAML helper (libyaml)
     except (OSError, UnicodeDecodeError, graph._yaml().YAMLError) as exc:
         return None, [f"{FILE}: not a YAML document ({type(exc).__name__})"]
     if not isinstance(data, dict):

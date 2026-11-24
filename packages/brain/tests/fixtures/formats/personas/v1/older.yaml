@@ -11,13 +11,13 @@ personas:
     audience: "Anyone with a kettle"
     bricks: [K]
     modules: []
-    optional: {bricks: [Q], modules: []}
+    optional: {bricks: [P], modules: [P12]}
     distributions: [kettle]
     ai: false
     topology: "One kitchen"
     realm: [PRIVATE]
     description: "Tea, no oracle."
-    note: "The documents say K (or K + Q)."
+    note: "The documents say K (or K + P)."
   - id: brewer
     name: The brewer
     kind: preset

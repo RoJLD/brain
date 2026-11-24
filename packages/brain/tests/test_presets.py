@@ -207,7 +207,8 @@ def test_the_older_fixture_passes_strict_and_holds_every_key_of_the_schema(tmp_p
     s = schema.load("personas")
     assert set(doc) == set(s["properties"])
     assert set().union(*(p.keys() for p in doc["personas"])) == set(s["$defs"]["preset"]["properties"])
-    store = _store(tmp_path, (FORMATS / "older.yaml").read_text(encoding="utf-8"))
+    registry = REGISTRY + "- {id: P12, name: kettle-meter, brick: P, phase: V1.5, status: proposed}\n"
+    store = _store(tmp_path, (FORMATS / "older.yaml").read_text(encoding="utf-8"), registry)
     assert presets.problems(store) == []
 
 
