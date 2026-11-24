@@ -1,0 +1,67 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "brain/schemas/personas.schema.json",
+  "title": "personas.yaml, the presets a module registry's installer offers",
+  "description": "A store's personas.yaml, beside its modules.yaml (brain.presets, docs/modules.md « Presets and personas »): the presets of the registry, each a set of bricks, modules and distributions; a persona is a preset a platform's documents describe, written by an import session (source, imported) and never by hand. brain modules --check validates the file (exit 1); brain modules --personas runs the two checks on each preset: its set closed under the hard dependencies of the map, and a preset whose ai is false pulls no AI module nor a distribution that ships one. An unknown key, at the top or in a preset, is a newer brain's: a note in read mode, kept; an error in strict mode (CI). A higher v is refused in both modes, its other keys not judged.",
+  "type": "object",
+  "required": ["v", "personas"],
+  "additionalProperties": false,
+  "properties": {
+    "v": {"const": 1, "description": "The format's version: 1."},
+    "source": {"type": "array", "items": {"$ref": "#/$defs/source"}, "description": "The documents the import read, each its ref and its date (YYYY-MM-DD)."},
+    "imported": {"description": "The day of the import (YYYY-MM-DD): no source is dated after it."},
+    "expand": {"$ref": "#/$defs/expand"},
+    "personas": {"type": "array", "items": {"$ref": "#/$defs/preset"}, "description": "The presets, one entry each."},
+    "note": {"type": "string", "description": "Free text."}
+  },
+  "$defs": {
+    "source": {
+      "type": "object",
+      "required": ["ref"],
+      "additionalProperties": false,
+      "properties": {
+        "ref": {"type": "string", "minLength": 1, "description": "The document read, by a reference its reader understands (a title, a section)."},
+        "date": {"description": "The document's date (YYYY-MM-DD)."},
+        "section": {"type": "string", "description": "The part of the document read."}
+      }
+    },
+    "expand": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "How a brick a preset lists becomes modules: every module of the registry with that brick, except those whose status or placement is listed here.",
+      "properties": {
+        "skip_status": {"type": "array", "items": {"type": "string"}, "description": "The registry statuses a brick does not give (default: [proposed])."},
+        "skip_placement": {"type": "array", "items": {"type": "string"}, "description": "The registry placements a brick does not give (the platform's own words: a module set aside); default none."}
+      }
+    },
+    "ids": {"type": "array", "items": {"type": ["string", "integer"]}},
+    "preset": {
+      "type": "object",
+      "required": ["id", "name"],
+      "additionalProperties": false,
+      "properties": {
+        "id": {"type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9_.-]*$", "description": "The preset's id, unique in the file."},
+        "name": {"type": "string", "minLength": 1, "description": "Its name, as the documents give it."},
+        "kind": {"enum": ["persona", "preset"], "description": "persona (the default): described by the documents, imported; preset: written by hand."},
+        "audience": {"type": "string", "description": "Who it is for, as the documents say."},
+        "bricks": {"$ref": "#/$defs/ids", "description": "The bricks it takes: each gives its modules (expand)."},
+        "modules": {"$ref": "#/$defs/ids", "description": "The modules it takes alone, ids of the registry."},
+        "optional": {
+          "type": "object",
+          "additionalProperties": false,
+          "description": "What it may add: checked as a second variant of the preset (its set with them).",
+          "properties": {
+            "bricks": {"$ref": "#/$defs/ids"},
+            "modules": {"$ref": "#/$defs/ids"}
+          }
+        },
+        "distributions": {"type": "array", "items": {"type": "string", "minLength": 1}, "description": "The distributions it downloads, as the map's ships_in names them."},
+        "ai": {"type": "boolean", "description": "Whether it uses AI: false asks that it pull no AI module (ai: true in the map) and no distribution that ships one; absent, the documents do not say and the check does not run."},
+        "topology": {"type": "string", "description": "Where it runs, as the documents say."},
+        "realm": {"type": "array", "items": {"type": "string", "minLength": 1}, "description": "The realms it spans, as the documents name them."},
+        "description": {"type": "string", "description": "What the documents say of its configuration."},
+        "note": {"type": "string", "description": "What the import read into the documents' words (a range, a part of a module)."}
+      }
+    }
+  }
+}

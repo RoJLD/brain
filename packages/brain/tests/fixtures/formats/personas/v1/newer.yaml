@@ -1,0 +1,11 @@
+# personas.yaml with a newer brain's additive keys under the same v: a top-level key and a preset's (a note in read
+# mode, kept; an error in strict mode).
+v: 1
+imported: 2026-11-24
+catalogue: tea-house
+personas:
+  - id: tea-drinker
+    name: The tea drinker
+    bricks: [K]
+    ai: false
+    cost: {ram_mb: 64}
