@@ -210,14 +210,21 @@ def _picked(f: Path, st: list, cache: dict) -> dict | None:
     return {"stat": st, "meta": pick(data)}
 
 
-def app_index() -> dict[str, dict] | None:
+def app_cache() -> Path:
+    """The picked keys of the app's files, by file and stat (:func:`app_index`): a session may write it, so the guards
+    never read it (``cached=False``) and refuse a session's write into it (brain.guards.app_files)."""
+    return paths.brain_home() / "cache" / "sessions-app.json"
+
+
+def app_index(cached: bool = True) -> dict[str, dict] | None:
     """{host_id: picked keys} of every session the app has on this machine; None when the app is not here. A file is
-    parsed again only when its size or mtime changed (``<BRAIN_HOME>/cache/sessions-app.json``)."""
+    parsed again only when its size or mtime changed (:func:`app_cache`); ``cached=False`` (the guards) parses every
+    file and neither reads nor writes the cache."""
     dirs = app_dirs()
     if not dirs:
         return None
-    cache_f = paths.brain_home() / "cache" / "sessions-app.json"
-    cache = _read_json(cache_f)
+    cache_f = app_cache()
+    cache = _read_json(cache_f) if cached else None
     cache = cache if isinstance(cache, dict) else {}
     fresh = {}
     for f in (f for d in dirs for f in sorted(d.glob("local_*.json"))):   # sorted: children started together keep
@@ -226,7 +233,7 @@ def app_index() -> dict[str, dict] | None:
         hit = _picked(f, st, cache) if st else None
         if hit:
             fresh[str(f)] = hit
-    if fresh != cache:
+    if cached and fresh != cache:
         _write_json(cache_f, fresh)
     return {h["meta"]["host_id"]: h["meta"] for h in fresh.values() if h["meta"].get("host_id")}
 

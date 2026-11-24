@@ -22,7 +22,8 @@ USAGE = """\
   brain permissions check | render [--level user|project|local|session] [--repo DIR] [--write] [--json]
                  | grant [perm-ID] [--call C] --rule R --why W [--global|--project P|--machine H|...] [--dry-run]
                  render: an adapter's files (Claude Code's; adds the missing rules, never removes one; the user file
-                 is install.ps1 -Apply's); grant: a rule appended in this branch, reviewed by PR (no --rule: proposals)
+                 is install.ps1 -Apply's; an allow rule no guard sees here is withheld and taken out as expired,
+                 and check flags it: GUARD_REQUIRED); grant: a rule appended in this branch, reviewed by PR (no --rule: proposals)
   brain permissions --scope REF [...]   each project of a node's subtree in the scope tree (brain scopes: an id, a path
                  of ids, global = --all, . or ..); with --requests, --scope keeps its meaning: a level's start
 """
@@ -44,12 +45,13 @@ def cmd_permissions(args, root: Path) -> int:
             return _permissions_grant(args, base)
         model = permissions.load(base)
         if sub == "check":
-            for e in model.errors:
+            errors = model.errors + permissions.unguarded(model)   # a rule no guard sees here (GUARD_REQUIRED)
+            for e in errors:
                 print(f"error: {e}")
             print(f"permissions: {model.file or 'no ' + permissions.FILE}, {len(model.rules)} rule(s) with "
                   f"{model.engine_file.name if model.engine_file else 'no ' + permissions.ENGINE_FILE}, "
-                  + (f"{len(model.errors)} error(s)" if model.errors else "OK"))
-            return 1 if model.errors else 0
+                  + (f"{len(errors)} error(s)" if errors else "OK"))
+            return 1 if errors else 0
         if sub == "render":
             return _permissions_render(args, base, model)
     except permissions.PermissionsError as exc:
@@ -133,7 +135,8 @@ def _permissions_render(args, base: Path, model) -> int:
         want = permissions.wanted(model, ctx, "user", adapter)
         print(json.dumps({"file": str(permissions.claude_home() / "settings.json"), "machine": ctx.machine,
                           **want, "expired": permissions.expired_rules(model, ctx, "user", adapter),
-                          "errors": model.errors}, ensure_ascii=False, indent=1))
+                          "withheld": permissions.unguarded(model, ctx, "user"), "errors": model.errors},
+                         ensure_ascii=False, indent=1))
         return 1 if model.errors else 0
     if args.write and args.level == "user":
         print("brain: install.ps1 -Apply writes the user settings (the owner's); this prints its plan", file=sys.stderr)

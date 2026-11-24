@@ -45,7 +45,10 @@ on Windows, else bash (TERMINAL_TOOL), in its cwd, else the session's. Nine guar
   decision allowed with its case. The desktop app's archive_session (wi-brain-coordinator-handover-no-prompt,
   archive) passes without the owner's card, under their allow rule, only for a finished session the caller started or
   its predecessor at a hand-over, with no child blocking, its PRs merged or closed and its folder clean (logged allowed
-  with its case, child or predecessor); any other call, and an error, gets ask: the card no allow rule lifts.
+  with its case, child or predecessor); any other call, and an error, gets ask: the card no allow rule lifts. Both
+  read the app's session files at the call, never the index's cache, and a session's write into those files, their
+  folders, that cache or a transcript is refused (app_files); git runs on the target's folder with no program of its repo
+  (_git_env, _git_runs_why).
 - ``power`` (wi-brain-power-guard, TOPO-2): no act on a machine or the cluster: machine (shutdown, reboot, sleep,
   Stop-Computer, systemctl and loginctl power verbs, boot arming by bcdedit, efibootmgr or ipmitool), node (the verbs
   but reads of the platform's node lifecycle CLIs, config.json's power.node_clis, a kubectl-<name> one as kubectl
@@ -1977,9 +1980,10 @@ def successors(caller: str, index: dict, meta, now: float | None = None) -> list
 def app_caller(payload: dict):
     """(the caller's app id, the app's index, its :func:`app_reader`, the caller's app file) for a hook's payload, else why not (a str): the
     app's files absent, the payload's transcript in none or in two of them, the environment's app id another, or the
-    caller's own file unreadable or naming another transcript. Read from the desktop app's own files only."""
+    caller's own file unreadable or naming another transcript. Read from the desktop app's own files only, each parsed
+    now: never the index's cache (sessions.app_cache), which a session may write (review of the PR, F7)."""
     from . import sessions
-    index = sessions.app_index()
+    index = sessions.app_index(cached=False)
     if index is None:
         return "the desktop app's session files are not on this machine"
     sid = str(payload.get("session_id") or "")
@@ -2074,23 +2078,94 @@ def remote_control(payload: dict, now: float | None = None) -> tuple[str | None,
 # call, and an error, gets permissionDecision ask: the card, which the allow rule cannot lift.
 ARCHIVE_TOOL = re.compile(r"^mcp__ccd_session_mgmt__archive_session$")   # the desktop app's own server only
 PR_DONE = ("MERGED", "CLOSED")   # the app's prs[].state that leave no work open; any other, or none, is open
-GIT_S = 3   # each git call in the target's folder, at most: the three stay well inside the hook's 30 s (hooks.json),
-            # since a hook Claude Code kills lets the call through to the owner's allow rule, with no card
+GIT_S = 3   # each git call in the target's folder, at most (five per folder: config, top, gitlinks, status, ignored)
+GIT_TOTAL_S = 15   # every git call of one archive_session together, at most, whatever the number of folders (cwd and
+                   # worktreePath): well inside the hook's 30 s (hooks.json), since a hook Claude Code kills lets the
+                   # call through to the owner's allow rule, with no card
 ARCHIVE_BOUND = ("a finished session this one started, or its predecessor at a hand-over, with no child blocking, its "
                  "PRs merged or closed and its folder clean")
-GIT_SAFE = ("-c", "core.fsmonitor=false", "-c", "core.untrackedCache=false", "-c", "submodule.recurse=false")
+GIT_SAFE = ("-c", "core.fsmonitor=false", "-c", "core.untrackedCache=false", "-c", "submodule.recurse=false",
+            "-c", f"core.hooksPath={os.devnull}")
+# What the target repo's own config may declare that runs a program during git status and that no -c switches off: a
+# filter driver (clean, smudge, process), or an include that could declare one; read first, without running anything,
+# and asked when found (review of the PR, F5).
+GIT_RUNS = r"^(filter\.|include\.|includeif\.)"
+
+
+def _git_env() -> dict:
+    """The environment of the archive case's git calls: none of the hook's GIT_ variables (GIT_DIR, GIT_CONFIG_*,
+    GIT_EXTERNAL_DIFF...), no system config and an empty global one (GIT_CONFIG_NOSYSTEM, GIT_CONFIG_GLOBAL): only the
+    repo's own config can declare a program, and :data:`GIT_RUNS` reads it first. No optional lock, no prompt."""
+    env = {k: v for k, v in os.environ.items() if not k.upper().startswith("GIT_")}
+    return {**env, "GIT_CONFIG_NOSYSTEM": "1", "GIT_CONFIG_GLOBAL": os.devnull, "GIT_OPTIONAL_LOCKS": "0",
+            "GIT_TERMINAL_PROMPT": "0"}
+
+
+def _git_timeout(deadline: float | None) -> float:
+    """One git call's timeout: GIT_S, cut to what is left before ``deadline`` (time.monotonic(), GIT_TOTAL_S after the
+    archive case's first call); TimeoutExpired, the card, once nothing is left."""
+    import time
+    left = GIT_S if deadline is None else min(GIT_S, deadline - time.monotonic())
+    if left <= 0:
+        raise subprocess.TimeoutExpired("git", GIT_TOTAL_S)
+    return left
+
+
+def _git_runs_why(cwd: str, env: dict, deadline: float | None = None) -> tuple[str, tuple[str, ...]]:
+    """('', the -c options that keep git's line-ending settings) when the repo's own config (local and worktree, its
+    includes followed) declares no filter driver nor include (:data:`GIT_RUNS`), else (why git may run a program
+    there, ()). Read once with every scope (a config read runs no filter), the hook's GIT_ variables dropped: the
+    system's and global core.autocrlf and core.eol (Git for Windows sets the first) are carried to the isolated calls
+    of :func:`_git_env`, whose status would else see a clean CRLF checkout as changed. What cannot be read is no
+    pass."""
+    if os.path.lexists(os.path.join(cwd, ".gitmodules")):
+        return f"{cwd} has submodules, whose own config git status would follow", ()
+    read = {k: v for k, v in env.items() if k not in ("GIT_CONFIG_NOSYSTEM", "GIT_CONFIG_GLOBAL")}
+    try:
+        r = _run(["git", *GIT_SAFE, "config", "--show-scope", "--get-regexp", GIT_RUNS + r"|^core\.(autocrlf|eol)$"],
+                 cwd, timeout=_git_timeout(deadline), env=read)
+    except (OSError, subprocess.SubprocessError, ValueError):
+        return f"git cannot read the config of {cwd}", ()
+    if r.returncode not in (0, 1):   # 1: no key matches
+        return f"git cannot read the config of {cwd}", ()
+    keys, keep = set(), {}
+    for line in r.stdout.decode("utf-8", "replace").splitlines():
+        scope, _, rest = line.partition("\t")
+        key, _, value = rest.partition(" ")
+        if key in ("core.autocrlf", "core.eol"):
+            if value.strip().lower() in ("true", "false", "input", "lf", "crlf", "native"):
+                keep[key] = value.strip().lower()   # the last scope wins, as git reads it
+        elif scope in ("local", "worktree", "command"):
+            keys.add(key)
+    if keys:
+        return (f"{cwd}'s git config declares {', '.join(sorted(keys)[:5])}: a program git would run during git "
+                "status"), ()
+    return "", tuple(x for k, v in keep.items() for x in ("-c", f"{k}={v}"))
+
+
+def _gitlinks_why(cwd: str, env: dict, safe: tuple, deadline: float | None) -> str:
+    """'' when the index holds no gitlink (mode 160000: a nested repo committed with or without .gitmodules, in which
+    git status would run git under that repo's own config), else why not."""
+    r = _run(["git", *safe, "ls-files", "-s", "-z"], cwd, timeout=_git_timeout(deadline), env=env)
+    if r.returncode:
+        return f"git cannot list the index of {cwd}"
+    links = [e.split(b"\t", 1)[-1].decode("utf-8", "replace") for e in r.stdout.split(b"\0")
+             if e.startswith(b"160000 ")]
+    return f"{cwd} holds nested repo(s) git status would enter: {', '.join(links[:5])}" if links else ""
 
 
 def _same(a: str, b: str) -> bool:
     return os.path.normcase(os.path.realpath(a)) == os.path.normcase(os.path.realpath(b))
 
 
-def folder_why(cwd) -> str:
+def folder_why(cwd, deadline: float | None = None) -> str:
     """'' when a session's folder holds no change git sees and nothing git ignores but caches (brain.tidy.lost_ignored,
     what brain tidy names before a removal), or is gone (its worktree removed), else why not. The folder must be its
     checkout's top (``git rev-parse --show-toplevel``): git would otherwise read a parent repo that ignores it. git runs
-    by its path (:func:`_run`) with its file-system monitor, untracked cache and submodule recursion off and no optional
-    lock, GIT_S each."""
+    by its path (:func:`_run`) with its file-system monitor, untracked cache, hooks and submodule recursion off, no
+    optional lock, no system or global config (:func:`_git_env`), GIT_S each and all of them before ``deadline``
+    (:func:`_git_timeout`: the archive case gives GIT_TOTAL_S to every folder together), and only once the repo's
+    config declares no filter nor include and it has no submodule (:func:`_git_runs_why`)."""
     if not isinstance(cwd, str) or not cwd.strip():
         return "its folder cannot be read from its app file"
     if not os.path.isabs(cwd):
@@ -2099,12 +2174,20 @@ def folder_why(cwd) -> str:
         return ""
     if not os.path.isdir(cwd):
         return f"{cwd} is not a folder"
-    env = {**os.environ, "GIT_OPTIONAL_LOCKS": "0", "GIT_TERMINAL_PROMPT": "0"}
+    env = _git_env()
+    runs, eol = _git_runs_why(cwd, env, deadline)
+    if runs:
+        return runs
+    safe = (*GIT_SAFE, *eol)
     try:
-        top = _run(["git", *GIT_SAFE, "rev-parse", "--show-toplevel"], cwd, timeout=GIT_S, env=env)
+        top = _run(["git", *safe, "rev-parse", "--show-toplevel"], cwd, timeout=_git_timeout(deadline), env=env)
         if top.returncode or not _same(top.stdout.decode("utf-8", "replace").strip(), cwd):
             return f"{cwd} is not the top of a checkout git can read"
-        r = _run(["git", *GIT_SAFE, "status", "--porcelain", "--untracked-files=normal"], cwd, timeout=GIT_S, env=env)
+        links = _gitlinks_why(cwd, env, safe, deadline)
+        if links:
+            return links
+        r = _run(["git", *safe, "status", "--porcelain", "--untracked-files=normal", "--ignore-submodules=all"], cwd,
+                 timeout=_git_timeout(deadline), env=env)
     except (OSError, subprocess.SubprocessError, ValueError):
         return f"git cannot run in {cwd}"
     if r.returncode:
@@ -2112,16 +2195,16 @@ def folder_why(cwd) -> str:
     n = len([line for line in r.stdout.splitlines() if line.strip()])
     if n:
         return f"{cwd} has {n} uncommitted change(s) the archive would remove with its worktree"
-    return _ignored_why(cwd, env)
+    return _ignored_why(cwd, env, deadline, safe)
 
 
-def _ignored_why(cwd: str, env: dict) -> str:
+def _ignored_why(cwd: str, env: dict, deadline: float | None = None, safe: tuple = GIT_SAFE) -> str:
     """'' when git ignores nothing in the checkout ``cwd`` but caches and folder links (brain.tidy's own reading before
     a removal), else what the archive would remove with it."""
     from . import tidy
     try:
-        r = _run(["git", *GIT_SAFE, "ls-files", "-z", "--others", "--ignored", "--exclude-standard", "--directory",
-                  "--no-empty-directory"], cwd, timeout=GIT_S, env=env)
+        r = _run(["git", *safe, "ls-files", "-z", "--others", "--ignored", "--exclude-standard", "--directory",
+                  "--no-empty-directory"], cwd, timeout=_git_timeout(deadline), env=env)
     except (OSError, subprocess.SubprocessError, ValueError):
         return f"git cannot list what {cwd} ignores"
     if r.returncode:
@@ -2204,7 +2287,15 @@ def _archive_left(target: str, node: dict, index: dict, meta, now) -> str:
     if left:
         named = ", ".join(f"{r or '?'}#{n or '?'} ({s or 'no state'})" for r, n, s in left[:5])
         return f"{target} has {len(left)} PR(s) neither merged nor closed: {named}"
-    return next((why for why in map(folder_why, work["folders"]) if why), "")
+    return folders_why(work["folders"])
+
+
+def folders_why(folders) -> str:
+    """The first of ``folders`` :func:`folder_why` finds not clean, '' when none: every folder's git calls share one
+    deadline, GIT_TOTAL_S from now."""
+    import time
+    deadline = time.monotonic() + GIT_TOTAL_S
+    return next((why for why in (folder_why(f, deadline) for f in folders) if why), "")
 
 
 def archive_ask(why: str) -> dict:
@@ -2245,6 +2336,136 @@ def _is_roots(target) -> bool:
     """Whether ``target`` is the file of the chain roots the owner marked (roots_file), or the folder that holds it (a
     copy, move, link or removal into or of it): any spelling the file system resolves to them (review of the PR)."""
     return _real(target) in (_real(roots_file()), _real(roots_file().parent))
+
+
+APP_FILES_TEXT = re.compile(r"(?i)(?:^|[\\/])claude-code-sessions(?:[\\/]|$)|(?:^|[\\/])sessions-app\.json$|"
+                            r"(?:^|[\\/])\.claude[\\/]projects[\\/][^\\/]+[\\/](?:[^\\/]+[\\/]subagents[\\/])?"
+                            r"[^\\/]+\.jsonl$")
+
+
+def _under(real: str, root: str) -> bool:
+    return real == root or real.startswith(root.rstrip("\\/") + os.sep)
+
+
+def _app_paths() -> tuple[list[str], list[str]]:
+    """(the folders of the desktop app's session files, the transcripts' folder), resolved: each account's
+    Claude-Data/<account>/claude-code-sessions, and <claude home>/projects."""
+    from . import permissions
+    base = os.environ.get("LOCALAPPDATA")
+    roots = [_real(r) for r in (Path(base) / "Claude-Data").glob("*/claude-code-sessions")] if base else []
+    return roots, [_real(permissions.claude_home() / "projects")]
+
+
+def app_files(target) -> bool:
+    """Whether ``target`` is one of the desktop app's session files, or a folder that holds them (each account's
+    claude-code-sessions and what it holds, any account folder, existing or new, Claude-Data), a session's transcript
+    (a .jsonl of <claude home>/projects/<project>/, or of a session's subagents/, whose tail says whether its turn is
+    finished) or a folder that would hold one (:func:`_transcript_place`), or
+    the guards' index of the app's files (sessions.app_cache), as written or as the file system resolves it, or a hard
+    link to one of them (F7 of the archive case's review): the guards read them to judge Remote Control and
+    archive_session, which the owner's allow rules no longer ask, so a session may not write them; the app and Claude
+    Code write them themselves, no tool call. A project's memory beside the transcripts stays writable. Like the chain
+    roots' file, it holds against a mistake: a script that writes them, or a path built at run time, is out of the
+    guard's reach."""
+    from . import sessions
+    if APP_FILES_TEXT.search(str(target)):
+        return True
+    real = _real(target)
+    cache = _real(sessions.app_cache())
+    roots, projects = _app_paths()
+    base = os.environ.get("LOCALAPPDATA")
+    data = _real(Path(base) / "Claude-Data") if base else ""
+    # Claude-Data itself and any account folder in it, one that exists or a new one: a folder copied there would hold
+    # a claude-code-sessions the app's glob reads (round 2 of the review)
+    if real == cache or (data and real in (data, os.path.join(data, os.path.basename(real)))) or \
+            any(_under(real, r) for r in roots):
+        return True
+    if any(_transcript_place(real, p) for p in projects):
+        return True
+    return _linked(real, cache, roots, projects)
+
+
+def _transcript_place(real: str, projects: str) -> bool:
+    """Whether a write at ``real`` may put a transcript where the guards read one, under the transcripts' folder
+    ``projects``: that folder, a project's folder, what a project's folder holds (a session's transcript, its folder)
+    but its memory, a session's subagents/ and what it holds, or any .jsonl; a folder copied or moved there brings the
+    .jsonl it holds (round 2 of the review). A session's tool results and workflow scripts deeper down stay writable."""
+    if not _under(real, projects):
+        return False
+    if real.endswith(".jsonl"):
+        return True
+    parts = [p for p in os.path.relpath(real, projects).split(os.sep) if p not in ("", ".")]
+    return len(parts) <= 1 or (len(parts) == 2 and parts[1] != "memory") or (len(parts) >= 3 and parts[2] == "subagents")
+
+
+def _linked(real: str, cache: str, roots: list[str], projects: list[str]) -> bool:
+    """Whether the file ``real`` is a hard link (more than one name) to the cache, an app file or a transcript."""
+    try:
+        if os.stat(real).st_nlink < 2:
+            return False
+    except (OSError, ValueError):
+        return False
+    files = [cache, *(str(f) for r in roots for f in Path(r).rglob("*.json")),
+             *(str(f) for r in projects for f in Path(r).rglob("*.jsonl"))]   # subagents/ included
+    for f in files:
+        try:
+            if os.path.samefile(real, f):
+                return True
+        except (OSError, ValueError):
+            continue
+    return False
+
+
+def _core_key() -> str:
+    """The core plugin as Claude Code's settings name it (``<plugin>@<marketplace>``, config.json adapters.claude)."""
+    names = config.claude(config.load())
+    return f"{names['plugin']}@{names['marketplace']}"
+
+
+def _plugin_off(before: str, after: str) -> bool:
+    """Whether an edit of a settings file disables the core plugin (enabledPlugins sets it false) where it did not:
+    the guards' hooks would not run in later sessions, and the allow rules they bound would pass unguarded (round 2 of
+    the review of wi-brain-coordinator-handover-no-prompt; under owner_strict, as GUARD_OFF). A text that is not JSON
+    disables it when it names enabledPlugins and the plugin with false, fail closed."""
+    key = _core_key()
+
+    def off(text: str) -> bool:
+        try:
+            data = json.loads(text)
+        except ValueError:
+            t = floor.unspelled(text)
+            return bool(re.search(r"enabledPlugins", t, re.I) and re.search(re.escape(key) + r"\W*:\s*false", t, re.I))
+        plugins = data.get("enabledPlugins") if isinstance(data, dict) else None
+        return isinstance(plugins, dict) and plugins.get(key) is False
+    return off(after) and not off(before)
+
+
+PLUGIN_OFF_VERBS = ("disable", "uninstall", "remove", "rm")
+
+
+def _plugin_off_command(command: str, cmds, shell: str) -> str | None:
+    """A shell call that disables the core plugin: claude plugin disable|uninstall of it (any scope), or a write into
+    Claude Code's settings that names enabledPlugins (:func:`_override`)."""
+    plugin = _core_key().split("@")[0]
+    for words, _, _, _ in actions(cmds, shell, command=command):
+        if _prog(words[0]) != "claude":
+            continue
+        args = words[1:]
+        at = next((k for k, a in enumerate(args) if a in ("plugin", "plugins")), None)
+        if at is not None and len(args) > at + 1 and args[at + 1] in PLUGIN_OFF_VERBS and \
+                any(a == plugin or a.startswith(plugin + "@") for a in args[at + 2:]):
+            return f"claude plugin {args[at + 1]} {plugin}"
+    if re.search(r"enabledPlugins", floor.unspelled(command), re.I):
+        return _override(command, cmds, shell, env=r"enabledPlugins")
+    return None
+
+
+def _app_override(cmds, shell: str) -> str | None:
+    """A shell write into the desktop app's session files or the guards' index of them (:func:`app_files`)."""
+    for what, target in shell_writes(cmds, shell):
+        if app_files(target):
+            return f"{what} into {target}"
+    return None
 
 
 _INTERPRETER = re.compile(r"^(?:python[0-9.]*w?|pythonw|py|pypy[0-9.]*|ipython[0-9.]*|bash|sh|zsh|dash|pwsh"
@@ -2323,7 +2544,8 @@ def _quote(words: list[str], shell: str) -> str:
 def check_owner(tool: str, inp: dict, cmds, cwd: str, powershell: bool = False, command: str = ""):
     """(category, reason, request) for a call that does what only the owner does, else None: a command of a
     never-grantable category, a file that starts something on its own (scheduled), the scheduled-tasks tools, or the
-    guards' override set for later sessions (check override). The reasons name the owner (config.owner_of)."""
+    guards' override set for later sessions, the usage allow file, the chain roots and the desktop app's session files
+    (check override). The reasons name the owner (config.owner_of)."""
     shell = "powershell" if powershell else "bash"
     if tool in EDIT_TOOLS:
         target = _edit_target(inp, tool, cwd)
@@ -2338,6 +2560,9 @@ def check_owner(tool: str, inp: dict, cmds, cwd: str, powershell: bool = False, 
         if off and gestures.strict():
             return ("override", f"{tool} refused: it writes {off} into {target}, which turns the guards "
                                 f"off for later sessions; that is {config.owner_of()}'s", None)
+        if override_file and gestures.strict() and _plugin_off(before, after):
+            return ("override", f"{tool} refused: it disables the {_core_key()} plugin in {target}, which turns the "
+                                f"guards off for later sessions; that is {config.owner_of()}'s", None)
         if target and _is_usage_allow(target):
             return ("override", f"{tool} refused: {target} lifts the usage guard; brain usage allow is "
                                 f"{config.owner_of()}'s, in their own terminal", None)
@@ -2345,6 +2570,10 @@ def check_owner(tool: str, inp: dict, cmds, cwd: str, powershell: bool = False, 
         if target and (_is_roots(target) or _is_roots(os.path.join(cwd, raw))):
             return ("override", f"{tool} refused: {target} marks the coordinators' chain roots; brain handover root "
                                 f"is {config.owner_of()}'s, in their own terminal", None)
+        if target and (app_files(target) or app_files(os.path.join(cwd, raw))):
+            return ("override", f"{tool} refused: {target} is the desktop app's session files (or the guards' index of "
+                                "them), which the guards read to let Remote Control and archive_session through; the "
+                                "app writes them, a session writes none", None)
         if target and _autostart(target) and "scheduled" in owner_categories():
             req = {"ref": _ref(f"{tool}\0{target}"), "category": "scheduled", "what": f"{tool} {target}",
                    "command": None, "cwd": cwd, "shell": None}
@@ -2369,6 +2598,10 @@ def check_owner(tool: str, inp: dict, cmds, cwd: str, powershell: bool = False, 
     if what and gestures.strict():
         return ("override", f"{what} refused: it turns the guards off for later sessions; that is "
                             f"{config.owner_of()}'s", None)
+    what = _plugin_off_command(command, cmds, sub) if gestures.strict() else None
+    if what:
+        return ("override", f"{what} refused: it disables the {_core_key()} plugin, which turns the guards off for "
+                            f"later sessions; that is {config.owner_of()}'s", None)
     cleared = gestures.clears_marker(command)   # cheap: read only when the call names a marker
     if cleared and gestures.wide_matching():   # guards.gestures_wide: the gestures' own check reads these markers
         return ("override", f"{cleared!r} refused: it clears an agent session's marker "
@@ -2394,6 +2627,10 @@ def check_owner(tool: str, inp: dict, cmds, cwd: str, powershell: bool = False, 
     if what:
         return ("override", f"{what} refused: it marks a coordinators' chain root, which lets a session switch "
                             f"Remote Control; that mark is {config.owner_of()}'s, in their own terminal", None)
+    what = _app_override(cmds, sub)
+    if what:
+        return ("override", f"{what} refused: the desktop app writes its session files, which the guards read to let "
+                            f"Remote Control and archive_session through; a session writes none", None)
 
     def refusal(cat, what, top, remote=""):
         why = cats[cat].get("why") or f"{cat} is in the never-grantable list"
@@ -4151,8 +4388,8 @@ def _token(run, strict: bool):
 def check_override(cmds, powershell: bool = False, command: str = ""):
     """(category, reason, None) for a shell call that lifts a guard for later sessions: check_owner's override
     category alone (the guards' override set in the environment, Claude Code's settings or a shell profile; a gesture
-    of category override, brain usage allow or brain handover root; a write into the usage allow file or the chain
-    roots). A floor-only machine runs it so that a session cannot lift its own floor (wi-brain-unadopted-floor)."""
+    of category override, brain usage allow or brain handover root; a write into the usage allow file, the chain
+    roots or the desktop app's session files and their index, app_files). A floor-only machine runs it so that a session cannot lift its own floor (wi-brain-unadopted-floor)."""
     if not cmds:
         return None
     sub = "ps" if powershell else "bash"
@@ -4174,6 +4411,10 @@ def check_override(cmds, powershell: bool = False, command: str = ""):
     if what:
         return ("override", f"{what} refused: it marks a coordinators' chain root, which lets a session switch "
                             f"Remote Control; that mark is {config.owner_of()}'s, in their own terminal", None)
+    what = _app_override(cmds, sub)
+    if what:
+        return ("override", f"{what} refused: the desktop app writes its session files, which the guards read to let "
+                            f"Remote Control and archive_session through; a session writes none", None)
     return None
 
 
