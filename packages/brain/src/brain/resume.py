@@ -10,7 +10,8 @@ cache, an exact prefix, keeps the longest prefix between two sessions started mi
   1. the project, its rules and the commands that hold the details;
   2. the milestones: pending ones with their progress, reached ones by id;
   3. the work: doing, then the startable P0/P1 items (the frontier), then the waiting P0/P1 items;
-  4. the decisions: the queue's DDRs pending and answered, the items' open questions (``props.open``);
+  4. the decisions: the queue's DDRs pending and answered, the items' open questions (``props.open``); then the
+     ADRs whose « Revisit if » is already met or lapsed (``brain adr revisit``, brain.revisit), the first few;
   5. git: the open PRs (gh, skipped with --offline or when it fails), the worktrees' branches;
   6. the journal: the last bullets of its last entry;
   7. the hand-over notes that name an open item (the desktop app's session-group notes folders,
@@ -40,13 +41,14 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
 
-from . import actions, config, decisions, graph, midsession, milestones, paths, projects, records
+from . import actions, config, decisions, graph, midsession, milestones, paths, projects, records, revisit
 
 BUDGET = 3000  # tokens; 0: no limit
 CHARS_PER_TOKEN = 4
 WIDTH = 118
 JOURNAL_BULLETS = 4
 NOTES_MAX = 8
+REVISIT_MAX = 6   # the flagged ADRs the pack lists; brain adr revisit has them all
 PACK_DIR = "resume"
 # research_graph's LayeredGraph: a todo item whose depends_on / gated_by targets all have one of these
 # statuses is on the frontier.
@@ -238,6 +240,29 @@ def _decisions(project: projects.Project, st: Store) -> Section:
     s.lines += [_row(f"- {n['id']}", str(n["props"]["open"])) for n in opens]
     if not (pend or answered or opens):
         s.lines.append("Nothing in the queue and no open question on an item.")
+    return s
+
+
+def _revisit(project: projects.Project, store: Path | None, today: str) -> Section:
+    """The ADRs whose « Revisit if » is met or lapsed (brain.revisit), the newest triggers first; no lines (the
+    section left out) when none is."""
+    logs = [p for p in (project.decision_logs or [project.decisions]) if p]
+    s = Section("Revisit if met or lapsed (all with their evidence: `brain adr revisit`)")
+    if not logs:
+        return s
+    try:
+        rep = revisit.report(store, logs, project.root, today)
+    except (OSError, ValueError, graph.GraphError) as exc:
+        s.lines.append(f"Not read: {exc}")
+        return s
+    flagged = rep["flagged"]
+    if flagged:
+        s.lines.append(f"{len(flagged)} ADR(s) in force with a trigger met or lapsed"
+                       + (f", the {REVISIT_MAX} newest:" if len(flagged) > REVISIT_MAX else ":"))
+    for f in flagged[:REVISIT_MAX]:
+        t = f["triggers"][0]
+        more = f" (+{len(f['triggers']) - 1})" if len(f["triggers"]) > 1 else ""
+        s.lines.append(_row(f"- {f['id']}", f"{t['state']} {t['kind']} {t['ref']}{more}: {f['title']}"))
     return s
 
 
@@ -477,8 +502,9 @@ def build(project: projects.Project, *, budget: int = BUDGET, offline: bool = Fa
     sections = [_header(project, repo)]
     if store:
         sections += [_milestones(st), _work(st)]
-    sections += [_decisions(project, st), _git(project, offline), _journal(project),
-                 _handover(st, notes_dirs(notes)), _now(project, now or datetime.now(timezone.utc), health)]
+    now = now or datetime.now(timezone.utc)
+    sections += [_decisions(project, st), _revisit(project, store, now.date().isoformat()), _git(project, offline),
+                 _journal(project), _handover(st, notes_dirs(notes)), _now(project, now, health)]
     return render(fit(sections, budget))
 
 
