@@ -9,6 +9,7 @@ import os
 import posixpath
 import re
 from concurrent.futures import ThreadPoolExecutor
+from dataclasses import dataclass, field
 from pathlib import Path
 
 import yaml
@@ -406,148 +407,277 @@ def _moved_refs(name: str, t, docs, moved: list) -> list[dict]:
     return found
 
 
-def _repo_result(c: projects.Repo, rf: inventory.RepoFacts, idx: inventory.Index, tops: set, mod_evidence: dict,
-                 facts: dict, dangling: list, unregistered: list, covered: dict, layered: set,
-                 missing: list, extra_dirs: set = frozenset(), ctx: dict | None = None) -> dict:
-    t, name = rf.tree, c.name
-    found: list[dict] = []
-    # readme.exists, readme.sections
-    readme = _readme(rf)
-    text = t.text(readme) if readme else ""
-    n = sum(1 for ln in (text or "").splitlines() if ln.strip())
+@dataclass
+class _Repo:
+    """One repo as its checks read it (:func:`_repo_result`): what :func:`measure` gathered for it, and what a check
+    leaves for a later one (the scripts that are shims of a module, by module, which cmd.documented reads)."""
+    c: projects.Repo
+    rf: inventory.RepoFacts
+    idx: inventory.Index
+    tops: set
+    mod_evidence: dict
+    facts: dict
+    dangling: list
+    covered: dict
+    layered: set
+    extra_dirs: set
+    ctx: dict | None
+    shims: dict = field(default_factory=dict)
+
+    @property
+    def name(self) -> str:
+        return self.c.name
+
+    @property
+    def t(self) -> inventory.Tree:
+        return self.rf.tree
+
+    def has_code(self) -> bool:
+        return bool(self.rf.units or self.rf.console)
+
+    def modules(self) -> list:
+        return [u for u in self.rf.units if u.kind == "module"]
+
+    def docs(self):
+        """The docs whose paths are checked: a generated doc's paths are its sources' to fix."""
+        return (d for d in self.rf.docs if not generated_doc(self.t, d))
+
+
+def _readme_checks(r: _Repo) -> list[dict]:
+    """readme.exists, readme.sections."""
+    found, readme = [], _readme(r.rf)
+    text = (r.t.text(readme) if readme else "") or ""
+    n = sum(1 for ln in text.splitlines() if ln.strip())
     if n < README_LINES:
-        found.append(finding(name, "readme.exists", "README.md",
+        found.append(finding(r.name, "readme.exists", "README.md",
                              f"README.md has {n} non-blank line(s) ({README_LINES} at least)" if readme
                              else "no README.md at the root", "write README.md: what it is, install, usage, tests"))
-    has_code = bool(rf.units or rf.console)
-    if readme and has_code:
-        heads = _headings(text or "")
+    if readme and r.has_code():
+        heads = _headings(text)
         for group, words in SECTIONS.items():
             if not any(re.search(rf"\b{w}", h) for h in heads for w in words):
-                found.append(finding(name, "readme.sections", f"README.md#{group}",
+                found.append(finding(r.name, "readme.sections", f"README.md#{group}",
                                      f"no heading for {group} ({', '.join(words)})", f"add a {group} section"))
-    # doc.dead-ref
-    top_dirs = {p.split("/")[0] for p in t.files if "/" in p} | set(extra_dirs)
-    owners: dict[str, str] = {}   # top-level package -> the repo that holds it
-    for other, f in facts.items():
-        for d in list(f.modules) + list(f.packages):
-            owners.setdefault(d.split(".")[0], other)
-    own = {d.split(".")[0] for d in list(rf.modules) + list(rf.packages)}
-    known = {x.lower() for x in facts} | {getattr(c, "folder", "").lower()}
-    for d in (d for d in rf.docs if not generated_doc(t, d)):   # a generated doc's paths are its sources' to fix
-        seen = set()
-        for line in (t.text(d) or "").splitlines():
-            for mod in inventory.DASH_M.findall(line):
-                if mod.split(".")[0] in tops and not idx.module_file(mod, main=True) and mod not in seen:
-                    seen.add(mod)
-                    what = "a package with no __main__.py" if mod in idx.packages else "no such module"
-                    found.append(finding(name, "doc.dead-ref", f"{d}#-m {mod}", f"{d} runs -m {mod}: {what}",
-                                         "fix or remove the reference"))
-            ext = EXTERNAL.search(line)
-            if ext and ext.group(1).lower().removesuffix(".git") not in known:
-                continue   # a row about another project's repository: its paths are that repo's
-            for m in DOC_PATH.finditer(line):
-                ref, before = m.group(1), line[m.start() - 1] if m.start() else ""
-                if ref in seen or ref.split("/")[0] not in top_dirs or (before and before in "<*{$"):
-                    continue
-                here = inventory._norm(f"{d.rsplit('/', 1)[0]}/{ref}") if "/" in d else ref
-                if t.has(ref) or t.has(here) or any(o.tree.has(ref) for o in facts.values()):
-                    continue
-                seen.add(ref)
-                segs = ref.split("/")
-                pkg = segs[1] if segs[0] == "src" and len(segs) > 2 else segs[0]
-                owner = owners.get(pkg, name) if pkg not in own else name
-                if owner != name:
-                    found.append(finding(name, "doc.dead-ref", f"{d}#{ref}", f"{d} names {ref}, a path of {owner}: "
-                                         f"not there either (a stale cross-repo reference)",
-                                         "fix or remove the reference", sev="P2"))
-                else:
-                    found.append(finding(name, "doc.dead-ref", f"{d}#{ref}", f"{d} names {ref}: no such file",
-                                         "fix or remove the reference"))
-    found += _moved_refs(name, t, (d for d in rf.docs if not generated_doc(t, d)), (ctx or {}).get("moved") or [])
-    found += dangling
-    # test.module, test.script
-    ev = rf.evidence
-    tdir = _test_dir(rf)
-    shims: dict[str, list] = {}
-    for u in rf.units:
+    return found
+
+
+def _dash_m_refs(r: _Repo, d: str, line: str, seen: set) -> list[dict]:
+    """doc.dead-ref for each ``-m <dotted>`` of a doc line that names no module (or a package with no __main__.py) of
+    the project's top-level packages."""
+    found = []
+    for mod in inventory.DASH_M.findall(line):
+        if mod.split(".")[0] in r.tops and not r.idx.module_file(mod, main=True) and mod not in seen:
+            seen.add(mod)
+            what = "a package with no __main__.py" if mod in r.idx.packages else "no such module"
+            found.append(finding(r.name, "doc.dead-ref", f"{d}#-m {mod}", f"{d} runs -m {mod}: {what}",
+                                 "fix or remove the reference"))
+    return found
+
+
+@dataclass
+class _Paths:
+    """What a doc's path references are checked against (:func:`_path_refs`)."""
+    top_dirs: set      # the repo's top-level folders (and the scout's extra ones)
+    owners: dict       # top-level package -> the repo that holds it
+    own: set           # the repo's own top-level packages
+    known: set         # the project's repos, lowercase, and this repo's folder
+
+    @classmethod
+    def of(cls, r: _Repo) -> _Paths:
+        owners: dict[str, str] = {}
+        for other, f in r.facts.items():
+            for d in list(f.modules) + list(f.packages):
+                owners.setdefault(d.split(".")[0], other)
+        return cls(top_dirs={p.split("/")[0] for p in r.t.files if "/" in p} | set(r.extra_dirs), owners=owners,
+                   own={d.split(".")[0] for d in list(r.rf.modules) + list(r.rf.packages)},
+                   known={x.lower() for x in r.facts} | {getattr(r.c, "folder", "").lower()})
+
+
+def _missing_path(r: _Repo, d: str, ref: str) -> bool:
+    """Whether a path a doc names is in no tree of the project, beside the doc nor from the root."""
+    here = inventory._norm(f"{d.rsplit('/', 1)[0]}/{ref}") if "/" in d else ref
+    return not (r.t.has(ref) or r.t.has(here) or any(o.tree.has(ref) for o in r.facts.values()))
+
+
+def _path_refs(r: _Repo, d: str, line: str, seen: set, paths: _Paths) -> list[dict]:
+    """doc.dead-ref for each repo path of a doc line that no tree has: P2 when the path is another repo's (a stale
+    cross-repo reference); nothing on a row about another project's repository (its paths are that repo's)."""
+    ext = EXTERNAL.search(line)
+    if ext and ext.group(1).lower().removesuffix(".git") not in paths.known:
+        return []
+    found = []
+    for m in DOC_PATH.finditer(line):
+        ref, before = m.group(1), line[m.start() - 1] if m.start() else ""
+        if ref in seen or ref.split("/")[0] not in paths.top_dirs or (before and before in "<*{$"):
+            continue
+        if not _missing_path(r, d, ref):
+            continue
+        seen.add(ref)
+        segs = ref.split("/")
+        pkg = segs[1] if segs[0] == "src" and len(segs) > 2 else segs[0]
+        owner = paths.owners.get(pkg, r.name) if pkg not in paths.own else r.name
+        if owner != r.name:
+            found.append(finding(r.name, "doc.dead-ref", f"{d}#{ref}", f"{d} names {ref}, a path of {owner}: "
+                                 f"not there either (a stale cross-repo reference)",
+                                 "fix or remove the reference", sev="P2"))
+        else:
+            found.append(finding(r.name, "doc.dead-ref", f"{d}#{ref}", f"{d} names {ref}: no such file",
+                                 "fix or remove the reference"))
+    return found
+
+
+def _doc_dead_refs(r: _Repo) -> list[dict]:
+    """doc.dead-ref: the ``-m`` lines and the paths each doc names that do not exist, once per doc."""
+    found, paths = [], _Paths.of(r)
+    for d in r.docs():
+        seen: set = set()
+        for line in (r.t.text(d) or "").splitlines():
+            found += _dash_m_refs(r, d, line, seen)
+            found += _path_refs(r, d, line, seen, paths)
+    return found
+
+
+def _moved_dead_refs(r: _Repo) -> list[dict]:
+    """doc.dead-ref for the prefixes config.json's table of moves says moved (:func:`_moved_refs`)."""
+    return _moved_refs(r.name, r.t, r.docs(), (r.ctx or {}).get("moved") or [])
+
+
+def _dangling_refs(r: _Repo) -> list[dict]:
+    """coderef.dangling: the repo's store's CodeRefs that name no file or symbol (found by :func:`measure`)."""
+    return r.dangling
+
+
+def _module_test(r: _Repo, u, tdir: str) -> list[dict]:
+    """test.module for one module: no test (P1), only an indirect one (P2), or how it is tested (info)."""
+    via, tests = r.mod_evidence[(r.name, u.path)]
+    s = inventory.stem(u)
+    if not via:
+        return [finding(r.name, "test.module", u.path, f"no test_{s}.py or test_*_{s}.py, no test imports "
+                        f"{u.name}", f"add {tdir}/test_{s}.py", u)]
+    if via == "indirect (unnamed)":
+        return [finding(r.name, "test.module", u.path, f"no direct test: only reached through what "
+                        f"{', '.join(tests[:2])} import", f"add {tdir}/test_{s}.py", u, via, "P2")]
+    if via != "name":
+        return [finding(r.name, "test.module", u.path, f"tested by {', '.join(tests[:3])}", "", u, via, "info")]
+    return []
+
+
+def _script_test(r: _Repo, u, tdir: str) -> list[dict]:
+    """test.script for one script: no test runs it, or how it is tested (info); a script that is a shim of a module
+    of the repo is recorded in ``r.shims`` and takes the module's test."""
+    via, tests = inventory.script_evidence(u, r.rf.evidence)
+    shim = inventory.shim_target(u, r.rf, r.idx)
+    if shim and shim[0] == r.name:
+        r.shims.setdefault(shim[1], []).append(u.path)
+    if not via and shim and r.mod_evidence.get(shim, ("", []))[0] not in ("", "indirect (unnamed)"):
+        via, tests = f"shim of {r.idx.dotted_of.get(shim, shim[1])}", r.mod_evidence[shim][1]
+    s = u.name.rsplit(".", 1)[0]
+    if not via:
+        pester = f" or {s}.Tests.ps1 (Pester)" if u.name.endswith((".ps1", ".psm1")) else ""
+        why = f"no test runs {u.name} (named in {', '.join(tests[:2])}, never run)" if tests \
+            else f"no test names {u.name}"
+        return [finding(r.name, "test.script", u.path, why,
+                        f"add {tdir}/test_{s.replace('-', '_')}.py{pester} that runs it", u)]
+    if via != "name":
+        return [finding(r.name, "test.script", u.path, f"tested by {', '.join(tests[:3])}", "", u, via, "info")]
+    return []
+
+
+def _test_checks(r: _Repo) -> list[dict]:
+    """test.module, test.script, unit by unit (before cmd.documented, which reads the shims they record)."""
+    found, tdir = [], _test_dir(r.rf)
+    for u in r.rf.units:
         if u.kind == "module":
-            via, tests = mod_evidence[(name, u.path)]
-            s = inventory.stem(u)
-            if not via:
-                found.append(finding(name, "test.module", u.path, f"no test_{s}.py or test_*_{s}.py, no test imports "
-                                     f"{u.name}", f"add {tdir}/test_{s}.py", u))
-            elif via == "indirect (unnamed)":
-                found.append(finding(name, "test.module", u.path, f"no direct test: only reached through what "
-                                     f"{', '.join(tests[:2])} import", f"add {tdir}/test_{s}.py", u, via, "P2"))
-            elif via != "name":
-                found.append(finding(name, "test.module", u.path, f"tested by {', '.join(tests[:3])}", "", u, via,
-                                     "info"))
+            found += _module_test(r, u, tdir)
         elif u.kind == "script":
-            via, tests = inventory.script_evidence(u, ev)
-            shim = inventory.shim_target(u, rf, idx)
-            if shim and shim[0] == name:
-                shims.setdefault(shim[1], []).append(u.path)
-            if not via and shim and mod_evidence.get(shim, ("", []))[0] not in ("", "indirect (unnamed)"):
-                via, tests = f"shim of {idx.dotted_of.get(shim, shim[1])}", mod_evidence[shim][1]
-            s = u.name.rsplit(".", 1)[0]
-            if not via:
-                pester = f" or {s}.Tests.ps1 (Pester)" if u.name.endswith((".ps1", ".psm1")) else ""
-                why = f"no test runs {u.name} (named in {', '.join(tests[:2])}, never run)" if tests \
-                    else f"no test names {u.name}"
-                found.append(finding(name, "test.script", u.path, why,
-                                     f"add {tdir}/test_{s.replace('-', '_')}.py{pester} that runs it", u))
-            elif via != "name":
-                found.append(finding(name, "test.script", u.path, f"tested by {', '.join(tests[:3])}", "", u, via,
-                                     "info"))
-    # cmd.documented
-    docs = _docs_index(rf)
-    for u in rf.units:
-        if u.kind == "command" and not _documented(u, rf, docs, shims):
-            found.append(finding(name, "cmd.documented", u.name, f"no doc of the docs set names {u.name}",
-                                 f"document {u.name} in README.md or docs/ (what it does, its options)", u))
-    # cmd.registry
-    found += registry_findings(name, rf)
-    # coderef.module
-    modules = [u for u in rf.units if u.kind == "module"]
-    if name in layered:
-        token = getattr(c, "folder", "") or name   # a project's code-check finds the repo folder by its exact case
-        for u in modules:
-            if u.path not in covered.get(name, set()):
-                found.append(finding(name, "coderef.module", u.path, "no CodeRef names this module",
-                                     f"add code:{token}:{u.path[4:] if u.path.startswith('src/') else u.path} to a "
-                                     "code store (implemented_by from its node)", u))
-    # not measured
-    applies = {"every": True, "code": has_code, "python": bool(modules), "commands": any(
-        u.kind == "command" for u in rf.units), "ts": c.lang == "ts", "no-code-layer": bool(modules)
-        and name not in layered, "tools": bool(c.tools),
-        "standards": ctx is not None and standards.selection(getattr(ctx.get("project"), "standards", None))
-        is not None}
-    pending = []
+            found += _script_test(r, u, tdir)
+    return found
+
+
+def _cmd_documented(r: _Repo) -> list[dict]:
+    """cmd.documented: each command no doc of the docs set names."""
+    docs = _docs_index(r.rf)
+    return [finding(r.name, "cmd.documented", u.name, f"no doc of the docs set names {u.name}",
+                    f"document {u.name} in README.md or docs/ (what it does, its options)", u)
+            for u in r.rf.units if u.kind == "command" and not _documented(u, r.rf, docs, r.shims)]
+
+
+def _cmd_registry(r: _Repo) -> list[dict]:
+    """cmd.registry (:func:`registry_findings`)."""
+    return registry_findings(r.name, r.rf)
+
+
+def _coderef_module(r: _Repo) -> list[dict]:
+    """coderef.module: each module no CodeRef names, in a repo whose store has a code layer."""
+    if r.name not in r.layered:
+        return []
+    token = getattr(r.c, "folder", "") or r.name   # a project's code-check finds the repo folder by its exact case
+    return [finding(r.name, "coderef.module", u.path, "no CodeRef names this module",
+                    f"add code:{token}:{u.path[4:] if u.path.startswith('src/') else u.path} to a "
+                    "code store (implemented_by from its node)", u)
+            for u in r.modules() if u.path not in r.covered.get(r.name, set())]
+
+
+# The checks of a repo, in the order its findings are gathered (the sort keeps it among equal keys): one function per
+# check, each from the repo to its findings; the test checks run before cmd.documented, which reads their shims.
+REPO_CHECKS = (_readme_checks, _doc_dead_refs, _moved_dead_refs, _dangling_refs, _test_checks, _cmd_documented,
+               _cmd_registry, _coderef_module)
+
+
+def _applies(r: _Repo) -> dict[str, bool]:
+    """Which of a pending check's ``applies`` scopes (brain.audit_checks.PENDING) hold for the repo."""
+    c, ctx, modules = r.c, r.ctx, r.modules()
+    return {"every": True, "code": r.has_code(), "python": bool(modules),
+            "commands": any(u.kind == "command" for u in r.rf.units), "ts": c.lang == "ts",
+            "no-code-layer": bool(modules) and r.name not in r.layered, "tools": bool(c.tools),
+            "standards": ctx is not None
+            and standards.selection(getattr(ctx.get("project"), "standards", None)) is not None}
+
+
+def _not_measured(r: _Repo, unregistered: list) -> tuple[list[dict], list[dict]]:
+    """(the findings of the generator checks that run, the checks not measured here and who owns them)."""
+    found, pending, applies = [], [], _applies(r)
     for k, v in checks.PENDING.items():
         if not applies[v.applies]:
             continue
-        got = v.owner if v.run is None or ctx is None else v.run(ctx)
+        got = v.owner if v.run is None or r.ctx is None else v.run(r.ctx)
         if isinstance(got, str):
             pending.append({"check": k, "owner": got})
         else:
             found += got
-    if rf.layout.roots is None:
-        pending.insert(0, {"check": "test.module", "owner": rf.layout.why})
+    if r.rf.layout.roots is None:
+        pending.insert(0, {"check": "test.module", "owner": r.rf.layout.why})
     if unregistered:
         pending.append({"check": "coderef.dangling", "owner": f"CodeRefs of repos not measured here (another "
                                                               f"project's, or not cloned): {', '.join(unregistered)}"})
+    return found, pending
+
+
+def _repo_result(c: projects.Repo, rf: inventory.RepoFacts, idx: inventory.Index, tops: set, mod_evidence: dict,
+                 facts: dict, dangling: list, unregistered: list, covered: dict, layered: set,
+                 missing: list, extra_dirs: set = frozenset(), ctx: dict | None = None) -> dict:
+    """One repo's result: :data:`REPO_CHECKS` in turn, the generator checks, the waivers, sorted by severity."""
+    r = _Repo(c, rf, idx, tops, mod_evidence, facts, dangling, covered, layered, extra_dirs, ctx)
+    found = [f for check in REPO_CHECKS for f in check(r)]
+    generated, pending = _not_measured(r, unregistered)
+    found += generated
     found, waived = waived_findings(found, getattr(c, "waive", None))
     if (ctx or {}).get("stale", True):   # not in the trend's past weeks (measure)
-        found += stale_waivers(name, t, getattr(c, "waive", None))
+        found += stale_waivers(r.name, rf.tree, getattr(c, "waive", None))
     found.sort(key=lambda f: (f["severity"] if f["severity"] != "info" else "P9", f["check"], f["unit"]))
+    return _shape(r, found, pending, waived, missing)
+
+
+def _shape(r: _Repo, found: list[dict], pending: list[dict], waived: list, missing: list) -> dict:
+    """The repo's result as the JSON output carries it, from its sorted findings."""
+    c, rf = r.c, r.rf
     counts = {s: sum(1 for f in found if f["severity"] == s) for s in SEVERITIES + ("info",)}
     classes = {k: sum(1 for u in rf.units if u.cls == k) for k in ("entry", "prod", "other")}
-    cov = (ctx or {}).get("cache", {}).get("feature.coverage")   # feature.coverage's section (feature_cover)
-    return {"name": name, "path": str(c.path), "production": c.production or c.entry is not None,
-            "commit": t.label, "date": t.date, "counts": counts, "classes": classes,
+    cov = (r.ctx or {}).get("cache", {}).get("feature.coverage")   # feature.coverage's section (feature_cover)
+    return {"name": r.name, "path": str(c.path), "production": c.production or c.entry is not None,
+            "commit": rf.tree.label, "date": rf.tree.date, "counts": counts, "classes": classes,
             "no_entry": rf.no_entry, "missing_entries": missing, "findings": found,
-            "not_measured": pending, "waived": [{"unit": u, "reason": r} for u, r in [*rf.waived, *waived]],
+            "not_measured": pending, "waived": [{"unit": u, "reason": w} for u, w in [*rf.waived, *waived]],
             "exempt": rf.exempt, **({"feature_coverage": cov} if cov else {})}
 
 
