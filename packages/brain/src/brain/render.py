@@ -38,6 +38,8 @@ from __future__ import annotations
 import json
 import os
 import shutil
+import stat
+import sys
 import tempfile
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -685,6 +687,7 @@ def _atomic_write(path: Path, data: bytes) -> None:
         os.replace(tmp, target)
     except BaseException:
         try:
+            os.chmod(tmp, stat.S_IREAD | stat.S_IWRITE)   # a read-only mode copied from the file: unlink it anyway
             os.unlink(tmp)
         except OSError:
             pass
@@ -927,11 +930,12 @@ def _home_hint(rows: list[dict], target: str) -> None:
 
 
 def _unreadable(rows: list[dict]) -> bool:
-    """Whether a home-folder file was refused (said, with why): --home then exits 1."""
+    """Whether a home-folder file was refused (said on stderr, with why, so that --json stays one document): --home
+    then exits 1."""
     bad = [x for x in rows if x["state"] == "unreadable"]
     if bad:
         print(f"brain render: {len(bad)} home-folder file(s) not merged, left as they are: "
-              + "; ".join(x["what"] for x in bad))
+              + "; ".join(x["what"] for x in bad), file=sys.stderr)
     return bool(bad)
 
 
@@ -968,6 +972,8 @@ def main(root: Path, target: str, *, project: str | None = None, project_root: P
                 print(f"  add to ~/{o.rel}:\n" + "".join(f"    {ln}\n" for ln in o.text.splitlines()), end="")
         if not home and out is None:
             _home_hint(rows, target)
+    if home and _unreadable(rows):   # --write cannot fix it: the owner repairs or removes the file
+        return 1
     if check:
         bad = stale(rows, bases=("user",) if home else ("brain", "repo"))
         if bad:
@@ -975,8 +981,6 @@ def main(root: Path, target: str, *, project: str | None = None, project_root: P
                   + (" --home" if home else f" --project {project}" if project and target != "claude" else "")
                   + " --write")
             return 1
-    if home and _unreadable(rows):
-        return 1
     if do_write:
         left = [x for x in rows if x["state"] == "foreign" and not x["written"]]
         if left:

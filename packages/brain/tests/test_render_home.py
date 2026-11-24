@@ -3,6 +3,7 @@ the user-level ~/.cursor/mcp.json behind an explicit flag (wi-brain-render-user-
 home folder (HOME and USERPROFILE), never the owner's."""
 
 import json
+import stat
 from pathlib import Path
 
 import pytest
@@ -114,11 +115,15 @@ def test_entries_equal_in_another_key_order_are_the_same(machine, home):
 def test_a_file_it_cannot_read_is_refused_and_never_overwritten(machine, home, capsys, text, why):
     write(home, {".cursor/mcp.json": text})
     assert render.main(machine, "cursor", home=True, do_write=True) == 1
-    out = capsys.readouterr().out
-    assert why in out and "not merged" in out
+    got = capsys.readouterr()
+    assert why in got.out and "not merged" in got.out and "left as they are" in got.err
     assert _file(home).read_text(encoding="utf-8") == text
     assert render.main(machine, "cursor", home=True, check=True) == 1
-    assert render.main(machine, "cursor", home=True) == 1   # the plan of --home fails too
+    got = capsys.readouterr()   # --write cannot fix it: the check never sends the owner there
+    assert "--home --write" not in got.out + got.err and "left as they are" in got.err
+    assert render.main(machine, "cursor", home=True, as_json=True) == 1   # the plan of --home fails too
+    data = json.loads(capsys.readouterr().out)   # one JSON document on stdout, the refusal on stderr
+    assert data["files"][0]["state"] == "unreadable" and why in data["files"][0]["what"]
     # the repo's plan still runs: the home row says why, and it exits 0
     assert render.main(machine, "cursor", project="demo", project_root=machine) == 0
     assert f"unreadable {_file(home)}" in capsys.readouterr().out
@@ -142,6 +147,22 @@ def test_a_failed_rename_leaves_the_file_and_no_temporary_one(machine, home, mon
     assert "not written (in use)" in capsys.readouterr().out
     assert _file(home).read_text(encoding="utf-8") == '{"mcpServers": {}}\n'
     assert [p.name for p in _file(home).parent.iterdir()] == ["mcp.json"]
+
+
+def test_a_read_only_file_is_refused_or_replaced_and_no_temporary_file_is_left(machine, home, capsys):
+    """Review of #316: the temporary file took the file's read-only mode, so a failed rename (Windows) left it."""
+    write(home, {".cursor/mcp.json": '{"mcpServers": {}}\n'})
+    _file(home).chmod(stat.S_IREAD)
+    try:
+        rc = render.main(machine, "cursor", home=True, do_write=True)
+        if rc:   # Windows: a read-only file is not replaced
+            assert "not written" in capsys.readouterr().out
+            assert _file(home).read_text(encoding="utf-8") == '{"mcpServers": {}}\n'
+        else:    # POSIX: the folder's permission decides, the file is replaced
+            assert json.loads(_file(home).read_text(encoding="utf-8"))["mcpServers"] == {"brain": BRAIN_ENTRY}
+        assert [p.name for p in _file(home).parent.iterdir()] == ["mcp.json"]
+    finally:
+        _file(home).chmod(stat.S_IREAD | stat.S_IWRITE)
 
 
 def test_a_symbolic_link_stays_one(machine, home, tmp_path):

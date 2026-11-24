@@ -20,7 +20,7 @@ apply, and it is what makes the next step's settings carry the header); Claude C
 ``otelHeadersHelper`` (``brain ipc claude-settings``: the exact lines and the helper's export checked, HTTP on
 loopback; written by the owner's ``install.ps1 -Apply``, never a session edit); the sovereign bundle applied (``brain
 bundle plan``, then ``apply``); ``brain health ipc``; and Cursor's MCP server rendered (``brain render --target
-cursor``; the home folder's file once brain render has a user-level target). They are optional (a machine without
+cursor --home``, then the owner's ``--home --write`` merges ``~/.cursor/mcp.json``). They are optional (a machine without
 the telemetry collector skips them), and each needs the ones before it: the cockpit runs one at a time, so the owner
 stops at the first that fails. ``brain init`` prints the same steps among its next steps (:func:`local_lines`).
 
