@@ -206,19 +206,10 @@ def _texts(value) -> list[str]:
 def surface(node: dict, st: resume.Store) -> tuple[list[tuple[str, str]], list[str]]:
     """(the (repo token, path) of its CodeRefs, the file names it names) of an item."""
     props = node.get("props") or {}
-    feats = {e["to"] for e in st.edges if e["from"] == node["id"] and e.get("type") == "delivers"
-             and (st.nodes.get(e["to"]) or {}).get("type") == "Feature"}
-    modules = {str(m) for m in [props.get("module"), *(_texts(props.get("modules_secondary")))]
-               if m and str(m).strip() and str(m).strip().lower() != "none"}
-    if modules:
-        feats |= {n["id"] for n in st.of_type("Feature") if str((n.get("props") or {}).get("module") or "") in modules}
+    feats = _delivered(node, st) | _of_modules(props, st)
     paths = {c for e in st.edges if e["from"] in feats and e.get("type") == "implemented_by"
              for c in [_code(e["to"])] if c}
-    for hook in SURFACE_HOOKS:
-        try:
-            paths |= set(hook(node, st))
-        except Exception:  # noqa: BLE001 - a predictor never breaks the report
-            continue
+    paths |= _hooked(node, st)
     names = {m.group(1) for t in [node.get("title") or "", *_texts(props)] for m in FILE_NAME.finditer(t)}
     return sorted(paths), sorted(names)
 
@@ -237,31 +228,60 @@ def weighted(node: dict, st: resume.Store, feature_files: int = FEATURE_FILES,
 
     An entry both strong and weak is strong. ``code``: :func:`coderefs` of ``st``, read once for a whole wave."""
     props = node.get("props") or {}
-    code = coderefs(st) if code is None else code
-    delivered = {e["to"] for e in st.edges if e["from"] == node["id"] and e.get("type") == "delivers"
-                 and (st.nodes.get(e["to"]) or {}).get("type") == "Feature"}
-    modules = {str(m) for m in [props.get("module"), *(_texts(props.get("modules_secondary")))]
-               if m and str(m).strip() and str(m).strip().lower() != "none"}
-    of_module = {n["id"] for n in st.of_type("Feature") if str((n.get("props") or {}).get("module") or "") in modules}
-    strong: set[str] = set()
-    weak: set[str] = set()
-    for f in delivered | of_module:
-        refs = {f"{r}:{p}" for r, p in code.get(f, ())}
-        (strong if f in delivered and len(refs) <= feature_files else weak).update(refs)
-    for hook in SURFACE_HOOKS:
-        try:
-            strong.update(f"{r}:{p}" if r else p for r, p in hook(node, st))
-        except Exception:  # noqa: BLE001 - a predictor never breaks the plan
-            continue
-    sure = [str(node.get("title") or ""), *(t for k in STRONG_PROPS for t in _texts(props.get(k)))]
-    other = [t for k, v in props.items() if k not in STRONG_PROPS for t in _texts(v)]
-    for texts, into in ((sure, strong), (other, weak)):
-        for t in texts:
-            into.update(m.group(1) for m in FILE_NAME.finditer(t))
-            into.update(m.group(1).replace(".", "/") + ".py" for m in MODULE_REF.finditer(t)
-                        if m.group(1).rsplit(".", 1)[1] not in NOT_MODULES)
+    strong, weak = _feature_entries(node, st, coderefs(st) if code is None else code, feature_files)
+    strong |= {f"{r}:{p}" if r else p for r, p in _hooked(node, st)}
+    strong |= _named([str(node.get("title") or ""), *(t for k in STRONG_PROPS for t in _texts(props.get(k)))])
+    weak |= _named([t for k, v in props.items() if k not in STRONG_PROPS for t in _texts(v)])
     specs = {e for e in strong if "specs/" in e.replace("\\", "/")}
     return sorted(strong - specs), sorted((weak | specs) - (strong - specs))
+
+
+def _delivered(node: dict, st: resume.Store) -> set[str]:
+    """The features an item delivers."""
+    return {e["to"] for e in st.edges if e["from"] == node["id"] and e.get("type") == "delivers"
+            and (st.nodes.get(e["to"]) or {}).get("type") == "Feature"}
+
+
+def _of_modules(props: dict, st: resume.Store) -> set[str]:
+    """The features of an item's modules (props.module, props.modules_secondary)."""
+    modules = {str(m) for m in [props.get("module"), *(_texts(props.get("modules_secondary")))]
+               if m and str(m).strip() and str(m).strip().lower() != "none"}
+    if not modules:
+        return set()
+    return {n["id"] for n in st.of_type("Feature") if str((n.get("props") or {}).get("module") or "") in modules}
+
+
+def _hooked(node: dict, st: resume.Store) -> set[tuple[str, str]]:
+    """What :data:`SURFACE_HOOKS` add for an item; a hook that fails adds nothing."""
+    out: set[tuple[str, str]] = set()
+    for hook in SURFACE_HOOKS:
+        try:
+            out |= set(hook(node, st))
+        except Exception:  # noqa: BLE001 - a predictor never breaks the report
+            continue
+    return out
+
+
+def _feature_entries(node: dict, st: resume.Store, code: dict, feature_files: int) -> tuple[set[str], set[str]]:
+    """(strong, weak) CodeRefs: a delivered feature's with ``feature_files`` of them or fewer strong, the others and
+    the modules' features' weak."""
+    delivered = _delivered(node, st)
+    strong: set[str] = set()
+    weak: set[str] = set()
+    for f in delivered | _of_modules(node.get("props") or {}, st):
+        refs = {f"{r}:{p}" for r, p in code.get(f, ())}
+        (strong if f in delivered and len(refs) <= feature_files else weak).update(refs)
+    return strong, weak
+
+
+def _named(texts: list[str]) -> set[str]:
+    """The file names the texts name, and the ``brain.x.y`` modules as ``brain/x/y.py``."""
+    out: set[str] = set()
+    for t in texts:
+        out.update(m.group(1) for m in FILE_NAME.finditer(t))
+        out.update(m.group(1).replace(".", "/") + ".py" for m in MODULE_REF.finditer(t)
+                   if m.group(1).rsplit(".", 1)[1] not in NOT_MODULES)
+    return out
 
 
 def coderefs(st: resume.Store) -> dict[str, set[tuple[str, str]]]:

@@ -43,7 +43,7 @@ def _commit(repo, files: dict, message: str, day: str) -> None:
         f.write_text(text, encoding="utf-8")
     run_git(repo, "add", "-A")
     env = dict(os.environ, **GIT_ENV, GIT_AUTHOR_DATE=f"{day}T10:00:00", GIT_COMMITTER_DATE=f"{day}T10:00:00")
-    subprocess.run(["git", "-C", str(repo), "commit", "-q", "-m", message], check=True, env=env)
+    subprocess.run(["git", "-C", str(repo), "commit", "-q", "-m", message], check=True, env=env, timeout=60)
 
 
 def _pr(repo, n: int, title: str, files: dict, day: str) -> None:
@@ -53,7 +53,7 @@ def _pr(repo, n: int, title: str, files: dict, day: str) -> None:
     run_git(repo, "checkout", "-q", "main")
     env = dict(os.environ, **GIT_ENV, GIT_AUTHOR_DATE=f"{day}T12:00:00", GIT_COMMITTER_DATE=f"{day}T12:00:00")
     subprocess.run(["git", "-C", str(repo), "merge", "-q", "--no-ff", "-m",
-                    f"Merge pull request #{n} from demo/pr{n}\n\n{title}", f"pr{n}"], check=True, env=env)
+                    f"Merge pull request #{n} from demo/pr{n}\n\n{title}", f"pr{n}"], check=True, env=env, timeout=60)
 
 
 @pytest.fixture
