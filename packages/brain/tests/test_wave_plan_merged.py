@@ -15,7 +15,7 @@ import pytest
 from conftest import GIT_ENV, git_init, run_git
 from test_wave_plan import EDGES, NODES, SCHEMA
 
-from brain import cli, closemerged, governor, lots, quota
+from brain import cli, closemerged, governor, lots, quota, waves
 from brain.commands import next as next_cmd
 from brain.commands import wave as wave_cmd
 
@@ -167,3 +167,67 @@ def test_next_counts_the_merged_items_done(root, registry, capsys):
     assert cli.main(["--root", str(root), "next", "--json"]) == 0
     data = json.loads(capsys.readouterr().out)
     assert data["merged"]["items"] == {"wi-views": ["engine #1"]} and data["lots"]["merged"]["counted"] == "done"
+
+
+def _hold_work(root, debt_wave: str = "wave-1.1.0") -> None:
+    """Three items a merge does not finish: one kept doing for a step after the pin (props.left), one waiting on a
+    gesture (props.external_blocker), the repo's standing debt item (props.audit_repo), in ``debt_wave``."""
+    store = root / "notes" / "graph"
+    text = NODES.replace('{id: wi-cli-help, type: WorkItem, status: todo, title: "A help text in cli.py", '
+                         'props: {priority: P2}}',
+                         '{id: wi-cli-help, type: WorkItem, status: doing, title: "A help text in cli.py", '
+                         'props: {priority: P2, left: "after the pin: the install"}}')
+    text = text.replace('{id: wi-blank, type: WorkItem, status: todo, title: "Something with no file named"}',
+                        '{id: wi-blank, type: WorkItem, status: todo, title: "Something with no file named", '
+                        'props: {external_blocker: "the owner signs the tag"}}')
+    assert text.count("left: ") == 1 and text.count("external_blocker") == 1
+    text += '- {id: wi-debt, type: WorkItem, status: doing, title: "The debt batch", props: {audit_repo: engine}}\n'
+    (store / "nodes" / "work.yaml").write_text(text, encoding="utf-8", newline="\n")
+    (store / "edges" / "work.yaml").write_text(EDGES + f"- {{from: wi-debt, to: {debt_wave}, type: part_of}}\n",
+                                               encoding="utf-8", newline="\n")
+
+
+def test_a_merged_item_that_still_holds_work_stays_open(root, engine, registry, capsys):
+    _hold_work(root)
+    _pr(engine, 4, "wi-cli-help: the help text", {"changes/wi-cli-help.md": "section: Added\n\n- help\n"},
+        "2030-01-06")
+    _pr(engine, 5, "wi-blank: the part before the gesture", {"src/blank.py": "x = 1\n"}, "2030-01-07")
+    _pr(engine, 6, "wi-debt: batch 1", {"changes/wi-debt-1.md": "section: Changes\n\n- debt\n"}, "2030-01-08")
+    wp = _plan(root, [("engine", engine)])
+    assert {"wi-cli-help", "wi-blank", "wi-debt"} <= set(wp.units)   # open, in the lots
+    assert wp.merged["items"] == {"wi-views": ["engine #1"]}
+    assert wp.merged["kept"] == {"wi-cli-help": "left: after the pin: the install",
+                                 "wi-blank": "waits on: the owner signs the tag",
+                                 "wi-debt": "standing: no merge closes it"}
+    text = "\n".join(lots.render(wp))
+    assert "  merged, work left, kept open (3): wi-cli-help (left: after the pin: the install), " in text
+    assert ("brain item close each (brain wave close-merged 1.1.0 --write would close the kept ones too, with their "
+            "work left)") in text
+    assert cli.main(["--root", str(root), "next"]) == 0
+    out = capsys.readouterr().out
+    assert "  merged, work left, kept open (3): wi-cli-help, wi-blank, wi-debt" in out
+    assert "nothing open" not in out
+    assert cli.main(["--root", str(root), "next", "--json"]) == 0
+    assert set(json.loads(capsys.readouterr().out)["merged"]["kept"]) == {"wi-cli-help", "wi-blank", "wi-debt"}
+
+
+def test_a_standing_batch_merged_does_not_count_the_next_waves_one_done(root, engine):
+    _hold_work(root, debt_wave="wave-1.2.0")
+    _pr(engine, 4, "wi-debt: batch 1", {"changes/wi-debt-1.md": "section: Changes\n\n- debt\n"}, "2030-01-06")
+    said, found = lots.merged_of(waves.load(root / "notes" / "graph", root), "wave-1.1.0", [("engine", engine)])
+    assert "wi-debt" not in found and "wi-debt" not in said["outside"] and said["kept"] == {}
+
+
+def test_a_repo_with_no_fragment_folder_maps_nothing_in_the_overlay(root, engine, tmp_path):
+    """A planning repo names an item in the title of the PR that files it: the overlay reads none of its PRs;
+    close-merged, a step someone reviews, still does."""
+    planning = git_init(tmp_path / "planning")
+    _commit(planning, {"notes/graph/nodes/work.yaml": "[]\n"}, "base", "2030-01-01")
+    run_git(planning, "tag", "v1.0.0")
+    _pr(planning, 7, "Idea wi-cli-fix (P1) filed", {"notes/ideas.md": "wi-cli-fix\n"}, "2030-01-03")
+    wp = _plan(root, [("engine", engine), ("planning", planning)])
+    assert "wi-cli-fix" in wp.units and wp.merged["items"] == {"wi-views": ["engine #1"]}
+    assert wp.merged["skipped"]["planning"].startswith("no changelog fragment folder at ")
+    assert "engine" in wp.merged["ranges"]
+    cm = closemerged.plan(root / "notes" / "graph", [("planning", planning)], "1.1.0", root=root)
+    assert [p.ref for p in cm.to_close["wi-cli-fix"]] == ["planning #7"]

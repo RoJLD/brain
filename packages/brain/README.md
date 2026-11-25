@@ -706,8 +706,12 @@ title) takes them out of the lots, the rounds and the quick-win slot's candidate
 prerequisites, the wave's own listed in the plan's head (« Merged, to close (N) », with the `close-merged --write` that
 closes them) and the others as prerequisites satisfied; a repo that cannot be read (no tag before the release, not a
 repo, git failing) maps nothing and is said, its items open, as are those of a PR merged by rebase (no trace on the
-branch). `--include-merged` keeps them in the lots, said merged; `--no-merged` reads no PR. Then each open item's
-predicted surface, weighted (`brain.collisions.weighted`): **strong** what says what it edits (a file, or a `brain.x`
+branch); so does a repo with no changelog fragment folder (a planning repo, whose PR titles name the items they file),
+which `close-merged` itself still reads. A merged item that still holds work stays open, listed as « merged, work left,
+kept open » with why: a standing item (`props.audit_repo` or `props.standing`), a step left (`props.left`) or a
+gesture awaited (`props.external_blocker`); while one is kept, the plan says to close the others by hand, as
+`close-merged --write` would close the kept ones too. `--include-merged` keeps them in the lots, said merged;
+`--no-merged` reads no PR. Then each open item's predicted surface, weighted (`brain.collisions.weighted`): **strong** what says what it edits (a file, or a `brain.x`
 module read as `brain/x.py`, that its title, `props.where`, `props.size_reason` or `props.files` name; the CodeRefs of
 a feature it delivers with 6 CodeRefs or fewer; what a surface hook adds), **weak** what only stands near it (a file its
 other props name, a spec document, a broader feature's or its module's CodeRefs). The items that meet on a file, a
