@@ -425,7 +425,8 @@ def propose(store: Path, root: Path | None = None, n: int = 3, start: str = "", 
     wid = _start(plan, start)
     merged: list[str] = []
     if repos and read_merged:
-        merged = sorted(lots.merged_of(plan, wid, repos)[1])
+        merged = sorted(i for i in lots.merged_of(plan, wid, repos)[1] if not _standing(plan, i))   # a batch merged
+        # leaves a standing item standing
         plan = lots.as_done(plan, merged)
     pls = placement.placements(plan)
     base = placement._Ctx.of(plan).pos.get(wid, len(plan.waves))

@@ -151,3 +151,13 @@ def test_brain_wave_propose_text_json_and_against(root, tmp_path, capsys):
     assert "since the earlier proposal, s3: +" in capsys.readouterr().out
     assert cli.main(base + ["--from", "wave-nothing"]) == 1
     assert "no wave of that release or id" in capsys.readouterr().err
+
+
+def test_merged_items_count_done_and_a_standing_one_stays(root, monkeypatch):
+    found = {"wi-a": ["brain #1"], "wi-debt": ["brain #2"]}
+    monkeypatch.setattr(propose.lots, "merged_of", lambda plan, wid, repos: ({}, found))
+    prop = _prop(root, items=8, pts=30, repos=[("brain", root)])
+    assert prop.merged == ["wi-a"]
+    assert "wi-a" not in _where(prop) and "wi-a" not in {r["id"] for r in prop.out}
+    assert _where(prop)["wi-b"] == "s3"   # its prerequisite merged: satisfied
+    assert all(w.standing == ["wi-debt"] for w in prop.waves)
