@@ -134,15 +134,21 @@ def items(root: Path, store: Path, *, statuses=None, every: bool = False, priori
     return rows
 
 
-def render_item(d: dict, events: list | None) -> list[str]:
-    """``brain item show``'s text: research_graph's item, every prop in full, then its decisions and DDRs."""
+def _head(d: dict) -> list[str]:
+    """``brain item show``'s first lines: the node, its title, its anchor, repo and store, its organ line."""
     from research_graph import report
     out = [f"{report.name(d)}  [{d['type']} {d['status']}]  priority {report.priority_label(d)}",
            f"  {' '.join(str(d['title']).split())}"]
     out += [f"  {k}: {v}" for k, v in (("anchor", d.get("anchor")), ("repo", ", ".join(d.get("repos") or [])),
                                         ("store", d.get("store_path"))) if v]
-    if d.get("organ_line"):
-        out.append(f"  {d['organ_line']}")
+    return out + ([f"  {d['organ_line']}"] if d.get("organ_line") else [])
+
+
+def render_item(d: dict, events: list | None) -> list[str]:
+    """``brain item show``'s text: research_graph's item, its organ, every prop in full, then its decisions and
+    DDRs."""
+    from research_graph import report
+    out = _head(d)
     if d.get("props"):
         out.append("props:")
         out += [f"  {k}: {' '.join(str(v).split())}" for k, v in d["props"].items()]
