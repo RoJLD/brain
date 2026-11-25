@@ -26,7 +26,8 @@ USAGE = """\
                  release forecast: whether the current wave ships as the patch it is named for or as a minor, the
                  first PR that tipped it and why (release_check --preview of the engine checkout's origin/main,
                  brain.nextrelease; advisory); the items merged but not closed (brain wave close-merged's mapping,
-                 git only) count done, said in one line
+                 git only) count done, said in one line, those still holding work kept open; the lots without the
+                 hot files by history (brain wave plan reads them)
 """
 
 
@@ -39,7 +40,9 @@ def _merged(pl: waves.Plan, repos: list) -> tuple[dict, dict]:
 
 
 def _lots(args, root: Path, store: Path, rep: dict, merged: tuple[dict, dict]):
-    """The current wave's plan (brain.lots), None without a current wave or when it cannot be cut."""
+    """The current wave's plan (brain.lots, with the merged items already read), None without a current wave or when it
+    cannot be cut. No repo is passed: the hot files by history (brain.lots.history_hot, one ``git log --numstat`` a
+    repo, tens of seconds on a planning repo) are brain wave plan's, not this summary's."""
     if rep["current"] is None:
         return None
     try:

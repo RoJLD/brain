@@ -710,20 +710,29 @@ branch); so does a repo with no changelog fragment folder (a planning repo, whos
 which `close-merged` itself still reads. A merged item that still holds work stays open, listed as « merged, work left,
 kept open » with why: a standing item (`props.audit_repo` or `props.standing`), a step left (`props.left`) or a
 gesture awaited (`props.external_blocker`), another wave's apart (« kept open outside the wave », e.g. its standing debt item a fragment of a batch maps); while one is kept, of this wave or another, the plan says to close the others by hand, as
-`close-merged --write` would close the kept ones too. `--include-merged` keeps them in the lots, said merged; `--no-merged` reads no PR. Then each open item's
-predicted surface (`brain collisions`': its features' CodeRefs, its
-modules, the files it names), the items that share a file in one lot, run in the order of their `depends_on`; the hot
-files every PR adds to (the READMEs, CHANGELOGs, `formats.md`, `FEATURES.md`, `config.schema.json`, the `changes/`
-fragments; `--hot` adds one) counted apart and listed, to merge origin/main before the push. A lot that holds another's
-prerequisite comes a round earlier, the lots that unblock the most first, at most the sessions cap in force less the
-master's and `N` PRs verified at once (3) a round. It prints the rounds, the predicted conflicts, the hot files shared
-and the items with no known surface (each a lot of its own, unchecked), with what the memory guard and the last quota
+`close-merged --write` would close the kept ones too. `--include-merged` keeps them in the lots, said merged;
+`--no-merged` reads no PR. Then each open item's predicted surface, weighted (`brain.collisions.weighted`): **strong** what says what it edits (a file, or a `brain.x`
+module read as `brain/x.py`, that its title, `props.where`, `props.size_reason` or `props.files` name; the CodeRefs of
+a feature it delivers with 6 CodeRefs or fewer; what a surface hook adds), **weak** what only stands near it (a file its
+other props name, a spec document, a broader feature's or its module's CodeRefs). The items that meet on a file, a
+strong entry on one side at least, share a lot, run in the order of their `depends_on`; two weak entries that meet are
+listed as possible conflicts and join nothing. The hot files every PR adds to (the READMEs, CHANGELOGs, `formats.md`,
+`FEATURES.md`, `config.schema.json`, the `changes/` fragments; `--hot` adds one), and those the repos' history shows so
+(touched by 10 % of the last 100 first-parent commits or more, 5 at least, mostly by additions: one `git log --numstat`
+a repo, `brain.lots.history_hot`; listed « Hot by history »), are counted apart and listed in the lots' order, to merge
+origin/main before the push. A lot over 8 items, or whose longest `depends_on` chain is over 3, is split: the links
+through its most shared file are cut first, and each cut file is listed as a merge-order note (« Lots split »). A broad
+item (more than 30 strong entries, or a repo's standing debt item: `props.audit_repo` or `props.standing`) is a lot of
+its own, in the last round when nothing waits on it. A lot that holds another's prerequisite comes a round earlier, the lots that unblock the most first, at most the sessions cap in force less the
+master's and `N` PRs verified at once (3) a round. It prints the rounds, the predicted conflicts, the possible ones, the lots split,
+the hot files shared and the items with no known surface (each a lot of its own, unchecked), with what the memory guard and the last quota
 forecast say now; it refuses nothing. While `usage.guard.wave_quota` is set, a round holds at most its `max_streams`
 lots, and the plan says how many streams fit now: this session's live streams under `max_streams`, and the first
 round's lots, each at the sum of its items' recorded estimates (`props.cost_estimate`; none: the median session's),
 under `ask_over_pct` at the week's reset (docs/guards.md, « The wave quota gate »). `brain next` shows the current
 wave's first round, and that line; it counts the merged items done too (its wave's counts, its startable and open
-groups), said in one line.
+groups), said in one line, and the ones kept open in another. Its lots leave the hot files by history aside (one
+`git log --numstat` a repo on every call: `brain wave plan` reads them).
 
 ### Item sizes
 
