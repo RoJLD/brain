@@ -511,10 +511,11 @@ def _value(ddr: dict, value) -> tuple[list[str], str, str] | None:
 
 
 def answer_batch(root: Path, text: str, *, by: str = "", via: str = "ask-tool", at: str,
-                 again: bool = False, check=None) -> dict:
+                 again: bool = False, check=None, dry_run: bool = False) -> dict:
     """Record a session's answers (``by``: config.json's owner by default): every key resolved and checked first
     (``check(ddr_id, choices, other)``: a refusal, '' when it may be recorded), then each DDR answered
-    (``decisions.answer``). Returns the DDRs answered and the ids left pending (an empty answer)."""
+    (``decisions.answer``; ``dry_run``: as it would be, nothing written). Returns the DDRs answered and the ids left
+    pending (an empty answer)."""
     by = by or config.owner_of()
     pairs = parse(text)
     if not pairs:
@@ -547,5 +548,5 @@ def answer_batch(root: Path, text: str, *, by: str = "", via: str = "ask-tool", 
     if errors:
         raise BatchError("nothing written:\n  " + "\n  ".join(errors))
     answered = [decisions.answer(root, ddr_id, choices, other=other, notes=notes, by=by, via=via, at=at,
-                                 again=again) for ddr_id, choices, other, notes in plan]
+                                 again=again, dry_run=dry_run) for ddr_id, choices, other, notes in plan]
     return {"answered": answered, "skipped": skipped}

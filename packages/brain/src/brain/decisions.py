@@ -171,9 +171,10 @@ def _choice(ddr: dict, text: str) -> str:
 
 
 def answer(root: Path, ref: str, choices: list[str], *, other: str = "", notes: str = "", by: str = "",
-           via: str = "cli", at: str, again: bool = False, check=None) -> dict:
+           via: str = "cli", at: str, again: bool = False, check=None, dry_run: bool = False) -> dict:
     """Record an answer to the DDR ``ref``, by ``by`` (config.json's owner by default); ``check(ddr_id, choices,
-    other)`` returns a refusal ('' when it may be recorded: brain.answers.refusal)."""
+    other)`` returns a refusal ('' when it may be recorded: brain.answers.refusal). ``dry_run``: every check made,
+    the DDR as it would be written returned (validated), nothing written."""
     by = by or config.owner_of()
     _, ddr = find(root, ref)
     if ddr.get("status") != "pending" and not again:
@@ -198,6 +199,12 @@ def answer(root: Path, ref: str, choices: list[str], *, other: str = "", notes: 
     ddr["status"] = "answered"
     for k in ("read", "applied", "archived"):
         ddr.pop(k, None)
+    if dry_run:   # records.write's checks, without the write: engine.min, then the schema (a newer brain's fields kept)
+        from . import schema, skew
+        low = skew.below_min(root)
+        if low:
+            raise QueueError(f"no DDR would be written: {low}")
+        return records.validate("ddr", ddr, frozenset(schema.unknown_fields("ddr", ddr)))
     records.write(root, "ddr", ddr, replace=True)
     return ddr
 
