@@ -482,21 +482,25 @@ def merged_lines(wp: WavePlan) -> list[str]:
     m = wp.merged
     if not m:
         return []
-    items, outside, kept = m.get("items") or {}, m.get("outside") or {}, m.get("kept") or {}
+    items, kept = m.get("items") or {}, m.get("kept") or {}
     how = ("still in the lots (--include-merged)" if m.get("counted") == "open"
            else "out of the lots, counted done")
-    lines = [f"Merged, to close ({len(items)}): " + (", ".join(f"{i} ({', '.join(v)})" for i, v in items.items())
-                                                    or "none") + (f"; {how}" if items else "")
-             + (f"; {close_advice(m['release'], kept)}" if items else "")]
-    if kept:
-        lines.append(f"  merged, work left, kept open ({len(kept)}): "
-                     + ", ".join(f"{i} ({why})" for i, why in kept.items()))
+    head = f"Merged, to close ({len(items)}): " + (
+        ", ".join(f"{i} ({', '.join(v)})" for i, v in items.items()) + f"; {how}; {close_advice(m['release'], kept)}"
+        if items else "none")
+    return [head] + _merged_tail(m)
+
+
+def _merged_tail(m: dict) -> list[str]:
+    """Under the plan's merged head: the items kept open, those outside the wave, the repos not read."""
+    kept, outside = m.get("kept") or {}, m.get("outside") or {}
+    lines = [f"  merged, work left, kept open ({len(kept)}): " + ", ".join(f"{i} ({why})" for i, why in kept.items())
+             ] if kept else []
     if outside:
         what = "counted open" if m.get("counted") == "open" else "satisfied as prerequisites"
         lines.append(f"  merged outside the wave, {what} ({len(outside)}): " + ", ".join(sorted(outside)))
-    for repo, why in (m.get("skipped") or {}).items():
-        lines.append(f"  merged PRs not read in {repo}: {why} (its items stay open)")
-    return lines
+    return lines + [f"  merged PRs not read in {repo}: {why} (its items stay open)"
+                    for repo, why in (m.get("skipped") or {}).items()]
 
 
 def close_advice(release: str, kept: dict) -> str:
