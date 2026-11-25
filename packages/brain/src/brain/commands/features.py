@@ -15,7 +15,8 @@ USAGE_ORDER = 30   # its usage lines' place in brain --help's epilog
 USAGE = """\
   brain features list [--status S] [--domain D] [--repo R] [--module M] [--value V] [--json]
   brain features search TEXT... [--limit N] [--json] | show ID [--json]   the feature matrix through its SQLite
-                 index (full-text search, FTS5), a cache in <BRAIN_HOME>/features rebuilt when the store changes
+                 index (full-text search, FTS5), a cache in <BRAIN_HOME>/features rebuilt when the store changes;
+                 show adds its organ (brain.placement: by hand, or derived from its links; --json: organ)
   brain features add ID --title T --domain D [--status planned] [--value medium] [--repo R] [--module M]
                  [--code PATH[::SYMBOL]]... [--test T]... [--doc D]... [--spec S]... [--adr A]... [--parent F]
                  [--item WI]... [--prop k=v]...   | link ID [the same edges] | set ID key=value...
@@ -89,6 +90,16 @@ def _features_sync(args, root: Path, store: Path) -> int:
     return _features_view(args, root, store, write=True)
 
 
+def _organ(root: Path, store: Path, fid: str) -> tuple[dict | None, str]:
+    """(the feature's placement as JSON, its organ line) (brain.placement); (None, '') for a store that reads no
+    registry of modules or whose graph does not load."""
+    from .. import placement, reads
+    g = placement.load(store, root)
+    if g is None or fid not in g:
+        return None, ""
+    return reads.organ(root, store, g, fid)
+
+
 def cmd_features(args, root: Path) -> int:
     store = _store(args, root)
     sub = args.features_cmd
@@ -107,7 +118,8 @@ def cmd_features(args, root: Path) -> int:
                     if f is None:
                         print(f"brain: {args.id}: unknown feature", file=sys.stderr)
                         return 1
-                    features.print_show(f, args.json)
+                    f["organ"], line = _organ(root, store, args.id)
+                    features.print_show(f, args.json, line)
             finally:
                 db.close()
             return 0

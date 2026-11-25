@@ -13,7 +13,8 @@ ORDER = 20   # its place in brain --help's list of commands (brain.commands)
 USAGE_ORDER = 20   # its usage lines' place in brain --help's epilog
 USAGE = """\
   brain item show ID [--history] [--json]   one node and all that bears on it, instead of reading the store's YAML:
-                 its props in full, its edges both ways, the ids its props name, its blockers, the ADRs that decide it
+                 its organ (brain.placement: its props.module, else derived from its links; --json: organ), its props
+                 in full, its edges both ways, the ids its props name, its blockers, the ADRs that decide it
                  (direct and inherited) and its specs, the DDRs that name it; --history: its changes from git (a
                  replay of the store's history: a minute on a store of thousands of nodes and commits)
   brain item add ID --title T [--priority P1 [--reason R]] [--size S|M|L|XL --size-reason R] [--spec S]

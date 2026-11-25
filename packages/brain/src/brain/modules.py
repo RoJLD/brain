@@ -575,7 +575,29 @@ def data(store: Path, root: Path | None = None) -> dict:
             "outside": sum(1 for n in opened if _props(n).get("module") == NONE), "problems": problems(store, root),
             "features": len(more["features"]), "features_unplaced": missing["features"],
             "done_items": len(more["done"]), "done_unplaced": missing["done"], "warnings": warnings(store, root),
-            **_import_data(store, root, reg)}
+            **_import_data(store, root, reg), "placement": _placement_data(store, root, reg)}
+
+
+def _known(reg: list[dict]) -> set[str]:
+    return {str(m["id"]) for m in reg}
+
+
+def _placement_data(store: Path, root: Path | None, reg: list[dict]) -> dict | None:
+    """brain modules --json's ``placement`` (brain.placement.data); None when the store's graph does not load."""
+    from . import placement
+    g = placement.load(store, root)
+    return None if g is None else placement.data(g, _known(reg))
+
+
+def placement_lines(store: Path, root: Path | None, reg: list[dict]) -> list[str]:
+    """The view's placement section (wi-brain-organ-placement, brain.placement): every node's organ by type."""
+    from . import placement
+    return placement.view_lines(placement.load(store, root), _known(reg), names(reg))
+
+
+def names(reg: list[dict]) -> dict[str, str]:
+    """{module id: its name} of the registry's entries."""
+    return {str(m["id"]): str(m.get("name") or "") for m in reg}
 
 
 def _import_data(store: Path, root: Path | None, reg: list[dict]) -> dict:
@@ -612,6 +634,7 @@ def render(store: Path, store_label: str = "notes/graph", root: Path | None = No
     out += _import_lines(reg)
     from . import modulemap   # the map of realisations (brain.modulemap): its sections, when an entry has it
     out += modulemap.view_lines(reg)
+    out += placement_lines(store, root, reg)
     for b, m in _order(reg):
         out += _section(b, m, counts, primary, secondary)
     out += ["", "## Outside the tree", ""] + ([f"- `{n['id']}`: {_cell(_props(n).get('module_reason', ''))}"

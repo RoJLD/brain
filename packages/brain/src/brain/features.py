@@ -769,13 +769,17 @@ def print_list(rows: list[dict], as_json: bool) -> None:
     print(f"{len(rows)} feature(s): " + ", ".join(f"{counts[s]} {s}" for s in STATUSES))
 
 
-def print_show(f: dict, as_json: bool) -> None:
+def print_show(f: dict, as_json: bool, organ_line: str = "") -> None:
+    """``brain features show``: the feature, its organ line (brain.placement; ``f["organ"]`` in JSON), its links and
+    its props."""
     if as_json:
         print(json.dumps(f, ensure_ascii=False, indent=1, sort_keys=True))
         return
     props = dict(f["props"])
     print(f"{f['id']} [{f['status']}] {f['title']}")
     print("  " + "  ".join(f"{k} {props.pop(k, '') or '-'}" for k in ("domain", "repo", "value", "module")))
+    if organ_line:
+        print(f"  {organ_line}")
     for link in f["links"]:
         what = link["other_type"] + (f", {link['other_status']}" if link["other_status"] else "")
         arrow = link["type"] if link["dir"] == "out" else f"{link['type']} (from)"

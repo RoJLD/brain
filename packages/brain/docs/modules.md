@@ -244,10 +244,48 @@ platform's. A public `FEATURES.md` an earlier engine rendered with that column i
   - a proposed module with none, to put back to sleep 90 days after its proposal;
   - a module an item names that the registry does not know;
 - for an imported registry, the counts by brick, the documents read and the divergences between them;
+- the placement: every node's organ, counted by node type, and the hand placements the links contradict (below);
 - per module, its open items and the open items that have it as secondary;
 - the items outside the tree, with their reason.
 
-The view holds no date of its own, so it changes only when the registry or the items change.
+The view holds no date of its own, so it changes only when the registry, the items or, for its placement section,
+the store's edges change.
+
+## Every node's organ
+
+A node's organ is the module of the registry it serves. Every node of the store (a doc section, a test, a
+piece of code, an ADR, a lesson, a spec, a milestone, as well as the items and features) is placed on one, by
+`brain.placement`, computed when it is read: no file holds it, and the store's format does not change.
+
+- **By hand**: the node's own `props.module` (the items and the features carry one; a rule, a hook, a skill, a
+  plugin or an MCP server, which no edge places, gets one once: `brain item set rule-x props.module=P2`).
+- **Derived**: otherwise, each neighbour placed by hand on a module of the registry gives it one vote, along
+  `documented_in`, `implemented_by`, `tested_by`, `specified_by`, `decided_by`, `enforced_by`, `delivers`,
+  `learned_from`, `led_to` and `part_of`, in either direction. The first module places the node when it has at least
+  twice the votes of the second (a clear majority).
+- **Split**: votes with no clear majority. **Unplaced**: no vote.
+- **Contradicted**: a hand placement whose votes give another module of the registry a clear majority of at least
+  two votes (a single link, a hook part of its plugin, is no evidence against a choice). The engine never changes it:
+  the owner moves the hand placement or the links. A hand `none` (outside the tree) is never contradicted.
+
+Placement is a distribution: each module's weight is its share of the votes (`brain item show ID --json`: `organ`,
+with `votes` per module and edge type, and `weights`). Only hand placements vote, one hop away, so the result does not
+depend on the order the nodes are read; the records (DDRs, sessions, actions), placed through what they are `about`,
+need a second hop, left to a later version.
+
+```text
+$ brain item show wi-x
+wi-x  [WorkItem todo]  priority P2
+  ...
+  organ: P2 kettle-core, by hand (props.module); its links: P2 2: delivers 2
+$ brain features show feat-y
+  ...
+  organ: P2 kettle-core, derived from 3 of 4 link(s) (P2 3: implemented_by 2, delivers 1; K1 1: delivers 1)
+```
+
+The view's section gives, per node type, how many nodes are placed by hand, derived, split, unplaced and
+contradicted, then the contradicted ones with their votes. `brain modules --json` gives `placement`: `edges`,
+`majority`, `contradict`, `by_type` and `contradicted` (each a node's placement), or null when the store's graph does not load.
 
 The view is a generated file, like the kanban: `.gitattributes` sends it to the brain's merge driver
 (`notes/modules_graph.md merge=brain`, a line `brain init` writes), which keeps one side of a merge and marks it

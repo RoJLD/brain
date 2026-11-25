@@ -19,7 +19,9 @@ USAGE = """\
                  reads the registry config.json modules.store names); the view notes/modules_graph.md (beside the
                  store's board when it is not in notes/; per module its phase, status, items done and open, and
                  the gaps, and how many features and done items are placed; for an imported registry, the counts by
-                 brick, the documents read and their divergences; for a map, the realisations and their gaps),
+                 brick, the documents read and their divergences; for a map, the realisations and their gaps; the
+                 placement: every node's organ by node type, by hand, derived from its links, split or unplaced, and
+                 the hand placements its links contradict, brain.placement; --json: placement),
                  written by brain sync; --check: the open items with no module, or a module the registry does not
                  know, the imported entries' fields and the map's (the modules, capabilities, projects and paths it
                  names; a wanted module with nothing that builds it; personas.yaml beside the registry: its
