@@ -10,7 +10,19 @@ import json
 import sys
 from pathlib import Path
 
-from .. import closemerged, config, graph, lots, nextrelease, projects, waveclose, waveimport, waverename, waves
+from .. import (
+    closemerged,
+    config,
+    graph,
+    lots,
+    nextrelease,
+    placement,
+    projects,
+    waveclose,
+    waveimport,
+    waverename,
+    waves,
+)
 from ._common import _project, _store
 from ._common import _repos as _project_repos
 
@@ -64,6 +76,14 @@ USAGE = """\
                  usage.guard.wave_quota: at most max_streams lots a round, and the streams that fit now), the wave's
                  quick-win slot (a fifth of its places for size S and high value: what fills it, the candidates);
                  refuses nothing
+  brain wave placements [ID]... [--all] [--json]   where each open item may go among the waves, at zero token
+                 (brain.placement, docs/placements.md): its props.place (« wave s11; after ID; with ID; own-lot »,
+                 format v1), else the placement words of its free text (props.wave_planned, planned_wave, wave_fit,
+                 wave, after_1_0, the decided_* answers, track), resolved to wave places: composed (in a pending wave
+                 now), pinned, a choice, constrained (earliest, latest, before or after an era's stage, after or with
+                 items, its own lot), free, out (owner, later, a trigger), unparsed (listed with its text), none
+                 (--all names them); then the questions: a choice, a conflict, a wave or an item named that is not
+                 there; each line ends with its props.place form; writes nothing
 """
 
 
@@ -102,6 +122,17 @@ def _rename(args, store: Path) -> int:
             f"check" if args.write else "not written: --write")
     n, k = sum(r.files.values()) + sum(r.generated.values()), len(r.files) + len(r.generated)
     print(f"{r.old} -> {r.new} (seq {r.seq}): {n} reference(s) in {k} file(s); {tail}")
+    return 0
+
+
+def _placements(args, root: Path, store: Path) -> int:
+    plan = waves.load(store, root)
+    unknown = [i for i in args.ids or [] if not plan.is_item(i)]
+    if unknown:
+        print(f"brain wave placements: not a work item: {', '.join(unknown)}", file=sys.stderr)
+        return 1
+    rep = placement.report(plan, args.ids or None)
+    print(json.dumps(rep, indent=2, ensure_ascii=False) if args.json else "\n".join(placement.render(rep, args.all)))
     return 0
 
 
@@ -246,6 +277,8 @@ def cmd_wave(args, root: Path) -> int:
             return _close_merged(args, root, store)
         if args.wave_cmd == "check":
             return _check(args, root, store)
+        if args.wave_cmd == "placements":
+            return _placements(args, root, store)
         return _import(args, store)
     except graph.GraphError as exc:
         print(f"brain: {exc}", file=sys.stderr)
@@ -310,6 +343,12 @@ def register(sub, ctx) -> None:
                         help="read no merged PR: every item not closed counts open (the plan before close-merged's "
                              "mapping)")
     wp.add_argument("--json", action="store_true", help="the data, as JSON")
+    wl = wv.add_parser("placements", help="where each open item may go among the waves: its props.place, else the "
+                                          "placement words of its free text, resolved; the questions it leaves "
+                                          "(zero token, writes nothing)")
+    wl.add_argument("ids", nargs="*", metavar="ID", help="these work items only (default: every open one)")
+    wl.add_argument("--all", action="store_true", help="name the items with no placement text too")
+    wl.add_argument("--json", action="store_true", help=f"the data, as JSON (format {placement.FORMAT})")
 
 
 run = cmd_wave

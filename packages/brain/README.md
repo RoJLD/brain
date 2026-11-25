@@ -729,6 +729,15 @@ under `ask_over_pct` at the week's reset (docs/guards.md, « The wave quota gate
 wave's first round, and that line; it counts the merged items done too (its wave's counts, its startable and open
 groups), said in one line.
 
+`brain wave placements [ID]... [--all] [--json]` says where each open item may go among the waves, at zero token
+(`brain.placement`, [docs/placements.md](docs/placements.md)): its `props.place` when it has one (« `wave s11; after
+wi-x; with wi-y; own-lot` », format v1, authoritative), else the placement words of its free text (`props.wave_planned`,
+`planned_wave`, `wave_fit`, `wave`, `after_1_0`, the `decided_*` answers, `track`), resolved to wave places. Each item
+is composed (in a pending wave now), pinned, a choice, constrained, free, out (owner, later, a trigger) or unparsed
+(listed with its text, never guessed), each with its `props.place` form; then the questions it leaves: a choice, two
+waves in one text, two sources that disagree, a wave reached or dropped, a wave or an item named that is not there. It
+writes nothing; `brain check` warns on a malformed `props.place`. The wave composer reads the same placements.
+
 ### Item sizes
 
 Every work item carries a size, the judgement of the session that writes it: `props.size` (`S`, `M`, `L`, `XL`) and
