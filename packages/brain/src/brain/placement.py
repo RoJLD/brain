@@ -15,9 +15,10 @@ Two sources, one result:
 - the free text the owner's placements were recorded in before: ``props.wave_planned``, ``props.planned_wave``,
   ``props.wave_fit`` and ``props.wave`` (in that order; ``brain wave import``'s ``props.wave`` included), then
   ``props.after_1_0`` (item ids: an ordering that binds only after the 1.0 era's exit), then the ``decided_*``
-  answers (newest first, read only for their placement words: a wave ``sN``, « the wave after X.Y.Z », « before
-  1.0 », « after 1.0 », « unplaced », « later »), then ``props.track`` (« owner »: out of the waves). A phrase it
-  does not know is never guessed: an item whose text yields nothing is listed as unparsed, with its text.
+  answers (newest first, read only for their placement words: a wave ``sN``, in it or its bounds, « the wave after
+  X.Y.Z », « before 1.0 », « after 1.0 », « unplaced », « later »; a release they name is a fact, never a wave nor a
+  bound), then ``props.track`` (« owner »: out of the waves). A phrase it does not know is never guessed: an item
+  whose text yields nothing is listed as unparsed, with its text.
 
 Each open item gets one :class:`Placement`, its constraints resolved to wave places (``seq``: the N of ``wave-sN``,
 a legacy wave's place in the order, a future wave's N even before it exists): ``pin``, ``choice``, ``earliest``,
@@ -27,11 +28,12 @@ its reason), and its ``status``: ``composed`` (in a pending wave now: the plan's
 ``choice``, ``constrained``, ``free``, ``out``, ``unparsed`` or ``none`` (no placement text). What cannot be honoured
 is said, never dropped silently: a pin on a wave already reached or dropped (``stale``), a reference to no wave or no
 item, two waves in one text (a choice, put as a question), two sources that disagree (the first one read wins),
-a pin before its earliest wave.
+a pin before its earliest wave, an earliest wave after the latest, a second stage, a wave beside « out later ».
 """
 
 from __future__ import annotations
 
+import functools
 import re
 from dataclasses import dataclass, field
 
@@ -48,17 +50,21 @@ DECIDED = "decided_"
 OUT_REASONS = ("owner", "later", "trigger")
 STATUSES = ("composed", "pinned", "choice", "constrained", "free", "out", "unparsed", "none")
 
-# a wave reference: a wave id, a place sN (or « wave sN »), a release X.Y.Z, a stage X.Y; never inside a word, a path
-# or an id (« roadmap-s8-s12.md » names no wave), and case-sensitive (« S1-S3 » are slices, not waves)
-_REF = r"(?:wave-[a-z0-9](?:[a-z0-9.-]*[a-z0-9])?|(?:[Ww]ave\s+)?s\d+|v?\d+\.\d+(?:\.\d+)?)"
-_B, _E = r"(?<![\w./-])", r"(?![\w-]|\.\d)"
+# a wave reference: a wave id (it holds a digit: « wave-close » is a command), a place sN (or « wave sN »), a release
+# X.Y.Z, a stage X.Y; never inside a word, a path, a file name or an id (« roadmap-s8-s12.md » and « s11.md » name no
+# wave), and case-sensitive (« S1-S3 » are slices, not waves)
+_REF = r"(?:wave-(?=[a-z0-9.-]*\d)[a-z0-9](?:[a-z0-9.-]*[a-z0-9])?|(?:[Ww]ave\s+)?s\d+|v?\d+\.\d+(?:\.\d+)?)"
+_B, _E = r"(?<![\w./-])", r"(?![\w/-]|\.\w)"
 _ID = r"[a-z][a-z0-9]*(?:-[a-z0-9]+)+"
 _IDS = rf"{_ID}(?:'s)?(?:\s*(?:,\s*and|,|and|&)\s*{_ID}(?:'s)?)*"
 _ORD = {"next": 1, "first": 1, "second": 2, "third": 3, "fourth": 4, "fifth": 5}
 _POSS = r"(?:'s(?:\s+release)?)?"
 
-_CHOICE = re.compile(rf"{_B}({_REF}){_E}\s*,?\s+or\s+(?:(?:in\s+)?(the\s+next(?:\s+(?:one|wave))?)|{_B}({_REF}){_E})",
-                     re.I)
+# « s4 or s5 », « s4/s5 », « s5 or the next »: a choice; the words alone are case-blind, the references are not
+_CHOICE = re.compile(rf"{_B}({_REF})(?:/({_REF}){_E}|{_E}\s*,?\s+(?i:or)\s+(?:(?:(?i:in)\s+)?"
+                     rf"((?i:the\s+next(?:\s+(?:one|wave))?))|{_B}({_REF}){_E}))")
+# « s4 or later » (earliest s4), « s4 or earlier » (latest s4)
+_OR_LATER = re.compile(rf"{_B}({_REF}){_E}\s*,?\s+(?i:or\s+(later|earlier))\b")
 _WAVE_AFTER = re.compile(rf"(?i:(?:the\s+)?(?:(next|first|second|third|fourth|fifth)\s+)?wave\s+after\s+"
                          rf"(?:release\s+)?){_B}({_REF}){_E}{_POSS}")
 _AFTER_REF = re.compile(rf"(?i:\b(?:right\s+|just\s+|only\s+)?after\s+(?:release\s+)?){_B}({_REF}){_E}{_POSS}")
@@ -66,7 +72,7 @@ _BEFORE_REF = re.compile(rf"(?i:\bbefore\s+(?:the\s+)?(?:release\s+)?){_B}({_REF
 _AFTER_IDS = re.compile(rf"(?i:\bafter\s+)({_IDS})")
 _WITH_IDS = re.compile(rf"(?i:\b(?:beside|alongside|with|same\s+wave\s+as|together\s+with)\s+)({_IDS})")
 _OWN_LOT = re.compile(r"\b(?:its|their)\s+own\s+lots?\b|\bown[- ]lot\b|\balone\s+in\s+(?:its|a)\s+lot\b", re.I)
-_ROUND = re.compile(r"\bround\s+(\d+)\b", re.I)
+_ROUND = re.compile(r"\bround\s+([0-9]+)\b", re.I)
 _FREE = re.compile(r"\bunplaced\b|^\s*none\s*$|\bno\s+fixed\s+wave\b|\bplaced\s+at\s+(?:a\s+wave's|its|the\s+wave's|"
                    r"its\s+wave's)\s+composition\b|\bat\s+(?:its|the)\s+(?:wave's\s+)?composition\b", re.I)
 _PIN = re.compile(rf"{_B}({_REF}){_E}")
@@ -75,7 +81,7 @@ _PROPOSED = re.compile(r"\bproposed\b", re.I)
 _LATER = re.compile(r"\bkept\s+for\s+later\b|\bfor\s+later\b|(?:^|[:(])\s*later\b", re.I)
 _OWNER = re.compile(r"^\s*owner\b", re.I)
 _PAREN = re.compile(r"\([^()]*\)")
-_VERSION = re.compile(r"v(\d+)")
+_VERSION = re.compile(r"v([0-9]+)", re.I)
 _SEQ = re.compile(r"^(?:[Ww]ave\s+)?s(\d+)$")
 _STAGE = re.compile(r"^\d+\.\d+$")
 
@@ -114,8 +120,8 @@ class Reading:
 
     def empty(self) -> bool:
         return not (self.pins or self.choices or self.earliest or self.latest or self.before or self.after_stage
-                    or self.after or self.soft_after or self.together or self.own_lot or self.round or self.out
-                    or self.triggers or self.free)
+                    or self.after or self.soft_after or self.together or self.own_lot or self.round is not None
+                    or self.soft or self.out or self.triggers or self.free)
 
 
 @dataclass(frozen=True)
@@ -147,11 +153,13 @@ class Placement:
     conflicts: tuple[str, ...] = ()
 
     def questions(self) -> list[str]:
-        """What the composer cannot decide alone: a choice, a conflict, a reference to nothing."""
+        """What the composer cannot decide alone: a choice, a conflict, a pin on a wave reached or dropped (overdue),
+        a reference to nothing."""
         out = [f"{self.item}: {c}" for c in self.conflicts]
         if self.choice and not self.conflicts:
             out.append(f"{self.item}: a choice of waves, {' or '.join(f's{n}' for n in self.choice)} (the earlier one "
                        "by default)")
+        out += [f"{self.item}: pinned to a wave reached or dropped, {s}: overdue, which wave now?" for s in self.stale]
         out += [f"{self.item}: {n}" for n in self.notes if "names no " in n]
         return out
 
@@ -244,6 +252,17 @@ def _ids(raw: str, items: frozenset[str], rd: Reading) -> list[str]:
     return out
 
 
+@functools.lru_cache(maxsize=8)
+def _prefixes(items: frozenset[str]) -> frozenset[str]:
+    return frozenset(i.split("-", 1)[0] for i in items)
+
+
+def _item_like(tok: str, items: frozenset[str]) -> bool:
+    """An id shaped like the store's items (« wi-typo »), not a hyphenated word (« long-term »)."""
+    tok = tok.strip().removesuffix("'s")
+    return bool(re.fullmatch(_ID, tok)) and tok.split("-", 1)[0] in _prefixes(items)
+
+
 def _strip_parens(text: str) -> str:
     prev = None
     while prev != text:
@@ -257,24 +276,31 @@ def read_text(text: str, items: frozenset[str] = frozenset(), mode: str = "text"
     ``track`` (« owner »: out), ``soft`` (after_1_0: item ids past the 1.0 exit). The parentheses are provenance:
     only their « proposed » and « later » are read. A clause (between ``;``) that still names another item once its
     « after » and « with » are read speaks of that item: the waves it names are not this item's (a note)."""
-    rd = Reading()
     raw = " ".join(str(text or "").split())
     if mode == "track":
-        if _OWNER.match(raw):
-            rd.out = "owner"
-        return rd
+        return Reading(out="owner" if _OWNER.match(raw) else "")
     core = _strip_parens(raw)
     if mode == "soft":
-        found = [i for i in re.findall(_ID, core) if i in items and i != self_id]
-        rd.soft_after, rd.soft_stage = list(dict.fromkeys(found)), SOFT_STAGE
-        return rd
+        return _read_soft(core, items, self_id)
+    rd = Reading()
     full = mode == "text"
     for clause in core.split(";"):
         _read_clause(rd, clause, items, full, self_id)
-    if full:
-        rd.soft = bool(_PROPOSED.search(raw))
     if _LATER.search(raw):
         rd.out = "later"
+    # « proposed » qualifies a placement read: alone in a text, it places nothing (never guessed)
+    rd.soft = full and bool(_PROPOSED.search(raw)) and not rd.empty()
+    return rd
+
+
+def _read_soft(core: str, items: frozenset[str], self_id: str) -> Reading:
+    """props.after_1_0: the items named, an ordering past the 1.0 exit; an id shaped like an item that is not one is a
+    note (nothing named: the text is unparsed, listed)."""
+    rd = Reading()
+    ids = list(dict.fromkeys(i for i in re.findall(_ID, core) if i != self_id))
+    rd.notes += [f"names no item: {i}" for i in ids if i not in items and _item_like(i, items)]
+    rd.soft_after = [i for i in ids if i in items]
+    rd.soft_stage = SOFT_STAGE if rd.soft_after else ""
     return rd
 
 
@@ -286,11 +312,22 @@ def _read_clause(rd: Reading, clause: str, items: frozenset[str], full: bool, se
         nonlocal clause
         clause = rx.sub(lambda m: " " if fn(m) is not False else m.group(0), clause)
 
+    def wave(r: Ref | str) -> bool:
+        """A wave an answer may name: a release in an answer is a fact (« after 1.0.0 shipped »), not a wave."""
+        return isinstance(r, Ref) and (full or r.kind != "release")
+
     def choice(m: re.Match) -> None:
         a = _ref(m.group(1))
-        b = _shift(a, 1) if m.group(2) else _ref(m.group(3))
+        b = _shift(a, 1) if m.group(3) else _ref(m.group(2) or m.group(4))
         if isinstance(a, Ref) and isinstance(b, Ref):
             found.choices.append((a, b))
+
+    def or_later(m: re.Match) -> bool:
+        r = _ref(m.group(1))
+        if not wave(r):
+            return False
+        (found.earliest if m.group(2).lower() == "later" else found.latest).append(r)
+        return True
 
     def wave_after(m: re.Match) -> None:
         r = _ref(m.group(2))
@@ -301,28 +338,39 @@ def _read_clause(rd: Reading, clause: str, items: frozenset[str], full: bool, se
 
     def after_ref(m: re.Match) -> None:
         r = _ref(m.group(1))
-        (found.after_stage.append(r) if isinstance(r, str) else found.earliest.append(_shift(r, 1)))
+        if isinstance(r, str):
+            found.after_stage.append(r)
+        elif wave(r):
+            found.earliest.append(_shift(r, 1))
 
     def before_ref(m: re.Match) -> None:
         r = _ref(m.group(1))
-        (found.before.append(r) if isinstance(r, str) else found.latest.append(_shift(r, -1)))
+        if isinstance(r, str):
+            found.before.append(r)
+        elif wave(r):
+            found.latest.append(_shift(r, -1))
 
     def ids_into(target: list[str]):
         def fn(m: re.Match) -> bool:
-            if not _known(m.group(1), items):
+            first = re.split(r"\s*(?:,\s*and|,|and|&)\s*", m.group(1))[0]
+            if _known(m.group(1), items):
+                target.extend(_ids(m.group(1), items, rd))
+            elif _item_like(first, items):   # « after wi-typo »: an item named that is not there, said
+                _ids(m.group(1), items, rd)
+            else:
                 return False
-            target.extend(_ids(m.group(1), items, rd))
             return True
         return fn
 
     def pin(m: re.Match) -> None:
         r = _ref(m.group(1))
-        if isinstance(r, Ref) and (full or r.kind != "release"):
+        if wave(r):
             found.pins.append(r)
 
     def free(_m: re.Match) -> None:
         found.free = True
 
+    take(_OR_LATER, or_later)
     if full:
         take(_CHOICE, choice)
     take(_WAVE_AFTER, wave_after)
@@ -418,11 +466,20 @@ def _after_clause(rd: Reading, rest: str, items: frozenset[str]) -> bool:
     if not ids or not all(re.fullmatch(_ID, i) or i in items for i in ids) or (sep and not _STAGE.match(stage.strip())):
         return False
     if sep:
-        rd.soft_after += _known_ids(ids, items, rd)
-        rd.soft_stage = stage.strip()
+        _past(rd, ids, stage.strip(), items)
     else:
         rd.after += _known_ids(ids, items, rd)
     return True
+
+
+def _past(rd: Reading, ids: list[str], stage: str, items: frozenset[str]) -> None:
+    """« after wi-a past 1.0 »: one stage per placement; a second, different one is said, not merged."""
+    if rd.soft_stage and _stage(stage) != _stage(rd.soft_stage):
+        rd.notes.append(f"'after {', '.join(ids)} past {stage}' not read: one stage past which the orderings bind, "
+                        f"{rd.soft_stage} is read")
+        return
+    rd.soft_after += _known_ids(ids, items, rd)
+    rd.soft_stage = stage
 
 
 def _with_clause(rd: Reading, rest: str, items: frozenset[str]) -> bool:
@@ -440,9 +497,10 @@ def _flag_clause(name: str):
 
 
 def _round_clause(rd: Reading, rest: str, _items) -> bool:
-    if rest.isdigit():
+    ok = bool(re.fullmatch(r"[0-9]+", rest))   # ASCII digits: « round ² » is an unknown clause, not a crash
+    if ok:
         rd.round = int(rest)
-    return rest.isdigit()
+    return ok
 
 
 def _out_clause(rd: Reading, rest: str, _items) -> bool:
@@ -534,14 +592,15 @@ def place_of(plan: waves.Plan, nid: str, ctx: _Ctx | None = None) -> Placement:
     if raw_place:
         rd = read_place(raw_place, ctx.items)
         if rd.refused:
-            return Placement(nid, "composed" if composed else "unparsed", composed, source=KEY,
-                             texts=((KEY, raw_place),),
+            return Placement(nid, "composed" if composed else "unparsed", composed,
+                             pin=ctx.pos.get(composed) if composed else None, source=KEY, texts=((KEY, raw_place),),
                              notes=(f"props.place {rd.refused} is written by a newer brain, which this engine "
                                     f"(v{V}) does not read: brain update",))
         return _merge(ctx, nid, composed, [(KEY, raw_place, rd)])
     readings = [(k, str(p[k]), read_text(p[k], ctx.items, mode, nid)) for k, mode in _sources(node)]
-    # a decided_* answer or a track that says nothing of a placement is not a placement text (most answers are not)
-    readings = [r for r in readings if r[0] in TEXT_KEYS or not r[2].empty()]
+    # a decided_* answer or a track that says nothing of a placement is not a placement text (most answers are not);
+    # after_1_0 is one: a value that names no item is unparsed, listed
+    readings = [r for r in readings if r[0] in TEXT_KEYS or r[0] == SOFT_AFTER_KEY or not r[2].empty()]
     return _merge(ctx, nid, composed, readings)
 
 
@@ -595,20 +654,26 @@ class _Merge:
             return
         self.read.append(key)
         self._waves(key, rd)
+        if not (key.startswith(DECIDED) and self.text_read):   # an answer's waves beside a text: its bounds too
+            self.earliest += self.resolve(rd.earliest, key)
+            self.latest += self.resolve(rd.latest, key)
         self.text_read = self.text_read or key in TEXT_KEYS
-        self.earliest += self.resolve(rd.earliest, key)
-        self.latest += self.resolve(rd.latest, key)
-        self._firsts(rd)
+        self._firsts(key, rd)
         for name, values in self.lists.items():
             values += getattr(rd, name)
         self.own_lot, self.free, self.any_soft = self.own_lot or rd.own_lot, self.free or rd.free, \
             self.any_soft or rd.soft
         self.round = self.round if self.round is not None else rd.round
 
-    def _firsts(self, rd: Reading) -> None:
+    def _firsts(self, key: str, rd: Reading) -> None:
+        """The first stage read holds (a second one is a note), the first « out »."""
         f = self.first
-        f["before"] = f["before"] or (rd.before[0] if rd.before else "")
-        f["after_stage"] = f["after_stage"] or (rd.after_stage[0] if rd.after_stage else "")
+        for name, word in (("before", "before"), ("after_stage", "after")):
+            for st in getattr(rd, name):
+                if not f[name]:
+                    f[name] = st
+                elif _stage(st) != _stage(f[name]):
+                    self.notes.append(f"{key}: '{word} {st}' not read: one stage, '{word} {f[name]}' is read")
         f["soft_stage"] = f["soft_stage"] or rd.soft_stage
         if rd.out and not f["out"]:
             f["out"], f["why"] = rd.out, rd.why
@@ -636,7 +701,7 @@ class _Merge:
                                       f"{self.pin_src} is read")
 
     def _first(self, key: str, pins: list[int], chs: list[list[int]], named: list[int]) -> None:
-        if len(pins) > 1 or (pins and chs):
+        if len(pins) > 1 or (pins and chs) or len(chs) > 1:
             self.choice = tuple(named)
             self.pin_conflicts.append(f"{key} names several waves ({_places(named)}): one wave, or the item split")
         elif pins or len(chs[0]) == 1:
@@ -646,23 +711,29 @@ class _Merge:
 
     def result(self, texts: tuple[tuple[str, str], ...]) -> Placement:
         f, ls = self.first, {k: [i for i in dict.fromkeys(v) if i != self.nid] for k, v in self.lists.items()}
-        conflicts: list[str] = []
         if self.cpos is not None:   # composed: the wave it is in, whatever its text named when it was planned
             self.pin, self.choice = self.cpos, ()
-        else:
-            conflicts += self.pin_conflicts
         e, lt = max(self.earliest, default=None), min(self.latest, default=None)
-        conflicts += self._bound_conflicts(e, lt)
         stage = f["before"] or f["after_stage"]
         era = self.ctx.eras.get(_stage(stage), "") if stage else ""
         bound = e is not None or lt is not None or bool(f["before"] or f["after_stage"] or ls["after"])
         out, why = self._out(bound, ls["triggers"])
+        conflicts = self._conflicts(e, lt, out)
         status = self._status(texts, out, bound or bool(ls["together"]) or self.own_lot, bool(ls["soft_after"]))
         return Placement(self.nid, status, self.composed, self.pin, self.choice, e, lt, f["before"], f["after_stage"],
                          era, tuple(ls["after"]), tuple(ls["soft_after"]), f["soft_stage"], tuple(ls["together"]),
                          self.own_lot, self.round, self.soft if self.pin_src else self.any_soft, out, why,
                          ", ".join(self.read), texts, tuple(self.stale), tuple(dict.fromkeys(self.notes)),
                          tuple(conflicts))
+
+    def _conflicts(self, e: int | None, lt: int | None, out: str) -> list[str]:
+        """The pins' conflicts (none once composed: its wave is the plan's fact), the bounds', « out later » beside a
+        wave."""
+        conflicts = [] if self.cpos is not None else list(self.pin_conflicts)
+        conflicts += self._bound_conflicts(e, lt)
+        if out == "later" and (self.pin is not None or self.choice):
+            conflicts.append("a wave and « out later » both: one of them")
+        return conflicts
 
     def _bound_conflicts(self, e: int | None, lt: int | None) -> list[str]:
         f, out = self.first, []
@@ -673,17 +744,23 @@ class _Merge:
             out.append(f"{what} s{self.pin}, before its earliest wave s{e}")
         if self.pin is not None and lt is not None and self.pin > lt:
             out.append(f"{what} s{self.pin}, after its latest wave s{lt}")
+        if e is not None and lt is not None and e > lt:
+            out.append(f"earliest wave s{e} after its latest wave s{lt}")
         return out
 
     def _out(self, bound: bool, triggers: list[str]) -> tuple[str, str]:
-        """Out of the waves, and why: a wave named beats a « later »; a trigger takes out an item nothing else
-        places, else it is a note."""
+        """Out of the waves, and why: in a free text a wave named beats a « later » (a note), props.place's « out
+        later » beside a wave is kept (a conflict, put as a question); a composed item's wave is the plan's fact. A
+        trigger takes out an item nothing else places, else it is a note."""
         out, why = self.first["out"], self.first["why"]
         hard = self.pin is not None or bool(self.choice)
-        if out == "later" and hard:
+        if out == "later" and hard and (KEY not in self.read or self.cpos is not None):
+            if self.cpos is None:
+                self.notes.append("« later » not read: a wave is named")
             out, why = "", ""
         if not out and triggers and not hard and not bound:
-            return "trigger", "; ".join(triggers)
+            # « , » not « ; »: the canonical form's clauses are split on « ; » (it reads back the same)
+            return "trigger", ", ".join(triggers)
         self.notes += [f"not read as a constraint: {t}" for t in triggers]
         return out, why
 
@@ -692,7 +769,7 @@ class _Merge:
             return "composed"
         ladder = (("none", not texts), ("choice", bool(self.choice)), ("pinned", self.pin is not None),
                   ("out", bool(out)), ("constrained", constrained),
-                  ("free", self.free or soft_after or self.round is not None or bool(self.stale)))
+                  ("free", self.free or soft_after or self.round is not None or bool(self.stale) or self.any_soft))
         return next((s for s, met in ladder if met), "unparsed")
 
 

@@ -718,8 +718,9 @@ wi-x; with wi-y; own-lot` », format v1, authoritative), else the placement word
 `planned_wave`, `wave_fit`, `wave`, `after_1_0`, the `decided_*` answers, `track`), resolved to wave places. Each item
 is composed (in a pending wave now), pinned, a choice, constrained, free, out (owner, later, a trigger) or unparsed
 (listed with its text, never guessed), each with its `props.place` form; then the questions it leaves: a choice, two
-waves in one text, two sources that disagree, a wave reached or dropped, a wave or an item named that is not there. It
-writes nothing; `brain check` warns on a malformed `props.place`. The wave composer reads the same placements.
+waves in one text, two sources that disagree, bounds that contradict, a wave reached or dropped, a wave or an item
+named that is not there. It writes nothing; `brain check` warns on a malformed `props.place`. The wave composer reads
+the same placements.
 
 ### Item sizes
 
