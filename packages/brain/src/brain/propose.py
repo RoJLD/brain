@@ -14,22 +14,28 @@ owner's priority, the owner's order, value over effort); their size in points (:
 place: ``s(N+1)``... Each window holds at most the capacity: ``--items`` and ``--points``, else what the last reached
 waves closed (:func:`capacity`: the median of their done items and points, :data:`HISTORY_WAVES` of them), else
 :data:`DEFAULT_ITEMS` and :data:`DEFAULT_POINTS`. About :data:`brain.waves.QUICKWIN_SHARE` of the places are kept for
-quick wins (size S, high value).
+quick wins (size S, high value). A window that is a pending wave already composed (``--from`` an earlier one) keeps
+its composed items, counted against its capacity.
 
 **Out.** Before any fill: a blocked item, one with an external blocker, one whose placement is out (owner, later, a
 trigger), one placed after an era's exit (« after 1.0 ») with no wave named, one pinned beyond the drafted waves, one
-in a ``depends_on`` cycle. Each is listed with its reason.
+in a cycle of prerequisites, one whose choice of waves lies beyond them. Each is listed with its reason.
 
-**The fill**, wave by wave: the items pinned to it first (over the capacity if need be: a question), then those due
-in it (their latest wave), then by rank, an item due before an era's exit (« before 1.0 ») first; an item goes in when
-its placement allows that wave (earliest, latest, pin), every open prerequisite is placed in an earlier wave or in the
-same one within a chain of :data:`brain.lots.CHAIN_CAP`, and the capacity holds; an item it must go ``with`` follows
+**The fill**, wave by wave: the items pinned to it first (over the capacity if need be: a question), then the overdue
+(a pin or a choice on waves composed without them, a latest wave before the window, a composed item's prerequisite)
+and their prerequisites, then those due (a latest wave, « before 1.0 »), then by rank; an item goes in when its
+placement allows that wave (its pin, one of its choice's waves, from its earliest), every open ``depends_on``
+prerequisite is placed in an earlier wave or in the same one within a chain of :data:`brain.lots.CHAIN_CAP`, every open
+item it is placed ``after`` in an earlier wave, and the capacity holds; the order is read again after each item placed.
+A latest wave orders and never excludes: a deadline missed is drafted and asked. An item it must go ``with`` follows
 it when it can. A standing item (``props.standing``, or a debt item, ``props.audit_repo``) is a batch in every wave.
 
 **The lots.** Each wave's items are cut by :func:`brain.lots.cut`, an ``own-lot`` item taken out to a lot of its own,
-and put in rounds by :func:`brain.lots.rounds_of` with the caps in force.
+gathered into :data:`MAX_LOTS` with no cycle between lots, and put in rounds by :func:`brain.lots.rounds_of` with the
+caps in force.
 
-**The checks.** No item before a prerequisite, none twice, every pin within the window honoured, the capacity: what
+**The checks.** No item before a prerequisite (nor in the wave of one it is ``after``), none twice, every pin and
+choice within the window honoured, the capacity: what
 fails is listed (``checks``), never hidden. ``--against FILE`` (an earlier ``--json``) says what moved.
 """
 
@@ -125,14 +131,22 @@ def _door(plan: waves.Plan, nid: str) -> bool:
     return bool(p.get("door") or p.get("one_way_door")) or "one-way door" in marks
 
 
-def _cycles(plan: waves.Plan, ids: set[str]) -> set[str]:
-    """The open items in a depends_on cycle among ``ids``."""
+def _prereqs(plan: waves.Plan, pls: dict[str, placement.Placement], i: str) -> list[tuple[str, bool]]:
+    """``i``'s open prerequisites, each with ``strict``: its ``depends_on`` blockers (False: the same wave within the
+    chain cap), then the open items its placement is ``after`` (True: an earlier wave, « after those items' waves »)."""
+    p = pls.get(i)
+    after = [d for d in (p.after if p else ()) if plan.status(d) not in waves.SATISFIED]
+    return [(d, False) for d in plan.blockers(i) if d not in after] + [(d, True) for d in dict.fromkeys(after)]
+
+
+def _cycles(plan: waves.Plan, pls: dict[str, placement.Placement], ids: set[str]) -> set[str]:
+    """The open items in a cycle of prerequisites (``depends_on`` and ``after``) among ``ids``."""
     found: set[str] = set()
     state: dict[str, int] = {}
 
     def visit(i: str, path: list[str]) -> None:
         state[i] = 1
-        for d in plan.blockers(i):
+        for d, _ in _prereqs(plan, pls, i):
             if d not in ids:
                 continue
             if state.get(d) == 1:
@@ -147,6 +161,10 @@ def _cycles(plan: waves.Plan, ids: set[str]) -> set[str]:
     return found
 
 
+def _waves_text(ns) -> str:
+    return " or ".join(f"s{n}" for n in ns)
+
+
 class _Fill:
     """The fill of the windows: where each item goes, what is left out and why, the questions."""
 
@@ -156,12 +174,15 @@ class _Fill:
         self.out: dict[str, str] = {}
         self.questions: list[str] = []
         self.placed: dict[int, list[str]] = {k: [] for k in windows}
+        for i, w in self.at.items():   # a window that is a pending wave (--from before it): its composed items count
+            if w in self.placed:
+                self.placed[w].append(i)
         self.room: dict[str, str] = {}   # item -> why it waited (capacity, dependency, window)
         self.pending: list[str] = []
 
     # -- before the fill --
     def exclude(self, cands: list[str]) -> list[str]:
-        cyc = _cycles(self.plan, set(cands))
+        cyc = _cycles(self.plan, self.pls, set(cands))
         keep = []
         for i in cands:
             why = self._why_out(i, cyc)
@@ -190,28 +211,42 @@ class _Fill:
             return f"after {p.after_stage} (no wave named)"
         if p.pin and p.pin > self.windows[-1]:
             return f"pinned to s{p.pin}, beyond the drafted waves"
+        if p.pin is None and p.choice and min(p.choice) > self.windows[-1]:
+            return f"a choice of {_waves_text(p.choice)}, beyond the drafted waves"
         return ""
 
     # -- the fill --
+    def choice(self, i: str) -> tuple[int, ...]:
+        """The waves of ``i``'s choice it may still take (none: no choice, or every one composed without it)."""
+        p = self.pls.get(i)
+        if not p or not p.choice or p.pin is not None:
+            return ()
+        return tuple(c for c in p.choice if c >= self.windows[0])
+
     def bounds(self, i: str) -> tuple[int, int]:
+        """The first and last wave ``i``'s placement allows. A pin bounds both, a choice both (its waves); an overdue
+        pin or choice (a wave composed without it) bounds nothing: it comes first. A latest wave bounds nothing
+        either: a due item comes early, and a deadline missed is a question, never a reason to leave it out."""
         p = self.pls.get(i)
         lo, hi = self.windows[0], 10 ** 6
-        if p and p.choice:
-            lo = max(lo, min(p.choice))
-        if p and p.pin is not None and p.pin >= self.windows[0]:
-            lo, hi = p.pin, p.pin   # an overdue pin (a wave composed without it) bounds nothing: it comes first
-        if p and p.earliest is not None:
+        if not p:
+            return lo, hi
+        if ch := self.choice(i):
+            lo, hi = max(lo, min(ch)), max(ch)
+        if p.pin is not None and p.pin >= self.windows[0]:
+            lo, hi = p.pin, p.pin
+        if p.earliest is not None:
             lo = max(lo, p.earliest)
-        if p and p.latest is not None and p.pin is None:
-            hi = max(self.windows[0], p.latest)
         return lo, hi
 
     def deps_ok(self, i: str, k: int) -> bool:
-        """Every open prerequisite of ``i`` placed before wave ``k``, or in it within the chain cap."""
-        for d in self.plan.blockers(i):
+        """Every open prerequisite of ``i`` placed before wave ``k``, or a ``depends_on`` one in it within the chain
+        cap (an ``after`` one never: after its wave)."""
+        for d, strict in _prereqs(self.plan, self.pls, i):
             w = self.at.get(d)
-            if w is None or w > k:
-                self.room[i] = f"dependency: {d} not placed before s{k}"
+            if w is None or w > k or (strict and w == k):
+                self.room[i] = (f"after: {d} not placed in a wave before s{k}" if strict
+                                else f"dependency: {d} not placed before s{k}")
                 return False
             if w == k and self._chain(d, k) >= lots.CHAIN_CAP:
                 self.room[i] = f"dependency: {d}'s chain in s{k} is at the cap ({lots.CHAIN_CAP})"
@@ -236,17 +271,21 @@ class _Fill:
         self.placed[k].append(i)
         self.room.pop(i, None)
         for t in (self.pls[i].together if i in self.pls else ()):
-            if t in self.at:
-                continue
-            if t in self.pending and self._eligible(t, k) and self.fits(k, t):
+            if t in self.at or self.plan.status(t) not in waves.OPEN or _standing(self.plan, t):
+                continue   # placed, done or merged, or a batch in every wave: nothing to follow
+            if t in self.out:
+                self.questions.append(f"{i} goes with {t}, which is out ({self.out[t]})")
+            elif t in self.pending and self._eligible(t, k) and self.fits(k, t):
                 self.put(t, k)
             else:
                 self.questions.append(f"{i} goes with {t}, which could not follow it into s{k}")
 
     def _eligible(self, i: str, k: int) -> bool:
         lo, hi = self.bounds(i)
-        if not lo <= k <= hi:
-            self.room.setdefault(i, f"window: from s{lo}" if k < lo else f"window: due by s{hi}")
+        ch = self.choice(i)
+        if k < lo or k > hi or (ch and k not in ch):
+            self.room.setdefault(i, f"window: from s{lo}" if k < lo else
+                                 f"window: a choice of {_waves_text(ch)}" if ch else f"window: s{hi} at the latest")
             return False
         return self.deps_ok(i, k)
 
@@ -254,32 +293,73 @@ class _Fill:
         self.pending = list(cands)
         rank = self.plan.ranker.key
         late = self._late(cands)
+        first = self._lifted({i for i, _ in late}, set(cands))
         due = {i for i in cands if (p := self.pls.get(i)) and (p.before or p.latest is not None)}
-        order = sorted(cands, key=lambda i: (i not in late, i not in due, rank(i)))
+        order = sorted(cands, key=lambda i: (i not in first, i not in due, rank(i)))
         for k in self.windows:
             self._pins(k)
             for reserve in (True, False):   # the quick-win places, kept, then given to the rest if none came
                 while self._pass(k, order, reserve):   # a placed item may let its dependents in, in the same wave
                     pass
             self.pending = [i for i in self.pending if i not in self.at]
+        self.questions += [f"{head}: {self._outcome(i)}" for i, head in late]
+        self.questions += self._deadlines(cands)
 
-    def _late(self, cands: list[str]) -> set[str]:
-        """The items that come first, each a question: pinned to a wave composed without them, or waited on by a
-        composed item."""
+    def _late(self, cands: list[str]) -> list[tuple[str, str]]:
+        """The items that come first, each a question once the fill is done: pinned to a wave composed without them
+        (a pin, a choice), due by a wave before the drafted ones, or waited on by a composed item."""
         first = self.windows[0]
-        late = {i for i in cands if (p := self.pls.get(i)) and p.pin is not None and p.pin < first}
-        self.questions += [f"{i} is pinned to s{self.pls[i].pin}, which was composed without it: drafted from "
-                           f"s{first}, first" for i in sorted(late)]
-        held = self._held(set(cands))
-        self.questions += [f"{c} (composed in s{self.at[c]}) waits on {d}, in no wave: drafted from s{first}, first"
-                           for d, c in sorted(held.items())]
-        return late | set(held)
+        late: list[tuple[str, str]] = []
+        for i in sorted(cands):
+            p = self.pls.get(i)
+            if not p:
+                continue
+            if p.pin is not None and p.pin < first:
+                late.append((i, f"{i} is pinned to s{p.pin}, which was composed without it"))
+            elif p.pin is None and p.choice and max(p.choice) < first:
+                late.append((i, f"{i}'s choice of waves, {_waves_text(p.choice)}, was composed without it"))
+            elif p.pin is None and p.latest is not None and p.latest < first:
+                late.append((i, f"{i} is due by s{p.latest}, before the drafted waves"))
+        late += [(d, f"{c} (composed in s{self.at[c]}) waits on {d}, in no wave")
+                 for d, c in sorted(self._held(set(cands)).items())]
+        return late
+
+    def _lifted(self, late: set[str], cands: set[str]) -> set[str]:
+        """The items that come first and their open prerequisites among the candidates, so that none of them waits
+        behind lower-ranked items."""
+        out: set[str] = set()
+        stack = sorted(late)
+        while stack:
+            i = stack.pop()
+            if i in out or i not in cands:
+                continue
+            out.add(i)
+            stack += [d for d, _ in _prereqs(self.plan, self.pls, i)]
+        return out
+
+    def _outcome(self, i: str) -> str:
+        if i in self.at:
+            return f"drafted in s{self.at[i]}, first"
+        return f"in no drafted wave ({self.out.get(i) or self.room.get(i, 'capacity')})"
+
+    def _deadlines(self, cands: list[str]) -> list[str]:
+        """A latest wave within the window that the draft misses: placed later, or in no wave."""
+        out = []
+        for i in cands:
+            p = self.pls.get(i)
+            if not p or p.pin is not None or p.latest is None or p.latest < self.windows[0] or i in self.out:
+                continue
+            if i not in self.at and p.latest <= self.windows[-1]:
+                out.append(f"{i} is due by s{p.latest}: in no drafted wave ({self.room.get(i, 'capacity')})")
+            elif self.at.get(i, 0) > p.latest:
+                out.append(f"{i} is due by s{p.latest}: no room there, drafted in s{self.at[i]}")
+        return out
 
     def _held(self, cands: set[str]) -> dict[str, str]:
         """The candidates a composed item waits on (prerequisite -> the first composed item that waits): due first."""
         out: dict[str, str] = {}
-        for c in sorted(self.at):
-            for d in self.plan.blockers(c):
+        for c in sorted(i for i, p in self.pls.items() if p.status == "composed" and i in self.at):
+            for d, _ in _prereqs(self.plan, self.pls, c):
                 if d in cands:
                     out.setdefault(d, c)
         return out
@@ -289,14 +369,15 @@ class _Fill:
             if i in self.at:
                 continue
             if not self.deps_ok(i, k):
-                self.questions.append(f"{i} is pinned to s{k}, but {self.room[i].removeprefix('dependency: ')}")
+                self.questions.append(f"{i} is pinned to s{k}, but {self.room[i].split(': ', 1)[1]}")
             over = not self.fits(k, i)
             self.put(i, k)
             if over:
                 self.questions.append(f"{i} is pinned to s{k}, over its capacity")
 
     def _pass(self, k: int, order: list[str], keep_quick: bool = True) -> bool:
-        changed = False
+        """One item placed in wave ``k``, the first in ``order`` that may go there (False: none). The caller runs it
+        again, so that an item first in order whose prerequisite has just come in takes its place before the rest."""
         quick = sum(1 for i in self.placed[k] if self.plan.ranker.score(i).quick_win)
         for i in order:
             if i in self.at or i not in self.pending or not self._eligible(i, k):
@@ -307,9 +388,8 @@ class _Fill:
                 self.room[i] = "capacity"
                 continue
             self.put(i, k)
-            quick += qw
-            changed = True
-        return changed
+            return True
+        return False
 
 
 def _start(plan: waves.Plan, start: str) -> str:
@@ -357,10 +437,55 @@ def _alone(cut: list, units: dict, own: set[str]) -> list:
     """The cutter's lots, each own-lot item taken out to a lot of its own."""
     found = []
     for lot in cut:
-        alone = [i for i in lot.items if i in own and len(lot.items) > 1]
-        found += [lots.Lot(0, [i], units[i].files, units[i].hot, lot.unblocks, units[i].known) for i in alone]
-        lot.items = [i for i in lot.items if i not in alone]
-        found += [lot] if lot.items else []
+        found += _split_own(lot, units, own) if len(lot.items) > 1 and set(lot.items) & own else [lot]
+    return found
+
+
+def _split_own(lot, units: dict, own: set[str]) -> list:
+    """A lot with its own-lot items each taken out alone. When the rest would both wait on the item and be waited on
+    by it (a cycle between lots, which :func:`brain.lots.rounds_of` cannot order), the rest is cut in two: what the
+    item waits on, and the others."""
+    parts, cut_rest = [list(lot.items)], False
+    for x in [i for i in lot.items if i in own]:
+        part = next(p for p in parts if x in p)
+        if len(part) > 1:
+            parts.remove(part)
+            pieces, cyclic = _take_out(x, part, units)
+            parts += pieces
+            cut_rest = cut_rest or cyclic
+    return _assemble(lot, parts, units, own, cut_rest)
+
+
+def _assemble(lot, parts: list[list[str]], units: dict, own: set[str], cut_rest: bool) -> list:
+    """The lots of ``parts``: each own-lot item alone, then the rest, the cut's lot kept when it was not cut."""
+    solo = [p for p in parts if len(p) == 1 and p[0] in own]
+    alone = [lots.Lot(0, p, units[p[0]].files, units[p[0]].hot, lot.unblocks, units[p[0]].known) for p in solo]
+    rest = [p for p in parts if p and p not in solo]
+    if rest and not cut_rest:   # the cut's lot, less its own-lot items
+        lot.items = rest[0]
+        return alone + [lot]
+    return alone + [lots._lot(p, units) for p in rest]
+
+
+def _take_out(x: str, part: list[str], units: dict) -> tuple[list[list[str]], bool]:
+    """``x`` out of ``part``: ([x], the rest) or, when the rest would both wait on ``x`` and be waited on by it, ([x],
+    what ``x`` waits on, the others); and whether that cut was needed."""
+    rest = [i for i in part if i != x]
+    before = _reach(x, set(rest), units)
+    after = [i for i in rest if i not in before]
+    cyclic = bool(before) and any(x in _reach(i, set(part), units) for i in after)
+    return ([[x], [i for i in rest if i in before], after] if cyclic else [[x], rest]), cyclic
+
+
+def _reach(i: str, within: set[str], units: dict) -> set[str]:
+    """The items of ``within`` that ``i`` waits on, directly or through others of ``within``."""
+    found: set[str] = set()
+    stack = [d for d in units[i].after if d in within]
+    while stack:
+        d = stack.pop()
+        if d not in found:
+            found.add(d)
+            stack += [e for e in units[d].after if e in within]
     return found
 
 
@@ -375,12 +500,46 @@ def _numbered(rounds: list[list]) -> tuple[list, list]:
     return [asdict(lot) for lot in numbered], [[lot.n for lot in g] for g in rounds]
 
 
+def _cyclic(parts: list, units: dict) -> bool:
+    """Whether lots wait on each other in a cycle (through the items' prerequisites in the wave)."""
+    of = {i: k for k, lot in enumerate(parts) for i in lot.items}
+    needs = {k: {of[d] for i in lot.items for d in units[i].after if d in of} - {k} for k, lot in enumerate(parts)}
+    left = set(needs)
+    while left:
+        ready = {k for k in left if not needs[k] & left}
+        if not ready:
+            return True
+        left -= ready
+    return False
+
+
+class _Joiner:
+    """The wave's lots as they are joined: a join stays within :data:`brain.lots.LOT_CAP` items and never makes two
+    lots wait on each other (one that reaches the other through a third: :func:`brain.lots.rounds_of` needs no cycle
+    between lots)."""
+
+    def __init__(self, found: list, units: dict):
+        self.lots, self.units = list(found), units
+
+    def join(self, a, b):
+        """``a`` and ``b`` joined, or None when they may not be."""
+        if len(a.items) + len(b.items) > lots.LOT_CAP:
+            return None
+        ab = _join([a, b])
+        trial = [ab] + [x for x in self.lots if x is not a and x is not b]
+        if _cyclic(trial, self.units):
+            return None
+        self.lots = trial
+        return ab
+
+
 def _grouped(plan: waves.Plan, found: list, units: dict, own: set[str]) -> list:
     """The cutter's lots gathered into :data:`MAX_LOTS` sessions at most: lots that share no file may run in one
     session in turn, so lots of one module join first, then the smallest pairs, never over :data:`brain.lots.LOT_CAP`
-    items, never a broad lot or an own-lot one."""
+    items, never a broad lot or an own-lot one, never into a cycle between lots (:class:`_Joiner`)."""
     fixed = [lot for lot in found if lot.broad or set(lot.items) & own]
-    free = [lot for lot in found if lot not in fixed]
+    free = [lot for lot in found if not any(lot is f for f in fixed)]
+    joiner = _Joiner(found, units)
 
     def module(lot) -> str:
         return str(waves._props(plan.nodes.get(lot.items[0]) or {}).get("module") or "")
@@ -388,26 +547,38 @@ def _grouped(plan: waves.Plan, found: list, units: dict, own: set[str]) -> list:
     groups: dict[str, list] = {}
     for lot in free:
         groups.setdefault(module(lot) or lot.items[0], []).append(lot)
-    merged = [m for g in groups.values() for m in _pack(g)]
-    merged.sort(key=lambda lot: len(lot.items))
-    while len(merged) + len(fixed) > MAX_LOTS and len(merged) > 1 \
-            and len(merged[0].items) + len(merged[1].items) <= lots.LOT_CAP:
-        merged = sorted([_join([merged[0], merged[1]])] + merged[2:], key=lambda lot: len(lot.items))
+    merged = _shrink([m for g in groups.values() for m in _pack(g, joiner)], max(MAX_LOTS - len(fixed), 1), joiner)
     out = merged + fixed
     for lot in out:
         lot.items = lots._order(lot.items, units)
     return out
 
 
-def _pack(group: list) -> list:
-    """One module's lots, joined in turn while they stay within the lot cap."""
+def _shrink(merged: list, most: int, joiner: _Joiner) -> list:
+    """The smallest pair that may join, joined, while there are more than ``most`` lots."""
+    merged = sorted(merged, key=lambda lot: len(lot.items))
+    while len(merged) > most:
+        pairs = sorted(((a, b) for n, a in enumerate(merged) for b in merged[n + 1:]),
+                       key=lambda ab: len(ab[0].items) + len(ab[1].items))
+        pair = next(((a, b, j) for a, b in pairs if (j := joiner.join(a, b)) is not None), None)
+        if pair is None:
+            break
+        a, b, ab = pair
+        merged = sorted([ab] + [x for x in merged if x is not a and x is not b], key=lambda lot: len(lot.items))
+    return merged
+
+
+def _pack(group: list, joiner: _Joiner) -> list:
+    """One module's lots, joined in turn while they stay within the lot cap and out of a cycle."""
     out: list = []
     for lot in sorted(group, key=lambda x: -len(x.items)):
-        fit = next((o for o in out if len(o.items) + len(lot.items) <= lots.LOT_CAP), None)
-        if fit is None:
-            out.append(lot)
+        for k, o in enumerate(out):
+            ab = joiner.join(o, lot)
+            if ab is not None:
+                out[k] = ab
+                break
         else:
-            out[out.index(fit)] = _join([fit, lot])
+            out.append(lot)
     return out
 
 
@@ -456,7 +627,8 @@ def _waves(plan, st, pls, fill: _Fill, wid: str, standing: list[str], at_once: i
         lot_rows, rounds = _lots(plan, st, ids, {i for i in ids if pls[i].own_lot}, at_once)
         pts = sum(points(plan, i) for i in ids)
         w = Wave(k, f"wave-s{k}", label, "minor" if doors else "patch",
-                 [_row(plan, i, k) for i in ids], list(standing), lot_rows, rounds, doors,
+                 [_row(plan, i, k, "composed" if pls[i].status == "composed" else "") for i in ids], list(standing),
+                 lot_rows, rounds, doors,
                  {"items": len(ids), "points": pts, "of_items": cap["items"], "of_points": cap["points"]})
         w.waits = sorted({f"{i}: {x}" for i in ids for x in plan.owner_waits(i)})
         w.exit = [f"{len(ids)} item(s) merged", f"tag v{label}" if label else "the tag"]
@@ -477,17 +649,22 @@ def _questions(pls: dict[str, placement.Placement], fill: _Fill) -> list[str]:
 
 
 def _checks(plan: waves.Plan, fill: _Fill, pls) -> list[str]:
-    """What the draft must hold and does not: an item before a prerequisite, an item twice, a pin not honoured."""
-    return _order_checks(plan, fill, pls) + _twice(fill) + [
-        f"{i}: pinned to s{p.pin}, not placed there" for i, p in pls.items()
-        if p.pin in fill.windows and p.status != "composed" and i not in fill.out and fill.at.get(i) != p.pin]
+    """What the draft must hold and does not: an item before a prerequisite, an item twice, a pin or a choice not
+    honoured."""
+    pins = [f"{i}: pinned to s{p.pin}, not placed there" for i, p in pls.items()
+            if p.pin in fill.windows and p.status != "composed" and i not in fill.out and fill.at.get(i) != p.pin]
+    choices = [f"{i}: a choice of {_waves_text(fill.choice(i))}, placed in s{fill.at[i]}" for i, p in pls.items()
+               if p.status != "composed" and i in fill.at and fill.choice(i) and fill.at[i] not in fill.choice(i)]
+    return _order_checks(plan, fill, pls) + _twice(fill) + pins + choices
 
 
 def _order_checks(plan: waves.Plan, fill: _Fill, pls) -> list[str]:
-    """A drafted item before one of its prerequisites (a composed item is the plan's fact: a question says it)."""
+    """A drafted item before one of its prerequisites, or in the same wave as an item it is placed ``after`` (a
+    composed item is the plan's fact: a question says it)."""
     drafted = {i: k for i, k in fill.at.items() if pls[i].status != "composed"}
-    return [f"{i} (s{k}) before its prerequisite {d} (s{fill.at[d]})" for i, k in drafted.items()
-            for d in plan.blockers(i) if fill.at.get(d, 0) > k]
+    return [f"{i} (s{k}) {'not after' if strict else 'before'} its prerequisite {d} (s{fill.at[d]})"
+            for i, k in drafted.items() for d, strict in _prereqs(plan, pls, i)
+            if fill.at.get(d, 0) > k or (strict and fill.at.get(d) == k)]
 
 
 def _twice(fill: _Fill) -> list[str]:
@@ -517,8 +694,7 @@ def _risks(drafted: list[Wave], cap: dict) -> list[str]:
 
 def against(prop: Proposal, path: Path) -> dict:
     """What moved since an earlier ``--json`` proposal: per wave, the items added and removed."""
-    old = json.loads(path.read_text(encoding="utf-8"))
-    before = {w["seq"]: {r["id"] for r in w["items"]} for w in old.get("waves") or []}
+    before = _earlier(json.loads(path.read_text(encoding="utf-8")), path)
     out = {}
     for w in prop.waves:
         now = {r["id"] for r in w.items}
@@ -526,6 +702,29 @@ def against(prop: Proposal, path: Path) -> dict:
         if now != was:
             out[f"s{w.seq}"] = {"added": sorted(now - was), "removed": sorted(was - now)}
     return out
+
+
+def _earlier(old, path: Path) -> dict[int, set[str]]:
+    """An earlier ``--json``'s waves: seq -> its items' ids; a file of another shape is a ValueError."""
+    waves_ = old.get("waves") if isinstance(old, dict) else None
+    if not isinstance(old, dict) or not isinstance(waves_ or [], list):
+        raise _not_a_proposal(path)
+    found = [(_ids_of(w, path), w) for w in waves_ or []]   # each wave checked before its seq is read
+    return {w["seq"]: ids for ids, w in found}
+
+
+def _not_a_proposal(path: Path) -> ValueError:
+    return ValueError(f"--against {path}: not a brain wave propose --json (an object whose waves each carry a seq and "
+                      "items with an id)")
+
+
+def _ids_of(w, path: Path) -> set[str]:
+    """One earlier wave's item ids; a wave of another shape is a ValueError."""
+    rows = w.get("items") if isinstance(w, dict) else None
+    ok = isinstance(w, dict) and isinstance(w.get("seq"), int) and isinstance(rows or [], list)
+    if not ok or not all(isinstance(r, dict) and "id" in r for r in rows or []):
+        raise _not_a_proposal(path)
+    return {str(r["id"]) for r in rows or []}
 
 
 def render(prop: Proposal, every: bool = False) -> list[str]:
