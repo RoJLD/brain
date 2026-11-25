@@ -6,7 +6,7 @@ once in the engine: `brain.gestures.CATALOGUE` (`wi-brain-automation-catalogue`,
 
 Each gesture has:
 
-- **an id**, the stable key `config.json`'s `automation` section will set a level by (`wi-brain-automation-config`).
+- **an id**, the stable key `config.json`'s `automation` section sets a level by (below).
   An id is never renamed or reused: one that leaves the catalogue moves to `brain.gestures.RETIRED`. The label beside
   it may change;
 - **a ceiling**: the highest level the engine allows it, whatever the config says. The levels, in order: `manual`
@@ -37,11 +37,62 @@ of the three (unknown, or unreadable), when it is above the gesture's ceiling, a
 
 The catalogue is version 1 (`brain.gestures.CATALOGUE_V`, the `v` of `--json`). Within it a gesture may be added; an
 id is never renamed, never reused, and leaves only to `RETIRED`. `tests/test_gestures.py` pins the ids 0.7.0
-publishes. The automation config (S2, `wi-brain-automation-config`) is to ignore an id this engine does not know,
-with a warning, so that an older engine reads a newer config; an unknown level reads `manual` (`effective`, now).
+publishes. The automation section (below) ignores an id this engine does not know, with a note, so that an older
+engine reads a newer config; an unknown level reads `manual`.
 
-No guard reads the catalogue yet: the `automation` section of `config.json` (S2), the guards that enforce a level (S3),
-the Settings page (S4) and the ask answered from the queue (S5) are their own items, which read these ids.
+No guard reads a level yet: the guards that enforce one (S3), the Settings page (S4) and the ask answered from the
+queue (S5) are their own items, which read these ids and `brain.automation`.
+
+## The levels: config.json's automation section
+
+A gesture's level (`brain.automation`, `wi-brain-automation-config`, slice S2) is resolved in three layers, in order:
+
+1. **the engine's default**, the gesture's `default` (its level today). A gesture no layer names keeps it: a new
+   engine never raises a level by itself;
+2. **config.json's `automation` section**, version 1:
+
+   ```json
+   "automation": {
+     "v": 1,
+     "levels": {
+       "session-archive": "auto",
+       "release-apply": "ask",
+       "usage-allow": "ask"
+     }
+   }
+   ```
+
+   Raising a level is the owner's (the floor gesture `automation-raise`): config.json changes by a pull request, and
+   the owner's merge is the raise (AUTO-5). When `$BRAIN_CONFIG` names another file than the config.json found
+   without it (a worktree's, say: `brain.config.anchored`), a gesture's level is the lower of the two, so a
+   config.json a session wrote never raises one; when no config.json is found without it (no pointer, or a personal
+   brain without its config.json), the cap is the engine's default, so the file it names may only lower; lowering
+   through it is anyone's;
+3. **the machine file** `<BRAIN_HOME>/automation.json`, of the same shape (`{"v": 1, "levels": {...}}`, `v` 1 when
+   absent): this machine's own levels, which **may only lower** (a second machine, or a session after an incident,
+   which says so). A level it gives above the one it would lower is ignored; one that is not a level lowers to
+   `manual`. The engine reads it and never writes it.
+
+Every level then passes `brain.gestures.effective` (the floor, above). Fail closed: a config.json that exists but
+cannot be read, one whose `v` this engine does not reach, a `$BRAIN_CONFIG` that names no file, an `automation`
+section that is not an object or whose `v` is not 1, and a machine file that cannot be read or whose `v` is not 1,
+make **every** gesture read `manual`. An id the catalogue does not hold (a newer engine's, or a retired one) is
+ignored, and a key of the section this engine does not know too: both are notes.
+
+`brain automation explain [GESTURE] [--json]` prints the layers it read (each file, or none, its error and notes) and,
+for each gesture (or GESTURE alone; exit 1 for an id the catalogue does not hold), its level, the layer that set it
+(`default`, `config` or `machine`) and one step per layer. `brain automation list` shows each level with that source.
+
+`brain config --check` and `brain check` (with the rest of config.json) refuse a floor gesture set above `manual`, in
+both modes: no config lifts the floor. An id the catalogue does not hold, a level that is not one of the three and a
+level above a gesture's ceiling are notes on a machine (they are ignored, or read `manual`: an older engine reading a
+newer config) and errors in strict mode (CI, where the engine is the pin). The schema
+(`schemas/config.schema.json`, `brain config --keys`) requires `v` and refuses a level that is not a string.
+
+The section is version 1 (`brain.automation.SECTION_V`): within it a gesture id may be added and a ceiling raised by a
+later engine (an older one then reads the higher level `manual`); a change of what a level or a key means is a `v` 2,
+which an older engine reads as `manual` for every gesture. An engine before 0.7.0 reads the section as an unknown key
+of config.json (a note, refused in strict mode) and keeps every default.
 
 ## The gestures
 
