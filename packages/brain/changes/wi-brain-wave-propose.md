@@ -5,7 +5,8 @@ section: Added
   the last pending one from the open items' rank, `depends_on`, placements (`brain wave placements`: a pin, a choice,
   earliest, latest, `after` an item, `with` one, `own-lot`), sizes in points and a capacity (given, else what the last
   reached waves closed), the items merged but not closed counted done; each wave's items, standing batches, lots and
-  rounds (`brain wave plan`'s cutter, six sessions at most), doors and release, what waits on the owner; then the eras'
-  due items, the items left out with their reason, the questions, the checks and the risks; `--against` an earlier
+  rounds (`brain wave plan`'s cutter, six sessions at most), doors and release (a pending wave already composed keeps
+  the plan's), what waits on the owner, a pin's prerequisites placed before it; then the eras' due items, a `with`
+  pair split asked, the items left out with their reason, the questions, the checks and the risks; `--against` an earlier
   `--json` says what moved. Its `--json` keys are a public contract (`format` 1, keys only added). It writes nothing
   (`wi-brain-wave-propose`).

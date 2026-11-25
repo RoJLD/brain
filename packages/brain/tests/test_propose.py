@@ -308,3 +308,124 @@ def test_the_lots_gathered_to_six_never_join_into_a_cycle():
     out = propose._grouped(plan, found, units, set())
     assert len(out) <= propose.MAX_LOTS and not propose._cyclic(out, units)
     assert propose.lots.rounds_of(out, units, 3)
+
+
+def test_a_pinned_items_prerequisite_is_lifted_before_higher_ranked_items(tmp_path):
+    prop = _small(tmp_path, """\
+- {id: wi-p, type: WorkItem, status: todo, title: P, props: {priority: P3, size: S, wave_planned: "s3"}}
+- {id: wi-d, type: WorkItem, status: todo, title: D, props: {priority: P3, size: S}}
+- {id: wi-h, type: WorkItem, status: todo, title: H, props: {priority: P1, size: S}}
+""", "- {from: wi-p, to: wi-d, type: depends_on}\n", items=2, pts=30, n=2)
+    assert _where(prop) == {"wi-p": "s3", "wi-d": "s3", "wi-h": "s4"}   # the same wave, within the chain cap
+    assert prop.checks == [] and not [q for q in prop.questions if "is pinned to s3, but" in q]
+
+
+@pytest.mark.parametrize("place,edge", [('wave_planned: "s4"', "- {from: wi-p, to: wi-dd, type: depends_on}\n"),
+                                        ('place: "wave s4; after wi-dd"', "")])
+def test_a_later_pins_prerequisite_comes_in_an_earlier_wave(tmp_path, place, edge):
+    prop = _small(tmp_path, f"""\
+- {{id: wi-p, type: WorkItem, status: todo, title: P, props: {{priority: P3, size: S, {place}}}}}
+- {{id: wi-dd, type: WorkItem, status: todo, title: DD, props: {{priority: P3, size: S}}}}
+- {{id: wi-h1, type: WorkItem, status: todo, title: H1, props: {{priority: P1, size: S}}}}
+- {{id: wi-h2, type: WorkItem, status: todo, title: H2, props: {{priority: P1, size: S}}}}
+""", edge, items=2, pts=30, n=3)
+    at = _where(prop)
+    assert at["wi-p"] == "s4" and at["wi-dd"] == "s3"
+    assert prop.checks == []
+
+
+def test_a_pin_whose_prerequisite_is_out_is_a_check_and_a_question(tmp_path):
+    prop = _small(tmp_path, """\
+- {id: wi-p, type: WorkItem, status: todo, title: P, props: {priority: P3, size: S, wave_planned: "s3"}}
+- {id: wi-ob, type: WorkItem, status: todo, title: Ob, props: {priority: P1, track: "owner (out of waves)"}}
+""", "- {from: wi-p, to: wi-ob, type: depends_on}\n", items=5, pts=30, n=1)
+    assert _where(prop) == {"wi-p": "s3"}
+    assert prop.checks == ["wi-p (s3) before its prerequisite wi-ob (in no drafted wave)"]
+    assert "wi-p is pinned to s3, but wi-ob not placed before s3" in prop.questions
+
+
+def test_from_an_earlier_wave_keeps_the_composed_waves_release(tmp_path):
+    prop = _small(tmp_path, """\
+- {id: wi-cd, type: WorkItem, status: todo, title: Composed door, props: {size: S, door: format}}
+- {id: wi-f1, type: WorkItem, status: todo, title: F1, props: {priority: P1, size: S}}
+""", "- {from: wi-cd, to: wave-s2, type: part_of}\n", items=4, pts=30, n=2, start="wave-s1")
+    s2, s3 = prop.waves
+    assert (s2.id, s2.release, s2.kind) == ("wave-s2", "1.0.1", "patch")   # the plan's label, not a computed minor
+    assert s2.exit[-1] == "tag v1.0.1" and (s3.release, s3.kind) == ("1.0.2", "patch")
+    default = _small(tmp_path, "- {id: wi-cd, type: WorkItem, status: todo, title: Cd, props: {size: S, door: x}}\n",
+                     "- {from: wi-cd, to: wave-s2, type: part_of}\n", items=4, pts=30, n=1)
+    assert default.start == "1.0.1" and default.waves[0].release == "1.0.2"
+
+
+@pytest.mark.parametrize("own", ["", ', place: "own-lot"'])
+def test_a_cycle_of_composed_items_in_a_window_crashes_nothing(tmp_path, own):
+    prop = _small(tmp_path, f"""\
+- {{id: wi-c2, type: WorkItem, status: todo, title: C2, props: {{size: S{own}}}}}
+- {{id: wi-n, type: WorkItem, status: todo, title: N, props: {{priority: P1, size: S}}}}
+- {{id: wi-m, type: WorkItem, status: todo, title: M, props: {{priority: P1, size: S}}}}
+""", """\
+- {from: wi-c2, to: wave-s2, type: part_of}
+- {from: wi-comp, to: wi-c2, type: depends_on}
+- {from: wi-c2, to: wi-comp, type: depends_on}
+- {from: wi-n, to: wi-comp, type: depends_on}
+- {from: wi-m, to: wi-n, type: depends_on}
+""", items=5, pts=30, n=2, start="wave-s1")
+    s2 = prop.waves[0]
+    assert {"wi-c2", "wi-comp"} <= {r["id"] for r in s2.items} and s2.rounds
+    assert _where(prop)["wi-n"] == "s2" and prop.checks == []   # after the cycle, in the same wave: its chain counted
+    assert any(q.startswith("a depends_on cycle: wi-c2, wi-comp") and "composed, kept" in q for q in prop.questions)
+
+
+def test_a_cycle_through_a_composed_item_leaves_the_drafted_ones_out(tmp_path):
+    prop = _small(tmp_path, """\
+- {id: wi-a, type: WorkItem, status: todo, title: A, props: {priority: P1, size: S, place: "own-lot"}}
+- {id: wi-b, type: WorkItem, status: todo, title: B, props: {priority: P1, size: S}}
+""", """\
+- {from: wi-a, to: wi-b, type: depends_on}
+- {from: wi-b, to: wi-comp, type: depends_on}
+- {from: wi-comp, to: wi-a, type: depends_on}
+""", items=5, pts=20, n=1)
+    why = {r["id"]: r["why"] for r in prop.out}
+    assert why["wi-a"] == why["wi-b"] == "a depends_on cycle" and _where(prop) == {}
+    assert any(q.startswith("a depends_on cycle: wi-a, wi-b, wi-comp") for q in prop.questions)
+
+
+def test_the_lots_drop_a_cycle_inside_a_wave():
+    units = _units({"x": ["y"], "y": ["x"], "z": ["x"]})
+    propose._acyclic(units)
+    assert units["x"].after == units["y"].after == [] and units["z"].after == ["x"]
+
+
+@pytest.mark.parametrize("nodes,kw", [
+    ('- {id: wi-t, type: WorkItem, status: todo, title: T, props: {priority: P1, size: S}}\n'
+     '- {id: wi-i, type: WorkItem, status: todo, title: I, props: {priority: P2, size: S, place: "earliest s4; with '
+     'wi-t"}}\n', {"items": 5}),
+    ('- {id: wi-t, type: WorkItem, status: todo, title: T, props: {priority: P1, size: S}}\n'
+     '- {id: wi-o, type: WorkItem, status: todo, title: O, props: {priority: P1, size: S}}\n'
+     '- {id: wi-i, type: WorkItem, status: todo, title: I, props: {priority: P2, size: S, place: "with wi-t"}}\n',
+     {"items": 2})])
+def test_a_with_pair_split_across_waves_is_asked(tmp_path, nodes, kw):
+    prop = _small(tmp_path, nodes, pts=30, n=2, **kw)
+    at = _where(prop)
+    assert at["wi-t"] == "s3" and at["wi-i"] == "s4"
+    assert "wi-i (s4) goes with wi-t, drafted in s3" in prop.questions
+
+
+def test_a_with_partner_that_comes_in_later_in_the_wave_asks_nothing(tmp_path):
+    prop = _small(tmp_path, """\
+- {id: wi-i, type: WorkItem, status: todo, title: I, props: {priority: P1, size: S, place: "with wi-t"}}
+- {id: wi-t, type: WorkItem, status: todo, title: T, props: {priority: P3, size: S}}
+- {id: wi-u, type: WorkItem, status: todo, title: U, props: {priority: P2, size: S}}
+- {id: wi-v, type: WorkItem, status: todo, title: V, props: {priority: P2, size: S}}
+""", "- {from: wi-t, to: wi-u, type: depends_on}\n", items=3, pts=30, n=2)
+    assert _where(prop) == {"wi-i": "s3", "wi-u": "s3", "wi-t": "s3", "wi-v": "s4"}   # the partner before wi-v
+    assert not [q for q in prop.questions if "goes with" in q]
+
+
+def test_an_item_after_a_standing_one_is_drafted(tmp_path):
+    prop = _small(tmp_path, """\
+- {id: wi-debt, type: WorkItem, status: todo, title: Debt, props: {standing: "true", wave_planned: "s3"}}
+- {id: wi-a, type: WorkItem, status: todo, title: A, props: {priority: P1, size: S}}
+""", "- {from: wi-a, to: wi-debt, type: depends_on}\n", items=5, pts=20, n=2)
+    assert _where(prop) == {"wi-a": "s3"} and prop.checks == []
+    assert all(w.standing == ["wi-debt"] for w in prop.waves)

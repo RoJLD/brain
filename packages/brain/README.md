@@ -743,14 +743,15 @@ the same placements.
 [--all] [--json]` is the wave composer, at zero token (`brain.propose`, [docs/propose.md](docs/propose.md)): it drafts
 the N waves (default 3) after the last pending one. Out first, each with its reason (blocked, external, owner, later,
 a trigger, after an era's exit, pinned beyond the drafted waves, a `depends_on` cycle); then, wave by wave, the items
-pinned to it, the overdue and the ones a composed item waits on, those due before an era's exit, then by rank
-(`brain.ranking`), each after its open prerequisites (or stacked in the same wave within a chain of 3; an item its
-placement is `after`, in an earlier wave), within its placement's waves (a choice: one of its waves), within a
-capacity in items and points (S 1, M 2, L 4, XL 8: given, else what the last reached waves closed), a fifth of the
-places kept for quick wins; the items merged but not closed count done. Each wave gets its release (a minor when it
-holds a one-way door), its standing batches, its lots and rounds (`brain wave plan`'s cutter, gathered into six
-sessions at most), its size against the capacity and what waits on the owner; then the eras' due items, the items
-left out, the questions, the checks and the risks; `--against` an earlier `--json` says what moved. It writes nothing:
+pinned to it and their prerequisites, the overdue and the ones a composed item waits on, those due before an era's
+exit, then by rank (`brain.ranking`), each after its open prerequisites (or stacked in the same wave within a chain
+of 3; an item its placement is `after`, in an earlier wave), within its placement's waves (a choice: one of its
+waves), within a capacity in items and points (S 1, M 2, L 4, XL 8: given, else what the last reached waves closed),
+a fifth of the places kept for quick wins; the items merged but not closed count done. Each wave gets its release (a
+minor when it holds a one-way door; a pending wave already composed keeps the plan's), its standing batches, its lots
+and rounds (`brain wave plan`'s cutter, gathered into six sessions at most), its size against the capacity and what
+waits on the owner; then the eras' due items, the items left out, the questions (a `with` pair split among them), the
+checks and the risks; `--against` an earlier `--json` says what moved. It writes nothing:
 the coordinator composes the waves from it.
 
 ### Item sizes
