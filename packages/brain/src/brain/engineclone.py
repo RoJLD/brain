@@ -208,11 +208,34 @@ def _ignored_overwritten(clone: Path, before: str, theirs: str, runner: Runner) 
     return sorted(set(changed.splitlines()) & set(ignored.splitlines()))
 
 
+GESTURE = "engine-clone-pull"   # its gesture in the automation catalogue (brain.gestures.CATALOGUE)
+
+
+def held_by_level(env=None) -> str:
+    """Why the clone is not pulled here, '' when it is: in an agent's session (brain.gestures.agent_session), its
+    gesture's level (brain.automation, config.json's automation section) must be auto; at ask or manual the pull is
+    left to the owner, with its command (wi-brain-automation-guard). The owner's own terminal pulls at every level:
+    the level says what a session does. Read once per refresh; a level that cannot be read is manual."""
+    from . import automation, gestures
+    if not gestures.agent_session(env):
+        return ""
+    r = automation.one(GESTURE)
+    if r.level == "auto":
+        return ""
+    return (f"not pulled: {GESTURE} is at level {r.level} ({r.source}: brain automation explain {GESTURE}), so a "
+            "session leaves it to the owner" + (", once they say yes" if r.level == "ask" else "") +
+            ": git fetch origin, then git merge --ff-only in the clone")
+
+
 def refresh(root: Path | None = None, runner: Runner = bounded, cfg=None) -> Result:
-    """:func:`pull` on the clone :func:`find` names, its note first; Result(None) when there is none."""
+    """:func:`pull` on the clone :func:`find` names, its note first; Result(None) when there is none. In an agent's
+    session, only at its gesture's level auto (:func:`held_by_level`): else skipped, with the command."""
     clone, note = find(root, cfg)
     if clone is None:
         return Result(None, SKIPPED, note)
+    held = held_by_level()
+    if held:
+        return Result(clone, SKIPPED, f"{note}; {held}" if note else held)
     res = pull(clone, runner)
     if note:
         res.line = f"{note}; {res.line}"

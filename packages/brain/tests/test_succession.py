@@ -10,7 +10,7 @@ from datetime import datetime, timezone
 import pytest
 import test_guards_remote_control as rc
 from test_guards import bash, decide, payload, pwsh
-from test_guards_remote_control import E, F, G, K, R, X, Z, call, refused
+from test_guards_remote_control import E, F, G, K, R, X, Z, call, passes, refused
 
 from brain import cli, guards, sessions, succession
 
@@ -26,7 +26,7 @@ def test_write_puts_the_sessions_own_id_first_and_the_guard_reads_it(lab, monkey
     assert text.startswith(f"From {F} (coordinator-f), ") and "Successor: coordinator-g" in text
     assert guards.LOCAL_ID.search(text).group(0) == F and guards.handover_note(F) == f
     monkeypatch.delenv(sessions.HOST_ENV)
-    assert decide(call(lab, G, True)) is None   # the guard takes it
+    assert passes(call(lab, G, True))   # the guard takes it
 
 
 def test_write_needs_an_app_id(lab, monkeypatch, capsys):
@@ -73,7 +73,7 @@ def test_check_agrees_with_the_guard_on_a_root(lab, chain):
     succession.mark_root(o, "the chain of a new wave", env={})
     r = succession.check(o)
     assert r["ok"] and r["root"] and r["on"] and r["off"] and not r["parent"]
-    assert decide(call(lab, c1, True, caller=o)) is None
+    assert passes(call(lab, c1, True, caller=o))
     assert "chain root" in "\n".join(succession.lines(r))
 
 
@@ -295,7 +295,7 @@ def test_children_line_says_which_child_blocks_and_what_it_needs(lab, capsys):
     r = json.loads(capsys.readouterr().out)
     assert r["blocking"] == [K, R] and [c["verdict"] for c in r["children"]] == ["detached", "blocking", "blocking"]
     assert r["ok"] and r["on"] and r["off"]   # the guard's conditions are unchanged
-    assert decide(call(lab, G, True)) is None   # and the guard lets on through with children blocking
+    assert passes(call(lab, G, True))   # and the guard lets on through with children blocking
 
 
 def test_children_archived_or_detached_do_not_block(lab):

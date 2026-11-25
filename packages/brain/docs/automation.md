@@ -40,8 +40,8 @@ id is never renamed, never reused, and leaves only to `RETIRED`. `tests/test_ges
 publishes. The automation section (below) ignores an id this engine does not know, with a note, so that an older
 engine reads a newer config; an unknown level reads `manual`.
 
-No guard reads a level yet: the guards that enforce one (S3), the Settings page (S4) and the ask answered from the
-queue (S5) are their own items, which read these ids and `brain.automation`.
+The guards read a level (S3, below: « Enforcement »); the Settings page (S4) and the ask answered from the queue (S5)
+are their own items, which read these ids and `brain.automation`.
 
 ## The levels: config.json's automation section
 
@@ -94,13 +94,73 @@ later engine (an older one then reads the higher level `manual`); a change of wh
 which an older engine reads as `manual` for every gesture. An engine before 0.7.0 reads the section as an unknown key
 of config.json (a note, refused in strict mode) and keeps every default.
 
+## Enforcement: what the guards make of a level
+
+A level changes who confirms a gesture, never its conditions (wi-brain-automation-guard, spec § 3.4;
+`brain.automation.enforce`). `brain automation explain` prints, per gesture, the line `enforced:` that says which of
+these holds.
+
+**A session's gesture through the app's tools** (`session-archive`: `archive_session`, and the `set_remote_control`
+off before an archive; `handover-remote-control`: Remote Control on and off at a coordinators' hand-over). The guard
+hook reads the level on every call, with its conditions (docs/guards.md « The archive case », « Remote Control's three
+exceptions ») and the session's permission mode (the payload's `permission_mode`):
+
+| Level | Inside its conditions | Outside them |
+|---|---|---|
+| `manual` | refused (`deny`), logged `denied`: the session records it on its item (`props.external_blocker`) and the owner does it | refused |
+| `ask` | the guard asks (`ask`, the card), logged `asked` with its case, whatever the tool's native rule | `archive_session`: the guard asks (`ask`, the card); `set_remote_control`: refused, as before |
+| `auto` | allowed (`allow`): no card, in any mode | as at `ask` |
+
+`ask` reads `manual` where the permission mode shows no card for an ask: the guard counts one only in `default`,
+`acceptEdits`, `plan` and `auto` (`brain.automation.CARD_MODES`); in `bypassPermissions`, `dontAsk`, a mode this
+engine does not know or a payload that gives none, the call is refused (the safe direction).
+
+Inside the conditions at `ask` the guard asks itself rather than leave the call to the native rule, since that rule
+need not be the gesture's level: `set_remote_control` is rendered at the higher level of its two gestures (an allow
+rule when the archive is at `auto` and the hand-over at `ask`, or the reverse), and a level lowered since the render
+(config.json, or the machine file after an incident) leaves the old allow rule in `~/.claude/settings.json` until
+`install.ps1 -Apply`. A hook's `ask` shows the card over an allow rule, so each gesture's level holds on each call as
+the guard reads it: a lowering to `ask` or `manual` takes effect at once. At the engine's defaults (`ask` for both) a
+call inside the conditions gets the card in the modes with one, as the default render's ask rule gives it; an owner's
+allow rule of before this item (`wi-brain-coordinator-handover-no-prompt`) no longer lifts it: the owner raises the
+level to `auto` instead (config.json, AUTO-5).
+
+The probe behind `CARD_MODES` (2026-11-25, Claude Code 2.1.330, recorded in the personal brain's trials): the
+documentation says an `ask` rule prompts in every mode but `dontAsk` (where it is denied), `bypassPermissions`
+included; a hook's `ask` prompts in `auto` mode (the classifier does not decide it), and nothing is said of it in
+`bypassPermissions`; deny and ask rules are evaluated whatever a hook returns, so an `ask` or `deny` rule wins over the
+guard's `allow`. The hook input carries `permission_mode` (a field of every tool hook's common input). A headless run
+that would settle the `bypassPermissions` cell needs a logged-in `claude` CLI: until it shows a card there, `ask` stays
+`manual` in that mode.
+
+**The native rules** (`brain permissions render --level user`, which `install.ps1 -Apply` writes into
+`~/.claude/settings.json`; `brain.automation.native_rules`, `brain.permissions.automation_rules`). Each tool gets the
+highest level of the gestures that use it (`set_remote_control`: the hand-over's and the archive's), since an ask or
+deny rule wins over the guard's allow, and the guard judges each call apart and always decides (a deny, its own ask or
+an allow), so a rule above a gesture's level never lifts its card: `auto` an allow rule, `ask` an ask rule, `manual` a
+deny rule; the tool's two other verdicts
+are rendered as expired, so that the install takes the old level's rule out (an old allow would lift a new ask; an old
+ask or deny would win over a new auto). An allow rule is withheld where no guard sees the tool (`GUARD_REQUIRED`,
+docs/guards.md « The archive case »): the tool then gets no rule. `--json` adds `automation`, each tool's level and
+verdict. The guard stays the authority: a native rule depends on the mode, the guard does not.
+
+**The engine clone's pull** (`engine-clone-pull`): `brain refresh` and `brain release apply` fast-forward the clone
+through one door, `brain.engineclone.refresh`. In an agent's session (`brain.gestures.agent_session`) it pulls at
+`auto` only; at `ask` or `manual` it says `not pulled`, with the level and the command, and leaves it to the owner.
+The owner's own terminal pulls at every level: the level says what a session does.
+
+**A gesture of the owner's terminal** (`release-tag`, `release-apply`, `engine-update`, `queue-apply`...): refused to a
+session at every level, as before (the owner guard, brain.gestures); its level is what the owner's own terminal does
+(spec § 3.1). **The harness's** (`merge-go`, `workflow-launch`) are its own confirmations. **The floor** stays refused
+at every level.
+
 ## The gestures
 
 The Commands column is each gesture's `commands`, the engine's commands that run it; a gesture the app runs (an
 archive, Remote Control, a merge, a workflow) or the owner does outside the engine has none. Its conditions are in
 `brain automation list`. The guard holds `session-archive`'s and `handover-remote-control`'s conditions
-(`brain.guards.archive` and `remote_control`, docs/guards.md « The archive case »): an owner's allow rule lifts the
-app's card inside them, and only there (`wi-brain-coordinator-handover-no-prompt`); the engine's default stays `ask`.
+(`brain.guards.archive` and `remote_control`, docs/guards.md « The archive case »), and reads their level inside
+them (« Enforcement » above); the engine's default stays `ask`.
 
 | Id | Runs | Ceiling | Default | Floor | Commands |
 |---|---|---|---|---|---|

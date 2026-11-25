@@ -18,8 +18,8 @@ whose ``v`` this engine does not know, and a machine file that cannot be read or
 every gesture read manual. An id the catalogue does not hold is ignored (an older engine reading a newer config), a
 note of ``brain config --check``; a retired id too.
 
-Nothing enforces a level yet: the guards that read it are wi-brain-automation-guard (S3). ``brain automation list``
-and ``brain automation explain`` print it. Standard library only (brain.config and brain.paths imported when the
+The guards read it (wi-brain-automation-guard, S3: :func:`enforce`, :func:`native_rules`; the block before
+:data:`CARD_MODES`). ``brain automation list`` and ``brain automation explain`` print it. Standard library only (brain.config and brain.paths imported when the
 caller gives no data), so that the guard hook may import it.
 """
 
@@ -242,13 +242,123 @@ def resolve(cfg=None, anchor=None, machine: Layer | None = None) -> dict[str, Re
     return {a.id: resolve_one(a, config, held, mach) for a in gestures.CATALOGUE}
 
 
-def level(gesture_id: str, cfg=None) -> str:
-    """The level ``gesture_id`` runs at here: manual for an id the catalogue does not hold (fail closed)."""
+def one(gesture_id: str, cfg=None) -> Resolved:
+    """``gesture_id``'s :class:`Resolved` here: manual (source ``default``) for an id the catalogue does not hold, and
+    manual (source ``error``) when the layers cannot be read at all (fail closed: what reads a level never raises)."""
     a = gestures.automation(gesture_id)
     if a is None:
-        return "manual"
-    config, held, mach = layers(cfg)
-    return resolve_one(a, config, held, mach).level
+        return Resolved(gesture_id, "manual", "default", (f"{gesture_id}: no gesture of this engine's catalogue: "
+                                                          "manual (fail closed)",))
+    try:
+        config, held, mach = layers(cfg)
+        return resolve_one(a, config, held, mach)
+    except Exception as exc:   # an engine bug or a file system error: no level is a manual one
+        return Resolved(a.id, "manual", "error", (f"the levels cannot be read ({type(exc).__name__}: {exc}): manual "
+                                                  "(fail closed)",))
+
+
+def level(gesture_id: str, cfg=None) -> str:
+    """The level ``gesture_id`` runs at here: manual for an id the catalogue does not hold (fail closed)."""
+    return one(gesture_id, cfg).level
+
+
+# --- enforcement (wi-brain-automation-guard, spec-brain-automation-levels S3; docs/automation.md) ----------------------
+# What the guards make of a level. A session's gesture with a tool of the app (archive_session, set_remote_control) is
+# judged by the guard hook (brain.guards.main), which reads its level on every call:
+#   manual  refused to the session, inside its conditions too: the owner does it;
+#   ask     inside its conditions the guard asks (permissionDecision ask: the app's card, which an allow rule does not
+#           lift), never leaving it to the native rule: that one is the highest level of the tool's gestures
+#           (set_remote_control is the hand-over's and the archive's) and the render's, which a level lowered since
+#           (config.json, the machine file) leaves behind until install.ps1 -Apply; outside them the guard's own ask
+#           (archive_session) or its refusal (set_remote_control, as before);
+#   auto    inside its conditions the guard allows it (permissionDecision allow: no card); outside them as at ask.
+# Where the session's permission mode shows no card for a hook's ask (CARD_MODES: the probe of 2026-11-25), ask falls
+# back to manual (the safe direction); a mode the payload does not give, or one this engine does not know, shows none.
+# So a gesture's level holds on each call as the guard reads it, whatever the native rules: a deny at manual, the card
+# at ask, the allow at auto (where an ask or deny rule left by an older render still wins: a card, the safe direction).
+# The engine clone's pull is judged by brain.engineclone.refresh (brain refresh, brain release apply): in an agent's
+# session it pulls at auto only. A gesture of the owner's terminal stays refused to a session at every level: its
+# level is what their own terminal does (spec § 3.1). The harness's gestures (merge-go, workflow-launch) are its own.
+CARD_MODES = ("default", "acceptEdits", "plan", "auto")   # the permission modes where a hook's ask shows the card
+TOOLS = {   # the app's tools a session's gesture runs through: {tool: the gestures that use it}
+    "mcp__ccd_session_mgmt__archive_session": ("session-archive",),
+    "mcp__ccd_session_mgmt__set_remote_control": ("handover-remote-control", "session-archive"),
+}
+NATIVE = {"manual": "deny", "ask": "ask", "auto": "allow"}   # a level as the app's native permission rule
+
+
+def card(mode) -> bool:
+    """Whether a hook's ask shows the app's card in the permission mode ``mode`` (the payload's ``permission_mode``):
+    one of :data:`CARD_MODES`; None, another value or a mode this engine does not know shows none (fail closed)."""
+    return isinstance(mode, str) and mode in CARD_MODES
+
+
+@dataclass(frozen=True)
+class Enforced:
+    """What the guard does with a gesture's call: ``decision`` the hook's permissionDecision (deny, ask or allow: the
+    guard always decides, the native rule never stands in for a level); ``level`` and ``source`` the gesture's
+    (:func:`one`), ``level`` manual where an ask reads manual; ``why`` one line for the reason and the ledger."""
+    gesture: str
+    decision: str
+    level: str
+    source: str
+    why: str
+
+
+def enforce(gesture_id: str, inside: bool, mode, resolved: Resolved | None = None) -> Enforced:
+    """What the guard does with a call of ``gesture_id``, ``inside`` its conditions or not, in the permission mode
+    ``mode`` (the block above). Never raises: a level that cannot be read is manual."""
+    r = resolved if resolved is not None else one(gesture_id)
+    lvl = r.level if r.level in gestures.LEVELS else "manual"
+    named = f"{gesture_id} is at level {lvl} ({r.source}: brain automation explain {gesture_id})"
+    if lvl == "manual":
+        return Enforced(gesture_id, "deny", lvl, r.source, f"{named}: its owner does it")
+    if lvl == "auto" and inside:
+        return Enforced(gesture_id, "allow", lvl, r.source, f"{named}, and its conditions hold: no card")
+    if not card(mode):
+        shown = json.dumps(mode) if isinstance(mode, str) else "none given"
+        return Enforced(gesture_id, "deny", "manual", r.source,
+                        f"{named}, but the permission mode ({shown[:40]}) shows no card for an ask: it reads manual "
+                        "(docs/automation.md)")
+    # the guard's own ask inside the conditions too, never the native rule's: that one may be an allow (a shared tool,
+    # a level lowered since the render)
+    where = "its conditions hold" if inside else "outside its conditions"
+    return Enforced(gesture_id, "ask", lvl, r.source, f"{named}: {where}, the owner's card")
+
+
+def native_rules(resolved: dict[str, Resolved] | None = None) -> dict[str, dict]:
+    """{tool: {level, verdict, gestures}} for each app tool of :data:`TOOLS`: the highest level of the gestures that
+    use it, as its native rule (:data:`NATIVE`: allow, ask or deny), since an ask or a deny rule wins over a hook's
+    allow (a gesture at auto would get a card). The guard judges each call apart and always decides (:func:`enforce`:
+    deny, ask or allow), so a rule above a gesture's level (the other gesture's, or one a lowering left behind until
+    the next render) never lifts its card. ``brain permissions render --level user`` writes it; the other two verdicts
+    of the tool are taken out."""
+    resolved = resolved if resolved is not None else resolve()
+    out = {}
+    for tool, ids in TOOLS.items():
+        levels = [resolved[g].level if g in resolved else "manual" for g in ids]
+        top = max(levels, key=_rank)
+        out[tool] = {"level": top, "verdict": NATIVE[top], "gestures": list(ids)}
+    return out
+
+
+def enforcement(a: gestures.Automation, lvl: str) -> str:
+    """One line on what enforces ``a`` at ``lvl`` (``brain automation explain``)."""
+    tools = [t for t, ids in TOOLS.items() if a.id in ids]
+    if a.floor:
+        return "the floor: refused to a session at every level"
+    if tools:
+        what = {"manual": "the guard refuses it to a session, inside its conditions too",
+                "ask": "inside its conditions the guard asks, the card (an ask reads manual in a mode with no card); "
+                       "outside them it asks or refuses",
+                "auto": "inside its conditions the guard allows it, no card; outside them it asks or refuses"}[lvl]
+        return f"{what} ({', '.join(t.rsplit('__', 1)[-1] for t in tools)})"
+    if a.id == "engine-clone-pull":
+        return ("brain refresh and brain release apply pull it in a session" if lvl == "auto" else
+                "in a session brain refresh does not pull it, and says the command")
+    if a.runs in ("terminal", "elevated"):
+        return "refused to a session at every level; the level is what the owner's own terminal does"
+    return "the harness's own confirmation: the Brain does not change it"
 
 
 def check(cfg) -> list[str]:
@@ -305,7 +415,7 @@ def explain(gesture_id: str | None = None, cfg=None, anchor=None, machine: Layer
         out.append({"id": a.id, "label": a.label, "level": r.level, "source": r.source, "default": a.default,
                     "ceiling": a.ceiling, "floor": a.floor or None, "locked": bool(a.floor), "runs": a.runs,
                     "config": config.levels.get(a.id), "machine": mach.levels.get(a.id),
-                    "steps": list(r.steps)})
+                    "steps": list(r.steps), "enforced": enforcement(a, r.level)})
     lay = [x for x in (config, held, mach) if x is not None]
     return {"v": gestures.CATALOGUE_V, "section_v": SECTION_V, "levels": list(gestures.LEVELS),
             "layers": [{"name": x.name, "where": x.where or None, "present": x.present, "error": x.error or None,

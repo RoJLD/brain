@@ -27,8 +27,9 @@ workflow's launch), each with its stable id, its ceiling (manual, ask or auto: t
 its default (its level today), its conditions, where it runs and its floor category (AUTO-1: :data:`FLOOR`); a level
 above the ceiling, unknown or unreadable, and any level of a floor gesture, reads manual (:func:`effective`).
 brain.automation resolves each gesture's level from its default, config.json's ``automation`` section and the machine
-file that may only lower (wi-brain-automation-config); no guard reads a level yet (``brain automation list`` and
-``explain`` print them; docs/automation.md).
+file that may only lower (wi-brain-automation-config); the guards read it (wi-brain-automation-guard:
+brain.automation.enforce, the guard hook on archive_session and set_remote_control, brain.engineclone.refresh;
+``brain automation list`` and ``explain`` print them; docs/automation.md « Enforcement »).
 """
 
 from __future__ import annotations
@@ -142,9 +143,9 @@ CATALOGUE: tuple[Automation, ...] = (
                 "its PRs merged and its worktree clean (the definition of done), none of its children blocking"),
                note="brain.guards.archive checks the family, the turn, the children, the PRs and the folder (the "
                     "Remote Control off is set_remote_control's own case, and the app refuses an archive while it is "
-                    "on): inside them an owner's allow rule lifts the app's card "
-                    "(wi-brain-coordinator-handover-no-prompt), outside them or on an error the guard asks; the "
-                    "engine's default stays ask"),
+                    "on): inside them its level decides (brain.automation.enforce: ask the guard's card, whatever "
+                    "an owner's allow rule; auto no card; manual refused), outside them or on an error the guard "
+                    "asks; the engine's default stays ask"),
     Automation("handover-remote-control", "Remote Control at a coordinators' hand-over", "session", "auto", "ask",
                ("on for the coordinator the caller started to succeed it, live or starting, detached",
                 "off on the caller itself once its hand-over note is written and its successor detached"),
