@@ -2097,15 +2097,15 @@ then `<BRAIN_HOME>/automation.json`, a machine file of the same shape that may o
 found). Fail closed: a level above its ceiling, unknown or unreadable, a floor gesture's, and a section or file this
 engine cannot read, read `manual`; an id the catalogue does not hold is ignored with a note. `brain automation
 explain [GESTURE] [--json]` says where each level comes from; `brain config --check` and `brain check` refuse a floor
-gesture set above `manual`. No guard reads a level yet: its enforcement is the next slice of
-`spec-brain-automation-levels`.
+gesture set above `manual`. The guards enforce them (below).
 
 **The levels enforced** (wi-brain-automation-guard,
 [docs/automation.md](docs/automation.md#enforcement-what-the-guards-make-of-a-level)): the guard reads
 `session-archive`'s and `handover-remote-control`'s level on each `archive_session` and `set_remote_control` call
-inside its conditions (`manual` refused, `ask` left to the native ask rule, `auto` allowed with no card; `ask` reads
-`manual` in a permission mode with no card, `bypassPermissions` or `dontAsk`); `brain permissions render --level
-user` writes each tool's level as its native rule (allow, ask or deny) and takes the other verdicts out; in an agent's
+inside its conditions (`manual` refused, `ask` the guard's own ask, the card, whatever the tool's native rule,
+`auto` allowed with no card; `ask` reads `manual` in a permission mode with no card, `bypassPermissions` or
+`dontAsk`); `brain permissions render --level user` writes each tool's level as its native rule (allow, ask or deny)
+and takes the other verdicts out; in an agent's
 session `brain refresh` and `brain release apply` pull the engine clone at `auto` only. A gesture of the owner's
 terminal stays refused to a session at every level.
 

@@ -4,6 +4,7 @@ coordinators, on for the coordinator the caller started to succeed it and off on
 note is written. Everything else stays refused. The tests run as owner Ada (fixtures/brain) on invented sessions: the
 desktop app's files under a temporary LOCALAPPDATA, transcripts under a temporary CLAUDE_CONFIG_DIR."""
 
+import io
 import json
 import os
 import time
@@ -85,6 +86,17 @@ def rows(lab):
             for line in f.read_text(encoding="utf-8").splitlines()]
 
 
+def passes(p) -> bool:
+    """Whether the hook takes ``p`` for one of the three exceptions at the engine's default level, ``ask``: the guard's
+    own ask (the owner's card, which no allow rule lifts; brain.automation.enforce), logged ``asked`` with its case."""
+    out = io.StringIO()
+    assert guards.main(stdin=io.StringIO(json.dumps(p)), stdout=out) == 0
+    hso = json.loads(out.getvalue() or "{}").get("hookSpecificOutput") or {}
+    reason = hso.get("permissionDecisionReason", "")
+    assert hso.get("permissionDecision") == "ask" and "its conditions hold" in reason, out.getvalue()
+    return "\n" not in reason
+
+
 def refused(lab, p, why):
     reason = decide(p)
     assert reason and "security-settings is Ada's alone" in reason and "No override" in reason, reason
@@ -95,9 +107,9 @@ def refused(lab, p, why):
 # --- 1. off on a finished session the caller started, before archiving it ---
 
 def test_off_on_a_finished_session_it_started_passes_and_is_logged(lab):
-    assert decide(call(lab, K, False)) is None
+    assert passes(call(lab, K, False))
     [row] = rows(lab)
-    assert (row["guard"], row["check"], row["decision"], row["case"]) == ("owner", "security-settings", "allowed",
+    assert (row["guard"], row["check"], row["decision"], row["case"]) == ("owner", "security-settings", "asked",
                                                                           "archive")
     assert row["what"] == {"session_id": K, "enabled": False} and row["session_id"] == CLI[F]
 
@@ -134,9 +146,9 @@ def test_a_parent_link_only_the_ledger_holds_is_not_trusted(lab):
 
 def test_on_for_its_successor_at_its_handover_passes(lab):
     lab.note()
-    assert decide(call(lab, G, True)) is None
+    assert passes(call(lab, G, True))
     [row] = rows(lab)
-    assert (row["decision"], row["case"]) == ("allowed", "handover-on")
+    assert (row["decision"], row["case"]) == ("asked", "handover-on")
 
 
 def test_on_is_refused_without_a_hand_over_note(lab):
@@ -200,9 +212,9 @@ def test_a_title_that_mentions_a_coordinator_is_no_coordinator(lab):
 def test_off_on_itself_at_its_handover_passes(lab):
     lab.note()
     for target in ("self", F):
-        assert decide(call(lab, target, False)) is None
+        assert passes(call(lab, target, False))
     got = rows(lab)
-    assert len(got) == 2 and {(r["decision"], r["case"]) for r in got} == {("allowed", "handover-off")}
+    assert len(got) == 2 and {(r["decision"], r["case"]) for r in got} == {("asked", "handover-off")}
     assert [r["what"]["session_id"] for r in got] == ["self", F] and G in got[0]["reason"]
 
 
@@ -302,16 +314,16 @@ def test_on_for_a_successor_just_started_passes(lab):
     """The outgoing coordinator turns it on seconds after start_session: the app has its file, not yet a transcript."""
     lab.note()
     starting(lab)
-    assert decide(call(lab, G, True)) is None
+    assert passes(call(lab, G, True))
     [row] = rows(lab)
-    assert (row["decision"], row["case"]) == ("allowed", "handover-on")
+    assert (row["decision"], row["case"]) == ("asked", "handover-on")
     assert "has no transcript yet and was created" in row["reason"]
 
 
 def test_on_for_a_successor_just_inside_the_start_window_passes(lab):
     lab.note()
     starting(lab, age_s=guards.HANDOVER_START_S - 30)
-    assert decide(call(lab, G, True)) is None
+    assert passes(call(lab, G, True))
 
 
 @pytest.mark.parametrize("age_s", [guards.HANDOVER_START_S + 60, 30 * 24 * 3600, -3600])   # too old, or in the future
@@ -338,9 +350,9 @@ def test_on_for_an_unknown_successor_whose_creation_time_cannot_be_read_is_refus
 def test_off_on_itself_with_a_successor_just_started_passes(lab):
     lab.note()
     starting(lab)
-    assert decide(call(lab, "self", False)) is None
+    assert passes(call(lab, "self", False))
     [row] = rows(lab)
-    assert (row["decision"], row["case"]) == ("allowed", "handover-off")
+    assert (row["decision"], row["case"]) == ("asked", "handover-off")
     assert f"{G} (starting: has no transcript yet and was created" in row["reason"]
 
 
@@ -379,7 +391,7 @@ def test_a_note_that_is_not_the_callers_own_does_not_count(lab, kw):
 
 def test_a_note_just_inside_the_window_counts(lab):
     lab.note(age_s=guards.HANDOVER_NOTE_S - 60)
-    assert decide(call(lab, G, True)) is None
+    assert passes(call(lab, G, True))
 
 
 @pytest.mark.skipif(os.name == "nt", reason="symbolic links need a privilege on Windows")
@@ -413,7 +425,7 @@ def test_a_name_that_only_starts_like_a_coordinator_is_none(lab, name):
     lab.note()
     lab.put(K, parent=F, name=name, title="A child")
     refused(lab, call(lab, K, True), f"{K} is not a Brain coordinator")
-    assert decide(call(lab, K, False)) is None   # and it is archived like any finished child
+    assert passes(call(lab, K, False))   # and it is archived like any finished child
 
 
 def test_a_coordinator_started_by_no_one_does_not_hand_over(lab):
@@ -500,8 +512,8 @@ def test_a_marked_root_hands_over_without_a_name(lab, chain):
     o, c1, _ = chain
     _mark(o)
     lab.note(host=o)
-    assert decide(call(lab, c1, True, caller=o)) is None
-    assert decide(call(lab, "self", False, caller=o)) is None
+    assert passes(call(lab, c1, True, caller=o))
+    assert passes(call(lab, "self", False, caller=o))
     assert [r["case"] for r in rows(lab)] == ["handover-on", "handover-off"]
 
 
@@ -510,8 +522,8 @@ def test_the_first_successor_of_a_marked_root_hands_over(lab, chain):
     lab.note(host=c1)
     refused(lab, call(lab, c2, True, caller=c1), "this session was not started by a Brain coordinator")
     _mark(o)
-    assert decide(call(lab, c2, True, caller=c1)) is None
-    assert decide(call(lab, "self", False, caller=c1)) is None
+    assert passes(call(lab, c2, True, caller=c1))
+    assert passes(call(lab, "self", False, caller=c1))
 
 
 def test_a_marked_session_that_a_session_started_is_no_root(lab, chain, monkeypatch):

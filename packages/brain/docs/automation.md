@@ -108,15 +108,22 @@ exceptions ») and the session's permission mode (the payload's `permission_mode
 | Level | Inside its conditions | Outside them |
 |---|---|---|
 | `manual` | refused (`deny`), logged `denied`: the session records it on its item (`props.external_blocker`) and the owner does it | refused |
-| `ask` | the guard says nothing, logged `allowed`: the native rule decides, the `ask` rule `brain permissions render` writes for the tool (the app's card) | `archive_session`: the guard asks (`ask`, the card); `set_remote_control`: refused, as before |
+| `ask` | the guard asks (`ask`, the card), logged `asked` with its case, whatever the tool's native rule | `archive_session`: the guard asks (`ask`, the card); `set_remote_control`: refused, as before |
 | `auto` | allowed (`allow`): no card, in any mode | as at `ask` |
 
 `ask` reads `manual` where the permission mode shows no card for an ask: the guard counts one only in `default`,
 `acceptEdits`, `plan` and `auto` (`brain.automation.CARD_MODES`); in `bypassPermissions`, `dontAsk`, a mode this
-engine does not know or a payload that gives none, the call is refused (the safe direction). The engine's defaults
-(`ask` for both) keep the behaviour before this item in the modes with a card: quiet inside the conditions, the
-owner's own native rule deciding (their allow rule lifts the card until `install.ps1 -Apply` renders the level as an
-ask rule), asked or refused outside.
+engine does not know or a payload that gives none, the call is refused (the safe direction).
+
+Inside the conditions at `ask` the guard asks itself rather than leave the call to the native rule, since that rule
+need not be the gesture's level: `set_remote_control` is rendered at the higher level of its two gestures (an allow
+rule when the archive is at `auto` and the hand-over at `ask`, or the reverse), and a level lowered since the render
+(config.json, or the machine file after an incident) leaves the old allow rule in `~/.claude/settings.json` until
+`install.ps1 -Apply`. A hook's `ask` shows the card over an allow rule, so each gesture's level holds on each call as
+the guard reads it: a lowering to `ask` or `manual` takes effect at once. At the engine's defaults (`ask` for both) a
+call inside the conditions gets the card in the modes with one, as the default render's ask rule gives it; an owner's
+allow rule of before this item (`wi-brain-coordinator-handover-no-prompt`) no longer lifts it: the owner raises the
+level to `auto` instead (config.json, AUTO-5).
 
 The probe behind `CARD_MODES` (2026-11-25, Claude Code 2.1.330, recorded in the personal brain's trials): the
 documentation says an `ask` rule prompts in every mode but `dontAsk` (where it is denied), `bypassPermissions`
@@ -128,8 +135,10 @@ that would settle the `bypassPermissions` cell needs a logged-in `claude` CLI: u
 
 **The native rules** (`brain permissions render --level user`, which `install.ps1 -Apply` writes into
 `~/.claude/settings.json`; `brain.automation.native_rules`, `brain.permissions.automation_rules`). Each tool gets the
-highest level of the gestures that use it (`set_remote_control`: the hand-over's and the archive's), since the guard
-judges each call apart: `auto` an allow rule, `ask` an ask rule, `manual` a deny rule; the tool's two other verdicts
+highest level of the gestures that use it (`set_remote_control`: the hand-over's and the archive's), since an ask or
+deny rule wins over the guard's allow, and the guard judges each call apart and always decides (a deny, its own ask or
+an allow), so a rule above a gesture's level never lifts its card: `auto` an allow rule, `ask` an ask rule, `manual` a
+deny rule; the tool's two other verdicts
 are rendered as expired, so that the install takes the old level's rule out (an old allow would lift a new ask; an old
 ask or deny would win over a new auto). An allow rule is withheld where no guard sees the tool (`GUARD_REQUIRED`,
 docs/guards.md « The archive case »): the tool then gets no rule. `--json` adds `automation`, each tool's level and

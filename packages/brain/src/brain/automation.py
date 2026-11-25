@@ -266,12 +266,16 @@ def level(gesture_id: str, cfg=None) -> str:
 # What the guards make of a level. A session's gesture with a tool of the app (archive_session, set_remote_control) is
 # judged by the guard hook (brain.guards.main), which reads its level on every call:
 #   manual  refused to the session, inside its conditions too: the owner does it;
-#   ask     inside its conditions the guard says nothing and the native rule decides: brain permissions render writes
-#           an ask rule for the tool (the app's card, which an ask rule shows in every mode but dontAsk); outside them
-#           the guard's own ask (archive_session) or its refusal (set_remote_control, as before);
+#   ask     inside its conditions the guard asks (permissionDecision ask: the app's card, which an allow rule does not
+#           lift), never leaving it to the native rule: that one is the highest level of the tool's gestures
+#           (set_remote_control is the hand-over's and the archive's) and the render's, which a level lowered since
+#           (config.json, the machine file) leaves behind until install.ps1 -Apply; outside them the guard's own ask
+#           (archive_session) or its refusal (set_remote_control, as before);
 #   auto    inside its conditions the guard allows it (permissionDecision allow: no card); outside them as at ask.
 # Where the session's permission mode shows no card for a hook's ask (CARD_MODES: the probe of 2026-11-25), ask falls
 # back to manual (the safe direction); a mode the payload does not give, or one this engine does not know, shows none.
+# So a gesture's level holds on each call as the guard reads it, whatever the native rules: a deny at manual, the card
+# at ask, the allow at auto (where an ask or deny rule left by an older render still wins: a card, the safe direction).
 # The engine clone's pull is judged by brain.engineclone.refresh (brain refresh, brain release apply): in an agent's
 # session it pulls at auto only. A gesture of the owner's terminal stays refused to a session at every level: its
 # level is what their own terminal does (spec § 3.1). The harness's gestures (merge-go, workflow-launch) are its own.
@@ -291,9 +295,9 @@ def card(mode) -> bool:
 
 @dataclass(frozen=True)
 class Enforced:
-    """What the guard does with a gesture's call: ``decision`` the hook's permissionDecision (deny, ask or allow), ''
-    when it says nothing (the native rules decide); ``level`` and ``source`` the gesture's (:func:`one`); ``why`` one
-    line for the reason and the ledger."""
+    """What the guard does with a gesture's call: ``decision`` the hook's permissionDecision (deny, ask or allow: the
+    guard always decides, the native rule never stands in for a level); ``level`` and ``source`` the gesture's
+    (:func:`one`), ``level`` manual where an ask reads manual; ``why`` one line for the reason and the ledger."""
     gesture: str
     decision: str
     level: str
@@ -316,16 +320,19 @@ def enforce(gesture_id: str, inside: bool, mode, resolved: Resolved | None = Non
         return Enforced(gesture_id, "deny", "manual", r.source,
                         f"{named}, but the permission mode ({shown[:40]}) shows no card for an ask: it reads manual "
                         "(docs/automation.md)")
-    if inside:
-        return Enforced(gesture_id, "", lvl, r.source, f"{named}: its conditions hold, the native rule decides")
-    return Enforced(gesture_id, "ask", lvl, r.source, f"{named}: outside its conditions, the owner's card")
+    # the guard's own ask inside the conditions too, never the native rule's: that one may be an allow (a shared tool,
+    # a level lowered since the render)
+    where = "its conditions hold" if inside else "outside its conditions"
+    return Enforced(gesture_id, "ask", lvl, r.source, f"{named}: {where}, the owner's card")
 
 
 def native_rules(resolved: dict[str, Resolved] | None = None) -> dict[str, dict]:
     """{tool: {level, verdict, gestures}} for each app tool of :data:`TOOLS`: the highest level of the gestures that
-    use it, as its native rule (:data:`NATIVE`: allow, ask or deny), since the guard judges each call apart and a
-    native rule above it may only let the guard's own decision stand (an ask or a deny rule wins over a hook's allow).
-    ``brain permissions render --level user`` writes it; the other two verdicts of the tool are taken out."""
+    use it, as its native rule (:data:`NATIVE`: allow, ask or deny), since an ask or a deny rule wins over a hook's
+    allow (a gesture at auto would get a card). The guard judges each call apart and always decides (:func:`enforce`:
+    deny, ask or allow), so a rule above a gesture's level (the other gesture's, or one a lowering left behind until
+    the next render) never lifts its card. ``brain permissions render --level user`` writes it; the other two verdicts
+    of the tool are taken out."""
     resolved = resolved if resolved is not None else resolve()
     out = {}
     for tool, ids in TOOLS.items():
@@ -342,8 +349,8 @@ def enforcement(a: gestures.Automation, lvl: str) -> str:
         return "the floor: refused to a session at every level"
     if tools:
         what = {"manual": "the guard refuses it to a session, inside its conditions too",
-                "ask": "inside its conditions the native ask rule shows the card (an ask reads manual in a mode with "
-                       "no card); outside them the guard asks or refuses",
+                "ask": "inside its conditions the guard asks, the card (an ask reads manual in a mode with no card); "
+                       "outside them it asks or refuses",
                 "auto": "inside its conditions the guard allows it, no card; outside them it asks or refuses"}[lvl]
         return f"{what} ({', '.join(t.rsplit('__', 1)[-1] for t in tools)})"
     if a.id == "engine-clone-pull":

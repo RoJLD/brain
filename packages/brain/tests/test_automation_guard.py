@@ -1,6 +1,7 @@
 """The automation levels enforced (wi-brain-automation-guard, spec-brain-automation-levels S3; docs/automation.md):
-brain.automation.enforce's table (manual refused inside the conditions too, ask left to the native rule inside them and
-asked outside, auto allowed inside them; ask reads manual in a permission mode with no card, or none given), the guard
+brain.automation.enforce's table (manual refused inside the conditions too, ask asked by the guard inside and outside
+them, whatever the native rule, auto allowed inside them; ask reads manual in a permission mode with no card, or none
+given), the guard
 hook on archive_session and set_remote_control at each level, the native rules brain permissions render writes for the
 app's tools (the highest level of their gestures, the other verdicts taken out, an allow no guard sees withheld), and
 the engine clone's pull, which a session does at auto only, through both of its paths (brain refresh, brain release
@@ -45,7 +46,7 @@ def resolved(level: str, source: str = "config") -> automation.Resolved:
 @pytest.mark.parametrize("level,inside,mode,decision", [
     ("manual", True, "default", "deny"), ("manual", False, "auto", "deny"),
     ("manual", True, "bypassPermissions", "deny"),
-    ("ask", True, "default", ""), ("ask", True, "auto", ""), ("ask", True, "acceptEdits", ""),
+    ("ask", True, "default", "ask"), ("ask", True, "auto", "ask"), ("ask", True, "acceptEdits", "ask"),
     ("ask", False, "default", "ask"), ("ask", False, "auto", "ask"), ("ask", False, "plan", "ask"),
     ("ask", True, "bypassPermissions", "deny"), ("ask", False, "dontAsk", "deny"),
     ("ask", True, None, "deny"), ("ask", False, "a-mode-of-later", "deny"), ("ask", True, 3, "deny"),
@@ -71,13 +72,14 @@ def test_a_level_the_engine_cannot_read_is_manual(monkeypatch):
 
 
 def test_the_engines_defaults_keep_todays_behaviour(lab):
-    """No automation section: archive and Remote Control at ask, so the guard keeps quiet inside the conditions (the
-    owner's native rule decides, as before) and asks or refuses outside them; the clone's pull at auto."""
+    """No automation section: archive and Remote Control at ask, so the guard asks inside the conditions (the card,
+    which the native ask rule of the default render shows too; an owner's old allow rule no longer lifts it) and asks
+    or refuses outside them; the clone's pull at auto."""
     levels = {g: automation.one(g).level for g in (*SESSION_GESTURES, engineclone.GESTURE)}
     assert levels == {"session-archive": "ask", "handover-remote-control": "ask", "engine-clone-pull": "auto"}
     work(lab, K, prs=["MERGED"])
-    assert hook(arc(lab, K)) == (None, "")
-    assert [(r["decision"], r["level"]) for r in rows(lab)] == [("allowed", "ask")]
+    assert arclab.passed(arc(lab, K))
+    assert [(r["decision"], r["case"], r["level"]) for r in rows(lab)] == [("asked", "child", "ask")]
 
 
 # --- archive_session ----------------------------------------------------------------------------------------------
@@ -146,6 +148,33 @@ def test_a_pass_the_ledger_does_not_take_is_no_allow(lab, tmp_path, monkeypatch)
     arclab.asked(lab, arc(lab, K), "the pass could not be logged in the guards ledger")
 
 
+def test_a_refusal_the_ledger_does_not_take_is_still_a_refusal(lab, tmp_path, monkeypatch):
+    """At manual a ledger that raises leaves the deny standing, on both paths of the archive (not the fallback ask)."""
+    set_levels(tmp_path, monkeypatch, session_archive="manual")
+    work(lab, K, prs=["MERGED"])
+
+    def boom(*a, **kw):
+        raise OSError("the ledger's disk is full")
+    monkeypatch.setattr(guards, "_record", boom)
+    decision, reason = hook(arc(lab, K))
+    assert decision == "deny" and "session-archive is at level manual" in reason
+    assert hook(call(lab, K, False))[0] == "deny"   # the Remote Control off before it
+
+
+def test_a_level_lowered_to_ask_after_the_render_gets_its_card_back(lab, tmp_path, monkeypatch):
+    """The render wrote the allow rule of auto; a level lowered to ask since (the machine file, after an incident) is
+    read on the next call: the guard asks, before any install.ps1 -Apply takes the allow rule out."""
+    set_levels(tmp_path, monkeypatch, session_archive="auto")
+    assert automation.native_rules()[ARCHIVE]["verdict"] == "allow"   # what ~/.claude/settings.json still holds
+    lab.home.mkdir(parents=True, exist_ok=True)
+    (lab.home / "automation.json").write_text(json.dumps({"v": 1, "levels": {"session-archive": "ask"}}),
+                                              encoding="utf-8")
+    work(lab, K, prs=["MERGED"])
+    assert arclab.passed(arc(lab, K))
+    assert hook(call(lab, K, False))[0] == "ask"
+    assert [(r["decision"], r["level"]) for r in rows(lab)] == [("asked", "ask"), ("asked", "ask")]
+
+
 # --- set_remote_control -------------------------------------------------------------------------------------------
 
 def test_a_hand_over_at_auto_is_allowed_and_at_manual_refused(lab, tmp_path, monkeypatch):
@@ -174,9 +203,26 @@ def test_remote_control_outside_its_cases_stays_refused_at_auto(lab, tmp_path, m
     assert hook(call(lab, K, True))[0] == "deny"                  # on for a child: never
 
 
+@pytest.mark.parametrize("archive_level,handover_level", [("auto", "ask"), ("ask", "auto")])
+def test_a_gesture_at_ask_gets_its_card_when_the_other_renders_the_tool_allow(lab, tmp_path, monkeypatch,
+                                                                              archive_level, handover_level):
+    """set_remote_control is the hand-over's and the archive's: rendered at the higher of the two levels (an allow
+    rule), the gesture at ask still gets the guard's own ask, which that allow rule does not lift."""
+    set_levels(tmp_path, monkeypatch, session_archive=archive_level, handover_remote_control=handover_level)
+    assert automation.native_rules()[RC]["verdict"] == "allow"
+    lab.note()
+    handover, off = hook(call(lab, G, True)), hook(call(lab, K, False))
+    at_ask, at_auto = (handover, off) if handover_level == "ask" else (off, handover)
+    assert at_ask[0] == "ask" and "is at level ask" in at_ask[1] and "its conditions hold" in at_ask[1], at_ask
+    assert at_auto[0] == "allow" and "is at level auto" in at_auto[1], at_auto
+    assert sorted((r["case"], r["decision"]) for r in rows(lab)) == sorted([
+        ("handover-on", "asked" if handover_level == "ask" else "allowed"),
+        ("archive", "asked" if archive_level == "ask" else "allowed")])
+
+
 def test_a_hand_over_at_ask_reads_manual_in_bypass_mode(lab):
     lab.note()
-    assert hook(call(lab, G, True))[0] is None   # the default, ask, in the default mode: the native rule decides
+    assert rclab.passes(call(lab, G, True))   # the default, ask, in the default mode: the guard's own ask
     decision, reason = hook(call(lab, G, True, perm="bypassPermissions"))
     assert decision == "deny" and "it reads manual" in reason
 
@@ -189,7 +235,7 @@ def test_a_session_cannot_raise_a_level_through_brain_config(lab, tmp_path, monk
     f.write_text(json.dumps(data), encoding="utf-8")
     monkeypatch.setenv("BRAIN_CONFIG", str(f))
     work(lab, K, prs=["MERGED"])
-    assert hook(arc(lab, K)) == (None, "")   # still ask: quiet, the native rule decides; never allow
+    assert arclab.passed(arc(lab, K))   # still ask: the guard's card; never allow
 
 
 # --- the native rules (brain permissions render --level user) ----------------------------------------------------

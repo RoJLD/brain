@@ -737,9 +737,10 @@ write into Claude Code's settings, `claude plugin disable` or `uninstall` of it:
 Its level (wi-brain-automation-guard; docs/automation.md « Enforcement »): inside a case, the gesture's automation
 level decides. `archive_session` and the `set_remote_control` off before it read `session-archive`'s, the hand-over's
 on and off `handover-remote-control`'s: at `manual` the call is refused (logged `denied` with its case and level), at
-`ask` (the engine's default) the guard says nothing, as above, and the native rule decides, at `auto` it prints
-`permissionDecision: allow`. Outside a case nothing changes, but at `manual` an `archive_session` is refused instead of
-asked. `ask` reads `manual` in a permission mode with no card for an ask (`bypassPermissions`, `dontAsk`, none given):
+`ask` (the engine's default) the guard prints `permissionDecision: ask` (the card, logged `asked` with its case),
+whatever the tool's native rule (an owner's allow rule no longer lifts it: their level `auto` does), at `auto` it
+prints `permissionDecision: allow`. A refusal at `manual` the ledger cannot take still refuses. Outside a case
+nothing changes, but at `manual` an `archive_session` is refused instead of asked. `ask` reads `manual` in a permission mode with no card for an ask (`bypassPermissions`, `dontAsk`, none given):
 refused. Every row of these decisions carries the `level` it read.
 
 What it does not hold against: its inputs are files a session can write. The guard reads the app's session files
