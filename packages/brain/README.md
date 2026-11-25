@@ -588,7 +588,7 @@ FAILED or TIMEOUT with the counts and the log, the failed tests' ids, the next c
 
 ### The module map
 
-A brain built module by module keeps the registry of its modules in the store (`notes/graph/modules.yaml`), and each open item names its module (`props.module`, `props.modules_secondary`). `brain sync` writes `notes/modules_graph.md`: per module its phase, its items done and open, and the gaps. `brain check` warns about an open item the map does not place, and about a feature or a done item with no module (the technical reference reads them by module). A programme's registry can live in another store (`config.json` `modules.store`) and be a read copy of the platform's documents, written by an agent session: `brain modules --check` validates the imported entries, the view generates the counts and lists the divergences between the documents, `brain modules --diff` says what an import changed; the map of realisations says who realises each module and where; `personas.yaml`, beside the registry, holds its presets (sets of modules and distributions), and `brain modules --personas` checks each one closed under the hard dependencies and, for a preset without AI, free of AI modules and of the distributions that ship them. See [docs/modules.md](docs/modules.md).
+A brain built module by module keeps the registry of its modules in the store (`notes/graph/modules.yaml`), and each open item names its module (`props.module`, `props.modules_secondary`). `brain sync` writes `notes/modules_graph.md`: per module its phase, its items done and open, and the gaps. `brain check` warns about an open item the map does not place, and about a feature or a done item with no module (the technical reference reads them by module). A programme's registry can live in another store (`config.json` `modules.store`) and be a read copy of the platform's documents, written by an agent session: `brain modules --check` validates the imported entries, the view generates the counts and lists the divergences between the documents, `brain modules --diff` says what an import changed; the map of realisations says who realises each module and where; `personas.yaml`, beside the registry, holds its presets (sets of modules and distributions), and `brain modules --personas` checks each one closed under the hard dependencies and, for a preset without AI, free of AI modules and of the distributions that ship them. Every node of the store gets its organ, the module it serves: its own `props.module`, else the modules of its neighbours placed by hand (a doc section, a test, a piece of code, an ADR placed by the items and features it is linked to), with the votes behind it; the view counts them by node type and lists the hand placements the links contradict, and `brain item show` and `brain features show` print a node's organ. See [docs/modules.md](docs/modules.md).
 
 ### Waves and eras
 
@@ -768,7 +768,8 @@ and needs no `research_graph` on the PATH (the graph is loaded in brain's own pr
 name):
 
 ```
-brain item show ID [--history] [--json]        # props in full, edges both ways, the ids its props name, its blockers,
+brain item show ID [--history] [--json]        # its organ (its module, by hand or derived from its links), props in
+                                               # full, edges both ways, the ids its props name, its blockers,
                                                # the ADRs behind it (direct, inherited, superseded) and its specs, the
                                                # DDRs that name it; --history: its changes from git (slow on a large store)
 brain items [--status S]... [--all] [--priority P]... [--wave X.Y.Z|ID] [--milestone M]... [--prop K[=TEXT]]...

@@ -77,6 +77,7 @@ def item(root: Path, stores: list[Path], nid: str, *, git: bool = True) -> tuple
     detail = query.show_item(g, nid, default_repo=root.resolve().name)
     detail["decisions"] = LayeredGraph(g).decisions(nid)
     detail["ddrs"] = ddrs_naming(root, nid)
+    detail["organ"], detail["organ_line"] = organ(root, store, g, nid)
     detail["store_path"] = store.as_posix()
     events, detail["history_error"] = None, None
     if git:
@@ -87,6 +88,23 @@ def item(root: Path, stores: list[Path], nid: str, *, git: bool = True) -> tuple
         except history.GitError as exc:
             detail["history_error"] = str(exc)
     return detail, events
+
+
+def organ(root: Path, store: Path, g, nid: str) -> tuple[dict | None, str]:
+    """(brain.organ_placement's placement of ``nid`` as JSON, its organ line) in ``g``, the graph of ``store``;
+    (None, '') for a store that reads no registry of modules (brain.modules), or one whose registry does not parse (a
+    conflict marker, a half-written entry: the item is still shown, without an organ)."""
+    import yaml
+
+    from . import modules, organ_placement
+    try:
+        reg = modules.registry(store, root)
+    except (OSError, ValueError, yaml.YAMLError):
+        return None, ""
+    if reg is None:
+        return None, ""
+    p = organ_placement.place(g, nid, {str(m["id"]) for m in reg})
+    return p.to_json(), organ_placement.line(p, modules.names(reg))
 
 
 def _wave_ids(root: Path, store: Path, ref: str) -> set[str]:
@@ -122,13 +140,21 @@ def items(root: Path, store: Path, *, statuses=None, every: bool = False, priori
     return rows
 
 
-def render_item(d: dict, events: list | None) -> list[str]:
-    """``brain item show``'s text: research_graph's item, every prop in full, then its decisions and DDRs."""
+def _head(d: dict) -> list[str]:
+    """``brain item show``'s first lines: the node, its title, its anchor, repo and store, its organ line."""
     from research_graph import report
     out = [f"{report.name(d)}  [{d['type']} {d['status']}]  priority {report.priority_label(d)}",
            f"  {' '.join(str(d['title']).split())}"]
     out += [f"  {k}: {v}" for k, v in (("anchor", d.get("anchor")), ("repo", ", ".join(d.get("repos") or [])),
                                         ("store", d.get("store_path"))) if v]
+    return out + ([f"  {d['organ_line']}"] if d.get("organ_line") else [])
+
+
+def render_item(d: dict, events: list | None) -> list[str]:
+    """``brain item show``'s text: research_graph's item, its organ, every prop in full, then its decisions and
+    DDRs."""
+    from research_graph import report
+    out = _head(d)
     if d.get("props"):
         out.append("props:")
         out += [f"  {k}: {' '.join(str(v).split())}" for k, v in d["props"].items()]
