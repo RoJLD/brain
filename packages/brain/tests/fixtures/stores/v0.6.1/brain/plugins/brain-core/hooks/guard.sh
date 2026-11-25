@@ -1,0 +1,176 @@
+#!/usr/bin/env bash
+# Run the PreToolUse guards (hooks/guard.py, brain/guards.py) on the hook's JSON on stdin; $1 is shell (Bash,
+# PowerShell) or edit (Edit, Write, MultiEdit, NotebookEdit). A refusal is one JSON line on stdout; nothing else is
+# printed. Uses $BRAIN_PYTHON, else the brain command's venv (<BRAIN_HOME>/venv: the installed engine), else python3,
+# else python, skipping the Windows Store stubs. It always exits 0, so a guard never breaks a session: on an error the
+# call goes through, except where a leak is possible (COMPAT-4, wi-brain-guards-fail-closed): when no Python is found,
+# or the one found cannot run guard.py (it cannot import brain: a broken or missing venv), a shell command that names
+# git and commit or push is refused (commits_or_pushes), the reason naming the fix (brain update, the installer).
+
+# needs_python KIND JSON: whether the guards have anything to read. A shell command that names neither gh, nor git
+# but to read (git [-C DIR | --no-pager | -P] SUB, SUB in brain/guards.py's GIT_READS, without --output or a pager
+# option: tests/test_guards.py checks the list against the guards' tables), nor anything that writes a file, nor a
+# program of the owner and power guards, has not: no Python started. Writing is a >
+# that is not a descriptor copy (2>&1, >&2) or a discard (>/dev/null, >$null), sed with -i or --in-place, or a name of
+# brain/guards.py's tables (programs and cmdlets that write, interpreters, shells), looked for in the command only (its
+# JSON string, escapes and all), not in the tool name or the description. tests/test_guards.py sources this file to
+# check it against the tables, and against the programs of permissions.yaml's deny rules; the node lifecycle CLIs of
+# config.json's power.node_clis come from <BRAIN_HOME>/cache/node-clis.txt, which brain/guards.py (node_tools) keeps
+# as an alternation, since this hook cannot find config.json (the plugin runs from a cached copy): none until the
+# first Python run writes it.
+{ . "${BASH_SOURCE[0]%[!A-Za-z0-9._-]*}/common.sh" || { selftime_bash() { :; }; brain_python() { return 1; }; brain_config() { :; }; floor_setting() { :; }; }; } 2>/dev/null  # brain_t0, selftime_bash, brain_python, brain_config, floor_setting
+
+needs_python() {
+  [ "$1" = "shell" ] || return 0
+  case "$2" in *'gh '*) return 0 ;; esac
+  local command='"command"[[:space:]]*:[[:space:]]*"(([^"\\]|\\.)*)"' text=$2 redirect discard found
+  [[ $2 =~ $command ]] && text=${BASH_REMATCH[1]}
+  # git that only reads is taken out of the text; any other git (another subcommand, -c, --git-dir, an alias) stays
+  local gitread='(^|[^A-Za-z0-9_.-]|\\[nrt])git(\.exe)?[[:space:]]+((-C[[:space:]]+[^[:space:];&|"]+|--no-pager|-P)[[:space:]]+)*(status|log|diff|show|rev-parse|ls-files|ls-tree|blame|describe|shortlog|rev-list|merge-base|cat-file|name-rev|grep|check-ignore|count-objects|var|version|whatchanged|show-ref|for-each-ref)([^A-Za-z0-9_-]|$)'
+  local rest=$text reads=
+  while [[ $rest =~ $gitread ]]; do
+    rest=${rest/"${BASH_REMATCH[0]}"/"${BASH_REMATCH[1]} ${BASH_REMATCH[6]}"}
+    reads=1
+  done
+  case "$rest" in *git*) return 0 ;; esac
+  [[ -n $reads && $rest =~ --output|--open-files-in-pager|[[:space:]]-O ]] && return 0
+  redirect=${text//[0-9*]>&[0-9]/}
+  redirect=${redirect//>&[0-9]/}
+  for discard in '/dev/null' ' /dev/null' '$null' ' $null'; do redirect=${redirect//">$discard"/}; done
+  case "$redirect" in *'>'*) return 0 ;; esac
+  local before='(^|[^A-Za-z0-9_.-]|\\[nrt])'
+  local writers="$before"'(rm|rmdir|unlink|shred|tee|touch|mkdir|truncate|mv|cp|ln|install|rsync|scp|chmod|chown|chgrp|sort|curl|perl|ruby|awk|gawk|dd|tar|bsdtar|unzip|patch|wget|find|xargs|py|node|bash|sh|zsh|dash|ksh|pwsh|powershell|cmd|iex|invoke-expression|set-content|add-content|clear-content|out-file|tee-object|export-csv|export-clixml|new-item|remove-item|rename-item|copy-item|move-item|start-transcript|expand-archive|compress-archive|invoke-webrequest|invoke-restmethod|sc|ac|clc|epcsv|ni|md|ri|rd|del|erase|rni|ren|cpi|copy|mi|move|iwr|irm|rename|mklink|xcopy|robocopy|setenvironmentvariable)([^A-Za-z0-9_-]|$)|python|\[(system\.)?io\.|\.(moveto|copyto|replace|delete|setaccesscontrol|setvalue|createsubkey|opensubkey|environment)[[:space:]]*\(|wscript\.shell|'"$before"'sed[^|;&]*[[:space:]]-(-in-place|[A-Za-z]*i)'
+  # (.NET's [Environment]::SetEnvironmentVariable is a writer: it may set a variable the floor reads, FLOOR_ENV.)
+  # The owner and power guards' programs (brain/guards.py: _owner_command, _power_command and their tables), the
+  # --arm flag, the owner's gestures (brain/gestures.py: usage allow, schedule install, vault open|drill|device|reseal,
+  # queue apply, release tag and apply, brain's update and uninstall; tests/test_gestures.py checks each; a brain usage, schedule, vault or
+  # queue or release command with a word the guard may not resolve, for guards.gestures_wide: brain schedule $x --apply), brain
+  # handover and the chain root
+  # hook (midsession, auto_root: _root_override), the words ipc, token (the machine's token file, brain/tokenguard.py)
+  # and otel-headers
+  # (brain ipc otel-headers, whatever runs it, quoted or not), the override's name, a magic packet's 0xFF, and the
+  # third-party guard's claude plugin and skills add (_kit_command; its downloaders and shells are in the lists
+  # already): claude or skills, then plugin or add as a later word, whatever comes between (a quote after a quoted claude.exe, global
+  # options such as --model opus, a line continuation).
+  local owner_power="$before"'(schtasks|register-scheduledtask|set-scheduledtask|unregister-scheduledtask|enable-scheduledtask|disable-scheduledtask|register-scheduledjob|set-scheduledjob|unregister-scheduledjob|new-service|set-service|remove-service|nssm|crontab|at|batch|atrm|systemctl|systemd-run|launchctl|reg|new-itemproperty|set-itemproperty|sp|install\.ps1|ssh-keygen|age-keygen|gpg2?|cmdkey|set-secret|remove-secret|register-secretvault|unregister-secretvault|set-secretstorepassword|reset-secretstore|new-storedcredential|remove-storedcredential|security|secret-tool|docker|npm|pnpm|yarn|az|gcloud|aws|argocd|net|new-localuser|set-localuser|remove-localuser|rename-localuser|enable-localuser|disable-localuser|add-localgroupmember|remove-localgroupmember|useradd|usermod|userdel|passwd|chpasswd|chage|groupadd|groupmod|groupdel|gpasswd|setx|k3s|microk8s|kubectl|kubecolor|oc|helm|https?|xh|shutdown|poweroff|reboot|halt|psshutdown|rtcwake|logoff|pm-suspend|pm-hibernate|pm-suspend-hybrid|stop-computer|restart-computer|init|telinit|loginctl|pmset|osascript|dbus-send|busctl|gdbus|rundll32|nircmd|wmic|invoke-cimmethod|invoke-wmimethod|bcdedit|efibootmgr|ipmitool|racadm|k3s-killall\.sh|k3s-uninstall\.sh|k3s-agent-uninstall\.sh|wakeonlan|wol|etherwake|ether-wake|wakemeonlan|mc-wol|wolcmd|send-wol|invoke-wakeonlan|send-wakeonlan|sigma_node_power|forge_boot|pxe_router|telegram-send|tg|telegram|power|ssh|plink|start-process|saps|start|brain_guard_allow|ipc|token|otel-headers|0xff|gh|git|255)([^A-Za-z0-9_-]|$)|--arm([^A-Za-z0-9_-]|$)|usage[^|;&]*allow([^A-Za-z0-9_-]|$)|handover([^A-Za-z0-9_-]|$)|midsession|auto_root|schedule[^|;&]*install([^A-Za-z0-9_-]|$)|vault[^|;&]*(open|drill|device|reseal)([^A-Za-z0-9_-]|$)|queue[^|;&]*apply([^A-Za-z0-9_-]|$)|release[^|;&]*(tag|apply)([^A-Za-z0-9_-]|$)|(^|[^A-Za-z0-9_.-]|-[A-Za-z]*m)brain(\.(exe|cmd|bat|ps1))?[^|;&]*[^A-Za-z0-9_-](update|uninstall)([^A-Za-z0-9_-]|$)|(^|[^A-Za-z0-9_.-]|-[A-Za-z]*m)brain(\.(exe|cmd|bat|ps1))?([[:space:]]|\\[nrt])[^|;&]*[$`%@]|[$][A-Za-z_{(][^|;&[:space:]]*[[:space:]]+[^|;&]*(usage|schedule|vault|queue|handover|update|uninstall|ipc|release)([^A-Za-z0-9_-]|$)|claudecode|claude_code_entrypoint|brain_agent_session|win32shutdown|setsuspendstate|exitwindowsex|initiatesystemshutdown|win32_operatingsystem|'"$before"'(claude(\.exe)?|skills(@[^[:space:]]*)?)(([^A-Za-z0-9_-]|\\[nrt]).*)?([[:space:]]|\\[nrt])(plugins?|add)([^A-Za-z0-9_-]|$)'
+  # node-clis.txt: line 1 the alternation, line 2 its format (brain.guards.NODE_CLI_FORMAT; none before 0.3.2): with
+  # another format the pre-filter cannot read the CLIs, so the guards read the command
+  local clis='' form='' cache="${BRAIN_HOME:-${USERPROFILE:-$HOME}/.brain}/cache/node-clis.txt"
+  [ -f "$cache" ] && { IFS= read -r clis; IFS= read -r form; } < "$cache"
+  [[ -n $form && $form != '#brain.node-clis/v1' ]] && return 0
+  local node_clis="$before($clis)([^A-Za-z0-9_-]|$)"
+  # the machine's token (brain/tokenguard.py), only under config.json guards.refuse_token_read (read by awk, no
+  # Python): the brain's home named (.brain, BRAIN_HOME's folder, $BRAIN_HOME), the token file's name or
+  # $BRAIN_IPC_TOKEN_FILE, any case; the words ipc and token are in owner_power
+  local tokfile=${BRAIN_IPC_TOKEN_FILE:-} homename=${BRAIN_HOME:-} token_home='[\\/]\.brain([\\/"]|$)' named=
+  tokfile=${tokfile%[\\/]}; tokfile=${tokfile##*[\\/]}; homename=${homename%[\\/]}; homename=${homename##*[\\/]}
+  shopt -s nocasematch
+  [[ $rest =~ $token_home || $rest == *brain_home* || $rest == *brain_ipc_token_file* ]] && named=1
+  [[ -n $tokfile && $rest == *"$tokfile"* ]] && named=1
+  [[ -n $homename && ( $rest == *[\\/]"$homename"[\\/\"]* || $rest == *[\\/]"$homename" ) ]] && named=1
+  shopt -u nocasematch
+  [ -n "$named" ] && [ -n "$(floor_setting "$(brain_config "${root:-}")" refuse_token_read guards)" ] && return 0
+  # plain: the text with its quotes (JSON's \" too), escaping backslashes and PowerShell backticks dropped (b\rain,
+  # ins''tall, "us"age, us`age: a shell reads brain usage), made only when the text holds one
+  local plain=
+  if [[ $rest == *\\* || $rest == *"'"* || $rest == *'`'* ]]; then
+    plain=${rest//'\"'/}; plain=${plain//\\\\/}; plain=${plain//"'"/}; plain=${plain//'`'/}
+  fi
+  # envset: what may set a variable the floor watches (brain/floor.py's watched, env_assign and ENV_DYNAMIC, any
+  # case; tests/test_floor_watched.py checks that every refused shape starts Python): a watched name given a value
+  # (an assignment, an append, an array element, a default expansion, an arithmetic one), a builtin that sets one or
+  # exports a name a substitution gives, allexport, set -a, PowerShell's env: provider and .NET's Environment. Read on
+  # the text and on it with quotes, escaping backslashes, backticks and cmd's carets dropped (BRAIN_HO''ME=).
+  local wvar='(brain_[a-z0-9_]+|git_[a-z0-9_]+|home|userprofile|xdg_config_home|bash_env|shellopts|bashopts|path|claude_config_dir|claude_plugin_root|claude_brain_dir|claude_project_dir)'
+  local edge='(^|[^A-Za-z0-9_-]|\\[nrt])' gap='([[:space:]]|\\[nrt])'
+  local envset='(^|[^A-Za-z0-9_]|\\[nrt])'"$wvar"'(\[[^]]*\])?\+?=|\$\{'"$wvar"'|\(\('"$gap"'*'"$wvar"'|'"$edge"'(export|declare|typeset)'"$gap"'[^|;&]*('"$wvar"'|[$(`])|'"$edge"'(readonly|read|for|select|getopts|mapfile|readarray)'"$gap"'[^|;&]*'"$wvar"'|printf'"$gap"'+-v|allexport|'"$edge"'set'"$gap"'[^|;&]*-[A-Za-z]*a|env:|environment|\$'"'"
+  # (and any ANSI-C string, $'...', whose escapes may spell a name: brain/floorenv.py's unescaped reads it)
+  local eplain=${text//'\"'/}
+  eplain=${eplain//\\\\/}; eplain=${eplain//"'"/}; eplain=${eplain//'`'/}; eplain=${eplain//^/}
+  shopt -s nocasematch
+  [[ $text =~ $envset || $eplain =~ $envset ]] && { shopt -u nocasematch; return 0; }
+  [[ $rest =~ $writers || $rest =~ $owner_power || ( -n $plain && $plain =~ $owner_power ) || ( -n $clis && $rest =~ $node_clis ) ]] && found=0 || found=1
+  shopt -u nocasematch
+  return $found
+}
+
+# commits_or_pushes KIND JSON: whether a shell command names git, then commit or push (any case, any path or quote
+# around git, any option between): what the public and secrets checks judge, refused when they cannot run. Wider than
+# the guards on purpose (git log --grep push is caught too): it only ever runs while the guards are broken.
+commits_or_pushes() {
+  [ "$1" = "shell" ] || return 1
+  local command='"command"[[:space:]]*:[[:space:]]*"(([^"\\]|\\.)*)"' text=$2 found
+  [[ $2 =~ $command ]] && text=${BASH_REMATCH[1]}
+  local edge='(^|[^A-Za-z0-9_.-]|\\[nrt])'
+  local gitcp="${edge}git(\.exe)?([^A-Za-z0-9_.-]|\\\\[nrt])(.*([^A-Za-z0-9_-]|\\\\[nrt]))?(commit|push)([^A-Za-z0-9_-]|$)"
+  shopt -s nocasematch
+  [[ $text =~ $gitcp ]] && found=0 || found=1
+  shopt -u nocasematch
+  return $found
+}
+
+# refuse_cannot_run WHY: the refusal of a commit or push while the guards cannot run, one JSON line on stdout.
+refuse_cannot_run() {
+  local why=${1//\\/\\\\}
+  why=${why//\"/\\\"}
+  printf '{"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"deny","permissionDecisionReason":"brain guard: the guards cannot run (%s), so the public and secrets checks refuse git commit and git push: run brain update (or the installer, install.ps1 -Apply), then retry. The SessionStart health says the same."}}\n' "$why"
+}
+
+# refuse_floor WHY: while the locked floor is on, every call the guards cannot judge is refused (fail closed).
+refuse_floor() {
+  local why=${1//\\/\\\\}
+  why=${why//\"/\\\"}
+  printf '{"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"deny","permissionDecisionReason":"brain guard: the locked floor is on (config.json floor) and the guards cannot run (%s), so they refuse every call they would judge: run brain update (or the installer, install.ps1 -Apply), then retry."}}\n' "$why"
+}
+
+[ "${BASH_SOURCE[0]}" = "$0" ] || return 0
+# A locked machine (brain floor lock) runs the guard's system copy from Claude Code's managed settings, whose
+# allowManagedHooksOnly keeps this plugin hook from running at all; where they are not in force (an HKLM policy or
+# server-managed settings come first: Claude Code's managed sources are first-wins), this copy still judges (round 8).
+root="${CLAUDE_PLUGIN_ROOT:-${BASH_SOURCE[0]%[!A-Za-z0-9._-]*}/..}"
+IFS= read -r -d '' input  # the hook's JSON, without $(cat)'s fork
+needs_python "${1:-}" "$input" || { selftime_bash "hook guard ${1:-} [bash]"; exit 0; }
+
+home="${BRAIN_HOME:-${USERPROFILE:-$HOME}/.brain}"
+# floor_on: whether config.json's locked floor is on (floor.refuse or floor.only, brain/floor.py), or the machine has
+# a lock file (brain floor lock: <ProgramData>/Brain or /etc/brain, which a session cannot remove), read only when the
+# guard cannot judge the call or would run PATH's Python: then it fails closed (wi-brain-unadopted-floor).
+# With BRAIN_CONFIG set, the config.json found without it counts too (brain/config.py's anchored): BRAIN_CONFIG never
+# lowers the floor.
+floor=
+floor_on() {
+  if [ -z "$floor" ]; then
+    local c d
+    c=$(brain_config "$root")
+    floor=0
+    [ -n "$(floor_setting "$c" refuse)$(floor_setting "$c" only)" ] && floor=1
+    if [ -n "${BRAIN_CONFIG:-}" ]; then
+      c=$(BRAIN_CONFIG= brain_config "$root")
+      [ -n "$(floor_setting "$c" refuse)$(floor_setting "$c" only)" ] && floor=1
+    fi
+    for d in "${PROGRAMDATA:-C:/ProgramData}/Brain" C:/ProgramData/Brain /etc/brain; do
+      [ -e "$d/floor-lock.json" ] && floor=1
+    done
+  fi
+  [ "$floor" = 1 ]
+}
+# may_run: whether the Python brain_python chose may judge the call: <BRAIN_HOME>/venv's or BRAIN_PYTHON's always,
+# PATH's only while the floor is off (a session could have put another python3 first on PATH).
+path_py=
+may_run() {
+  case $brain_py in "$home/venv/"*) return 0 ;; esac
+  [ -n "${BRAIN_PYTHON:-}" ] && [ "$brain_py" = "$BRAIN_PYTHON" ] && return 0
+  path_py=1
+  ! floor_on
+}
+brain_py=
+brain_python "${BRAIN_PYTHON:-}" "$home/venv/Scripts/python.exe" "$home/venv/bin/python" python3 python && may_run && BRAIN_HOOK_T0=$brain_t0 "$brain_py" -X utf8 -I "$root/hooks/guard.py" "${1:-}" <<<"$input" 2>/dev/null && exit 0
+# here no Python was found, or the one found failed: guard.py's main never fails, so it could not import brain
+why="no Python 3 found (BRAIN_PYTHON, <BRAIN_HOME>/venv, python3, python)"
+[ -n "$brain_py" ] && why="$brain_py cannot import brain"
+[ -n "$path_py" ] && floor_on && why="only PATH's $brain_py was found, not <BRAIN_HOME>/venv's"
+[ -n "$brain_py" ] && [ "$brain_py" = "${BRAIN_PYTHON:-}" ] && why="$why; BRAIN_PYTHON chose it: fix or unset BRAIN_PYTHON"
+selftime_bash "hook guard ${1:-} [cannot run]" 1
+if floor_on; then refuse_floor "$why"; exit 0; fi
+commits_or_pushes "${1:-}" "$input" && refuse_cannot_run "$why"
+exit 0

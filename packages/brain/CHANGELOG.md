@@ -2,6 +2,293 @@
 
 The command shares the repo's tag series with `research-graph`: `vX.Y.Z` is both at X.Y.Z.
 
+## 0.7.0 — 2026-11-25 — wave s9: automation config and catalogue, answers lane fixes, hand-over without prompt, render user MCP, xerj backend, hardware-cad pack, standards score
+
+### Upgrade
+
+1. **Install the engine**, in your own terminal, not from a Claude Code session: `brain update`, then `y`. It installs
+   the tag, writes `engine.pin`, commits `config.json` and runs `brain sync`. A brain whose `config.json` declares
+   `engine.installer`: merge the PR that moves `engine.pin`, then `brain release apply` instead (0.6.1's gesture, which
+   runs the installer's `-Apply`: it updates the core plugin before it renders the permissions, so one run brings the
+   guard's new matcher and the allow rules it bounds). Until then the commands this release adds are not there
+   (`brain automation list` and `explain`, `brain adr revisit`, `brain graphs`, `brain milestone path`, `brain
+   standards score`, `brain modules --personas`, `brain forecast --critical`, `brain index --backend xerj` with
+   `--serve` and `--stop`, `brain render --target cursor --home`, `brain tui --once --zoom`) and none of its optional
+   keys is read. Do it on every machine and in the brain's CI before a brain sets one of them (`config.json`
+   `automation` and `overlap`, `projects.yaml` `standards.coverage`): an engine at 0.6.1 notes them, and its strict
+   check (CI, `BRAIN_STRICT=1`) refuses a file that holds one (« Read by 0.7.0 only », under Changes).
+2. **Restart the Claude Code sessions**, so that they run the hooks `brain sync` rendered. Until then a session keeps
+   0.6.1's `hooks.json` and `guard.sh`: the desktop app's `archive_session` never reaches the guard (an allow rule for
+   it lets every call through, the archive case's conditions unchecked), the guard's tool matcher is stopped after
+   10 s instead of 30, and a `guard.sh` that finds no Python importing brain lets `set_remote_control` and
+   `set_session_permission_mode` through to the app's card instead of refusing them. The archive case holds only in a
+   restarted session, on a machine whose core plugin, as Claude Code installed it, carries this release's matcher.
+3. **Refresh the public stamp**: a stamp is valid only under the engine that made it, so the push guard refuses the
+   old one until then. `brain update` and the installer's `-Apply` refresh them (`brain check --public --refresh`:
+   each local checkout of `public.repos` in the registry); by hand, run `brain check --public --history` in each
+   public repo's checkout they skipped (uncommitted work, named in their output) or outside the registry, before its
+   next push.
+4. **A machine whose floor is locked: `brain floor lock --apply` again**, in the owner's elevated terminal, once step 1
+   installed this engine there (`brain floor status` says whether the managed hooks are in force). A locked floor runs
+   the managed copy of the hooks that `brain floor lock --apply` wrote, and its `allowManagedHooksOnly` keeps the
+   plugin's own hooks from running: the copy an older engine wrote has no `archive_session` in its matcher. Until it
+   is run again, that machine's guard never sees `archive_session`, so an allow rule that lets `archive_session` or
+   `set_remote_control` through is withheld there (`brain.permissions.GUARD_REQUIRED`): `brain permissions render`
+   lists it as expired and the installer's `-Apply` takes it out of the settings (its line `withheld`), `brain
+   permissions check` fails on it, `brain check` and `brain doctor` warn of it, and the app's approval card asks at
+   each archive. Restart the sessions after it (step 2). A machine with no floor lock has nothing to do here.
+5. **An allow rule for `archive_session` at a project's or a tenant's level: move it to a user level.** An allow rule
+   that lets `archive_session` through (the tool, its server `mcp__ccd_session_mgmt__*` or a wildcard that matches
+   it) now waits for the guard of each machine, which only a level the installer renders per machine can follow: such
+   a rule is refused outside the user levels (`engine`, `global`, `profile`, `machine` in `permissions.yaml`), since a
+   project's or a tenant's settings are committed and read by every machine. Until it is moved, `brain permissions
+   check` fails on it, and so does `brain check` in the brain's root. The exact rule
+   `mcp__ccd_session_mgmt__set_remote_control` is no longer never grantable and is held at the user levels only too.
+   A brain whose `brain permissions check` says OK under this engine has nothing to do here.
+
+Nothing to run for the rest: no registered schema moved (`config.json`'s grew by optional keys only; `personas.yaml`
+is a new format). This release is a minor one because it newly refuses or asks what passed, with no key to turn it
+off: the guard's archive case (`archive_session` outside a finished child or a hand-over's predecessor asks the
+owner's card, which no allow rule lifts), the allow rules a guard bounds withheld where the guard does not see their
+tool (steps 4 and 5), `guard.sh` with no Python refusing a session's Remote Control and permission mode, and the
+guards refusing a session's write into the desktop app's session files, their index's cache or a transcript
+(« Changes »). Everything else it adds is off until the owner turns it on (« Optional, off by default », under
+Changes). One check acts by itself, a warning only: `brain check` in a brain's own root warns of a rule, a procedure
+step or a memory note that restates another (`overlap.warn`, default 20 %).
+
+### Added
+
+- The engine ships a third typology pack, `hardware-cad` (a physical or cyber-physical product): the software catalog
+  under the `hardware-cad` profile, three clauses of done (`physical-evidence`: a hardware or simulated run recorded
+  with its run id, date and data hash; `failsafe-tested`: an emergency stop and a lost link put the device in its safe
+  state; `design-checked`: schematics, bill of materials and netlist in step, the electrical and design rule checks
+  passed), two one-way doors (`hardware-spec`, `safety-interlock`) and two roles. An item of typology `hardware-cad`
+  (or its sub-profiles `hardware` and `engineering-product`) takes its clauses from this release on; a brain takes the
+  pack's other parts with `from: engine` in its `packs.yaml` (`brain typologies propose`).
+- `brain adr revisit [--all] [--today D] [--json]`: the ADRs in force whose « Revisit if » is already met or lapsed,
+  read from their prose at zero token (`docs/revisit.md`): a node they name now done, reached, have, retired,
+  answered, integrated or archived (dropped: lapsed), a wave closed, a day or a span (« after a month ») reached, a key
+  of `config.json` whose value differs from the ADR's day (git's first-parent history); each with its evidence. A
+  flagged ADR that a later ADR names by its id, dated on or after its newest trigger, is reviewed and left out
+  (`--all` shows it). No change to the decision log. Its `--json` keys are a public contract (`v` 1, keys
+  only added): `v, today, logs, adrs, with_revisit, flagged, reviewed, counts`. `brain resume` gains a section with
+  the first flagged ADRs, and `brain digest` one with the triggers met in its window (`--json`: the new key
+  `revisit`) (`wi-brain-adr-revisit-report`).
+- `brain automation list [--json]`: the automation catalogue (`brain.gestures.CATALOGUE`, docs/automation.md), every
+  recurring owner gesture, the ones a session runs too (the engine clone's pull, a session's archive, Remote Control
+  at a hand-over, the merge go, a workflow's launch) and every owner-only command: its stable id (the key
+  `config.json`'s coming `automation` section will set a level by), its level today and its source, its ceiling
+  (manual, ask or auto: the highest level the engine allows), where it runs (a session, the owner's terminal, their
+  elevated terminal, the harness), its conditions and its floor category (AUTO-1: the never-grantable categories, the
+  elevated terminal, the rules' text and raising a level, locked at manual). `brain.gestures.effective` reads a level
+  above its ceiling, unknown or unreadable, and any level of a floor gesture, as manual. Read only, zero token; no
+  guard reads the catalogue yet (`wi-brain-automation-catalogue`).
+- config.json's `automation` section, version 1 (`{"v": 1, "levels": {gesture id: manual, ask or auto}}`;
+  `brain.automation`, docs/automation.md): a gesture's level is the engine's default (today's behaviour: a new engine
+  never raises one), then the section, then `<BRAIN_HOME>/automation.json`, a machine file of the same shape that may
+  only lower a level. A config.json that `$BRAIN_CONFIG` names never raises a level above the one found without it
+  (the engine's default when none is found). Fail closed: a level above its ceiling, unknown or unreadable, any floor
+  gesture's, and a section or file this engine cannot read, read `manual`; an id the catalogue does not hold is
+  ignored with a note. `brain automation explain [GESTURE] [--json]` says, layer by layer, where each level comes
+  from, and `brain automation list` shows each level's source. `brain config --check` and `brain check` refuse a
+  floor gesture set above `manual`; an unknown id, an unknown level or one above its ceiling is a note (an error in
+  strict mode, CI). No guard reads a level yet (`wi-brain-automation-config`).
+- xerj, an opt-in backend of the code index, never chosen by default (GitNexus stays the search authority, CBM-1): `brain
+  index --backend xerj` reads each declared repo's branch head with `git archive` into
+  `$BRAIN_HOME/code-index/xerj/snapshots` and runs `xerj autoindex --no-graph` on it under the repo's prefix (two
+  repos sharing one are refused), read from its `xerj-done` line (exit 0 and 3 finished, 4 a decision reported, never
+  answered; no line a failure), recorded in `$BRAIN_HOME/code-index/xerj/record.json`; `brain health code-index` says
+  its line once it indexed a repo, never counted, and an installed xerj never lifts the declaration error of repos
+  with no counted backend; `brain.codebackends.search(query, repo, k, backend="xerj")` returns ranked rows (rank,
+  path, line, name, kind, score) from `xerj search --json`. Its node is a stack whose start and stop are the new
+  `brain index --backend xerj --serve` and `--stop`: detached on 127.0.0.1:9200, TLS and keys off, lexical, its data
+  under BRAIN_HOME; a port held by another service is left alone; the stop signals only the process of the engine's
+  binary that its lock names (SIGTERM then SIGKILL; forced at once on Windows, where a detached node has no console).
+  Every call runs with `XERJ_DISABLE_FEEDBACK=true`, `XERJ_NO_AUTOSTART=1` and `HF_HUB_OFFLINE=1`; never `xerj init`.
+  The binary is built by the owner from xerj's public main (`docs/code-index.md` « xerj »; tier `code-index-xerj`)
+  (`wi-brain-code-index-xerj-backend`).
+- The guard's archive case (`brain.guards.archive`, `wi-brain-coordinator-handover-no-prompt`): the desktop app's
+  `mcp__ccd_session_mgmt__archive_session` now goes through `guard.sh tool` (hooks.json's matcher). It passes, logged
+  `allowed` with its case, only for a finished session the caller started (`child`, not a coordinator) or for the
+  caller's predecessor at a hand-over (`predecessor`: a coordinator by name or a chain root whose live, detached
+  coordinator successor the caller is, its hand-over note written), with none of the target's children blocking,
+  every PR of its app file merged or closed and each of its folders (`cwd`, `worktreePath`) gone or the top of a
+  checkout with no change and nothing ignored but caches (the archive removes its worktree). Any other call, an
+  unlogged pass and an error get `permissionDecision: ask`: the owner's card, which no allow rule lifts. So an owner's
+  allow rule for `archive_session` lifts the card only inside those conditions (`docs/guards.md`, « The archive
+  case »). `brain.sessions.app_work` reads a session's PR states and folders from its own app file.
+- `brain.permissions.GUARD_BOUNDED`: the exact allow rule `mcp__ccd_session_mgmt__set_remote_control` no longer falls
+  in `security-settings` (`check`, `grant`, `render`, `explain`); `brain.guards.remote_control` refuses every call
+  outside its three cases. Any other rule naming Remote Control stays never grantable.
+- `brain forecast` keeps what its scheduler knows (model 3, additive keys of format 1): each item's `start`
+  (p10-p90), its drawn `hours` and its `critical` index per group it belongs to (the share of futures in which it
+  lies on the chain that sets the group's finish, Van Slyke 1963), each milestone's and the backlog's most frequent
+  `chain` (what each link waited on, the most frequent of the chain's futures: a gate, a dependency or a lane another
+  item freed; a gate counted from an item's end, a Go/NoGo's lag or a calendar from an item, keeps the chain going
+  through that item, a milestone's own calendar from an item too), and `past`, the ledger's first
+  session and done day of the done and doing members of the open milestones. `brain forecast --critical
+  [<milestone>]` prints the chains, capacity- or dependency-bound, and one milestone's items with their index, start
+  and end (`wi-brain-forecast-starts-critical`).
+- `brain graphs [--project P | --all] [--json]`: every graph of a project, or of every project, in one list, at zero
+  token and writing nothing (`docs/graphs.md`): each store's layers (the store's own `layers:` then the catalogue's;
+  the recorded and the catalogue's version; written, generated or mixed; node and edge counts by type; the last
+  commit of their files and whether one has uncommitted changes; query and impact entries; what reads them) and the
+  catalogue's layers it lacks with the command that adds them; its overlays; its code index per backend against the
+  branch head, from the records and git alone; its `docgraph/` documents (a read project's pinned copy under that
+  project with `--all`); the source files beside the graph. Its `--json` keys are a public contract (`v` 1, keys
+  only added): `v, scope, projects` (`wi-brain-graph-registry`).
+- `brain milestone path [--check] [--json] [--history] [--width N]` and the Milestones tab's Path view (`v`, after
+  Trajectories; `brain tui --once --tab milestones --view path`): the order of the milestones (UX-12). An arc A → B is
+  derived when an item of B still waits on an item of A (both open; `--history` counts the done pairs too), weighted
+  by its pairs of items; a declared `depends_on` between two milestones wins over a derived arc the other way. The
+  ranks run left to right with the milestones of a rank in parallel, each with its items done out of its live items
+  and its p50; a mutual wait is a knot `⟦a ⇄ b⟧`, and `--check` lists each one with its pairs each way and how to
+  settle it (exit 1 while one is left); `◆` marks the longest chain of p50 work. Under 120 columns the path is a tree.
+  `cockpit.milestone_layers` gives the data to the view, the command and the later PERT and HTML views; `--json` is a
+  public contract (`v` 1) (`wi-brain-milestone-order`).
+- `brain render --target cursor --home` plans the user-level `~/.cursor/mcp.json` for the machine-wide MCP servers
+  (those of the packs without `projects`, such as the Brain's own server) with each entry it adds or changes, and
+  `--home --write` merges it: its `mcpServers` entries only, every other server and key kept with the file's format,
+  written atomically, a file it cannot read refused and never overwritten, a second run a no-op; `--home --check`
+  exits 1 while it is not current. `--write` alone still never writes the home folder, and the plan of `brain render
+  --target cursor` names the home file; the `--json` rows gain `entries` and the answer `home`. The setup wizard's
+  Cursor step shows this command (`wi-brain-render-user-mcp`).
+- `brain check`, in a brain's own root, warns when one of the brain's texts restates another: a rule, a procedure
+  step or a memory note (a `## ` section, or a file without one) whose entity-neutral 8-word shingles (ids, dates,
+  numbers and the brain's entity names dropped) are at least `overlap.warn` percent of the smaller unit's
+  (`brain.overlap`, `docs/overlap.md`; the method of agency-agents' originality check, MIT, rewritten in Python). A
+  warning, never an error. New `config.json` keys, all optional: `overlap.roots` (default the neutral source's rules
+  and procedures and the memory notes), `overlap.exclude` (default `**/MEMORY.md`), `overlap.warn` (default 20) and
+  `overlap.min_shingles` (default 10); an older engine notes and keeps them. `brain review prep` adds the pairs a PR's
+  touched files take part in to the packet's notes when the procedure lens is called (`wi-brain-rule-overlap`).
+- Presets and personas beside a module registry (`brain.presets`, `wi-brain-sigma-personas`): a store that keeps
+  `modules.yaml` may keep `personas.yaml` (a new format, `v: 1`, `schemas/personas.schema.json`), its presets, each a
+  set of bricks, modules and distributions, with optional ones and whether it uses AI. `brain modules --check`
+  validates the file (exit 1; `brain check` warns), and the new `brain modules --personas [--json]` runs two checks
+  on each preset: its set closed under the map's hard dependencies (`open`, or `incomplete` while a module's
+  dependencies are unclassified, never a silent pass), and a preset without AI pulling no AI module nor a
+  distribution that ships one (`violated`; the map's `ships_in` says which distributions ship which modules). Exit 1
+  when a preset is open or violated (run from a store that reads another's registry, `config.json` `modules.store`,
+  it checks the file beside that registry; it runs alone, refused with `--check` or `--diff`); `brain modules
+  --check` and `brain check` warn of each fault
+  (docs/modules.md, « Presets and personas »).
+- `brain standards score [--json]`: a project's scorecard on its standards. Each applicable row scores from the new
+  `projects.yaml` `standards.coverage` key (`{id: status}` or `{id: {status, by}}`, the statuses of a row's own
+  coverage): 2 for have, 1 for partial, 0 for none or not said (listed, so the score is a floor), a row of n/a left
+  out; the points by catalog and domain, the total, its percent and its band (prototype, production from 18 of 34,
+  hardened from 28 of 34). `brain standards check` and `brain check --all` check the key (a mapping, known statuses,
+  known ids). The software catalog gains five rows from a grid of resilience pillars (95 rows): `sw-debt-tracked`,
+  `sw-hot-paths`, `sw-sobriety`, `sw-alert-runbooks` and `sw-onboarding-time` (`wi-brain-standards-score`).
+- The cockpit's Trajectories have an item level (`brain tui`, Milestones, Trajectories: `z` or Enter on a milestone's,
+  an era's or a wave's row): its items as Gantt lanes, a wave's by lot and the others in the scheduler's order, each
+  with its past bar from its first session to its done day, its start-to-finish band, its est. h (a done item: its
+  actual hours) and its `crit.`, the share of futures in which it lies on the chain that sets the row's finish; `c`
+  marks that chain with `◆` and says it in the heading, Enter opens an item's detail (on the heading, the
+  milestone's), `Z` or Escape goes back. A forecast written before model 3 shows its finish bands alone and no
+  `crit.`. The text twin: `brain tui --once --tab milestones --view trajectories --zoom <milestone>`
+  (`wi-brain-tui-trajectories-items`).
+
+### Fixes
+
+- `tests/test_resources.py` no longer fails when a run crosses midnight UTC: the module took its ledger day from the
+  clock at import while `Sampler.tokens_today()` read the clock again, so the fixtures' tokens fell on yesterday.
+  The sampler's clock is now frozen for the module, and a new test moves it across midnight with the ledger
+  unchanged (`wi-brain-engine-debt`).
+- `brain decision answer ID CHOICE --dry-run` and `--batch ... --dry-run` wrote the answer: the flag reached `ask`
+  and `--captured` only. They now run every check, print the DDR as it would be written (`--batch`: each answer) and
+  write nothing (`wi-brain-decision-answer-dry-run`).
+- An answer recorded by hand (`brain decision answer ID CHOICE`, `--batch`) now settles the question tool's capture of
+  that DDR in the recorded ledger: the same answer marked recorded, another one captured before it retired
+  (superseded). `--captured --dry-run` listed such captures again, and `--captured` would have written them from the
+  default branch while the answer by hand waited on an unmerged branch (`wi-brain-answer-marks-capture-recorded`).
+- `docs_graph.md` no longer goes stale on main after every PR that touches a doc: its Last commit column shows today
+  for a doc with uncommitted changes (a new one included), the day its commit will carry, instead of `edited`, which
+  became a date once the PR merged and asked for one more views PR (`wi-brain-docsgraph-edited-loop`).
+- `brain audit --json` is byte-stable across runs: the inventory's closure walks each file's edges in sorted order, so
+  a unit's `chain` (how the closure reached it) no longer changes with Python's hash seed; a chain may read differently
+  once, the first path in sorted order. `brain audit`'s per-repo checks are one function each (`REPO_CHECKS`), the
+  findings unchanged; the selftime test of `brain perf --engine` no longer straddles two ISO weeks in the first minutes
+  of a Monday UTC (`wi-brain-engine-debt`, batch 3).
+- `brain forecast` dates a wave by the items in it now, as the cockpit's Tree counts them: an item carried into a wave
+  counts in its range, one carried out of it no longer does (`brain.waves`' `items_of`;
+  `wi-brain-forecast-starts-critical`).
+
+### Changes
+
+- **Optional, off by default**: nothing changes until the owner turns one on, by a PR of the brain once Upgrade step 1
+  is done on every machine and in its CI (« Read by 0.7.0 only », below), or runs the command:
+  - `config.json` `automation` (absent by default: every gesture of the automation catalogue at the engine's default,
+    today's behaviour), `{"v": 1, "levels": {gesture id: manual, ask or auto}}`: `v` is required and 1; `levels`
+    sets a gesture's level, which `brain automation list` and `brain automation explain` then report with its
+    source. It turns on no gesture yet: no guard reads a level in this release. A level above the gesture's ceiling,
+    unknown or unreadable reads `manual`; a floor gesture set above `manual` is refused by `brain config --check` and
+    `brain check`; an unknown id, an unknown level or one above its ceiling is a note (an error in strict mode, CI). A
+    `config.json` that `$BRAIN_CONFIG` names never raises a level above the one found without it
+    (`wi-brain-automation-config`, « Added »).
+  - `<BRAIN_HOME>/automation.json` (absent by default), the machine file of the same shape: it may only lower a level
+    on that machine, never raise one; the engine never writes it. Its engine store, `automation`, is new: a brain that
+    declares `classes` but not it gives it its suggested class, sealed, and `brain classes --check` and `brain check
+    --all` note it without failing (`brain classes --suggest` prints its `classes.stores` lines).
+  - `config.json` `overlap.roots` (default the neutral source's rules and procedures and the memory notes),
+    `overlap.exclude` (default `**/MEMORY.md`), `overlap.warn` (default 20, in percent) and `overlap.min_shingles`
+    (default 10): what the overlap warning of `brain check` compares and from which share it warns
+    (`wi-brain-rule-overlap`, « Added »).
+  - `projects.yaml` `standards.coverage` (absent by default: every applicable row scores 0, so the score is a floor):
+    `{id: status}` or `{id: {status, by}}`, which `brain standards score` scores; `brain standards check` and `brain
+    check --all` check it (`wi-brain-standards-score`, « Added »).
+  - `personas.yaml` beside a store's `modules.yaml` (absent by default), a new format (`v: 1`): its presets, which
+    `brain modules --personas` checks; `brain modules --check` (exit 1) and `brain check` (a warning) refuse its faults
+    (`wi-brain-sigma-personas`, « Added »).
+  - The `hardware-cad` pack's parts beyond its clauses of done: `from: engine` in `source/packs.yaml`, which `brain
+    typologies propose` writes (`hardware-cad-pack`, « Added »).
+  - xerj, a backend of the code index never chosen by default: the owner builds its binary (tier `code-index-xerj`,
+    docs/code-index.md), then `brain index --backend xerj`, `--serve` and `--stop`; without it every code index
+    command reads GitNexus as before (`wi-brain-code-index-xerj-backend`, « Added »).
+  - `brain render --target cursor --home --write`: merges the machine-wide MCP servers into the user-level
+    `~/.cursor/mcp.json`; `--write` alone still never writes the home folder (`wi-brain-render-user-mcp`, « Added »).
+  - `config.json` `guards.owner_strict` (default false, as before): under it a session's disabling the core plugin is
+    now refused too (below).
+- **Read by 0.7.0 only**: an engine at 0.6.1 notes `config.json` `automation` and `overlap` and `projects.yaml`
+  `standards.coverage` in read mode, keeping every default, and refuses them in strict mode (CI, `BRAIN_STRICT=1`); it
+  reads neither `personas.yaml` nor `<BRAIN_HOME>/automation.json`. A brain sets one once every machine and its CI run
+  0.7.0.
+- **What a brain gets by itself**, with no key: the guard's archive case and the allow rules it bounds (Upgrade steps
+  2, 4 and 5); the overlap warning of `brain check` in a brain's own root; an item of typology `hardware-cad` (or
+  `hardware`, `engineering-product`) takes the pack's three clauses of done; the software catalog's five new rows
+  (`brain standards`); `brain resume`'s and `brain digest`'s sections on the ADRs whose « Revisit if » is met;
+  `brain forecast`'s model 3 (a `latest.json` written before shows its finish bands alone, and no `crit.`, until the
+  next forecast); Enter on a milestone row of the Trajectories opens its items (its detail is one Enter further); an
+  answer recorded by hand settles its capture; `docs_graph.md`'s Last commit column reads today for a doc with
+  uncommitted changes, and a `brain audit --json` chain may read differently once.
+- `guard.sh` without a Python that imports brain, the floor off, refuses `set_remote_control` and
+  `set_session_permission_mode` and asks the card for `archive_session` (it let them through to the card before): the
+  owner's allow rules never pass them unguarded. The guard's tool matcher gets a 30 s timeout (10 before), its git
+  calls 3 s each: a hook Claude Code kills lets the call through. A machine with a locked floor runs
+  `brain floor lock --apply` again for the new matcher: until then its allow rules for those tools are withheld.
+- The allow rules a guard bounds wait for it (`brain.permissions.GUARD_REQUIRED`, fail closed): an allow rule that lets
+  `set_remote_control` or `archive_session` through is withheld where the PreToolUse hooks Claude Code runs do not send
+  that tool to the guard (a floor lock's managed settings, else the core plugin installed at user scope, enabled, hooks
+  not all off; unreadable is unseen). `brain permissions render` leaves it out and lists it as expired
+  (`install.ps1 -Apply` takes it out of the settings, its line `withheld`, the user render's JSON key `withheld`);
+  `brain permissions check` fails on it, `brain check` and `brain doctor` warn of it. Such a rule is refused outside the user levels
+  (engine, global, profile, machine): a project's settings are shared by every machine.
+- The guards read the desktop app's session files at each call, never the index's cache
+  (`brain.sessions.app_index(cached=False)`, `app_cache`), and refuse a session's write into those files, their
+  folders (any account folder under `Claude-Data`, a new one too), that cache, a session's transcript or a folder
+  that would bring one into the transcripts' folder, also through a hard link (`brain.guards.app_files`, category
+  `override`, edit tools and shell writes). Under `guards.owner_strict` a session no longer disables the core plugin
+  (`enabledPlugins` false in Claude Code's settings, `claude plugin disable` or `uninstall` of it).
+- The archive case's git calls run with none of the hook's `GIT_` variables, no system or global config (but their
+  line endings) and hooks off, 15 s for all of them, and only once the target repo's config declares no filter driver
+  nor include and the checkout has no submodule nor nested repo (else the card): no program of the target repo runs
+  in the hook.
+- `brain audit`'s measure is split into one step each (the feature model, the closure's classes, the test evidence,
+  the CodeRefs), and `cmd.documented` into a script's, a module's and a shim's test, every one at complexity 15 or
+  under; the inventory is split by concern into `brain.inventory_python` (the text patterns and a Python file's
+  facts), `brain.inventory_closure`, `brain.inventory_evidence` and `brain.inventory_stores`, `brain.inventory`
+  keeping every public name; `brain audit --json` is byte-identical before and after (`wi-brain-engine-debt`,
+  batch 4).
+
 ## 0.6.1 — 2026-11-23 — The release commands
 
 ### Upgrade
