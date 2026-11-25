@@ -731,7 +731,8 @@ lots, and the plan says how many streams fit now: this session's live streams un
 round's lots, each at the sum of its items' recorded estimates (`props.cost_estimate`; none: the median session's),
 under `ask_over_pct` at the week's reset (docs/guards.md, « The wave quota gate »). `brain next` shows the current
 wave's first round, and that line; it counts the merged items done too (its wave's counts, its startable and open
-groups), said in one line.
+groups), said in one line, and the ones kept open in another. Its lots leave the hot files by history aside (one
+`git log --numstat` a repo on every call: `brain wave plan` reads them).
 
 ### Item sizes
 

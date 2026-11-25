@@ -6,12 +6,14 @@ chain over 3 by cutting its most shared file. Fixtures only: a store and a repo 
 import os
 import shutil
 import subprocess
+from types import SimpleNamespace
 
 import pytest
 import yaml
 from conftest import GIT_ENV, git_init, run_git
 
-from brain import closemerged, collisions, governor, lots, quota, resume
+from brain import cli, closemerged, collisions, governor, lots, quota, resume
+from brain.commands import next as next_cmd
 
 SCHEMA = (
     "node_types: [WorkItem, Milestone, Feature]\n"
@@ -209,3 +211,17 @@ def test_hot_files_shared_across_lots_are_listed_in_the_lots_order(tmp_path):
     wp = _plan(root)
     assert _lot_of(wp)["wi-z"] < _lot_of(wp)["wi-a"]
     assert wp.hot == {"README.md": ["wi-z", "wi-a"]}   # the merge order, not the alphabet
+
+
+@pytest.mark.skipif(not shutil.which("git"), reason="git not available")
+def test_brain_next_cuts_its_lots_without_the_history(tmp_path, engine, monkeypatch, capsys):
+    """brain next's summary leaves history_hot aside: one git log --numstat a repo on every call, in an MCP tool's
+    time budget."""
+    root = _store(tmp_path, [{"id": "wi-a", "title": "registry.py"}, {"id": "wi-b", "title": "registry.py"}])
+    monkeypatch.setattr(next_cmd, "_repos", lambda args, root: [SimpleNamespace(name="engine", path=engine)])
+    read = []
+    monkeypatch.setattr(lots, "history_hot",
+                        lambda *a, **kw: read.append(a) or {"files": {}, "read": {}, "skipped": {}})
+    assert cli.main(["--root", str(root), "next"]) == 0
+    out = capsys.readouterr().out
+    assert "Lots (brain wave plan 1.1.0): 1 lot(s)" in out and read == []   # registry.py, not hot here, joins them

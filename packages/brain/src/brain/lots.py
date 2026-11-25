@@ -221,9 +221,7 @@ def _unit(plan: waves.Plan, st: resume.Store, nid: str, extra_hot: tuple[str, ..
                 strong=sure, broad=standing(props) or len(sure) > BROAD_FILES)
 
 
-def standing(props: dict) -> bool:
-    """A repo's standing debt item: the one its audit defers into (props.audit_repo), or one said standing."""
-    return bool(props.get("audit_repo")) or str(props.get("standing") or "").strip().lower() in ("true", "yes", "1")
+standing = closemerged.standing   # a repo's standing debt item: one test, the lots' and the merged overlay's
 
 
 def units_of(plan: waves.Plan, st: resume.Store, wid: str, extra_hot: tuple[str, ...] = (),
