@@ -9,7 +9,7 @@ closed »).
 | Hook | Tools | Decides |
 |---|---|---|
 | `guard.sh tool` (`brain.guards`) | `mcp__*__set_remote_control`, `mcp__*__set_session_permission_mode`, the app's `set_setting` for a Remote Control or permission key | refuses, but Remote Control's three exceptions |
-| `guard.sh tool` (`brain.guards`) | `mcp__ccd_session_mgmt__archive_session` | the archive case (a finished child, a hand-over's predecessor) at its automation level: allowed at auto, the native rule's at ask, refused at manual; else asks the owner's card (docs/automation.md « Enforcement ») |
+| `guard.sh tool` (`brain.guards`) | `mcp__ccd_session_mgmt__archive_session` | the archive case (a finished child, a hand-over's predecessor) at its automation level: allowed at auto, asked (the guard's card) at ask, refused at manual; else asks the owner's card (docs/automation.md « Enforcement ») |
 | `governor.sh` (`brain.governor`) | `mcp__*__start_session`, `Agent`, `Task`, `Workflow` | asks at WARN, refuses at CRITICAL, past a cap, or on a stale reading |
 
 Both are declared in `src/brain/adapters/claude/hooks/hooks.json`. A personal brain gets them with
@@ -620,8 +620,9 @@ The owner then switches it in the app (the toolbar's Remote Control switch, the 
 Settings for the default). The category is `security-settings`, never grantable: `brain permissions check` refuses an
 allow rule that names those tools, Remote Control or a permission mode, at every level, but the one rule
 `mcp__ccd_session_mgmt__set_remote_control`, exactly (`brain.permissions.GUARD_BOUNDED`): this guard refuses every
-call of that tool outside its three exceptions, so the owner's allow rule only lifts the app's card inside them
-(wi-brain-coordinator-handover-no-prompt). `BRAIN_GUARD_ALLOW` does not
+call of that tool outside its three exceptions, and inside them the gesture's level decides (« Its level » below:
+at `ask` the guard's own card, whatever the allow rule; at `auto` no card) (wi-brain-coordinator-handover-no-prompt,
+wi-brain-automation-guard). `BRAIN_GUARD_ALLOW` does not
 lift it, not even `all`. Refusals are in `<BRAIN_HOME>/ledger/guards-<month>.jsonl` (`"check": "security-settings"`).
 
 ### Remote Control's three exceptions
@@ -686,9 +687,11 @@ and the app's settings stay refused in every case.
 ### The archive case
 
 The owner allows `mcp__ccd_session_mgmt__archive_session` and `mcp__ccd_session_mgmt__set_remote_control` in their
-permissions (their personal brain's `permissions.yaml`): the app's approval card no longer asks. The
-guard bounds both. `set_remote_control` keeps its three exceptions above, everything else refused. `archive_session`
-(`brain.guards.archive`) passes, logged `allowed` with its case, only in:
+permissions (their personal brain's `permissions.yaml`): the guard bounds both, and since wi-brain-automation-guard
+the allow rule alone no longer lifts the card, the gesture's level does (« Its level » below: at `ask`, the engine's
+default, the guard asks, logged `asked`; at `auto` it allows, logged `allowed`; at `manual` it refuses).
+`set_remote_control` keeps its three exceptions above, everything else refused. `archive_session`
+(`brain.guards.archive`) passes its conditions, logged with its case, only in:
 
 | Case | Target | The guard checks |
 |---|---|---|
@@ -753,8 +756,8 @@ folder holds and a session's `subagents/`: a folder copied or moved there; the m
 session's tool results and workflow scripts stay writable), by an edit tool or a shell write, also through a hard link (`override`, as the chain roots' file; the app
 and Claude Code write them themselves, with no tool call). That holds against a mistake: a script that writes them, a
 path built at run time (`"$(...)"`), or a note naming itself, is tampering, out of a hook's reach, and the app asked the owner to approve each
-switch until the owner's allow rules (the archive case): inside the cases the guard is now the only check, and a
-session that forges the app's files through a script passes it. The note is the handover's
+switch until the owner's allow rules (the archive case): inside the cases at level `auto` the guard is now the only
+check (at `ask` the card still asks), and a session that forges the app's files through a script passes it. The note is the handover's
 procedural mark (the ADR's « une fois sa note écrite »), not a credential. The names are chosen by the session that
 starts a child, so a session that starts a `coordinator-x` which starts a `coordinator-y` has built the mark; the
 guard checks one hop of lineage, not the whole chain back to the owner. While its note is under 6 hours old, a

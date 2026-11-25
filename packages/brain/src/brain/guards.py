@@ -4657,7 +4657,7 @@ def main(stdin=None, stdout=None) -> int:
                 (stdout or sys.stdout).write(json.dumps({"hookSpecificOutput": {
                     "hookEventName": "PreToolUse", "permissionDecision": "ask",
                     "permissionDecisionReason": "brain guard: archive_session passes without the owner's card only "
-                                                "inside its conditions; the guard failed, so the card asks "
+                                                "inside its conditions at level auto; the guard failed, so the card asks "
                                                 "(ledger/errors.log)"}}) + "\n")
         except Exception:
             pass

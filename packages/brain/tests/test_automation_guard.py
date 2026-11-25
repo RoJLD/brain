@@ -19,7 +19,7 @@ import test_guards_archive as arclab
 import test_guards_remote_control as rclab
 from test_guards_archive import ARCHIVE, arc, hook, work
 from test_guards_remote_control import G, K, RC, call, rows
-from test_engine_clone import clones, git as egit  # noqa: F401 (clones: a fixture)
+from test_engine_clone import git as egit, make_clones
 
 lab = rclab.lab   # the invented sessions of test_guards_remote_control
 
@@ -306,9 +306,9 @@ def test_explain_says_what_enforces_each_level(tmp_path, monkeypatch, capsys):
 # --- the engine clone's pull: brain refresh and brain release apply ----------------------------------------------
 
 @pytest.fixture
-def clone(clones):
+def clone(tmp_path, monkeypatch):
     """test_engine_clone's remote and clones, with its git helper."""
-    return SimpleNamespace(**vars(clones), git=egit)
+    return SimpleNamespace(**vars(make_clones(tmp_path, monkeypatch)), git=egit)
 
 
 def engine_brain(tmp_path, monkeypatch, clone, level=None):

@@ -32,8 +32,14 @@ def commit(repo: Path, name: str, text: str = "x\n") -> str:
 
 @pytest.fixture
 def clones(tmp_path, monkeypatch):
+    """:func:`make_clones` in the test's folder."""
+    return make_clones(tmp_path, monkeypatch)
+
+
+def make_clones(tmp_path: Path, monkeypatch) -> SimpleNamespace:
     """A bare remote of the engine, the owner's clone at its first commit, a second clone that merged one more
-    commit into the remote's main: SimpleNamespace(remote, clone, other, first, last)."""
+    commit into the remote's main: SimpleNamespace(remote, clone, other, first, last). A plain function, so that
+    another test file builds them without importing the fixture."""
     cfg = tmp_path / "gitconfig"
     cfg.write_text("[user]\n\tname = Ada\n\temail = ada@example.com\n[commit]\n\tgpgsign = false\n"
                    "[init]\n\tdefaultBranch = main\n", encoding="utf-8")

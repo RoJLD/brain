@@ -143,9 +143,9 @@ CATALOGUE: tuple[Automation, ...] = (
                 "its PRs merged and its worktree clean (the definition of done), none of its children blocking"),
                note="brain.guards.archive checks the family, the turn, the children, the PRs and the folder (the "
                     "Remote Control off is set_remote_control's own case, and the app refuses an archive while it is "
-                    "on): inside them an owner's allow rule lifts the app's card "
-                    "(wi-brain-coordinator-handover-no-prompt), outside them or on an error the guard asks; the "
-                    "engine's default stays ask"),
+                    "on): inside them its level decides (brain.automation.enforce: ask the guard's card, whatever "
+                    "an owner's allow rule; auto no card; manual refused), outside them or on an error the guard "
+                    "asks; the engine's default stays ask"),
     Automation("handover-remote-control", "Remote Control at a coordinators' hand-over", "session", "auto", "ask",
                ("on for the coordinator the caller started to succeed it, live or starting, detached",
                 "off on the caller itself once its hand-over note is written and its successor detached"),
