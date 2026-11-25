@@ -9,7 +9,9 @@ Three machine-local ledgers under $BRAIN_HOME/ledger (never the repo):
   hook (:func:`capture`): the DDR's id, the answer exactly as the tool returned it, the labels it names (the DDR's own,
   the ``(Recommandé)`` mark dropped), the owner's free text (``other``) and notes, the session and the tool call;
 - ``answer-recorded-<yyyy-mm>.jsonl``: the captures ``--captured`` recorded, with their PR, and the ones it retired
-  without writing them (``retired``: not answered, a label that names no option, older than the DDR's answer).
+  without writing them (``retired``: not answered, a label that names no option, older than the DDR's answer); and
+  the captures of a DDR ``brain decision answer ID CHOICE`` or ``--batch`` answered by hand (:func:`settle`: no PR;
+  ``retired`` when the answer differs).
 
 A question is tied to its DDR by the id a repeated question carries at its end, else by its text and header, else by
 its header and labels (only a question this session's batch printed); a question that matches no printed one (asked
@@ -311,6 +313,34 @@ def unrecorded(session: str = "", project: str = "") -> list[dict]:
         if cur is None or (real, at) >= (not unanswered(cur.get("answer")), cur.get("at") or ""):
             latest[r["ddr"]] = r
     return sorted(latest.values(), key=lambda r: (r.get("at") or "", r["id"]))
+
+
+def settle(project: str, ddrs: list[dict], at: str = "") -> list[dict]:
+    """The captures of ``ddrs`` (``project``'s, every session's), which ``brain decision answer ID CHOICE`` or
+    ``--batch`` just answered by hand, written to the recorded ledger so that ``--captured`` never proposes them
+    again (wi-brain-answer-marks-capture-recorded): the capture of the same answer recorded (``pr`` empty, ``via``
+    the answer's); one of another answer, captured no later than it, retired (superseded, as ``--captured`` would
+    judge it stale); one captured after it (the owner answered again since) left for ``--captured``. The rows
+    written."""
+    from . import defaults   # the engine, not the hook's part
+    want = {d["id"]: d.get("answer") or {} for d in ddrs if d.get("id")}
+    rows = []
+    for c in unrecorded("", project) if want else []:
+        ans = want.get(c.get("ddr"))
+        if ans is None:
+            continue
+        same = not unanswered(c.get("answer")) and sorted(c.get("choices") or []) == sorted(
+            ans.get("choices") or []) and _norm(c.get("other")) == _norm(ans.get("other"))
+        if not same and ans.get("at") and c.get("at") and defaults.before(ans["at"], c["at"]):
+            continue
+        row = {"v": 1, "id": c["id"], "at": at or _now(), "ddr": c["ddr"], "captured_at": c.get("at") or "",
+               "pr": "", "via": ans.get("via") or "cli"}
+        if not same:
+            row["retired"] = (f"answered by hand at {ans.get('at') or '?'} with another answer, after this capture: "
+                              "superseded, retired")
+        rows.append(row)
+    _append(RECORDED, rows)
+    return rows
 
 
 def _run(cmd: list[str], cwd: Path, check: bool = True) -> subprocess.CompletedProcess:
