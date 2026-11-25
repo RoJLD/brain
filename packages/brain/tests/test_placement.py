@@ -6,9 +6,8 @@ from __future__ import annotations
 import json
 
 import pytest
-from test_waves import _write
-
 from brain import cli, placement, waves
+from test_waves import _write
 
 # Two reached waves (1.0.0, 1.1.0), two pending ones (s3, s4: computed 1.1.1 and 1.1.2) in an era whose stage is 2.0;
 # s5 and later do not exist yet: a placement names them by their place.
