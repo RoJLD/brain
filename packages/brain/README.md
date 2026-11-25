@@ -709,7 +709,7 @@ repo, git failing) maps nothing and is said, its items open, as are those of a P
 branch); so does a repo with no changelog fragment folder (a planning repo, whose PR titles name the items they file),
 which `close-merged` itself still reads. A merged item that still holds work stays open, listed as « merged, work left,
 kept open » with why: a standing item (`props.audit_repo` or `props.standing`), a step left (`props.left`) or a
-gesture awaited (`props.external_blocker`); while one is kept, the plan says to close the others by hand, as
+gesture awaited (`props.external_blocker`), another wave's apart (« kept open outside the wave », e.g. its standing debt item a fragment of a batch maps); while one is kept, of this wave or another, the plan says to close the others by hand, as
 `close-merged --write` would close the kept ones too. `--include-merged` keeps them in the lots, said merged;
 `--no-merged` reads no PR. Then each open item's predicted surface, weighted (`brain.collisions.weighted`): **strong** what says what it edits (a file, or a `brain.x`
 module read as `brain/x.py`, that its title, `props.where`, `props.size_reason` or `props.files` name; the CodeRefs of

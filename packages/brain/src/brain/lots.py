@@ -538,14 +538,16 @@ def merged_of(pl: waves.Plan, wid: str, repos: list[tuple[str, Path]]) -> tuple[
     """(what the plan says of them, item -> its merged PRs): the items merged but not closed (brain.closemerged's
     mapping, git only: the PRs merged in ``repos`` since the last tag before the wave's release, by changelog fragment
     or an item id in the title), the wave's and the others (a prerequisite outside the wave), with the ranges read and
-    the repos not read (their items stay open); the wave's items merged that still hold work (a standing item, a step
-    left, a gesture awaited: closemerged.kept_open) stay open, said ``kept``."""
+    the repos not read (their items stay open); the items merged that still hold work (a standing item, a step left,
+    a gesture awaited: closemerged.kept_open) stay open, said ``kept`` (the wave's) and ``kept_outside`` (another
+    wave's: close-merged --write would close them too, so the close advice weighs both, :func:`all_kept`)."""
     ov = closemerged.overlay(pl, repos, pl.label(wid))
     found = {i: [p.ref for p in prs] for i, prs in ov.to_close.items()}
     members = set(pl.items_of(wid))
     return {"release": ov.version, "items": {i: v for i, v in found.items() if i in members},
             "outside": {i: v for i, v in found.items() if i not in members}, "ranges": ov.ranges,
             "skipped": ov.skipped, "kept": {i: why for i, why in ov.kept.items() if i in members},
+            "kept_outside": {i: why for i, why in ov.kept.items() if i not in members},
             "counted": "done"}, found
 
 
@@ -682,25 +684,42 @@ def merged_lines(wp: WavePlan) -> list[str]:
     m = wp.merged
     if not m:
         return []
-    items, kept = m.get("items") or {}, m.get("kept") or {}
+    items = m.get("items") or {}
     how = ("still in the lots (--include-merged)" if m.get("counted") == "open"
            else "out of the lots, counted done")
+    advice = close_advice(m["release"], all_kept(m))
     head = f"Merged, to close ({len(items)}): " + (
-        ", ".join(f"{i} ({', '.join(v)})" for i, v in items.items()) + f"; {how}; {close_advice(m['release'], kept)}"
-        if items else "none")
+        ", ".join(f"{i} ({', '.join(v)})" for i, v in items.items()) + f"; {how}; {advice}" if items else "none")
     return [head] + _merged_tail(m)
 
 
 def _merged_tail(m: dict) -> list[str]:
-    """Under the plan's merged head: the items kept open, those outside the wave, the repos not read."""
-    kept, outside = m.get("kept") or {}, m.get("outside") or {}
-    lines = [f"  merged, work left, kept open ({len(kept)}): " + ", ".join(f"{i} ({why})" for i, why in kept.items())
-             ] if kept else []
+    """Under the plan's merged head: the items kept open (the wave's, then another wave's), those outside the wave,
+    the repos not read."""
+    outside = m.get("outside") or {}
+    lines = [f"  merged, work left, kept open{where} ({len(ids)}): "
+             + ", ".join(f"{i} ({why})" for i, why in ids.items()) for where, ids in _kept_groups(m)]
     if outside:
         what = "counted open" if m.get("counted") == "open" else "satisfied as prerequisites"
         lines.append(f"  merged outside the wave, {what} ({len(outside)}): " + ", ".join(sorted(outside)))
     return lines + [f"  merged PRs not read in {repo}: {why} (its items stay open)"
                     for repo, why in (m.get("skipped") or {}).items()]
+
+
+def _kept_groups(m: dict) -> list[tuple[str, dict]]:
+    """(where said, item -> why) of the merged items kept open: the wave's, then another wave's; empty ones left out."""
+    groups = (("", m.get("kept") or {}), (" outside the wave", m.get("kept_outside") or {}))
+    return [(where, ids) for where, ids in groups if ids]
+
+
+def all_kept(m: dict) -> dict:
+    """The merged items kept open, the wave's and another wave's: close-merged --write would close them all."""
+    return (m.get("kept") or {}) | (m.get("kept_outside") or {})
+
+
+def kept_lines(m: dict) -> list[str]:
+    """brain next's short lines on the merged items kept open: the wave's, then another wave's, ids only."""
+    return [f"merged, work left, kept open{where} ({len(ids)}): {', '.join(ids)}" for where, ids in _kept_groups(m)]
 
 
 def close_advice(release: str, kept: dict) -> str:

@@ -77,12 +77,11 @@ def cmd_next(args, root: Path) -> int:
 
 
 def _merged_line(m: dict) -> list[str]:
-    items, kept = (m or {}).get("items") or {}, (m or {}).get("kept") or {}
+    m = m or {}
+    items = m.get("items") or {}
     out = [f"merged, to close ({len(items)}), counted done: {', '.join(items)} "
-           f"({lots.close_advice(m['release'], kept)})"] if items else []
-    if kept:
-        out.append(f"merged, work left, kept open ({len(kept)}): {', '.join(kept)}")
-    return out
+           f"({lots.close_advice(m['release'], lots.all_kept(m))})"] if items else []
+    return out + lots.kept_lines(m)
 
 
 def register(sub, ctx) -> None:
