@@ -54,7 +54,7 @@ def cmd_next(args, root: Path) -> int:
         except SystemExit:
             name = ""
         try:
-            wp = lots.plan(store, root, rep["current"]["id"], name, merged=merged if merged[0] else None)
+            wp = lots.plan(store, root, rep["current"]["id"], name, repos=repos, merged=merged)
         except Exception:   # noqa: BLE001 - the lots are a summary: brain next prints the waves whatever they say
             wp = None
     fc = nextrelease.forecast([path for _, path in repos]) if rep["current"] is not None else None

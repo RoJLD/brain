@@ -21,6 +21,8 @@ counts as a collision: two branches meet there at no cost (wi-brain-generated-me
 - each function of :data:`SURFACE_HOOKS` (``(node, store) -> [(repo or '', path)]``): where wi-brain-touched-surface
   will plug the files that similar finished items touched.
 
+:func:`weighted` reads the same surface weighted, strong or weak, for brain wave plan's lots (brain.lots).
+
 An item whose id (without its ``wi-`` and project prefix) is in a branch's name is on that branch already. An item
 with no surface at all is listed apart: it can start, unchecked.
 """
@@ -38,6 +40,10 @@ from . import projects, resume, tidy
 
 FILE_NAME = re.compile(r"(?<![\w/.-])((?:\w[\w.-]*/)*\w[\w-]*\.(?:py|md|ps1|psm1|sh|ya?ml|json|jsonl|toml|txt|ts|js|cfg|ini))"
                        r"(?![\w-])")
+MODULE_REF = re.compile(r"(?<![\w./-])(brain(?:\.[a-z_][a-z0-9_]*)+)(?![\w(-])")   # brain.lots: brain/lots.py
+STRONG_PROPS = ("where", "size_reason", "files")   # the props that say what an item edits (brain.collisions.weighted)
+NOT_MODULES = {"py", "md", "json", "jsonl", "yaml", "yml", "toml", "txt", "sh", "ps1", "exe", "cfg", "ini", "js", "ts"}
+FEATURE_FILES = 6   # a delivered feature with more CodeRefs than this stands for its area, not the change: weak
 GIT_TEMP = ".merge_file_"   # git's temporary files while a merge driver runs
 SURFACE_HOOKS: list[Callable[[dict, "resume.Store"], list[tuple[str, str]]]] = []
 
@@ -215,6 +221,57 @@ def surface(node: dict, st: resume.Store) -> tuple[list[tuple[str, str]], list[s
             continue
     names = {m.group(1) for t in [node.get("title") or "", *_texts(props)] for m in FILE_NAME.finditer(t)}
     return sorted(paths), sorted(names)
+
+
+def weighted(node: dict, st: resume.Store, feature_files: int = FEATURE_FILES,
+             code: dict[str, set[tuple[str, str]]] | None = None) -> tuple[list[str], list[str]]:
+    """(strong, weak): an item's predicted surface weighted by how surely it says what the item will edit
+    (wi-brain-wave-plan-surfaces; brain wave plan joins a lot on a strong entry only), each entry ``repo:path`` for a
+    CodeRef, a name or path as written otherwise.
+
+    - **Strong**: a file its title, its ``props.where``, ``props.size_reason`` or ``props.files`` name, or a module
+      they name as ``brain.x.y`` (read as ``brain/x/y.py``); the CodeRefs of a feature it delivers that has
+      ``feature_files`` CodeRefs or fewer; what :data:`SURFACE_HOOKS` add (the files similar finished items touched).
+    - **Weak**: a file its other props name (its idea, its context, the spec it comes from), a spec document
+      (``specs/`` in its path) wherever it is named, the CodeRefs of a broader feature, its module's features'.
+
+    An entry both strong and weak is strong. ``code``: :func:`coderefs` of ``st``, read once for a whole wave."""
+    props = node.get("props") or {}
+    code = coderefs(st) if code is None else code
+    delivered = {e["to"] for e in st.edges if e["from"] == node["id"] and e.get("type") == "delivers"
+                 and (st.nodes.get(e["to"]) or {}).get("type") == "Feature"}
+    modules = {str(m) for m in [props.get("module"), *(_texts(props.get("modules_secondary")))]
+               if m and str(m).strip() and str(m).strip().lower() != "none"}
+    of_module = {n["id"] for n in st.of_type("Feature") if str((n.get("props") or {}).get("module") or "") in modules}
+    strong: set[str] = set()
+    weak: set[str] = set()
+    for f in delivered | of_module:
+        refs = {f"{r}:{p}" for r, p in code.get(f, ())}
+        (strong if f in delivered and len(refs) <= feature_files else weak).update(refs)
+    for hook in SURFACE_HOOKS:
+        try:
+            strong.update(f"{r}:{p}" if r else p for r, p in hook(node, st))
+        except Exception:  # noqa: BLE001 - a predictor never breaks the plan
+            continue
+    sure = [str(node.get("title") or ""), *(t for k in STRONG_PROPS for t in _texts(props.get(k)))]
+    other = [t for k, v in props.items() if k not in STRONG_PROPS for t in _texts(v)]
+    for texts, into in ((sure, strong), (other, weak)):
+        for t in texts:
+            into.update(m.group(1) for m in FILE_NAME.finditer(t))
+            into.update(m.group(1).replace(".", "/") + ".py" for m in MODULE_REF.finditer(t)
+                        if m.group(1).rsplit(".", 1)[1] not in NOT_MODULES)
+    specs = {e for e in strong if "specs/" in e.replace("\\", "/")}
+    return sorted(strong - specs), sorted((weak | specs) - (strong - specs))
+
+
+def coderefs(st: resume.Store) -> dict[str, set[tuple[str, str]]]:
+    """Feature -> its CodeRefs ((repo token, path))."""
+    out: dict[str, set[tuple[str, str]]] = {}
+    for e in st.edges:
+        c = _code(str(e.get("to") or "")) if e.get("type") == "implemented_by" else None
+        if c:
+            out.setdefault(str(e["from"]), set()).add(c)
+    return out
 
 
 def _named_after(nid: str, project: str, branch: str) -> bool:

@@ -2,20 +2,30 @@
 that never touch the same file, computed instead of composed by hand: les-brain-lots-composed-by-hand).
 
 **The surface.** Each open item of the wave (brain.waves: part_of it or carried to it) gets its predicted surface from
-brain.collisions (:func:`brain.collisions.surface`): the CodeRefs of the features it delivers and of its modules, the
-file names its title and props name, and what :data:`brain.collisions.SURFACE_HOOKS` add (wi-brain-touched-surface
-will plug the files that similar finished items touched there). Two items meet on a file when one's path is the
-other's, or ends with ``/`` and the other's name (``cli.py`` meets ``packages/brain/src/brain/cli.py``).
+brain.collisions, weighted (:func:`brain.collisions.weighted`, wi-brain-wave-plan-surfaces): **strong** what says what
+it edits (a file or a ``brain.x`` module its title, ``where``, ``size_reason`` or ``files`` name; the CodeRefs of a
+narrow feature it delivers; what :data:`brain.collisions.SURFACE_HOOKS` add, where wi-brain-touched-surface will plug
+the files similar finished items touched), **weak** what only stands near it (a file its other props name, a spec
+document, a broad feature's or its module's CodeRefs). Two entries meet on a file when one's path is the other's, or
+ends with ``/`` and the other's name (``cli.py`` meets ``packages/brain/src/brain/cli.py``).
 
 **Hot files.** Some files nearly every PR touches and only adds to: the READMEs, CHANGELOGs, ``formats.md``,
 ``FEATURES.md``, ``config.schema.json`` (an optional key) and the changelog fragments of ``changes/`` (:data:`HOT`;
-``--hot NAME`` adds more). They never put two items in one lot; the plan lists who shares them, to add and never
-rewrite, and to merge origin/main before the push.
+``--hot NAME`` adds more), and the files the repos' history shows so (:func:`history_hot`: touched by
+:data:`HISTORY_SHARE` of the last :data:`HISTORY_PRS` first-parent commits or more, at least :data:`HISTORY_MIN`,
+mostly by additions: the registries every command adds a line to). They never put two items in one lot; the plan lists
+who shares them in the lots' order, to add and never rewrite, and to merge origin/main before the push.
 
-**The lots.** Items that meet on a file that is not hot go into one lot (transitively: a lot is a connected group), run
-in sequence by one session, in the order of their ``depends_on`` edges, then priority. An item with no known surface is
-a lot of its own, said unchecked. A lot that holds a prerequisite of another comes in an earlier round; lots that
-depend on each other both ways are merged. Within a round, the lots that unblock the most items come first.
+**The lots.** Items that meet on a file that is not hot, a strong entry on one side at least, go into one lot
+(transitively: a lot is a connected group), run in sequence by one session, in the order of their ``depends_on``
+edges, then priority; two weak entries that meet are listed as possible conflicts and join nothing. A lot over
+:data:`LOT_CAP` items, or whose longest ``depends_on`` chain is over :data:`CHAIN_CAP`, is split: the links through its
+most shared file are cut first (as edge betweenness would), until it fits or nothing links it; each cut file becomes a
+merge-order note. A broad item (a surface over :data:`BROAD_FILES` files, or a repo's standing debt item:
+``props.audit_repo`` or ``props.standing``) joins no lot: a lot of its own, in the last round when nothing waits on
+it. An item with no known surface is a lot of its own, said unchecked. A lot that holds a prerequisite of another
+comes in an earlier round; lots that depend on each other both ways are merged. Within a round, the lots that unblock
+the most items come first.
 
 **The size.** A round holds at most the lots that may run at once: the sessions cap in force (brain.governor's, the
 project's own if lower, minus the master's session) and the PRs one machine verifies at once (:data:`AT_ONCE`, the
@@ -42,6 +52,13 @@ from pathlib import Path
 from . import closemerged, collisions, governor, quota, resume, wavegate, waves
 
 HOT = ("README.md", "CHANGELOG.md", "FEATURES.md", "formats.md", "config.schema.json", "changes/")
+HISTORY_PRS = 100     # the last first-parent commits of each repo's default branch read for hot files
+HISTORY_SHARE = 0.10  # a file touched by this share of them or more ...
+HISTORY_MIN = 5       # ... and by this many at least ...
+ADDITIVE = 0.5        # ... with this many lines deleted at most per line added: hot by history
+LOT_CAP = 8           # a lot over this many items is split
+CHAIN_CAP = 3         # a lot whose longest depends_on chain is over this many items is split
+BROAD_FILES = 30      # an item with more strong entries than this is broad: a lot of its own, last
 AT_ONCE = 3   # the PRs one machine verifies at once: each runs the whole suite locally, ~10 minutes on all cores
 PRIORITY = {"P0": 0, "P1": 1, "P2": 2, "P3": 3}
 
@@ -58,6 +75,8 @@ class Unit:
     outside: list[str] = field(default_factory=list)    # its open prerequisites outside the wave
     usd: float | None = None                             # its recorded estimate (props.cost_estimate's usd=)
     merged: list[str] = field(default_factory=list)      # its merged PRs, when --include-merged keeps it
+    strong: list[str] = field(default_factory=list)      # the entries of ``files`` that say what it edits
+    broad: bool = False                                  # a lot of its own, last (BROAD_FILES, a standing debt item)
 
     @property
     def known(self) -> bool:
@@ -73,6 +92,7 @@ class Lot:
     unblocks: int
     checked: bool
     round: int = 0
+    broad: bool = False
 
 
 @dataclass
@@ -87,13 +107,56 @@ class WavePlan:
     caps: dict
     slot: dict = field(default_factory=dict)   # the wave's quick-win slot (brain.waves.quickwin_slot)
     merged: dict = field(default_factory=dict)  # merged but not closed (:func:`merged_of`)
+    possible: list[dict] = field(default_factory=list)   # weak-weak meetings: listed, never a lot
+    cuts: list[dict] = field(default_factory=list)       # the files a split cut: merge-order notes
+    history: dict = field(default_factory=dict)          # hot by history (:func:`history_hot`)
 
     def as_dict(self) -> dict:
         return {"wave": self.wave, "id": self.wid, "caps": self.caps, "slot": self.slot, "merged": self.merged,
                 "rounds": [[asdict(self.lots[n - 1]) for n in r] for r in self.rounds],
-                "conflicts": self.conflicts, "hot": self.hot,
+                "conflicts": self.conflicts, "possible": self.possible, "cuts": self.cuts,
+                "history": self.history, "hot": self.hot,
                 "unknown": sorted(u.id for u in self.units.values() if not u.known),
                 "outside": {u.id: u.outside for u in self.units.values() if u.outside}}
+
+
+def history_hot(repos: list[tuple[str, Path]], n: int = HISTORY_PRS) -> dict:
+    """The files hot by history: in each repo, the last ``n`` first-parent commits of its default branch as last fetched
+    (one ``git log --numstat``), each file touched by :data:`HISTORY_SHARE` of them or more (:data:`HISTORY_MIN` at
+    least) with :data:`ADDITIVE` lines deleted at most per line added. {"files": {path: {repo, share, prs, added,
+    deleted}}, "read": {repo: commits read}, "skipped": {repo: why}}; a repo git cannot read is skipped."""
+    out: dict = {"files": {}, "read": {}, "skipped": {}}
+    for name, path in repos:
+        try:
+            end = closemerged._default_end(path)
+            log = closemerged._git(path, "log", "--first-parent", "--diff-merges=first-parent", "--no-renames",
+                                   "--numstat", f"-n{int(n)}", "--format=%x1e", end)   # %x1e: closemerged.END
+        except closemerged.CloseError as exc:
+            out["skipped"][name] = str(exc)
+            continue
+        commits = [c for c in log.split(closemerged.END)[1:]]
+        touched: dict[str, list[int]] = {}
+        for c in commits:
+            for line in c.splitlines():
+                parts = line.split("\t")
+                if len(parts) != 3:
+                    continue
+                t = touched.setdefault(parts[2], [0, 0, 0])
+                t[0] += 1
+                if parts[0].isdigit() and parts[1].isdigit():
+                    t[1] += int(parts[0])
+                    t[2] += int(parts[1])
+        out["read"][name] = len(commits)
+        for f, (prs, added, deleted) in sorted(touched.items()):
+            if commits and prs >= HISTORY_MIN and prs / len(commits) >= HISTORY_SHARE and deleted <= ADDITIVE * added:
+                out["files"].setdefault(f, {"repo": name, "share": round(prs / len(commits), 2), "prs": prs,
+                                            "added": added, "deleted": deleted})
+    return out
+
+
+def _hot_by(entry: str, extra: tuple[str, ...], history: tuple[str, ...]) -> bool:
+    """Hot: :func:`is_hot` with ``extra``, or one file with a path hot by history (a name meets the path it ends)."""
+    return is_hot(entry, extra) or any(meet(entry, h) for h in history)
 
 
 def is_hot(path: str, extra: tuple[str, ...] = ()) -> bool:
@@ -124,29 +187,47 @@ def meet(a: str, b: str) -> bool:
 
 
 def shared(a: Unit, b: Unit) -> list[str]:
-    """The files two items both touch, hot ones aside; the longer spelling of each."""
-    return sorted({max(x, y, key=len) for x in a.files for y in b.files if meet(x, y)})
+    """The files two items both touch, hot ones aside, a strong entry on one side at least: the reason they share a
+    lot; the longer spelling of each."""
+    sa, sb = set(a.strong), set(b.strong)
+    return sorted({max(x, y, key=len) for x in a.files for y in b.files if meet(x, y) and (x in sa or y in sb)})
+
+
+def possible(a: Unit, b: Unit) -> list[str]:
+    """The files two items meet on through weak entries alone: a possible conflict, listed, never a lot."""
+    sa, sb = set(a.strong), set(b.strong)
+    return sorted({max(x, y, key=len) for x in a.files if x not in sa for y in b.files if y not in sb
+                   and meet(x, y)} - set(shared(a, b)))
 
 
 def _rank(u: Unit) -> tuple:
     return PRIORITY.get(u.priority, 9), u.id
 
 
-def _unit(plan: waves.Plan, st: resume.Store, nid: str, extra_hot: tuple[str, ...]) -> Unit:
-    """One item with its surface (a CodeRef as ``repo:path``, a name as it is), split into files and hot files."""
+def _unit(plan: waves.Plan, st: resume.Store, nid: str, extra_hot: tuple[str, ...], history: tuple[str, ...] = (),
+          code: dict | None = None) -> Unit:
+    """One item with its weighted surface (a CodeRef as ``repo:path``, a name as it is), split into files (its strong
+    ones said) and hot files; broad when it is over :data:`BROAD_FILES` files or a standing debt item."""
     node = st.nodes.get(nid) or plan.nodes.get(nid) or {"id": nid}
-    paths, names = collisions.surface(node, st)
-    entries = sorted({f"{repo}:{p}" if repo else p for repo, p in paths} | set(names))
-    hot = [e for e in entries if is_hot(e, extra_hot)]
+    strong, weak = collisions.weighted(node, st, code=code)
+    entries = sorted(set(strong) | set(weak))
+    hot = [e for e in entries if _hot_by(e, extra_hot, history)]
     props = node.get("props") or {}
     priority = str(props.get("priority") or "")
-    return Unit(nid, str(node.get("title") or ""), plan.status(nid), priority, [e for e in entries if e not in hot],
-                hot, usd=wavegate.estimate_usd(str(props.get("cost_estimate") or "")))
+    files = [e for e in entries if e not in hot]
+    sure = [e for e in files if e in set(strong)]
+    standing = bool(props.get("audit_repo")) or str(props.get("standing") or "").lower() in ("true", "yes", "1")
+    return Unit(nid, str(node.get("title") or ""), plan.status(nid), priority, files, hot,
+                usd=wavegate.estimate_usd(str(props.get("cost_estimate") or "")),
+                strong=sure, broad=standing or len(sure) > BROAD_FILES)
 
 
-def units_of(plan: waves.Plan, st: resume.Store, wid: str, extra_hot: tuple[str, ...] = ()) -> dict[str, Unit]:
-    """The wave's open items, each with its surface split into files and hot files, and its open prerequisites."""
-    out = {i: _unit(plan, st, i, extra_hot) for i in plan.items_of(wid) if plan.status(i) in waves.OPEN}
+def units_of(plan: waves.Plan, st: resume.Store, wid: str, extra_hot: tuple[str, ...] = (),
+             history: tuple[str, ...] = ()) -> dict[str, Unit]:
+    """The wave's open items, each with its surface split into files and hot files (``history``: the paths hot by
+    history), and its open prerequisites."""
+    code = collisions.coderefs(st)
+    out = {i: _unit(plan, st, i, extra_hot, history, code) for i in plan.items_of(wid) if plan.status(i) in waves.OPEN}
     for i, u in out.items():
         u.outside = sorted(d for d in plan.blockers(i) if d not in out)
         u.after = sorted(_inside(plan, i, set(out)))
@@ -240,29 +321,103 @@ def _order(ids: list[str], units: dict[str, Unit]) -> list[str]:
     return out
 
 
+@dataclass
+class Cut:
+    """The lot cutter's answer: the lots (unnumbered rounds), the predicted conflicts left (each pair of items that
+    share a file not hot, a strong entry on one side), the possible ones (weak entries alone), the files a split cut."""
+    lots: list[Lot]
+    conflicts: list[dict]
+    possible: list[dict]
+    cuts: list[dict]
+
+
 def lots_of(units: dict[str, Unit]) -> tuple[list[Lot], list[dict]]:
-    """The lots (unnumbered rounds) and the predicted conflicts: each pair of items that share a file not hot."""
-    u = _Union(sorted(units))
-    conflicts = []
+    """The lots (unnumbered rounds) and the predicted conflicts (:func:`cut`'s)."""
+    c = cut(units)
+    return c.lots, c.conflicts
+
+
+def chain(ids, units: dict[str, Unit]) -> int:
+    """The longest depends_on chain among ``ids``, in items (a cycle counted once through)."""
+    ids = set(ids)
+    memo: dict[str, int] = {}
+
+    def depth(i: str, seen: frozenset) -> int:
+        if i in memo:
+            return memo[i]
+        d = 1 + max((depth(j, seen | {i}) for j in units[i].after if j in ids and j not in seen), default=0)
+        memo[i] = d
+        return d
+    return max((depth(i, frozenset()) for i in ids), default=0)
+
+
+def _components(ids: list[str], links: dict[tuple[str, str], list[str]]) -> list[list[str]]:
+    u = _Union(sorted(ids))
+    for a, b in links:
+        u.join(a, b)
+    return [sorted(g) for g in u.groups().values()]
+
+
+def _split_lot(ids: list[str], links: dict[tuple[str, str], list[str]], units: dict[str, Unit],
+           cuts: list[dict]) -> list[list[str]]:
+    """``ids`` (one component) in components that fit :data:`LOT_CAP` and :data:`CHAIN_CAP`: while one does not, the
+    links through its most shared file are cut (the file noted in ``cuts`` with the items that touch it)."""
+    out, todo = [], [ids]
+    while todo:
+        comp = todo.pop()
+        inner = {k: v for k, v in links.items() if k[0] in comp and k[1] in comp and v}
+        if (len(comp) <= LOT_CAP and chain(comp, units) <= CHAIN_CAP) or not inner:
+            out.append(comp)
+            continue
+        count: dict[str, int] = {}
+        for files in inner.values():
+            for f in files:
+                count[f] = count.get(f, 0) + 1
+        top = min(count, key=lambda f: (-count[f], f))
+        touched = sorted({i for k, v in inner.items() if top in v for i in k})
+        cuts.append({"file": top, "items": touched})
+        for k in inner:
+            links[k] = [f for f in links[k] if f != top]
+        todo += _components(comp, {k: v for k, v in links.items() if v and k[0] in comp and k[1] in comp})
+    return out
+
+
+def cut(units: dict[str, Unit]) -> Cut:
+    """The lots: the items linked by a shared file (:func:`shared`) in connected groups, a broad item alone, each
+    group over the caps split (:func:`_split`), the groups that depend on each other both ways merged."""
     ids = sorted(units)
+    links: dict[tuple[str, str], list[str]] = {}
+    maybe = []
     for k, a in enumerate(ids):
         for b in ids[k + 1:]:
-            files = shared(units[a], units[b])
+            if units[a].broad or units[b].broad:
+                files = shared(units[a], units[b]) + possible(units[a], units[b])
+                if files:
+                    maybe.append({"items": [a, b], "files": sorted(set(files)), "broad": True})
+                continue
+            files, weak = shared(units[a], units[b]), possible(units[a], units[b])
             if files:
-                conflicts.append({"items": [a, b], "files": files})
-                u.join(a, b)
-    groups = u.groups()
-    for a, b in _cycles(groups, units):
+                links[(a, b)] = files
+            if weak:
+                maybe.append({"items": [a, b], "files": weak})
+    cuts: list[dict] = []
+    groups = [g for comp in _components(ids, links) for g in _split_lot(comp, links, units, cuts)]
+    u = _Union(ids)
+    for g in groups:
+        for i in g[1:]:
+            u.join(g[0], i)
+    for a, b in _cycles(u.groups(), units):
         u.join(a, b)
-    groups = u.groups()
     lots = []
-    for ids_ in groups.values():
+    for ids_ in u.groups().values():
         order = _order(ids_, units)
         files = sorted({f for i in order for f in units[i].files})
         hot = sorted({f for i in order for f in units[i].hot})
         unblocks = sum(1 for o in units.values() if o.id not in ids_ and set(o.after) & set(ids_))
-        lots.append(Lot(0, order, files, hot, unblocks, all(units[i].known for i in order)))
-    return lots, conflicts
+        lots.append(Lot(0, order, files, hot, unblocks, all(units[i].known for i in order),
+                        broad=all(units[i].broad for i in order)))
+    conflicts = [{"items": list(k), "files": v} for k, v in sorted(links.items()) if v]
+    return Cut(lots, conflicts, maybe, cuts)
 
 
 def rounds_of(lots: list[Lot], units: dict[str, Unit], at_once: int) -> list[list[Lot]]:
@@ -278,8 +433,10 @@ def rounds_of(lots: list[Lot], units: dict[str, Unit], at_once: int) -> list[lis
         return level[k]
 
     by: dict[int, list[Lot]] = {}
-    for k in range(len(lots)):
-        by.setdefault(depth(k), []).append(lots[k])
+    last = 1 + max((depth(k) for k in range(len(lots)) if not lots[k].broad), default=-1)
+    for k in range(len(lots)):   # a broad lot nothing waits on: after every other round
+        tail = lots[k].broad and not any(k in needs[m] for m in needs)
+        by.setdefault(max(depth(k), last) if tail else depth(k), []).append(lots[k])
     out: list[list[Lot]] = []
     step = max(int(at_once), 1)
     for d in sorted(by):
@@ -381,14 +538,16 @@ def as_done(pl: waves.Plan, ids) -> waves.Plan:
 
 def plan(store: Path, root: Path | None, wave: str = "", project: str = "", at_once: int | None = None,
          hot: tuple[str, ...] = (), repos: list[tuple[str, Path]] | None = None,
-         include_merged: bool = False, merged: tuple[dict, dict] | None = None) -> WavePlan:
+         include_merged: bool = False, merged: tuple[dict, dict] | None = None,
+         read_merged: bool = True) -> WavePlan:
     """The plan of ``wave`` (its release or id; default the current wave, brain next's) in ``store``. With ``repos``
     ((name, checkout)), the items their merged PRs deliver and not closed yet count as done (:func:`merged_of`; or
-    ``merged``, that pair already read), unless ``include_merged`` keeps them in the lots, said merged.
+    ``merged``, that pair already read; none read when ``read_merged`` is false), unless ``include_merged`` keeps them
+    in the lots, said merged; and the files hot by their history count hot (:func:`history_hot`).
     :class:`ValueError` when the store holds no such wave."""
     pl = waves.load(store, root)
     wid = _wave_id(pl, wave, store)
-    if merged is None and repos:
+    if merged is None and repos and read_merged:
         merged = merged_of(pl, wid, repos)
     said: dict = {}
     if merged:
@@ -397,12 +556,13 @@ def plan(store: Path, root: Path | None, wave: str = "", project: str = "", at_o
             said["counted"] = "open"
         else:
             pl = as_done(pl, found)
-    units = units_of(pl, resume.Store.load(store), wid, tuple(hot))
+    history = history_hot(repos) if repos else {}
+    units = units_of(pl, resume.Store.load(store), wid, tuple(hot), tuple((history.get("files") or {})))
     for i, u in units.items():
         u.merged = (said.get("items") or {}).get(i, [])
     caps = caps_in_force(root, project, at_once)
-    lots, conflicts = lots_of(units)
-    rounds = rounds_of(lots, units, caps["at_once"])
+    c = cut(units)
+    rounds = rounds_of(c.lots, units, caps["at_once"])
     if caps["max_streams"] is not None:
         streams_now(root, caps, rounds[0] if rounds else [], units)
     numbered = [lot for group in rounds for lot in group]
@@ -411,8 +571,19 @@ def plan(store: Path, root: Path | None, wave: str = "", project: str = "", at_o
     for r, group in enumerate(rounds, 1):
         for lot in group:
             lot.round = r
-    return WavePlan(pl.label(wid), wid, units, numbered, [[lot.n for lot in g] for g in rounds], conflicts,
-                    _hot_shared(units, numbered), caps, waves.quickwin_slot(pl, wid), said)
+    return WavePlan(pl.label(wid), wid, units, numbered, [[lot.n for lot in g] for g in rounds], c.conflicts,
+                    _hot_shared(units, numbered), caps, waves.quickwin_slot(pl, wid), said, c.possible, c.cuts,
+                    _history_of(history, units))
+
+
+def _history_of(history: dict, units: dict[str, Unit]) -> dict:
+    """What the plan says of the history read: the hot-by-history files this wave's items touch, the repos read and
+    those skipped."""
+    if not history:
+        return {}
+    touched = {h: v for h, v in (history.get("files") or {}).items()
+               if any(meet(e, h) for u in units.values() for e in u.hot)}
+    return {"files": touched, "read": history.get("read") or {}, "skipped": history.get("skipped") or {}}
 
 
 def _wave_id(pl: waves.Plan, wave: str, store: Path) -> str:
@@ -435,7 +606,8 @@ def _hot_shared(units: dict[str, Unit], lots: list[Lot]) -> dict[str, list[str]]
     for u in units.values():
         for f in u.hot:
             by.setdefault(f, set()).add(u.id)
-    return {f: sorted(ids) for f, ids in sorted(by.items()) if len({lot_of[i] for i in ids}) > 1}
+    return {f: sorted(ids, key=lambda i: (lot_of[i], i)) for f, ids in sorted(by.items())
+            if len({lot_of[i] for i in ids}) > 1}   # in the lots' order: the merge order
 
 
 def _item(u: Unit) -> str:
@@ -463,6 +635,7 @@ def _lot_lines(wp: WavePlan, lot: Lot) -> list[str]:
         what = f"files: {_files(lot.files)}" if lot.files else "no file but hot ones"
     extra = f"; hot: {_files(lot.hot)}" if lot.hot else ""
     unb = f", unblocks {lot.unblocks}" if lot.unblocks else ""
+    unb += ", broad: alone" if lot.broad else ""
     return [f"  Lot {lot.n} ({len(lot.items)} item(s){unb}): " + " -> ".join(_item(wp.units[i]) for i in lot.items),
             f"    {what}{extra}"]
 
@@ -510,13 +683,35 @@ def render(wp: WavePlan) -> list[str]:
             lines += _lot_lines(wp, wp.lots[n - 1])
     lines.append(f"Predicted conflicts ({len(wp.conflicts)}), the reason two items share a lot:")
     lines += [f"  {' + '.join(x['items'])}: {_files(x['files'])}" for x in wp.conflicts] or ["  none"]
-    lines.append(f"Hot files shared across lots ({len(wp.hot)}): add, never rewrite; merge origin/main before the push")
+    lines += _list(f"Possible conflicts ({len(wp.possible)}), weak entries alone (a spec, a broad feature, a module, "
+                   "context props; or a broad item): no lot joined", [
+                       f"  {' + '.join(x['items'])}: {_files(x['files'], 3)}" for x in wp.possible])
+    if wp.cuts:
+        of = {i: lot.n for lot in wp.lots for i in lot.items}
+        lines.append(f"Lots split ({len(wp.cuts)} file(s) cut, over {LOT_CAP} items or a chain over {CHAIN_CAP}): "
+                     "merge in the lots' order, origin/main merged before each push")
+        lines += [f"  {x['file']}: " + ", ".join(f"{i} (lot {of[i]})" for i in sorted(x["items"],
+                                                                               key=lambda i: (of.get(i, 0), i)))
+                  for x in wp.cuts]
+    lines.append(f"Hot files shared across lots ({len(wp.hot)}): add, never rewrite; merge origin/main before the "
+                 "push, in the lots' order")
     lines += [f"  {f}: {', '.join(ids)}" for f, ids in wp.hot.items()] or ["  none"]
+    h = wp.history or {}
+    if h.get("files"):
+        lines.append(f"Hot by history ({len(h['files'])} the wave touches; {HISTORY_SHARE:.0%} of the last "
+                     f"{HISTORY_PRS} commits or more, mostly added): "
+                     + ", ".join(f"{f} ({v['share']:.0%})" for f, v in h["files"].items()))
+    lines += [f"  history not read in {r}: {why}" for r, why in (h.get("skipped") or {}).items()]
     unknown = sorted(u.id for u in wp.units.values() if not u.known)
     lines.append(f"No known surface ({len(unknown)}): each a lot of its own, unchecked (a feature's CodeRef, a "
                  f"module or a file named in its title or props gives one; wi-brain-touched-surface)")
     lines += [f"  {', '.join(unknown)}"] if unknown else ["  none"]
     return lines
+
+
+def _list(head: str, rows: list[str], n: int = 12) -> list[str]:
+    """A section: its head, at most ``n`` rows and the count of the rest, or « none »."""
+    return [head] + (rows[:n] + ([f"  ... {len(rows) - n} more (--json)"] if len(rows) > n else []) or ["  none"])
 
 
 def summary(wp: WavePlan) -> list[str]:

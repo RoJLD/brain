@@ -53,8 +53,11 @@ USAGE = """\
                  lots (default: the current wave), at zero token: the items merged but not closed (close-merged's
                  mapping over the project's repos, git only) counted done and listed apart (--include-merged keeps
                  them in the lots, --no-merged reads no PR), then the open items grouped by the files their
-                 predicted surface shares (brain collisions'),
-                 hot files (READMEs, CHANGELOGs, formats.md, FEATURES.md, config.schema.json, changes/) counted apart,
+                 predicted surface shares (brain collisions', weighted: a strong entry, what the item says it edits,
+                 on one side at least; two weak ones, a spec or a module's files, are a possible conflict only), hot
+                 files (READMEs, CHANGELOGs, formats.md, FEATURES.md, config.schema.json, changes/, and those the
+                 repos' last 100 commits add to most) counted apart, a lot over 8 items or a chain over 3 split at
+                 its most shared file, a broad item (over 30 files, a standing debt item) alone and last,
                  in rounds by their depends_on, the lots that unblock the most first, at most the sessions cap less the
                  master's and N PRs verified at once (3) a round; the predicted conflicts, the hot files shared, the
                  items with no known surface, what the memory guard and the quota forecast say now (with
@@ -144,9 +147,9 @@ def _plan(args, root: Path, store: Path) -> int:
     except SystemExit:
         name = ""
     try:
-        repos = [] if args.no_merged else [(r.name, r.path) for r in _project_repos(args, root)]
+        repos = [(r.name, r.path) for r in _project_repos(args, root)]
         wp = lots.plan(store, root, args.version or "", name, args.at_once, tuple(args.hot or ()), repos,
-                       args.include_merged)
+                       args.include_merged, read_merged=not args.no_merged)
     except ValueError as exc:
         print(f"brain wave plan: {exc}", file=sys.stderr)
         return 1
