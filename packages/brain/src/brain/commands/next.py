@@ -74,11 +74,12 @@ def cmd_next(args, root: Path) -> int:
 
 
 def _merged_line(m: dict) -> list[str]:
-    items = (m or {}).get("items") or {}
-    if not items:
-        return []
-    return [f"merged, to close ({len(items)}), counted done: {', '.join(items)} "
-            f"(brain wave close-merged {m['release']} --write)"]
+    items, kept = (m or {}).get("items") or {}, (m or {}).get("kept") or {}
+    out = [f"merged, to close ({len(items)}), counted done: {', '.join(items)} "
+           f"({lots.close_advice(m['release'], kept)})"] if items else []
+    if kept:
+        out.append(f"merged, work left, kept open ({len(kept)}): {', '.join(kept)}")
+    return out
 
 
 def register(sub, ctx) -> None:

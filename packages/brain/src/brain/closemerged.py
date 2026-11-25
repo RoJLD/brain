@@ -81,6 +81,7 @@ class Plan:
     waiting: list[str] = field(default_factory=list)            # the wave's open items no merged PR names
     skipped: dict[str, str] = field(default_factory=dict)       # repo -> why it was not read
     earlier: dict[str, str] = field(default_factory=dict)       # item -> the props.pr it holds already
+    kept: dict[str, str] = field(default_factory=dict)          # overlay only: merged, kept open -> why
 
     def as_dict(self) -> dict:
         def prs(xs):
@@ -248,18 +249,60 @@ def overlay(wp: waves.Plan, repos: list[tuple[str, Path]], version: str) -> Plan
     merged): the PRs merged since the last tag before ``version`` in ``repos``, each item they deliver sorted by its
     status (``to_close``: the open ones, merged but not closed yet). A repo that cannot be read (no tag before
     ``version``, git missing or failing, ``version`` not a release) is in ``skipped`` and maps nothing: its items stay
-    open, as a rebase merge's do."""
+    open, as a rebase merge's do. So is a repo with no changelog fragment folder (a planning repo: the title of the PR
+    that files or records an item names it, so its titles do not say what merged); close-merged itself, a step someone
+    reviews, still reads it. An open item a merged PR maps that still holds work is ``kept`` open, out of
+    ``to_close``, with why (:func:`kept_open`)."""
     out = Plan(version, wp.resolve(version) or "")
-    _read(out, repos, "", "")
+    _read(out, repos, "", "", ledger=True)
     _map(out, wp, {k for k, n in wp.nodes.items() if n.get("type") == "WorkItem"})
+    for item in list(out.to_close):
+        why = kept_open((wp.nodes.get(item) or {}).get("props") or {})
+        if why:
+            out.kept[item] = why
+            del out.to_close[item]
     return out
 
 
-def _read(out: Plan, repos: list[tuple[str, Path]], since: str, until: str) -> None:
-    """Each repo's merged PRs into ``out.prs``, its range into ``out.ranges``, or why it was not read."""
+def standing(props: dict) -> bool:
+    """A repo's standing debt item: the one its audit defers into (props.audit_repo), or one said standing
+    (props.standing). It takes a batch each wave and no merge closes it."""
+    return bool(props.get("audit_repo")) or str(props.get("standing") or "").strip().lower() in ("true", "yes", "1")
+
+
+def kept_open(props: dict) -> str:
+    """Why an open item a merged PR maps stays open in the overlay ('' when it counts done): a standing item, a step
+    recorded as left (props.left: kept doing after its PR merged, for a step after the pin or an install), or a
+    gesture it waits on (props.external_blocker)."""
+    if standing(props):
+        return "standing: no merge closes it"
+    for key, what in (("left", "left"), ("external_blocker", "waits on")):
+        value = str(props.get(key) or "").strip()
+        if value:
+            return f"{what}: " + (value if len(value) <= 80 else value[:77].rstrip(" ,;:") + "...")
+    return ""
+
+
+def has_fragment_folder(repo: Path, end: str) -> bool:
+    """Whether ``end`` holds a changelog fragment folder (``changes/`` or ``packages/<name>/changes/``, the folders
+    :func:`is_fragment` reads)."""
+    for d in _git(repo, "ls-tree", "-r", "-d", "--name-only", end).splitlines():
+        parts = PurePosixPath(d).parts
+        if parts == ("changes",) or (len(parts) == 3 and parts[0] == "packages" and parts[2] == "changes"):
+            return True
+    return False
+
+
+def _read(out: Plan, repos: list[tuple[str, Path]], since: str, until: str, ledger: bool = False) -> None:
+    """Each repo's merged PRs into ``out.prs``, its range into ``out.ranges``, or why it was not read (``ledger``, the
+    overlay's: nor a repo with no changelog fragment folder)."""
     for name, path in repos:
         try:
             start, end = span(path, out.version, since, until)
+            if ledger and not has_fragment_folder(path, end):
+                out.skipped[name] = (f"no changelog fragment folder at {end}: its PR titles name the items they file, "
+                                     "not what merged")
+                continue
             out.prs += merged_prs(path, name, start, end)
             day = _git(path, "log", "-1", "--format=%cs", start).strip()
         except CloseError as exc:

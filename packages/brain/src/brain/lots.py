@@ -360,13 +360,15 @@ def merged_of(pl: waves.Plan, wid: str, repos: list[tuple[str, Path]]) -> tuple[
     """(what the plan says of them, item -> its merged PRs): the items merged but not closed (brain.closemerged's
     mapping, git only: the PRs merged in ``repos`` since the last tag before the wave's release, by changelog fragment
     or an item id in the title), the wave's and the others (a prerequisite outside the wave), with the ranges read and
-    the repos not read (their items stay open)."""
+    the repos not read (their items stay open); the wave's items merged that still hold work (a standing item, a step
+    left, a gesture awaited: closemerged.kept_open) stay open, said ``kept``."""
     ov = closemerged.overlay(pl, repos, pl.label(wid))
     found = {i: [p.ref for p in prs] for i, prs in ov.to_close.items()}
     members = set(pl.items_of(wid))
     return {"release": ov.version, "items": {i: v for i, v in found.items() if i in members},
             "outside": {i: v for i, v in found.items() if i not in members}, "ranges": ov.ranges,
-            "skipped": ov.skipped, "counted": "done"}, found
+            "skipped": ov.skipped, "kept": {i: why for i, why in ov.kept.items() if i in members},
+            "counted": "done"}, found
 
 
 def as_done(pl: waves.Plan, ids) -> waves.Plan:
@@ -475,22 +477,35 @@ def _lot_lines(wp: WavePlan, lot: Lot) -> list[str]:
 
 def merged_lines(wp: WavePlan) -> list[str]:
     """The plan's lines on what merged and is not closed yet: the wave's items (out of the lots, or in them with
-    --include-merged), the prerequisites outside the wave counted satisfied, the repos not read."""
+    --include-merged), the ones kept open for the work they still hold, the prerequisites outside the wave counted
+    satisfied, the repos not read."""
     m = wp.merged
     if not m:
         return []
-    items, outside = m.get("items") or {}, m.get("outside") or {}
+    items, outside, kept = m.get("items") or {}, m.get("outside") or {}, m.get("kept") or {}
     how = ("still in the lots (--include-merged)" if m.get("counted") == "open"
            else "out of the lots, counted done")
     lines = [f"Merged, to close ({len(items)}): " + (", ".join(f"{i} ({', '.join(v)})" for i, v in items.items())
                                                     or "none") + (f"; {how}" if items else "")
-             + (f"; brain wave close-merged {m['release']} --write" if items else "")]
+             + (f"; {close_advice(m['release'], kept)}" if items else "")]
+    if kept:
+        lines.append(f"  merged, work left, kept open ({len(kept)}): "
+                     + ", ".join(f"{i} ({why})" for i, why in kept.items()))
     if outside:
         what = "counted open" if m.get("counted") == "open" else "satisfied as prerequisites"
         lines.append(f"  merged outside the wave, {what} ({len(outside)}): " + ", ".join(sorted(outside)))
     for repo, why in (m.get("skipped") or {}).items():
         lines.append(f"  merged PRs not read in {repo}: {why} (its items stay open)")
     return lines
+
+
+def close_advice(release: str, kept: dict) -> str:
+    """The command that closes the merged items: close-merged's --write, or, while some are kept open (it would close
+    them too), each closed by hand."""
+    if not kept:
+        return f"brain wave close-merged {release} --write"
+    return (f"brain item close each (brain wave close-merged {release} --write would close the kept ones too, with "
+            "their work left)")
 
 
 def render(wp: WavePlan) -> list[str]:

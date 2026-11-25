@@ -706,7 +706,11 @@ title) takes them out of the lots, the rounds and the quick-win slot's candidate
 prerequisites, the wave's own listed in the plan's head (« Merged, to close (N) », with the `close-merged --write` that
 closes them) and the others as prerequisites satisfied; a repo that cannot be read (no tag before the release, not a
 repo, git failing) maps nothing and is said, its items open, as are those of a PR merged by rebase (no trace on the
-branch). `--include-merged` keeps them in the lots, said merged; `--no-merged` reads no PR. Then each open item's
+branch); so does a repo with no changelog fragment folder (a planning repo, whose PR titles name the items they file),
+which `close-merged` itself still reads. A merged item that still holds work stays open, listed as « merged, work left,
+kept open » with why: a standing item (`props.audit_repo` or `props.standing`), a step left (`props.left`) or a
+gesture awaited (`props.external_blocker`); while one is kept, the plan says to close the others by hand, as
+`close-merged --write` would close the kept ones too. `--include-merged` keeps them in the lots, said merged; `--no-merged` reads no PR. Then each open item's
 predicted surface (`brain collisions`': its features' CodeRefs, its
 modules, the files it names), the items that share a file in one lot, run in the order of their `depends_on`; the hot
 files every PR adds to (the READMEs, CHANGELOGs, `formats.md`, `FEATURES.md`, `config.schema.json`, the `changes/`
