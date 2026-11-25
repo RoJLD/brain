@@ -6,7 +6,9 @@ section: Added
   earliest, latest, `after` an item, `with` one, `own-lot`), sizes in points and a capacity (given, else what the last
   reached waves closed), the items merged but not closed counted done; each wave's items, standing batches, lots and
   rounds (`brain wave plan`'s cutter, six sessions at most), doors and release (a pending wave already composed keeps
-  the plan's), what waits on the owner, a pin's prerequisites placed before it; then the eras' due items, a `with`
-  pair split asked, the items left out with their reason, the questions, the checks and the risks; `--against` an earlier
+  the plan's; a standing item composed there stays its batch), what waits on the owner, a pin's or a choice's
+  prerequisites placed before it (due by the wave before, ahead of the overdue items); then the eras' due items, a
+  `with` pair split and a choice missed asked, the items left out with their reason, the questions, the checks and the
+  risks; `--against` an earlier
   `--json` says what moved. Its `--json` keys are a public contract (`format` 1, keys only added). It writes nothing
   (`wi-brain-wave-propose`).

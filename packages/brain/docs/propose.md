@@ -28,11 +28,15 @@ part_of WAVE`, `brain wave plan`) and answers its questions.
    `props.one_way_door`, or « one-way door » in its `size_reason`). A window that is a pending wave already composed
    (`--from` an earlier wave) keeps its composed items: they count against its capacity and are listed (`why`:
    `composed`); it keeps the plan's id and release (its kind read against the release before), and the later windows
-   count from it.
-3. **Wave by wave**: the items pinned to it (over the capacity if need be: a question), then their open
-   prerequisites (a place kept for quick wins taken if need be); then, first, the items whose pin or choice names only
-   waves already composed without them, those due by a wave before the drafted ones, the items a composed item waits
-   on, and the open prerequisites of all of these and of the later pins; then those due (a latest wave, « before
+   count from it. A standing item composed there is its standing batch only: no row, no lot, no place.
+3. **Wave by wave**: the items pinned to it (over the capacity if need be: a question), then the open prerequisites
+   due by it, ahead of every other item (a place kept for quick wins taken if need be): a pin's prerequisite is due by
+   the wave before the pin's (the pins of a wave are placed first and may fill it), a prerequisite of a choice within
+   the window by the wave before its first one (every wave of the choice stays open), and down the chain a
+   `depends_on` one by the same wave, an `after` one by the wave before; never before the first window, where it comes
+   first. Then, first, the items whose pin or choice names only waves already composed without them, those due by a
+   wave before the drafted ones, the items a composed item waits on, and the open prerequisites of all of these and of
+   the later pins and choices; then those due (a latest wave, « before
    1.0 »); then by rank. An item goes in when its placement allows the wave (its pin; one of the waves of its choice;
    from its earliest), every open `depends_on` prerequisite is placed earlier or in the same wave within a chain of 3,
    every open item it is placed `after` is in an earlier wave, and the capacity holds. After each item placed the
@@ -57,7 +61,8 @@ compatibility), its standing batches, its lots by round, what waits on the owner
 DDRs), its exit (the items merged, the tag). Then the eras (the items due before each exit: placed, left), the items
 left out with their reason (capacity, dependency, window, owner, later, trigger, external, blocked; the first 20, `--all`
 for every one), the questions (an item that comes first says, once the fill is done, the wave it was drafted in or
-why it is in none; a `with` pair split; a pin still before a prerequisite), the checks (an item before a prerequisite
+why it is in none; a `with` pair split; a pin still before a prerequisite; a choice within the window drafted in
+none of its waves), the checks (an item before a prerequisite
 or in the wave of an item it is placed `after`, a pin drafted while its prerequisite is in no drafted wave, an item
 twice, a pin or a choice not honoured: empty when the draft holds) and the risks (unchecked lots, a wave over its
 capacity, uncalibrated sizes). `--against FILE`, an earlier `--json`, says what moved in each wave; a file of another

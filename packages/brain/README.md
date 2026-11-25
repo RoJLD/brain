@@ -743,7 +743,8 @@ the same placements.
 [--all] [--json]` is the wave composer, at zero token (`brain.propose`, [docs/propose.md](docs/propose.md)): it drafts
 the N waves (default 3) after the last pending one. Out first, each with its reason (blocked, external, owner, later,
 a trigger, after an era's exit, pinned beyond the drafted waves, a `depends_on` cycle); then, wave by wave, the items
-pinned to it and their prerequisites, the overdue and the ones a composed item waits on, those due before an era's
+pinned to it and the prerequisites due by it (a pin's or a choice's, by the wave before), the overdue and the ones
+a composed item waits on, those due before an era's
 exit, then by rank (`brain.ranking`), each after its open prerequisites (or stacked in the same wave within a chain
 of 3; an item its placement is `after`, in an earlier wave), within its placement's waves (a choice: one of its
 waves), within a capacity in items and points (S 1, M 2, L 4, XL 8: given, else what the last reached waves closed),

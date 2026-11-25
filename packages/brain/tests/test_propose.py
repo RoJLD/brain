@@ -429,3 +429,53 @@ def test_an_item_after_a_standing_one_is_drafted(tmp_path):
 """, "- {from: wi-a, to: wi-debt, type: depends_on}\n", items=5, pts=20, n=2)
     assert _where(prop) == {"wi-a": "s3"} and prop.checks == []
     assert all(w.standing == ["wi-debt"] for w in prop.waves)
+
+
+@pytest.mark.parametrize("place,edge", [('wave_planned: "s4"', "- {from: wi-p, to: wi-dd, type: depends_on}\n"),
+                                        ('place: "wave s4; after wi-dd"', "")])
+def test_a_later_pins_prerequisite_comes_before_the_overdue_items(tmp_path, place, edge):
+    prop = _small(tmp_path, f"""\
+- {{id: wi-p, type: WorkItem, status: todo, title: P, props: {{priority: P3, size: S, {place}}}}}
+- {{id: wi-dd, type: WorkItem, status: todo, title: DD, props: {{priority: P3, size: S}}}}
+- {{id: wi-h1, type: WorkItem, status: todo, title: H1, props: {{priority: P1, size: S, wave_planned: "s2"}}}}
+- {{id: wi-h2, type: WorkItem, status: todo, title: H2, props: {{priority: P1, size: S, wave_planned: "s2"}}}}
+""", edge, items=2, pts=30, n=3)
+    at = _where(prop)
+    assert at["wi-dd"] == "s3" and at["wi-p"] == "s4"   # due by the wave before the pin's: ahead of the overdue ones
+    assert {at["wi-h1"], at["wi-h2"]} == {"s3", "s4"}
+    assert prop.checks == []
+
+
+def test_a_choices_prerequisite_is_lifted_so_the_choice_holds(tmp_path):
+    prop = _small(tmp_path, """\
+- {id: wi-ch, type: WorkItem, status: todo, title: Choice, props: {priority: P1, size: S, place: "wave s3 or s4"}}
+- {id: wi-pre, type: WorkItem, status: todo, title: Pre, props: {priority: P3, size: S}}
+- {id: wi-h1, type: WorkItem, status: todo, title: H1, props: {priority: P1, size: S}}
+- {id: wi-h2, type: WorkItem, status: todo, title: H2, props: {priority: P1, size: S}}
+- {id: wi-h3, type: WorkItem, status: todo, title: H3, props: {priority: P2, size: S}}
+- {id: wi-h4, type: WorkItem, status: todo, title: H4, props: {priority: P2, size: S}}
+""", "- {from: wi-ch, to: wi-pre, type: depends_on}\n", items=2, pts=30, n=3)
+    at = _where(prop)
+    assert at["wi-pre"] == "s3" and at["wi-ch"] in ("s3", "s4")
+    assert prop.checks == []
+
+
+def test_a_choice_that_misses_its_waves_is_asked(tmp_path):
+    prop = _small(tmp_path, """\
+- {id: wi-ch, type: WorkItem, status: todo, title: Choice, props: {priority: P1, size: S, place: "wave s3 or s4"}}
+- {id: wi-p3, type: WorkItem, status: todo, title: P3, props: {priority: P3, size: S, wave_planned: "s3"}}
+- {id: wi-p4, type: WorkItem, status: todo, title: P4, props: {priority: P3, size: S, wave_planned: "s4"}}
+""", items=1, pts=30, n=3)
+    assert "wi-ch" not in _where(prop)
+    assert "wi-ch's choice of waves, s3 or s4: in no drafted wave (capacity)" in prop.questions
+
+
+def test_a_standing_item_composed_in_a_window_is_the_batch_only(tmp_path):
+    prop = _small(tmp_path, """\
+- {id: wi-debt, type: WorkItem, status: todo, title: Debt, props: {standing: "true", size: M}}
+- {id: wi-f1, type: WorkItem, status: todo, title: F1, props: {priority: P1, size: S}}
+""", "- {from: wi-debt, to: wave-s2, type: part_of}\n", items=2, pts=30, n=2, start="wave-s1")
+    s2, s3 = prop.waves
+    assert [r["id"] for r in s2.items] == ["wi-comp", "wi-f1"] and s2.standing == ["wi-debt"]
+    assert "wi-debt" not in {i for lot in s2.lots for i in lot["items"]} and s2.size["items"] == 2
+    assert all(w.standing == ["wi-debt"] for w in prop.waves)

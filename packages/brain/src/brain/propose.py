@@ -15,7 +15,8 @@ place: ``s(N+1)``... Each window holds at most the capacity: ``--items`` and ``-
 waves closed (:func:`capacity`: the median of their done items and points, :data:`HISTORY_WAVES` of them), else
 :data:`DEFAULT_ITEMS` and :data:`DEFAULT_POINTS`. About :data:`brain.waves.QUICKWIN_SHARE` of the places are kept for
 quick wins (size S, high value). A window that is a pending wave already composed (``--from`` an earlier one) keeps
-its composed items, counted against its capacity, and the plan's id and release for it (the later ones count from it).
+its composed items, counted against its capacity, and the plan's id and release for it (the later ones count from it);
+a standing item composed there stays the standing batch, never an item, a lot or a place of its own.
 
 **Out.** Before any fill: a blocked item, one with an external blocker, one whose placement is out (owner, later, a
 trigger), one placed after an era's exit (« after 1.0 ») with no wave named, one pinned beyond the drafted waves, one
@@ -23,16 +24,20 @@ in a cycle of prerequisites (looked for among every open item, composed ones inc
 the plan's fact, and its edges inside the wave are dropped for the lots), one whose choice of waves lies beyond them.
 Each is listed with its reason.
 
-**The fill**, wave by wave: the items pinned to it first (over the capacity if need be: a question), then their open
-prerequisites (taking a place kept for quick wins if need be), then the overdue (a pin or a choice on waves composed
-without them, a latest wave before the window, a composed item's prerequisite), the prerequisites of the later pins
-and of all these, then those due (a latest wave, « before 1.0 »), then by rank; an item goes in when its
+**The fill**, wave by wave: the items pinned to it first (over the capacity if need be: a question), then the open
+prerequisites due by it (taking a place kept for quick wins if need be), ahead of every other item: a prerequisite of
+a pin is due by the wave before the pin's (the pins of a wave may fill it), of a choice within the window by the wave
+before its first one, and down the chain the same wave for a ``depends_on`` one and one earlier for an ``after`` one,
+never before the first window; then the overdue (a pin or a choice on waves composed without them, a latest wave
+before the window, a composed item's prerequisite), the prerequisites of the later pins and choices and of all these,
+then those due (a latest wave, « before 1.0 »), then by rank; an item goes in when its
 placement allows that wave (its pin, one of its choice's waves, from its earliest), every open ``depends_on``
 prerequisite is placed in an earlier wave or in the same one within a chain of :data:`brain.lots.CHAIN_CAP`, every open
 item it is placed ``after`` in an earlier wave, and the capacity holds; the order is read again after each item placed.
 A latest wave orders and never excludes: a deadline missed is drafted and asked. An item it must go ``with`` follows
 it when it can (at once, or once its prerequisite has come in); a pair the draft splits is asked once the fill is done.
-A pin still before a prerequisite at the end is asked too. A standing item (``props.standing``, or a debt item,
+A pin still before a prerequisite at the end is asked too, and a choice within the window that ends in none of its
+waves (its capacity full). A standing item (``props.standing``, or a debt item,
 ``props.audit_repo``) is a batch in every wave, never a prerequisite to wait on.
 
 **The lots.** Each wave's items are cut by :func:`brain.lots.cut`, an ``own-lot`` item taken out to a lot of its own,
@@ -177,7 +182,8 @@ class _Fill:
 
     def __init__(self, plan: waves.Plan, pls: dict[str, placement.Placement], windows: list[int], cap: dict):
         self.plan, self.pls, self.windows, self.cap = plan, pls, windows, cap
-        self.at: dict[str, int] = {p.item: p.pin for p in pls.values() if p.status == "composed" and p.pin}
+        self.at: dict[str, int] = {p.item: p.pin for p in pls.values()   # a standing item: the batch, never a place
+                                   if p.status == "composed" and p.pin and not _standing(plan, p.item)}
         self.out: dict[str, str] = {}
         self.questions: list[str] = []
         self.placed: dict[int, list[str]] = {k: [] for k in windows}
@@ -187,6 +193,7 @@ class _Fill:
         self.room: dict[str, str] = {}   # item -> why it waited (capacity, dependency, window)
         self.pending: list[str] = []
         self.early: list[tuple[str, int]] = []   # pins placed before a prerequisite: asked after the fill if still so
+        self.due_by: dict[str, int] = {}   # a pin's or a choice's prerequisite -> the wave it is due by (_due_by)
 
     # -- before the fill --
     def exclude(self, cands: list[str], every: list[str]) -> list[str]:
@@ -335,10 +342,11 @@ class _Fill:
     def run(self, cands: list[str]) -> None:
         self.pending = list(cands)
         late = self._late(cands)
+        self.due_by = self._due_by(cands)
         order = self._order(cands, {i for i, _ in late})
         for k in self.windows:
             self._pins(k)
-            need = self._needed(k, order)   # the prerequisites of its pins first, before the other first items
+            need = self._needed(k, order)   # the prerequisites due by it first, before the other first items
             for reserve in (True, False):   # the quick-win places, kept, then given to the rest if none came
                 while self._pass(k, need + order, reserve, set(need)):   # a placed item may let its dependents in
                     pass
@@ -347,11 +355,11 @@ class _Fill:
         self.questions += self._deadlines(cands) + self.apart()
 
     def _order(self, cands: list[str], late: set[str]) -> list[str]:
-        """The fill's order: first the late items, the items pinned within the window, and their open prerequisites;
-        then those due; then by rank."""
+        """The fill's order: first the late items, the items pinned within the window, and their open prerequisites,
+        with the prerequisites of a choice within the window; then those due; then by rank."""
         rank = self.plan.ranker.key
         pins = {i for i in cands if (p := self.pls.get(i)) and p.pin in self.windows}
-        first = self._lifted(late | pins, set(cands))
+        first = self._lifted(late | pins, set(cands)) | set(self.due_by)
         due = {i for i in cands if (p := self.pls.get(i)) and (p.before or p.latest is not None)}
         return sorted(cands, key=lambda i: (i not in first, i not in due, rank(i)))
 
@@ -398,8 +406,11 @@ class _Fill:
         return f"in no drafted wave ({self.out.get(i) or self.room.get(i, 'capacity')})"
 
     def _deadlines(self, cands: list[str]) -> list[str]:
-        """A latest wave within the window that the draft misses: placed later, or in no wave."""
-        out = []
+        """A latest wave within the window that the draft misses (placed later, or in no wave), and a choice within
+        the window that ends in none of its waves."""
+        out = [f"{i}'s choice of waves, {_waves_text(ch)}: in no drafted wave ({self.room.get(i, 'capacity')})"
+               for i in cands if i not in self.at and i not in self.out and (ch := self.choice(i))
+               and max(ch) <= self.windows[-1]]
         for i in cands:
             p = self.pls.get(i)
             if not p or p.pin is not None or p.latest is None or p.latest < self.windows[0] or i in self.out:
@@ -431,10 +442,37 @@ class _Fill:
                 self.questions.append(f"{i} is pinned to s{k}, over its capacity")
 
     def _needed(self, k: int, order: list[str]) -> list[str]:
-        """The open prerequisites of the items pinned to wave ``k`` still to place, in ``order``."""
-        pinned = {i for i in self.pending if (p := self.pls.get(i)) and p.pin == k}
-        need = self._lifted(pinned, set(self.pending)) - pinned
-        return [i for i in order if i in need and i not in self.at]
+        """The prerequisites due by wave ``k`` (or before it) still to place, in ``order``: ahead of every other item
+        there, the overdue ones included."""
+        return [i for i in order if self.due_by.get(i, k + 1) <= k and i not in self.at and i in self.pending]
+
+    def _anchors(self, cands: list[str]) -> list[tuple[str, int]]:
+        """The items whose wave the window must keep, with that wave: a pin within the window (its wave), a choice
+        within it (its first wave still open, so that every wave of the choice stays open to it)."""
+        out = []
+        for i in cands:
+            p = self.pls.get(i)
+            if p and p.pin in self.windows:
+                out.append((i, p.pin))
+            elif (ch := self.choice(i)) and max(ch) <= self.windows[-1]:
+                out.append((i, min(ch)))
+        return out
+
+    def _due_by(self, cands: list[str]) -> dict[str, int]:
+        """The wave each open prerequisite of an anchor (:meth:`_anchors`) is due by: the one before the anchor's
+        (the pins of a wave are placed first and may fill it), then down the chain, the same wave for a
+        ``depends_on`` one (within the chain cap) and one earlier for an ``after`` one; never before the first
+        window, where such a prerequisite is placed first (a pin there still before it is asked)."""
+        due: dict[str, int] = {}
+        keep, first = set(cands), self.windows[0]
+        stack = [(d, max(first, k - 1)) for i, k in self._anchors(cands) for d, _ in _prereqs(self.plan, self.pls, i)]
+        while stack:
+            d, k = stack.pop()
+            if d not in keep or due.get(d, k + 1) <= k:
+                continue
+            due[d] = k
+            stack += [(e, max(first, k - 1 if strict else k)) for e, strict in _prereqs(self.plan, self.pls, d)]
+        return due
 
     def _follow(self, k: int) -> bool:
         """A partner of wave ``k``'s items that could not follow at once, placed now that it may (False: none)."""
