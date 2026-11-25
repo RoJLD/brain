@@ -58,7 +58,7 @@ What it does, every command reading files and git, never a model:
 Python 3.10 or later. The command depends on PyYAML and on `research-graph` at the same tag.
 
 ```bash
-pip install "brain @ git+https://github.com/RoJLD/brain.git@v0.6.1#subdirectory=packages/brain"
+pip install "brain @ git+https://github.com/RoJLD/brain.git@v0.7.0#subdirectory=packages/brain"
 ```
 
 On Windows, `installer/install.ps1` does it in a venv of its own (`~/.brain/venv`, `BRAIN_HOME`), puts the `brain`
@@ -588,7 +588,7 @@ FAILED or TIMEOUT with the counts and the log, the failed tests' ids, the next c
 
 ### The module map
 
-A brain built module by module keeps the registry of its modules in the store (`notes/graph/modules.yaml`), and each open item names its module (`props.module`, `props.modules_secondary`). `brain sync` writes `notes/modules_graph.md`: per module its phase, its items done and open, and the gaps. `brain check` warns about an open item the map does not place, and about a feature or a done item with no module (the technical reference reads them by module). A programme's registry can live in another store (`config.json` `modules.store`) and be a read copy of the platform's documents, written by an agent session: `brain modules --check` validates the imported entries, the view generates the counts and lists the divergences between the documents, `brain modules --diff` says what an import changed; the map of realisations says who realises each module and where; `personas.yaml`, beside the registry, holds its presets (sets of modules and distributions), and `brain modules --personas` checks each one closed under the hard dependencies and, for a preset without AI, free of AI modules and of the distributions that ship them. See [docs/modules.md](docs/modules.md).
+A brain built module by module keeps the registry of its modules in the store (`notes/graph/modules.yaml`), and each open item names its module (`props.module`, `props.modules_secondary`). `brain sync` writes `notes/modules_graph.md`: per module its phase, its items done and open, and the gaps. `brain check` warns about an open item the map does not place, and about a feature or a done item with no module (the technical reference reads them by module). A programme's registry can live in another store (`config.json` `modules.store`) and be a read copy of the platform's documents, written by an agent session: `brain modules --check` validates the imported entries, the view generates the counts and lists the divergences between the documents, `brain modules --diff` says what an import changed; the map of realisations says who realises each module and where; `personas.yaml`, beside the registry, holds its presets (sets of modules and distributions), and `brain modules --personas` checks each one closed under the hard dependencies and, for a preset without AI, free of AI modules and of the distributions that ship them. Every node of the store gets its organ, the module it serves: its own `props.module`, else the modules of its neighbours placed by hand (a doc section, a test, a piece of code, an ADR placed by the items and features it is linked to), with the votes behind it; the view counts them by node type and lists the hand placements the links contradict, and `brain item show` and `brain features show` print a node's organ. See [docs/modules.md](docs/modules.md).
 
 ### Waves and eras
 
@@ -706,8 +706,12 @@ title) takes them out of the lots, the rounds and the quick-win slot's candidate
 prerequisites, the wave's own listed in the plan's head (« Merged, to close (N) », with the `close-merged --write` that
 closes them) and the others as prerequisites satisfied; a repo that cannot be read (no tag before the release, not a
 repo, git failing) maps nothing and is said, its items open, as are those of a PR merged by rebase (no trace on the
-branch). `--include-merged` keeps them in the lots, said merged; `--no-merged` reads no PR. Then each open item's
-predicted surface, weighted (`brain.collisions.weighted`): **strong** what says what it edits (a file, or a `brain.x`
+branch); so does a repo with no changelog fragment folder (a planning repo, whose PR titles name the items they file),
+which `close-merged` itself still reads. A merged item that still holds work stays open, listed as « merged, work left,
+kept open » with why: a standing item (`props.audit_repo` or `props.standing`), a step left (`props.left`) or a
+gesture awaited (`props.external_blocker`), another wave's apart (« kept open outside the wave », e.g. its standing debt item a fragment of a batch maps); while one is kept, of this wave or another, the plan says to close the others by hand, as
+`close-merged --write` would close the kept ones too. `--include-merged` keeps them in the lots, said merged;
+`--no-merged` reads no PR. Then each open item's predicted surface, weighted (`brain.collisions.weighted`): **strong** what says what it edits (a file, or a `brain.x`
 module read as `brain/x.py`, that its title, `props.where`, `props.size_reason` or `props.files` name; the CodeRefs of
 a feature it delivers with 6 CodeRefs or fewer; what a surface hook adds), **weak** what only stands near it (a file its
 other props name, a spec document, a broader feature's or its module's CodeRefs). The items that meet on a file, a
@@ -727,7 +731,8 @@ lots, and the plan says how many streams fit now: this session's live streams un
 round's lots, each at the sum of its items' recorded estimates (`props.cost_estimate`; none: the median session's),
 under `ask_over_pct` at the week's reset (docs/guards.md, « The wave quota gate »). `brain next` shows the current
 wave's first round, and that line; it counts the merged items done too (its wave's counts, its startable and open
-groups), said in one line.
+groups), said in one line, and the ones kept open in another. Its lots leave the hot files by history aside (one
+`git log --numstat` a repo on every call: `brain wave plan` reads them).
 
 `brain wave placements [ID]... [--all] [--json]` says where each open item may go among the waves, at zero token
 (`brain.placement`, [docs/placements.md](docs/placements.md)): its `props.place` when it has one (« `wave s11; after
@@ -779,7 +784,8 @@ and needs no `research_graph` on the PATH (the graph is loaded in brain's own pr
 name):
 
 ```
-brain item show ID [--history] [--json]        # props in full, edges both ways, the ids its props name, its blockers,
+brain item show ID [--history] [--json]        # its organ (its module, by hand or derived from its links), props in
+                                               # full, edges both ways, the ids its props name, its blockers,
                                                # the ADRs behind it (direct, inherited, superseded) and its specs, the
                                                # DDRs that name it; --history: its changes from git (slow on a large store)
 brain items [--status S]... [--all] [--priority P]... [--wave X.Y.Z|ID] [--milestone M]... [--prop K[=TEXT]]...
@@ -1170,6 +1176,13 @@ The session that asks the owner records the answers, in one PR per batch (wi-bra
    plan first, `--write` applies it in that order; a DDR not answered is refused, an item or a spec the store does not
    have is said and left out. A brainstorm's asks, captured answers and applied ADR thus travel in its own branch's
    PR.
+
+An answer recorded by hand (`brain decision answer ID CHOICE`, or `--batch`) settles the question tool's capture of
+the same DDR (any session's, this project's): the capture of the same answer is marked recorded (no PR), one of
+another answer captured before it is retired (superseded), so `--captured` never proposes either again, nor writes it
+from the default branch while the answer by hand waits on a branch; a capture of another answer made after it (the
+owner answered again since) is left for `--captured`. `--dry-run` there prints the DDR as it would be written (with
+`--batch`, each answer) after every check, and writes nothing: no DDR, no view, no ledger row.
 
 `--batch` is strict: a value is an option's exact label (any case, `(Recommandé)` ignored) or its number; a shortened
 label is refused with the label it shortens, and the owner's own text is marked as such, `{"other": "..."}`. Its file
@@ -2130,8 +2143,27 @@ hand-over, the merge go, a workflow's launch) and each owner-only command above,
 (`manual`, `ask` or `auto`: the highest level the engine allows), its level today, its conditions, where it runs and
 its floor category; the floor (the never-grantable categories, the elevated terminal, the rules' text, raising a
 level) stays `manual` whatever a config says, and a level above its ceiling, unknown or unreadable reads `manual`.
-`brain automation list [--json]` prints it, read only. No guard reads it yet: the `automation` section of
-`config.json` and its enforcement are the next slices of `spec-brain-automation-levels`.
+`brain automation list [--json]` prints it, read only.
+
+**The automation levels** (`brain.automation`, [docs/automation.md](docs/automation.md#the-levels-configjsons-automation-section)):
+a gesture's level is the engine's default (today's behaviour), then config.json's `automation` section
+(`{"v": 1, "levels": {"session-archive": "auto"}}`; raising a level is the owner's, by their merge of config.json),
+then `<BRAIN_HOME>/automation.json`, a machine file of the same shape that may only lower one. A config.json that
+`$BRAIN_CONFIG` names never raises a level above the one found without it (the engine's default when none is
+found). Fail closed: a level above its ceiling, unknown or unreadable, a floor gesture's, and a section or file this
+engine cannot read, read `manual`; an id the catalogue does not hold is ignored with a note. `brain automation
+explain [GESTURE] [--json]` says where each level comes from; `brain config --check` and `brain check` refuse a floor
+gesture set above `manual`. The guards enforce them (below).
+
+**The levels enforced** (wi-brain-automation-guard,
+[docs/automation.md](docs/automation.md#enforcement-what-the-guards-make-of-a-level)): the guard reads
+`session-archive`'s and `handover-remote-control`'s level on each `archive_session` and `set_remote_control` call
+inside its conditions (`manual` refused, `ask` the guard's own ask, the card, whatever the tool's native rule,
+`auto` allowed with no card; `ask` reads `manual` in a permission mode with no card, `bypassPermissions` or
+`dontAsk`); `brain permissions render --level user` writes each tool's level as its native rule (allow, ask or deny)
+and takes the other verdicts out; in an agent's
+session `brain refresh` and `brain release apply` pull the engine clone at `auto` only. A gesture of the owner's
+terminal stays refused to a session at every level.
 
 **The machine's token** (`brain.tokenguard`, [docs/guards.md](docs/guards.md#the-machines-token)): under config.json
 `guards.refuse_token_read: true` (off by default), the owner guard (check `token`) refuses a session's `Read`, `Grep`,

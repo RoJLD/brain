@@ -8,3 +8,4 @@ section: Changes
   8 items or with a `depends_on` chain over 3 is split at its most shared file (« Lots split », a merge-order note); a
   broad item (more than 30 strong entries, or a standing debt item: `props.audit_repo` or `props.standing`) is a lot of
   its own, last when nothing waits on it. The JSON gains `possible`, `cuts` and `history`; a lot, `broad`.
+  `brain next`'s lots leave the history aside (one `git log --numstat` a repo on every call).

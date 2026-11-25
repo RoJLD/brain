@@ -64,8 +64,9 @@ USAGE = """\
                  values listed to place by {owner}; --write creates the waves and their items' part_of edges
   brain wave plan [X.Y.Z] [--at-once N] [--hot NAME]... [--include-merged | --no-merged] [--json]   the wave's
                  lots (default: the current wave), at zero token: the items merged but not closed (close-merged's
-                 mapping over the project's repos, git only) counted done and listed apart (--include-merged keeps
-                 them in the lots, --no-merged reads no PR), then the open items grouped by the files their
+                 mapping over the repos with a changelog fragment folder, git only) counted done and listed apart,
+                 those still holding work (standing, props.left, external_blocker) kept open (--include-merged keeps
+                 them all in the lots, --no-merged reads no PR), then the open items grouped by the files their
                  predicted surface shares (brain collisions', weighted: a strong entry, what the item says it edits,
                  on one side at least; two weak ones, a spec or a module's files, are a possible conflict only), hot
                  files (READMEs, CHANGELOGs, formats.md, FEATURES.md, config.schema.json, changes/, and those the

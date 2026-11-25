@@ -8,7 +8,7 @@ from pathlib import Path
 import pytest
 import yaml
 
-from brain import __version__, cli, permissions, queue
+from brain import __version__, automation, cli, permissions, queue
 
 INSTALLER = Path(__file__).resolve().parents[1] / "installer" / "install.ps1"
 ENGINE = ("# header: what this file is\n\n# brain up: start the stacks (Ada, 2026-11-01)\nBash(brain up)\n"
@@ -480,7 +480,8 @@ def test_cli_view_explain_check_and_render(tmp_path, monkeypatch, capsys):
     assert "permissions of mine on BOX1 (profile lite, tenant -): 0 deny, 1 ask, 3 allow" in out
     assert "ask    Bash(git push *)" in out and "project mine" in out
     assert "hard deny  guard production" in out and "never      keys, money, arming" in out
-    assert "1 of 3 rule(s) present, 2 missing (install.ps1 -Apply)" in out
+    # 3 of the hierarchy and the automation levels' 2 (brain.automation.native_rules: ask at the engine's default)
+    assert "1 of 5 rule(s) present, 4 missing (install.ps1 -Apply)" in out
     assert "held, declared by no level [broad: powershell with a wildcard runs any code]" in out
     assert cli.main(["--root", str(root), "permissions", "--json"]) == 0
     data = json.loads(capsys.readouterr().out)
@@ -594,7 +595,8 @@ def test_durations_expire_and_a_render_takes_out_only_what_expired(tmp_path, mon
     assert plans[0]["unmanaged"]["allow"] == ["Bash(mine *)"]
     assert json.loads(settings.read_text(encoding="utf-8"))["permissions"]["allow"] == \
         ["Bash(mine *)", "Bash(make b)", "Bash(make d)"]
-    assert permissions.expired_rules(model, ctx, "user")["allow"] == ["Bash(make e)"]   # install.ps1 takes it out
+    gone = permissions.expired_rules(model, ctx, "user")["allow"]   # install.ps1 takes it out
+    assert [x for x in gone if x not in automation.TOOLS] == ["Bash(make e)"]   # and the levels' other verdicts
     assert permissions.decide(model, ctx, "Bash: make a")["verdict"] == "none"
 
 

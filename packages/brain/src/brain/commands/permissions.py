@@ -9,7 +9,7 @@ import json
 import sys
 from pathlib import Path
 
-from .. import paths, permissions, projects, queue
+from .. import automation, paths, permissions, projects, queue
 from ._common import _on_main, _project, _scope
 
 ORDER = 260   # its place in brain --help's list of commands (brain.commands)
@@ -135,7 +135,8 @@ def _permissions_render(args, base: Path, model) -> int:
         want = permissions.wanted(model, ctx, "user", adapter)
         print(json.dumps({"file": str(permissions.claude_home() / "settings.json"), "machine": ctx.machine,
                           **want, "expired": permissions.expired_rules(model, ctx, "user", adapter),
-                          "withheld": permissions.unguarded(model, ctx, "user"), "errors": model.errors},
+                          "withheld": permissions.unguarded(model, ctx, "user"),
+                          "automation": automation.native_rules(), "errors": model.errors},
                          ensure_ascii=False, indent=1))
         return 1 if model.errors else 0
     if args.write and args.level == "user":

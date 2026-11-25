@@ -1274,7 +1274,33 @@ def wanted(model: Model, ctx: Context, scope: str, adapter: Adapter | None = Non
             for t in adapter.translate(r.text):
                 if t not in out[r.verdict]:
                     out[r.verdict].append(t)
+    if scope == "user":
+        for tool, verdict in automation_rules()[0].items():
+            if tool not in out[verdict]:
+                out[verdict].append(tool)
     return out
+
+
+def automation_rules() -> tuple[dict[str, str], dict[str, list[str]]]:
+    """The app's tools of a session's gestures as native rules of the user scope (wi-brain-automation-guard,
+    brain.automation.native_rules: each tool at the highest level of its gestures, auto an allow rule, ask an ask
+    rule, manual a deny rule), and the rules a render takes out: ({tool: verdict}, {verdict: [tool]}), the second
+    each tool's two other verdicts, so that a level changed leaves no rule of the old one (an ask or a deny wins over
+    the new level's allow; an old allow would lift the new ask). An allow rule no guard sees here is withheld
+    (:func:`withheld`): the tool then gets no rule, and its allow is taken out."""
+    from . import automation
+    want: dict[str, str] = {}
+    gone: dict[str, list[str]] = {v: [] for v in VERDICTS}
+    for tool, info in automation.native_rules().items():
+        verdict = info["verdict"]
+        if verdict == "allow" and withheld(tool):
+            verdict = ""
+        else:
+            want[tool] = verdict
+        for v in VERDICTS:
+            if v != verdict:
+                gone[v].append(tool)
+    return want, gone
 
 
 def expired_rules(model: Model, ctx: Context, scope: str, adapter: Adapter | None = None) -> dict[str, list[str]]:
@@ -1284,10 +1310,22 @@ def expired_rules(model: Model, ctx: Context, scope: str, adapter: Adapter | Non
     want = wanted(model, ctx, scope, adapter)
     out: dict[str, list[str]] = {v: [] for v in VERDICTS}
     for r in model.rules:
-        gone = model.expired(r) or (r.verdict == "allow" and guard_covers(r.text) and bool(withheld(r.text)))
-        if r.level in adapter.scopes[scope] and ctx.applies(r) and gone:
-            out[r.verdict] += [t for t in adapter.translate(r.text) if t not in want[r.verdict] and t not in out[r.verdict]]
+        if r.level in adapter.scopes[scope] and ctx.applies(r) and _rule_gone(model, r):
+            _take_out(out, want, r.verdict, adapter.translate(r.text))
+    if scope == "user":   # the automation levels' rules of another verdict (automation_rules)
+        for v, tools in automation_rules()[1].items():
+            _take_out(out, want, v, tools)
     return out
+
+
+def _rule_gone(model: Model, r: Rule) -> bool:
+    """A declared rule a render takes out: expired, or an allow a guard bounds whose guard is withheld."""
+    return bool(model.expired(r)) or (r.verdict == "allow" and guard_covers(r.text) and bool(withheld(r.text)))
+
+
+def _take_out(out: dict[str, list[str]], want: dict[str, list[str]], verdict: str, tools) -> None:
+    """``tools`` added to ``out[verdict]``, but those a live declaration still wants and those already there."""
+    out[verdict] += [t for t in tools if t not in want[verdict] and t not in out[verdict]]
 
 
 def _production(path: Path) -> str | None:

@@ -42,10 +42,12 @@ on Windows, else bash (TERMINAL_TOOL), in its cwd, else the session's. Nine guar
   once its hand-over note is in <BRAIN_HOME>/handover/ (a successor with no transcript yet counts as starting for
   HANDOVER_START_S after its app file's createdAt; a chain root the owner marked, brain handover root, hands over
   without a name; brain handover root and a write into its file are the owner's); each one passes logged as
-  decision allowed with its case. The desktop app's archive_session (wi-brain-coordinator-handover-no-prompt,
-  archive) passes without the owner's card, under their allow rule, only for a finished session the caller started or
-  its predecessor at a hand-over, with no child blocking, its PRs merged or closed and its folder clean (logged allowed
-  with its case, child or predecessor); any other call, and an error, gets ask: the card no allow rule lifts. Both
+  decision allowed (asked at level ask) with its case. The desktop app's archive_session
+  (wi-brain-coordinator-handover-no-prompt, archive) passes the guard's conditions only for a finished session the
+  caller started or its predecessor at a hand-over, with no child blocking, its PRs merged or closed and its folder
+  clean (logged with its case, child or predecessor); any other call, and an error, gets ask: the card no allow rule
+  lifts. Inside the conditions of both, the gesture's automation level decides (brain.automation.enforce: manual
+  refused, ask the guard's ask, auto allowed with no card). Both
   read the app's session files at the call, never the index's cache, and a session's write into those files, their
   folders, that cache or a transcript is refused (app_files); git runs on the target's folder with no program of its repo
   (_git_env, _git_runs_why).
@@ -153,7 +155,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import NamedTuple
 
-from . import config, diffs, floor, gestures, markers, midsession, paths, projects, public, secretscan, timing
+from . import automation, config, diffs, floor, gestures, markers, midsession, paths, projects, public, secretscan, timing
 
 GUARDS = ("production", "attribution", "secrets", "markers", "owner", "power", "third-party", "public", "branches",
           "merges", "floor")
@@ -2071,9 +2073,10 @@ def remote_control(payload: dict, now: float | None = None) -> tuple[str | None,
     return "archive", f"off on {target}, a finished session it started, before archiving it"
 
 
-# The archive case (wi-brain-coordinator-handover-no-prompt; the owner's answer of 2026-11-18): the owner's allow rule
-# for archive_session lifts the app's approval card; this guard holds it to the coordinator's family. A call passes
-# (nothing printed) only for a finished session the caller started, or for the caller's predecessor at a hand-over,
+# The archive case (wi-brain-coordinator-handover-no-prompt; the owner's answer of 2026-11-18): session-archive's level
+# auto lifts the app's approval card (brain.automation.enforce; before wi-brain-automation-guard, the owner's allow
+# rule); this guard holds it to the coordinator's family. A call passes its conditions (allowed at auto, the guard's
+# ask at ask) only for a finished session the caller started, or for the caller's predecessor at a hand-over,
 # with no child left blocking, its PRs merged or closed and its folder clean (the app removes its worktree); any other
 # call, and an error, gets permissionDecision ask: the card, which the allow rule cannot lift.
 ARCHIVE_TOOL = re.compile(r"^mcp__ccd_session_mgmt__archive_session$")   # the desktop app's own server only
@@ -2306,6 +2309,30 @@ def archive_ask(why: str) -> dict:
               f"{why}. Without a card it passes only for {ARCHIVE_BOUND}.")
     return {"hookSpecificOutput": {"hookEventName": "PreToolUse", "permissionDecision": "ask",
                                    "permissionDecisionReason": " ".join(reason.split("\n"))}}
+
+
+# A case of set_remote_control's three exceptions -> the catalogue's gesture whose level says who confirms it
+# (brain.automation.enforce): the off before an archive is the archive's, a hand-over's on and off the hand-over's.
+RC_GESTURES = {"archive": "session-archive", "handover-on": "handover-remote-control",
+               "handover-off": "handover-remote-control"}
+LOGGED = {"allow": "allowed", "ask": "asked"}   # enforce's decision inside the conditions -> the ledger's
+
+
+def _emit(stdout, decision: str, reason: str) -> int:
+    """The hook's output: permissionDecision ``decision`` (deny, ask or allow) with ``reason`` on one line; 0."""
+    (stdout or sys.stdout).write(json.dumps({"hookSpecificOutput": {
+        "hookEventName": "PreToolUse", "permissionDecision": decision,
+        "permissionDecisionReason": " ".join(reason.split("\n"))}}) + "\n")
+    return 0
+
+
+def _level_refusal(why: str) -> str:
+    """A refusal by a gesture's automation level (manual, or ask in a mode with no card): what the session does
+    instead (the owner's gesture, recorded on its item)."""
+    cfg = config.load()
+    return (f"{config.claude(cfg)['plugin']} guard: {why}. It is {config.owner(cfg)}'s to do: record it on its item "
+            "(props.external_blocker) with the call; raising the level is theirs (config.json automation, "
+            "docs/automation.md).")
 
 
 def _is_usage_allow(target) -> bool:
@@ -4460,7 +4487,7 @@ def allowed() -> set[str]:
 
 
 def _record(payload: dict, guard: str, check: str, decision: str, reason: str, request: dict | None = None,
-            case: str | None = None) -> bool:
+            case: str | None = None, level: str | None = None) -> bool:
     """Append the refusal, override or exception (``case``) to the guards ledger; True when written. A request for
     the owner, or an exception, creates the ledger folder: brain queue add --guard reads it there."""
     d = paths.ledger_dir()
@@ -4479,6 +4506,8 @@ def _record(payload: dict, guard: str, check: str, decision: str, reason: str, r
     if case is not None:
         rec["case"] = case
         rec["what"] = {k: v for k, v in (payload.get("tool_input") or {}).items() if not str(k).startswith("_")}
+    if level is not None:   # the gesture's automation level the decision read (brain.automation.enforce)
+        rec["level"] = level
     timing.append(d / f"guards-{at[:7]}.jsonl", rec)  # under the ledger's lock: every session's hook writes here
     return True
 
@@ -4511,26 +4540,49 @@ def main(stdin=None, stdout=None) -> int:
     try:
         payload = midsession.read_payload(stdin)   # UTF-8 bytes, whatever the console's codepage
         ok = allowed()
-        rc_why, case = "", None
+        mode = payload.get("permission_mode")
+        rc_why, case, rc_level = "", None, None
         if RC_TOOL.match(str(payload.get("tool_name") or "")):
             try:
                 case, rc_why = remote_control(payload)
+                if case:   # one of the three exceptions: its gesture's level says who confirms (brain.automation)
+                    rc_level = automation.enforce(RC_GESTURES[case], True, mode)
+                    if rc_level.decision == "deny":
+                        reason = f"set_remote_control {rc_why}, but {rc_level.why}"
+                        _record(payload, "owner", "security-settings", "denied", reason, case=case,
+                                level=rc_level.level)
+                        return _emit(stdout, "deny", _level_refusal(reason))
                 # every decision is logged: a pass the ledger did not take is no pass
-                if case and not _record(payload, "owner", "security-settings", "allowed", rc_why, case=case):
-                    case, rc_why = None, "the pass could not be logged in the guards ledger"
+                if case and not _record(payload, "owner", "security-settings", LOGGED[rc_level.decision], rc_why,
+                                        case=case, level=rc_level.level):
+                    case, rc_why, rc_level = None, "the pass could not be logged in the guards ledger", None
             except Exception as exc:   # an error is no exception: the call goes on to its refusal
                 _log("owner", exc)
-                case, rc_why = None, "the session tree or the ledger could not be read"
+                case, rc_why, rc_level = None, "the session tree or the ledger could not be read", None
         is_archive, archive_case, archive_why = ARCHIVE_TOOL.match(str(payload.get("tool_name") or "")), None, ""
+        arc_level = None
         if is_archive:
             try:
                 archive_case, archive_why = archive(payload)
-                if archive_case and not _record(payload, "owner", "session-archive", "allowed", archive_why,
-                                                case=archive_case):
-                    archive_case, archive_why = None, "the pass could not be logged in the guards ledger"
-            except Exception as exc:   # an error is no pass: the card
+            except Exception as exc:   # an error is no pass: outside the conditions
                 _log("owner", exc)
                 archive_case, archive_why = None, "the session tree, the session's work or the ledger could not be read"
+            arc_level = automation.enforce("session-archive", bool(archive_case), mode)   # never raises
+            if arc_level.decision == "deny":
+                reason = f"archive_session refused: {archive_why}; {arc_level.why}"
+                try:   # a refusal the ledger does not take is still a refusal (as set_remote_control's)
+                    _record(payload, "owner", "session-archive", "denied", reason, case=archive_case or "outside",
+                            level=arc_level.level)
+                except Exception as exc:
+                    _log("owner", exc)
+                return _emit(stdout, "deny", _level_refusal(reason))
+            if archive_case and not _record(payload, "owner", "session-archive", LOGGED[arc_level.decision],
+                                            archive_why, case=archive_case, level=arc_level.level):
+                archive_case, archive_why = None, "the pass could not be logged in the guards ledger"
+                arc_level = automation.enforce("session-archive", False, mode)
+                if arc_level.decision == "deny":
+                    return _emit(stdout, "deny", _level_refusal(f"archive_session refused: {archive_why}; "
+                                                                f"{arc_level.why}"))
         for guard, check, reason, request in refusals(payload):
             if case and check == "security-settings":   # one of the three exceptions, logged above
                 continue
@@ -4555,9 +4607,18 @@ def main(stdin=None, stdout=None) -> int:
                 "hookEventName": "PreToolUse", "permissionDecision": "deny", "permissionDecisionReason": reason}}) + "\n")
             return 0
         if is_archive and not archive_case:
-            _record(payload, "owner", "session-archive", "asked", archive_why, case="outside")   # logged too
+            _record(payload, "owner", "session-archive", "asked", archive_why, case="outside",
+                    level=arc_level.level if arc_level else None)   # logged too
             (stdout or sys.stdout).write(json.dumps(archive_ask(archive_why)) + "\n")
             return 0
+        # its conditions held (logged above): auto allows it, no card whatever the mode; ask asks, the card, whatever
+        # the tool's native rule (an allow of the other gesture's level, or of a level lowered since the render)
+        held = next(((tool, x) for tool, x in (("set_remote_control", rc_level if case else None),
+                                               ("archive_session", arc_level if archive_case else None))
+                     if x is not None and x.decision in LOGGED), None)
+        if held is not None:
+            return _emit(stdout, held[1].decision,
+                         f"{config.claude(config.load())['plugin']} guard: {held[0]}: {held[1].why}")
         notes = []
         note = heredoc_note(payload)
         if note:
@@ -4596,7 +4657,7 @@ def main(stdin=None, stdout=None) -> int:
                 (stdout or sys.stdout).write(json.dumps({"hookSpecificOutput": {
                     "hookEventName": "PreToolUse", "permissionDecision": "ask",
                     "permissionDecisionReason": "brain guard: archive_session passes without the owner's card only "
-                                                "inside its conditions; the guard failed, so the card asks "
+                                                "inside its conditions at level auto; the guard failed, so the card asks "
                                                 "(ledger/errors.log)"}}) + "\n")
         except Exception:
             pass

@@ -21,7 +21,9 @@ USAGE = """\
                  [--low-stakes]: applied at once, provisionally, final by default 24 h later without an answer;
                  refused on keys, money, accounts, visibility, publication, rules, arming and scheduled tasks
   brain decision pending [--all] [--json]     what waits on {owner}: the queue, items' props.open, spec questions
-  brain decision answer ID CHOICE... [--other TEXT]   {owner}'s choice (label, number or start of the label)
+  brain decision answer ID CHOICE... [--other TEXT] [--dry-run]   {owner}'s choice (label, number or start of the
+                 label); the question tool's capture of it is marked recorded (--captured leaves it); --dry-run prints
+                 the DDR as it would be written and writes nothing (--batch too)
   brain decision answer --batch @FILE|-|JSON [--via ask-tool --by {owner}]   a morning session's answers in one call:
                  {"<DDR id or question>": "<label>" | ["<label>"...] | {"choices", "other", "notes"}}; exact labels
                  ("(Recommandé)" ignored, a multi_select's labels joined by ", "), {owner}'s own text only as
@@ -112,17 +114,28 @@ def cmd_decision(args, root: Path) -> int:
                 raise decisions.QueueError("--batch takes the answers from its JSON: no ID, CHOICE, --other or "
                                            "--notes")
             done = batch.answer_batch(root, _answers(args.batch), by=args.by, via=args.via, at=now,
-                                      again=args.again, check=answers.refusal)
-            print(f"answered {len(done['answered'])} decision(s) via {args.via} by {args.by}:")
+                                      again=args.again, check=answers.refusal, dry_run=args.dry_run)
+            print(("dry run: would answer" if args.dry_run else "answered")
+                  + f" {len(done['answered'])} decision(s) via {args.via} by {args.by}:")
             print("\n".join(f"  {d['id']}: {decisions._answer_text(d)}" for d in done["answered"]))
             if done["skipped"]:
                 print(f"left pending (no answer): {', '.join(done['skipped'])}")
+            if args.dry_run:
+                print("nothing written")
+                return 0
+            _settle(args, root, done["answered"])
             print("the model in charge applies each answer, then brain decision ack ID --applied <where>")
         elif sub == "answer":
             if not args.id:
                 raise decisions.QueueError("answer takes a DDR id and a choice, or --batch with the answers")
             ddr = decisions.answer(root, args.id, args.choice, other=_text(args.other), notes=_text(args.notes),
-                                   by=args.by, via=args.via, at=now, again=args.again, check=answers.refusal)
+                                   by=args.by, via=args.via, at=now, again=args.again, check=answers.refusal,
+                                   dry_run=args.dry_run)
+            if args.dry_run:
+                print(records._dump_yaml(ddr), end="")
+                print(f"dry run: would answer {ddr['id']}: {decisions._answer_text(ddr)}; nothing written")
+                return 0
+            _settle(args, root, [ddr])
             print(f"answered {ddr['id']}: {decisions._answer_text(ddr)}; the model in charge applies it, then "
                   f"brain decision ack {ddr['id']} --applied <where>")
         elif sub == "ack":
@@ -180,6 +193,23 @@ def _answers(value: str) -> str:
     if value == "-":
         return batch.decode(sys.stdin.buffer.read()) if hasattr(sys.stdin, "buffer") else sys.stdin.read()
     return value
+
+
+def _settle(args, root: Path, ddrs: list[dict]) -> None:
+    """The captures of the DDRs just answered by hand (ID CHOICE, --batch) marked in the recorded ledger, so that
+    --captured never proposes them again (brain.answers.settle); a ledger that cannot be written warns, the answers
+    stay."""
+    try:
+        rows = answers.settle(_project(args, root).name, ddrs)
+    except OSError as exc:
+        print(f"brain: warning: the captures of these answers were not marked recorded: {exc}", file=sys.stderr)
+        return
+    same = [r["ddr"] for r in rows if not r.get("retired")]
+    if same:
+        print(f"the question tool's capture marked recorded: {', '.join(same)}")
+    for r in rows:
+        if r.get("retired"):
+            print(f"the question tool's capture of {r['ddr']} retired: {r['retired']}")
 
 
 def _capture_line(c: dict) -> str:
@@ -440,7 +470,9 @@ def register(sub, ctx) -> None:
     dw.add_argument("--no-merge", action="store_true", help="--captured: open the PR, do not merge it")
     dw.add_argument("--retries", type=_whole, default=answers.RETRIES,
                     help=f"--captured: merge attempts after the first (default {answers.RETRIES})")
-    dw.add_argument("--dry-run", action="store_true", help="--captured: list what would be recorded")
+    dw.add_argument("--dry-run", action="store_true", help="print what would be recorded, write nothing (ID CHOICE: "
+                                                           "the DDR; --batch: each answer; --captured: where each "
+                                                           "goes)")
     # decisions by default (wi-brain-decision-default): the review list
     dd = de.add_parser("defaulted", help=f"the review list: the decisions taken by default, for {who} to take note")
     dd.add_argument("--all", action="store_true", help="every registered project")

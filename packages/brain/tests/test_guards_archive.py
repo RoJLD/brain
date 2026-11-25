@@ -1,6 +1,7 @@
 """The guard's archive case (wi-brain-coordinator-handover-no-prompt, brain.guards: archive): the owner's allow rules
 for archive_session and set_remote_control lift the app's card, so the guard bounds both. archive_session passes
-(nothing printed, logged allowed) only for a finished session the caller started or the caller's predecessor at a
+its conditions (at the engine's default level, ask, the guard's own ask, logged asked with its case; at auto an allow:
+test_automation_guard) only for a finished session the caller started or the caller's predecessor at a
 hand-over, with no child blocking, its PRs merged or closed and its folder clean or gone; any other call, and an error,
 gets permissionDecision ask (the card no allow rule lifts). The exact rule mcp__ccd_session_mgmt__set_remote_control
 leaves security-settings (GUARD_BOUNDED); its guard keeps refusing outside its three cases. Invented sessions, as
@@ -49,6 +50,14 @@ def work(lab, host, prs=(), cwd="gone", **more):
     f.write_text(json.dumps(data), encoding="utf-8")
 
 
+def passed(p) -> bool:
+    """Whether the hook takes ``p`` for one of the archive's cases at the engine's default level, ``ask``: the guard's
+    own ask (the owner's card, which no allow rule lifts; brain.automation.enforce), logged ``asked`` with its case."""
+    decision, reason = hook(p)
+    return decision == "ask" and "archive_session: session-archive is at level ask" in reason \
+        and "its conditions hold" in reason
+
+
 def asked(lab, p, why):
     decision, reason = hook(p)
     assert decision == "ask", reason
@@ -66,9 +75,9 @@ def git(cwd, *args):
 
 def test_a_finished_child_merged_and_gone_passes_and_is_logged(lab):
     work(lab, K, prs=["MERGED", "closed"])
-    assert hook(arc(lab, K)) == (None, "")
+    assert passed(arc(lab, K))
     [row] = rows(lab)
-    assert (row["guard"], row["check"], row["decision"], row["case"]) == ("owner", "session-archive", "allowed",
+    assert (row["guard"], row["check"], row["decision"], row["case"]) == ("owner", "session-archive", "asked",
                                                                           "child")
     assert row["what"]["session_id"] == K
 
@@ -107,7 +116,7 @@ def test_the_folder_must_be_clean(lab, tmp_path):
     git(repo, "add", "a.txt")
     git(repo, "commit", "-qm", "a")
     work(lab, K, prs=["MERGED"], cwd=str(repo))
-    assert hook(arc(lab, K)) == (None, "")
+    assert passed(arc(lab, K))
     (repo / "b.txt").write_text("b", encoding="utf-8")   # untracked
     (repo / "a.txt").write_text("changed", encoding="utf-8")
     asked(lab, arc(lab, K), f"{repo} has 2 uncommitted change(s) the archive would remove with its worktree")
@@ -136,7 +145,7 @@ def test_a_child_with_a_blocking_child_asks(lab, monkeypatch):
     work(lab, K)
     asked(lab, arc(lab, K), f"{K} has 1 child session(s) neither archived nor detached")
     lab.put(q, parent=K, name="grandchild", detached=True)
-    assert hook(arc(lab, K)) == (None, "")
+    assert passed(arc(lab, K))
 
 
 @pytest.mark.parametrize("target,why", [
@@ -181,9 +190,9 @@ def _handed_over(lab):
 
 def test_the_successor_archives_its_predecessor(lab):
     _handed_over(lab)
-    assert hook(arc(lab, F, caller=G)) == (None, "")
+    assert passed(arc(lab, F, caller=G))
     [row] = rows(lab)
-    assert (row["decision"], row["case"]) == ("allowed", "predecessor")
+    assert (row["decision"], row["case"]) == ("asked", "predecessor")
 
 
 def test_a_predecessor_with_a_blocking_child_asks(lab):
@@ -534,7 +543,7 @@ def test_what_git_ignores_but_caches_asks(lab, tmp_path):
     (repo / "__pycache__").mkdir()
     (repo / "__pycache__" / "x.pyc").write_bytes(b"0")
     work(lab, K, cwd=str(repo))
-    assert hook(arc(lab, K)) == (None, "")   # a cache goes with the worktree
+    assert passed(arc(lab, K))   # a cache goes with the worktree
     (repo / ".env").write_text("A=1", encoding="utf-8")
     asked(lab, arc(lab, K), "1 path(s) git ignores that the archive would remove with its worktree: .env")
 
@@ -566,7 +575,7 @@ def test_every_folders_git_calls_share_one_deadline(lab, tmp_path, monkeypatch):
     import time
     a, b = _repo(tmp_path, "a"), _repo(tmp_path, "b")
     work(lab, K, cwd=str(a), worktreePath=str(b))
-    assert hook(arc(lab, K)) == (None, "")
+    assert passed(arc(lab, K))
     seen = []
     real = guards._git_timeout
 
@@ -574,7 +583,7 @@ def test_every_folders_git_calls_share_one_deadline(lab, tmp_path, monkeypatch):
         seen.append(deadline)
         return real(deadline)
     monkeypatch.setattr(guards, "_git_timeout", spy)
-    assert hook(arc(lab, K)) == (None, "") and len(seen) == 10 and len(set(seen)) == 1
+    assert passed(arc(lab, K)) and len(seen) == 10 and len(set(seen)) == 1
     with pytest.raises(subprocess.TimeoutExpired):
         real(time.monotonic() - 1)
     assert 0 < real(time.monotonic() + 1) <= 1 and real(None) == guards.GIT_S
@@ -653,7 +662,7 @@ def test_git_runs_without_the_hooks_variables_nor_the_system_and_global_config(m
 def test_a_clean_repo_still_passes_under_the_safe_git(lab, tmp_path):
     repo = _repo(tmp_path)
     work(lab, K, cwd=str(repo))
-    assert hook(arc(lab, K)) == (None, "")
+    assert passed(arc(lab, K))
 
 
 # --- F7: what a session writes is no confirmation ---

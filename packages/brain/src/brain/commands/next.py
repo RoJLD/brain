@@ -26,7 +26,8 @@ USAGE = """\
                  release forecast: whether the current wave ships as the patch it is named for or as a minor, the
                  first PR that tipped it and why (release_check --preview of the engine checkout's origin/main,
                  brain.nextrelease; advisory); the items merged but not closed (brain wave close-merged's mapping,
-                 git only) count done, said in one line
+                 git only) count done, said in one line, those still holding work kept open; the lots without the
+                 hot files by history (brain wave plan reads them)
 """
 
 
@@ -38,9 +39,10 @@ def _merged(pl: waves.Plan, repos: list) -> tuple[dict, dict]:
     return lots.merged_of(pl, pend[0], repos)   # a repo git cannot read is skipped there, its items open
 
 
-def _lots(args, root: Path, store: Path, rep: dict, merged: tuple[dict, dict], repos: list):
-    """The current wave's plan (brain.lots; ``repos``: their history's hot files), None without a current wave or when
-    it cannot be cut."""
+def _lots(args, root: Path, store: Path, rep: dict, merged: tuple[dict, dict]):
+    """The current wave's plan (brain.lots, with the merged items already read), None without a current wave or when it
+    cannot be cut. No repo is passed: the hot files by history (brain.lots.history_hot, one ``git log --numstat`` a
+    repo, tens of seconds on a planning repo) are brain wave plan's, not this summary's."""
     if rep["current"] is None:
         return None
     try:
@@ -48,7 +50,7 @@ def _lots(args, root: Path, store: Path, rep: dict, merged: tuple[dict, dict], r
     except SystemExit:
         name = ""
     try:
-        return lots.plan(store, root, rep["current"]["id"], name, repos=repos, merged=merged)
+        return lots.plan(store, root, rep["current"]["id"], name, merged=merged)
     except Exception:   # noqa: BLE001 - the lots are a summary: brain next prints the waves whatever they say
         return None
 
@@ -59,7 +61,7 @@ def cmd_next(args, root: Path) -> int:
     pl = waves.load(store, root)
     merged = _merged(pl, repos)
     rep = waves.next_report(lots.as_done(pl, merged[1]))
-    wp = _lots(args, root, store, rep, merged, repos)
+    wp = _lots(args, root, store, rep, merged)
     fc = nextrelease.forecast([path for _, path in repos]) if rep["current"] is not None else None
     if args.json:
         print(json.dumps(rep | {"lots": wp.as_dict() if wp else None, "forecast": fc, "merged": merged[0] or None},
@@ -75,11 +77,11 @@ def cmd_next(args, root: Path) -> int:
 
 
 def _merged_line(m: dict) -> list[str]:
-    items = (m or {}).get("items") or {}
-    if not items:
-        return []
-    return [f"merged, to close ({len(items)}), counted done: {', '.join(items)} "
-            f"(brain wave close-merged {m['release']} --write)"]
+    m = m or {}
+    items = m.get("items") or {}
+    out = [f"merged, to close ({len(items)}), counted done: {', '.join(items)} "
+           f"({lots.close_advice(m['release'], lots.all_kept(m))})"] if items else []
+    return out + lots.kept_lines(m)
 
 
 def register(sub, ctx) -> None:

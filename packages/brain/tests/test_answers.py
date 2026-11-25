@@ -726,3 +726,66 @@ def test_the_asking_branch_is_pushed_to_its_upstream_of_another_name(origin, mon
     out = answers.record_captured(_project(root), answers.unrecorded("s-1"), owner="Ada", wait=0, at=AT, here=wt)
     assert out["in_branch"]["pushed"] and "in branch" in _branch_log(bare, "claude/feat-asking")
     assert _branch_log(bare, "feat/asking") == ""
+
+
+# --- brain decision answer by hand: --dry-run writes nothing, the capture it answers is marked recorded ---
+
+def _ddr_files(root):
+    return {f.name: f.read_bytes() for f in (root / records.RECORDS_DIR / "ddr").glob("*.yaml")}
+
+
+def test_answer_dry_run_prints_the_ddr_and_writes_nothing(registry, capsys, brain_home):
+    """wi-brain-decision-answer-dry-run: the flag reached ask and --captured only; ID CHOICE and --batch wrote."""
+    root = registry
+    before, view = _ddr_files(root), (root / decisions.VIEW).exists()
+    base = ["--project", "demo", "decision", "answer"]
+    assert cli.main(base + ["lone", "Yes", "--notes", "maybe", "--dry-run"]) == 0
+    out = capsys.readouterr().out
+    assert f"dry run: would answer {LONE}: Yes" in out and "nothing written" in out
+    assert "status: answered" in out and "notes: maybe" in out   # the DDR as it would be written
+    assert cli.main(base + ["--batch", '{"lone": "No", "hosts": ["Alpha", "Delta"]}', "--dry-run"]) == 0
+    out = capsys.readouterr().out
+    assert "dry run: would answer 2 decision(s)" in out and "nothing written" in out
+    assert cli.main(base + ["lone", "Maybe", "--dry-run"]) == 1   # its checks still run
+    assert "not one of the options" in capsys.readouterr().err
+    assert _ddr_files(root) == before and (root / decisions.VIEW).exists() == view
+    assert _status(root, "lone")["status"] == "pending" and not _ledger(brain_home, "answer-recorded")
+
+
+def test_an_answer_by_hand_marks_its_capture_recorded(registry, capsys, brain_home):
+    """wi-brain-answer-marks-capture-recorded: a captured answer recorded by hand stayed unrecorded, and --captured
+    proposed it again (and would write it from main while the hand answer waited on a branch)."""
+    root = registry
+    (b,) = _batches(root)
+    by_header = {q["header"]: q for q in b["questions"]}
+    _hook(b["questions"], {by_header["Lone"]["question"]: "Yes (Recommandé)",
+                           by_header["Hosts"]["question"]: ["Alpha (Recommandé)"],
+                           by_header["PLAT-5"]["question"]: f"{LONG} (Recommandé)"})
+    assert len(answers.unrecorded("s-1")) == 3
+    base = ["--project", "demo", "decision", "answer"]
+    assert cli.main(base + ["lone", "Yes"]) == 0   # the captured answer, recorded by hand
+    assert f"capture marked recorded: {LONE}" in capsys.readouterr().out
+    assert cli.main(base + ["--batch", '{"hosts": ["Delta"]}', "--via", "cli"]) == 0   # the owner changed it since
+    assert "capture of ddr-2026-11-01-hosts retired: answered by hand" in capsys.readouterr().out
+    left = answers.unrecorded("s-1")
+    assert [c["ddr"] for c in left] == ["ddr-2026-11-01-plat-5-what-is-public"]
+    rows = {r["ddr"]: r for r in answers.read(answers.RECORDED)}
+    assert rows[LONE]["pr"] == "" and "retired" not in rows[LONE] and rows[LONE]["via"] == "cli"
+    assert rows["ddr-2026-11-01-hosts"]["retired"].endswith("superseded, retired")
+    assert cli.main(base + ["--captured", "--session", "s-1", "--dry-run"]) == 0
+    out = capsys.readouterr().out
+    assert "plat-5-what-is-public" in out and LONE not in out and "hosts" not in out
+
+
+def test_a_capture_later_than_the_answer_by_hand_is_left_for_captured(registry, brain_home):
+    """An answer by hand dated before a capture of another answer (the owner answered again since): left."""
+    root = registry
+    (b,) = _batches(root)
+    lone = next(q for q in b["questions"] if q["header"] == "Lone")
+    _hook(b["questions"], {lone["question"]: "No"})
+    ddr = decisions.answer(root, "lone", ["Yes"], at="2026-11-01T09:30:00Z", by="Ada")
+    assert answers.settle("demo", [ddr]) == [] and [c["ddr"] for c in answers.unrecorded("s-1")] == [LONE]
+    same = decisions.answer(root, "lone", ["No"], at="2026-11-01T09:40:00Z", by="Ada", again=True)
+    (row,) = answers.settle("demo", [same])   # the same answer: recorded whatever its time
+    assert "retired" not in row and answers.unrecorded("s-1") == []
+    assert answers.settle("other", [same]) == [] and answers.settle("demo", []) == []
