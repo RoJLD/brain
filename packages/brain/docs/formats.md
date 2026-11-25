@@ -109,6 +109,12 @@ then the view merges as plain text and `boundary.yaml` reads it as `notes/**`; `
 | `wave` | work items; it is itself `part_of` a milestone or an era (a warning without one) | `seq` (its place; the id `wave-sN`), `release: X.Y.Z` (a legacy or pinned release; else computed), `shipped_as: X.Y.Z` (written by `brain wave close`), `renamed_from` (`brain wave rename`), `week` (optional) | a `release` that is not `X.Y.Z`, a wave with no release (nothing before it to count from), two waves of one release, a member that is not a work item, an item `part_of` two waves, a `carried_to` that names no later wave, a `carried_via` that names no wave, a reached or dropped wave that still holds an open item |
 | `era` | milestones | `exit` (the Go/NoGo question, a DDR once its milestones are reached), `stage_to` and `serves` (optional, free labels) | a member that is not a milestone (a warning without `exit`, and once its exit is due) |
 
+An item's **`props.place`** (format v1, [placements.md](placements.md)) is where it may go among the waves: `;`
+clauses (`wave s11`, `after wi-a`, `with wi-b`, `own-lot`, `out later`...), an optional first clause `v1`. An unknown
+clause is a `brain check` warning, the others read; a first clause `v2` or above leaves it unread, listed (« written by
+a newer brain »); an engine before it keeps it as an unknown prop. A free-text placement (`props.wave_planned` and the
+like) is read beneath it, never rewritten.
+
 An item's wave is the one it is `part_of`, or, once that wave closed without it, the later one its `props.carried_to`
 names (a wave's id or its release; `brain wave close` writes the id): the edge to its first wave stays, as where it was
 planned. `brain wave close` carries only to a pending wave, which it creates when the release has none yet. An item carried again keeps the waves it went through
