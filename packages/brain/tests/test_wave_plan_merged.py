@@ -211,11 +211,24 @@ def test_a_merged_item_that_still_holds_work_stays_open(root, engine, registry, 
     assert set(json.loads(capsys.readouterr().out)["merged"]["kept"]) == {"wi-cli-help", "wi-blank", "wi-debt"}
 
 
-def test_a_standing_batch_merged_does_not_count_the_next_waves_one_done(root, engine):
+def test_a_standing_batch_merged_does_not_count_the_next_waves_one_done(root, engine, registry, capsys):
+    """The next wave's standing item a merged batch maps stays open, listed apart; close-merged --write would close
+    it too (its plan has no kept filter), so the advice is to close each by hand."""
     _hold_work(root, debt_wave="wave-1.2.0")
     _pr(engine, 4, "wi-debt: batch 1", {"changes/wi-debt-1.md": "section: Changes\n\n- debt\n"}, "2030-01-06")
     said, found = lots.merged_of(waves.load(root / "notes" / "graph", root), "wave-1.1.0", [("engine", engine)])
     assert "wi-debt" not in found and "wi-debt" not in said["outside"] and said["kept"] == {}
+    assert said["kept_outside"] == {"wi-debt": "standing: no merge closes it"}
+    cm = closemerged.plan(root / "notes" / "graph", [("engine", engine)], "1.1.0", root=root)
+    assert "wi-debt" in cm.to_close   # what the advice must not hide
+    text = "\n".join(lots.render(_plan(root, [("engine", engine)])))
+    assert "brain wave close-merged 1.1.0 --write would close the kept ones too" in text
+    assert "  merged, work left, kept open outside the wave (1): wi-debt (standing: no merge closes it)" in text
+    assert "  merged, work left, kept open (" not in text
+    assert cli.main(["--root", str(root), "next"]) == 0
+    out = capsys.readouterr().out
+    assert "(brain item close each (brain wave close-merged 1.1.0 --write would close the kept ones too" in out
+    assert "  merged, work left, kept open outside the wave (1): wi-debt" in out
 
 
 def test_a_repo_with_no_fragment_folder_maps_nothing_in_the_overlay(root, engine, tmp_path):
