@@ -176,7 +176,60 @@ def test_the_anchor_is_read_when_brain_config_names_another_file(tmp_path, monke
     assert automation.resolve(cfg, None, NO_MACHINE)["session-archive"].level == "ask"
 
 
+def test_with_no_config_json_found_without_brain_config_the_defaults_cap_it(tmp_path, monkeypatch):
+    """No config.json found as if BRAIN_CONFIG were unset (here a personal brain without its config.json, so
+    brain.config.anchored gives None): the file BRAIN_CONFIG names may only lower, capped at the engine's default."""
+    empty = tmp_path / "brain"
+    empty.mkdir()
+    monkeypatch.setenv("CLAUDE_BRAIN_DIR", str(empty))
+    cfg = write_config(tmp_path, monkeypatch, {"v": 1, "levels": {"session-archive": "auto", "release-tag": "manual"}},
+                       name="wt.json")
+    assert config.base_file() is None and config.anchored(cfg) is None
+    got = automation.resolve(cfg, None, NO_MACHINE)
+    assert (got["session-archive"].level, got["session-archive"].source) == ("ask", "default")
+    assert got["session-archive"].steps[-1] == ("no config.json found without BRAIN_CONFIG: the engine's default, "
+                                                "ask: the lower holds")
+    assert got["release-tag"].level == "manual"            # lowering through BRAIN_CONFIG is anyone's
+    assert automation.level("session-archive", cfg) == "ask"
+    assert {x["name"] for x in automation.explain("session-archive", cfg, None, NO_MACHINE)["layers"]} == {
+        "config", "anchor", "machine"}
+
+
+def test_brain_config_naming_the_file_found_without_it_is_no_anchor(tmp_path, monkeypatch):
+    """BRAIN_CONFIG naming the very config.json found without it: that file is the owner's, its levels apply."""
+    home = tmp_path / "brain"
+    home.mkdir()
+    cfg = write_config(home, monkeypatch, {"v": 1, "levels": {"session-archive": "auto"}})
+    monkeypatch.setenv("CLAUDE_BRAIN_DIR", str(home))
+    assert automation.anchor_config(cfg) is None
+    assert automation.resolve(cfg, None, NO_MACHINE)["session-archive"].level == "auto"
+
+
 # --- the machine file: it may only lower ----------------------------------------------------------------------------
+
+def test_a_machine_file_that_cannot_be_accessed_makes_every_gesture_manual(tmp_path, monkeypatch):
+    """A denied access (an OSError other than not found) is the layer's error, never a traceback (Path.exists raises
+    it on Python 3.10-3.13) nor an absent file (3.14's exists says False)."""
+    import pathlib
+    f = tmp_path / "automation.json"
+    f.write_text(json.dumps({"v": 1, "levels": {}}), encoding="utf-8")
+    read, exists = pathlib.Path.read_text, pathlib.Path.exists
+
+    def denied(real):
+        def call(self, *a, **k):
+            if self == f:
+                raise PermissionError(13, "Access is denied", str(self))
+            return real(self, *a, **k)
+        return call
+    monkeypatch.setattr(pathlib.Path, "read_text", denied(read))
+    monkeypatch.setattr(pathlib.Path, "exists", denied(exists))
+    layer = automation.machine_layer(f)
+    assert layer.present and "cannot be read" in layer.error
+    cfg = write_config(tmp_path, monkeypatch, {"v": 1, "levels": {"session-archive": "auto"}})
+    got = automation.resolve(cfg, False, layer)
+    assert {r.level for r in got.values()} == {"manual"}
+    assert not automation.machine_layer(tmp_path / "missing" / "automation.json").present
+
 
 def test_the_machine_file_lowers_a_level(tmp_path, monkeypatch):
     cfg = write_config(tmp_path, monkeypatch, {"v": 1, "levels": {"session-archive": "auto"}})
@@ -352,6 +405,7 @@ def test_the_schema_documents_the_section():
 
 def test_explain_json_gives_the_layers_and_each_gestures_steps(tmp_path, monkeypatch, capsys, brain_home):
     write_config(tmp_path, monkeypatch, {"v": 1, "levels": {"session-archive": "auto"}})
+    monkeypatch.setenv("CLAUDE_BRAIN_DIR", str(tmp_path))   # the owner's config.json: BRAIN_CONFIG names it, no anchor
     brain_home.mkdir(parents=True, exist_ok=True)
     (brain_home / "automation.json").write_text(json.dumps({"v": 1, "levels": {"session-archive": "ask"}}),
                                                 encoding="utf-8")
@@ -382,6 +436,7 @@ def test_explain_an_unknown_gesture_exits_1(capsys):
 
 def test_list_shows_each_levels_source(tmp_path, monkeypatch, capsys):
     write_config(tmp_path, monkeypatch, {"v": 1, "levels": {"session-archive": "auto"}})
+    monkeypatch.setenv("CLAUDE_BRAIN_DIR", str(tmp_path))   # the owner's config.json: BRAIN_CONFIG names it, no anchor
     assert cli.main(["automation", "list", "--json"]) == 0
     arch = next(g for g in json.loads(capsys.readouterr().out)["gestures"] if g["id"] == "session-archive")
     assert (arch["level"], arch["source"]) == ("auto", "config")

@@ -2093,11 +2093,12 @@ level) stays `manual` whatever a config says, and a level above its ceiling, unk
 a gesture's level is the engine's default (today's behaviour), then config.json's `automation` section
 (`{"v": 1, "levels": {"session-archive": "auto"}}`; raising a level is the owner's, by their merge of config.json),
 then `<BRAIN_HOME>/automation.json`, a machine file of the same shape that may only lower one. A config.json that
-`$BRAIN_CONFIG` names never raises a level above the one found without it. Fail closed: a level above its ceiling,
-unknown or unreadable, a floor gesture's, and a section or file this engine cannot read, read `manual`; an id the
-catalogue does not hold is ignored with a note. `brain automation explain [GESTURE] [--json]` says where each level
-comes from; `brain config --check` and `brain check` refuse a floor gesture set above `manual`. No guard reads a level
-yet: its enforcement is the next slice of `spec-brain-automation-levels`.
+`$BRAIN_CONFIG` names never raises a level above the one found without it (the engine's default when none is
+found). Fail closed: a level above its ceiling, unknown or unreadable, a floor gesture's, and a section or file this
+engine cannot read, read `manual`; an id the catalogue does not hold is ignored with a note. `brain automation
+explain [GESTURE] [--json]` says where each level comes from; `brain config --check` and `brain check` refuse a floor
+gesture set above `manual`. No guard reads a level yet: its enforcement is the next slice of
+`spec-brain-automation-levels`.
 
 **The machine's token** (`brain.tokenguard`, [docs/guards.md](docs/guards.md#the-machines-token)): under config.json
 `guards.refuse_token_read: true` (off by default), the owner guard (check `token`) refuses a session's `Read`, `Grep`,

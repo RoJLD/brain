@@ -65,7 +65,9 @@ A gesture's level (`brain.automation`, `wi-brain-automation-config`, slice S2) i
    Raising a level is the owner's (the floor gesture `automation-raise`): config.json changes by a pull request, and
    the owner's merge is the raise (AUTO-5). When `$BRAIN_CONFIG` names another file than the config.json found
    without it (a worktree's, say: `brain.config.anchored`), a gesture's level is the lower of the two, so a
-   config.json a session wrote never raises one; lowering through it is anyone's;
+   config.json a session wrote never raises one; when no config.json is found without it (no pointer, or a personal
+   brain without its config.json), the cap is the engine's default, so the file it names may only lower; lowering
+   through it is anyone's;
 3. **the machine file** `<BRAIN_HOME>/automation.json`, of the same shape (`{"v": 1, "levels": {...}}`, `v` 1 when
    absent): this machine's own levels, which **may only lower** (a second machine, or a session after an incident,
    which says so). A level it gives above the one it would lower is ignored; one that is not a level lowers to

@@ -6,7 +6,8 @@ and where that level comes from, in three layers:
 2. **config.json's ``automation`` section**, version 1: ``{"v": 1, "levels": {gesture id: level}}``. A gesture left
    out keeps its default. Raising a level is the owner's (``automation-raise``, a floor gesture): their merge of
    config.json is the raise (AUTO-5). When ``$BRAIN_CONFIG`` names another file than the one found without it
-   (brain.config.anchored), a level is the lower of the two, so a config.json a session wrote never raises one;
+   (brain.config.anchored), a level is the lower of the two, so a config.json a session wrote never raises one; when
+   none is found without it, the cap is the engine's default (an empty anchor layer): ``$BRAIN_CONFIG`` only lowers;
 3. **the machine file** ``<BRAIN_HOME>/automation.json``, of the same shape: it may only lower a level (anyone may
    lower one, a session after an incident included); a level it gives above the one it would lower is ignored.
 
@@ -142,27 +143,44 @@ def machine_file() -> Path:
 
 
 def machine_layer(path: Path | None = None) -> Layer:
-    """The machine file as a layer: none (an empty layer) when it does not exist; one that cannot be read or parsed is
-    an error, so every gesture reads manual (it was there to lower)."""
+    """The machine file as a layer: none (an empty layer) when it does not exist; one that cannot be read (any other
+    OSError: a denied access included) or parsed is an error, so every gesture reads manual (it was there to lower).
+    No ``exists()`` first: it raises outside the try on Python 3.10-3.13 and hides the error on 3.14."""
     path = path or machine_file()
-    if not path.exists():
-        return Layer("machine", str(path))
     try:
-        data = json.loads(path.read_text(encoding="utf-8-sig"))
-    except (OSError, ValueError) as exc:
+        text = path.read_text(encoding="utf-8-sig")
+    except (FileNotFoundError, NotADirectoryError):
+        return Layer("machine", str(path))
+    except OSError as exc:
+        return Layer("machine", str(path), error=f"{path}: cannot be read ({exc})", present=True)
+    try:
+        data = json.loads(text)
+    except ValueError as exc:
         return Layer("machine", str(path), error=f"{path}: not readable JSON ({exc})", present=True)
     return parse(data, "machine", str(path))
 
 
 def layers(cfg=None, anchor=None, machine: Layer | None = None) -> tuple[Layer, Layer | None, Layer]:
-    """(config, anchor, machine): ``cfg`` brain.config.load() when None, ``anchor`` brain.config.anchored(cfg) when
-    None (pass False for none), ``machine`` :func:`machine_layer` when None."""
+    """(config, anchor, machine): ``cfg`` brain.config.load() when None, ``anchor`` :func:`anchor_config` when None
+    (pass False for none), ``machine`` :func:`machine_layer` when None."""
     from . import config
     cfg = cfg if cfg is not None else config.load()
     if anchor is None:
-        anchor = config.anchored(cfg)
+        anchor = anchor_config(cfg)
     return (config_layer(cfg), config_layer(anchor, "anchor") if anchor else None,
             machine if machine is not None else machine_layer())
+
+
+def anchor_config(cfg):
+    """The config.json that caps the one ``$BRAIN_CONFIG`` names: brain.config.anchored's (the one found without it,
+    when that is another file); when none is found without it, an empty config (the engine's defaults), so that a file
+    a session wrote only lowers; None when BRAIN_CONFIG is unset or names the file found without it."""
+    from . import config
+    if not os.environ.get("BRAIN_CONFIG"):
+        return None
+    if config.base_file() is None:
+        return config.Config(None, cfg.root)
+    return config.anchored(cfg)
 
 
 def _config_step(a: gestures.Automation, layer: Layer, label: str) -> tuple[str, str | None]:
@@ -196,8 +214,10 @@ def resolve_one(a: gestures.Automation, config: Layer, anchor: Layer | None, mac
     if anchor is not None:
         held, astep = _config_step(a, anchor, f"the config.json found without BRAIN_CONFIG ({anchor.where})")
         if _rank(held) < _rank(level):
-            level, source = held, "config"
-            steps.append(f"{astep or f'the config.json found without BRAIN_CONFIG: {held}'}: the lower holds")
+            level, source = held, "config" if anchor.where else "default"
+            plain = (f"the config.json found without BRAIN_CONFIG: {held}" if anchor.where else
+                     f"no config.json found without BRAIN_CONFIG: the engine's default, {held}")
+            steps.append(f"{astep or plain}: the lower holds")
     if machine.error:
         level, source = "manual", "machine"
         steps.append(f"the machine file cannot be read ({machine.error}): manual (fail closed)")

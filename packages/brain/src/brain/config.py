@@ -72,10 +72,11 @@ def anchored(cfg: Config | None = None) -> Config | None:
     """The config.json found as if ``$BRAIN_CONFIG`` were unset (:func:`brain.paths.bases`), when ``$BRAIN_CONFIG``
     names another file: the guard holds the floor of both (brain.floor.effective), so that a process started with
     BRAIN_CONFIG pointing at a file a session wrote (a worktree's config.json) never runs with a lower floor
-    (wi-brain-floor-watched-vars). None when BRAIN_CONFIG is unset, names that same file, or no other is found."""
+    (wi-brain-floor-watched-vars). None when BRAIN_CONFIG is unset, names that same file, or no other is found
+    (:func:`base_file` tells the last two apart)."""
     if not os.environ.get("BRAIN_CONFIG"):
         return None
-    f = next((b / FILE for b in paths.bases() if (b / FILE).is_file()), None)
+    f = base_file()
     if f is None:
         return None
     cfg = cfg if cfg is not None else load()
@@ -85,6 +86,12 @@ def anchored(cfg: Config | None = None) -> Config | None:
     except OSError:
         pass
     return _read(f)
+
+
+def base_file() -> Path | None:
+    """The config.json found as if ``$BRAIN_CONFIG`` were unset: the first place of :func:`brain.paths.bases` that
+    holds one, None when none does."""
+    return next((b / FILE for b in paths.bases() if (b / FILE).is_file()), None)
 
 
 def _read(f: Path) -> Config:

@@ -24,9 +24,10 @@ USAGE = """\
                  elevated terminal, the rules' text, raising a level) and its conditions. Read only
   brain automation explain [GESTURE] [--json]   why each gesture (or GESTURE alone) runs at its level: the engine's
                  default, config.json's automation section (the lower of it and the config.json found without
-                 $BRAIN_CONFIG, when that names another), then <BRAIN_HOME>/automation.json, which may only lower; a
-                 level above the ceiling, unknown or unreadable, and any floor gesture's, reads manual. Exit 1 for an
-                 id the catalogue does not hold. Read only
+                 $BRAIN_CONFIG, when that names another; the default when none is found), then
+                 <BRAIN_HOME>/automation.json, which may only lower; a level above the ceiling, unknown or
+                 unreadable, and any floor gesture's, reads manual. Exit 1 for an id the catalogue does not hold.
+                 Read only
 """
 
 
