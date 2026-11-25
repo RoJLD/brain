@@ -583,16 +583,16 @@ def _known(reg: list[dict]) -> set[str]:
 
 
 def _placement_data(store: Path, root: Path | None, reg: list[dict]) -> dict | None:
-    """brain modules --json's ``placement`` (brain.placement.data); None when the store's graph does not load."""
-    from . import placement
-    g = placement.load(store, root)
-    return None if g is None else placement.data(g, _known(reg))
+    """brain modules --json's ``placement`` (brain.organ_placement.data); None when the store's graph does not load."""
+    from . import organ_placement
+    g = organ_placement.load(store, root)
+    return None if g is None else organ_placement.data(g, _known(reg))
 
 
 def placement_lines(store: Path, root: Path | None, reg: list[dict]) -> list[str]:
-    """The view's placement section (wi-brain-organ-placement, brain.placement): every node's organ by type."""
-    from . import placement
-    return placement.view_lines(placement.load(store, root), _known(reg), names(reg))
+    """The view's placement section (wi-brain-organ-placement, brain.organ_placement): every node's organ by type."""
+    from . import organ_placement
+    return organ_placement.view_lines(organ_placement.load(store, root), _known(reg), names(reg))
 
 
 def names(reg: list[dict]) -> dict[str, str]:

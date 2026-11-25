@@ -91,20 +91,20 @@ def item(root: Path, stores: list[Path], nid: str, *, git: bool = True) -> tuple
 
 
 def organ(root: Path, store: Path, g, nid: str) -> tuple[dict | None, str]:
-    """(brain.placement's placement of ``nid`` as JSON, its organ line) in ``g``, the graph of ``store``; (None, '')
-    for a store that reads no registry of modules (brain.modules), or one whose registry does not parse (a conflict
-    marker, a half-written entry: the item is still shown, without an organ)."""
+    """(brain.organ_placement's placement of ``nid`` as JSON, its organ line) in ``g``, the graph of ``store``;
+    (None, '') for a store that reads no registry of modules (brain.modules), or one whose registry does not parse (a
+    conflict marker, a half-written entry: the item is still shown, without an organ)."""
     import yaml
 
-    from . import modules, placement
+    from . import modules, organ_placement
     try:
         reg = modules.registry(store, root)
     except (OSError, ValueError, yaml.YAMLError):
         return None, ""
     if reg is None:
         return None, ""
-    p = placement.place(g, nid, {str(m["id"]) for m in reg})
-    return p.to_json(), placement.line(p, modules.names(reg))
+    p = organ_placement.place(g, nid, {str(m["id"]) for m in reg})
+    return p.to_json(), organ_placement.line(p, modules.names(reg))
 
 
 def _wave_ids(root: Path, store: Path, ref: str) -> set[str]:

@@ -16,7 +16,7 @@ USAGE = """\
   brain features list [--status S] [--domain D] [--repo R] [--module M] [--value V] [--json]
   brain features search TEXT... [--limit N] [--json] | show ID [--json]   the feature matrix through its SQLite
                  index (full-text search, FTS5), a cache in <BRAIN_HOME>/features rebuilt when the store changes;
-                 show adds its organ (brain.placement: by hand, or derived from its links; --json: organ)
+                 show adds its organ (brain.organ_placement: by hand, or derived from its links; --json: organ)
   brain features add ID --title T --domain D [--status planned] [--value medium] [--repo R] [--module M]
                  [--code PATH[::SYMBOL]]... [--test T]... [--doc D]... [--spec S]... [--adr A]... [--parent F]
                  [--item WI]... [--prop k=v]...   | link ID [the same edges] | set ID key=value...
@@ -91,10 +91,10 @@ def _features_sync(args, root: Path, store: Path) -> int:
 
 
 def _organ(root: Path, store: Path, fid: str) -> tuple[dict | None, str]:
-    """(the feature's placement as JSON, its organ line) (brain.placement); (None, '') for a store that reads no
+    """(the feature's placement as JSON, its organ line) (brain.organ_placement); (None, '') for a store that reads no
     registry of modules or whose graph does not load."""
-    from .. import placement, reads
-    g = placement.load(store, root)
+    from .. import organ_placement, reads
+    g = organ_placement.load(store, root)
     if g is None or fid not in g:
         return None, ""
     return reads.organ(root, store, g, fid)

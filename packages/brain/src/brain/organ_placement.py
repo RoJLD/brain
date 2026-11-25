@@ -191,7 +191,7 @@ def view_lines(g, known: set[str], names: dict[str, str] | None = None) -> list[
     out += [f"Every node's organ, derived from the modules of its neighbours placed by hand (`props.module`), one hop "
             f"along {', '.join(EDGES)}: the first module places it when it has at least {MAJORITY} times the votes "
             f"of the second. A hand `props.module` overrides; it is contradicted when the votes give another module "
-            f"that majority with at least {CONTRADICT} votes (brain.placement).", "",
+            f"that majority with at least {CONTRADICT} votes (brain.organ_placement).", "",
             "| Type | Nodes | By hand | Derived | Split | Unplaced | Contradicted |", "|---|---|---|---|---|---|---|"]
     rows = by_type(placed)
     for t, r in rows.items():

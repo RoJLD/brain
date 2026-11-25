@@ -255,7 +255,7 @@ the store's edges change.
 
 A node's organ is the module of the registry it serves. Every node of the store (a doc section, a test, a
 piece of code, an ADR, a lesson, a spec, a milestone, as well as the items and features) is placed on one, by
-`brain.placement`, computed when it is read: no file holds it, and the store's format does not change.
+`brain.organ_placement`, computed when it is read: no file holds it, and the store's format does not change.
 
 - **By hand**: the node's own `props.module` (the items and the features carry one; a rule, a hook, a skill, a
   plugin or an MCP server, which no edge places, gets one once: `brain item set rule-x props.module=P2`).
@@ -285,7 +285,8 @@ $ brain features show feat-y
 
 The view's section gives, per node type, how many nodes are placed by hand, derived, split, unplaced and
 contradicted, then the contradicted ones with their votes. `brain modules --json` gives `placement`: `edges`,
-`majority`, `contradict`, `by_type` and `contradicted` (each a node's placement), or null when the store's graph does not load.
+`majority`, `contradict`, `by_type` and `contradicted` (each a node's placement), or null when the store's graph
+does not load.
 
 The view is a generated file, like the kanban: `.gitattributes` sends it to the brain's merge driver
 (`notes/modules_graph.md merge=brain`, a line `brain init` writes), which keeps one side of a merge and marks it

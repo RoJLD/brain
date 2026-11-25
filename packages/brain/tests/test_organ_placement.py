@@ -1,4 +1,4 @@
-"""wi-brain-organ-placement (brain.placement): every node's organ, the module of the registry it serves, by hand
+"""wi-brain-organ-placement (brain.organ_placement): every node's organ, the module of the registry it serves, by hand
 (props.module) or derived from the modules of its neighbours placed by hand, one hop along the edges that say what a
 node belongs to, with its votes; the module view's placement section, brain modules --json's placement, and the organ
 line of brain item show and brain features show. No persisted format: computed when read."""
@@ -7,7 +7,7 @@ import json
 
 import networkx as nx
 
-from brain import cli, modules, placement
+from brain import cli, modules, organ_placement
 
 REGISTRY = """\
 - {id: P2, name: kettle-core, brick: P, phase: MVP, status: tree}
@@ -81,13 +81,13 @@ def _store(tmp_path, registry=REGISTRY):
 
 
 def _graph(tmp_path):
-    g = placement.load(_store(tmp_path))
+    g = organ_placement.load(_store(tmp_path))
     assert g is not None
     return g
 
 
 def _place(tmp_path):
-    return placement.place_all(_graph(tmp_path), KNOWN)
+    return organ_placement.place_all(_graph(tmp_path), KNOWN)
 
 
 # --- the rule ---
@@ -114,9 +114,9 @@ def test_a_split_vote_and_no_vote_leave_a_node_without_an_organ(tmp_path):
 
 
 def test_the_clear_majority_threshold():
-    assert placement.clear([("P2", 3), ("K1", 2)]) == ""     # 1.5 times: split
-    assert placement.clear([("P2", 4), ("K1", 2)]) == "P2"   # twice
-    assert placement.clear([("P2", 1)]) == "P2" and placement.clear([]) == ""
+    assert organ_placement.clear([("P2", 3), ("K1", 2)]) == ""     # 1.5 times: split
+    assert organ_placement.clear([("P2", 4), ("K1", 2)]) == "P2"   # twice
+    assert organ_placement.clear([("P2", 1)]) == "P2" and organ_placement.clear([]) == ""
 
 
 def test_only_hand_placements_vote_one_hop_away(tmp_path):
@@ -145,18 +145,18 @@ def test_another_stores_node_is_never_placed_and_an_edge_in_both_directions_vote
     g.add_node("wi-far", foreign="other:notes/graph", props={"module": "K1"})
     g.add_edge("doc-x", "wi-x", type="documented_in")   # the reverse direction counts too
     g.add_edge("wi-far", "doc-x", type="documented_in")
-    assert placement.own_nodes(g) == ["doc-x", "wi-x"]
-    p = placement.place(g, "doc-x", KNOWN)
+    assert organ_placement.own_nodes(g) == ["doc-x", "wi-x"]
+    p = organ_placement.place(g, "doc-x", KNOWN)
     assert (p.state, p.organ) == ("derived", "P2") and "K1" not in p.votes   # another registry's module: no vote
 
 
 def test_counts_by_type_and_the_json(tmp_path):
     g = _graph(tmp_path)
-    rows = placement.by_type(placement.place_all(g, KNOWN))
+    rows = organ_placement.by_type(organ_placement.place_all(g, KNOWN))
     assert rows["Doc"] == {"nodes": 2, "hand": 0, "contradicted": 0, "derived": 1, "split": 1, "unplaced": 0}
     assert rows["Feature"] == {"nodes": 2, "hand": 0, "contradicted": 1, "derived": 0, "split": 0, "unplaced": 1}
     assert (rows["WorkItem"]["hand"], rows["WorkItem"]["contradicted"]) == (5, 0)
-    d = placement.data(g, KNOWN)
+    d = organ_placement.data(g, KNOWN)
     assert (d["majority"], d["contradict"]) == (2, 2) and d["edges"][0] == "documented_in" and len(d["edges"]) == 10
     assert [c["node"] for c in d["contradicted"]] == ["feat-a"]
     assert d["contradicted"][0]["weights"] == {"P2": 1.0}
@@ -167,17 +167,19 @@ def test_counts_by_type_and_the_json(tmp_path):
 
 def test_the_organ_line_of_each_state(tmp_path):
     got, names = _place(tmp_path), {"P2": "kettle-core", "K1": "tea-room", "M4": "lamp-post"}
-    assert placement.line(got["doc-1"], names) == \
+    assert organ_placement.line(got["doc-1"], names) == \
         "organ: P2 kettle-core, derived from 2 of 3 link(s) (P2 2: documented_in 2; K1 1: documented_in 1)"
-    assert placement.line(got["doc-2"], names) == \
+    assert organ_placement.line(got["doc-2"], names) == \
         "organ: split, no clear majority (K1 1: documented_in 1; P2 1: documented_in 1); props.module places it"
-    assert placement.line(got["feat-b"]) == \
+    assert organ_placement.line(got["feat-b"]) == \
         "organ: unplaced (no link to a node placed by hand); props.module places it"
-    assert placement.line(got["feat-a"], names) == ("organ: K1 tea-room, by hand (props.module); contradicted: its "
-                                                    "links give P2 a clear majority (2 of 2: P2 2: delivers 2)")
-    assert placement.line(got["hook-1"], names) == "organ: M4 lamp-post, by hand (props.module)"
-    assert placement.line(got["wi-out"], names).startswith("organ: none, by hand (outside the tree); its links: P2 1")
-    assert placement.line(got["wi-odd"]) == "organ: Z9, by hand (props.module); its links: P2 1: led_to 1"
+    assert organ_placement.line(got["feat-a"], names) == ("organ: K1 tea-room, by hand (props.module); contradicted: "
+                                                          "its links give P2 a clear majority (2 of 2: P2 2: "
+                                                          "delivers 2)")
+    assert organ_placement.line(got["hook-1"], names) == "organ: M4 lamp-post, by hand (props.module)"
+    assert organ_placement.line(got["wi-out"], names).startswith(
+        "organ: none, by hand (outside the tree); its links: P2 1")
+    assert organ_placement.line(got["wi-odd"]) == "organ: Z9, by hand (props.module); its links: P2 1: led_to 1"
 
 
 def test_the_view_section_counts_by_type_and_lists_the_contradicted(tmp_path):
@@ -196,7 +198,7 @@ def test_the_view_section_counts_by_type_and_lists_the_contradicted(tmp_path):
 def test_a_store_whose_graph_does_not_load_gets_one_line(tmp_path):
     store = _store(tmp_path)
     (store / "edges.yaml").unlink()   # research_graph refuses a store without it
-    assert placement.load(store) is None
+    assert organ_placement.load(store) is None
     text = modules.render(store, "notes/graph", tmp_path / "lab")
     assert "## Placement\n\nNot derived: the store's graph does not load (brain check says why)." in text
     assert modules.data(store, tmp_path / "lab")["placement"] is None

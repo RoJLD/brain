@@ -1,7 +1,7 @@
 section: Added
 
-- Every node's organ (`wi-brain-organ-placement`, `brain.placement`): the module of the registry a node serves, its
-  own `props.module`, else derived from the modules of its neighbours placed by hand, one hop along `documented_in`,
+- Every node's organ (`wi-brain-organ-placement`, `brain.organ_placement`): the module of the registry a node serves,
+  its own `props.module`, else derived from the modules of its neighbours placed by hand, one hop along `documented_in`,
   `implemented_by`, `tested_by`, `specified_by`, `decided_by`, `enforced_by`, `delivers`, `learned_from`, `led_to`
   and `part_of` (a clear majority: the first module has twice the votes of the second), with its votes per module and
   edge type and a weight per module. The module view (`notes/modules_graph.md`) gains a placement section: per node

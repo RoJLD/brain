@@ -770,8 +770,8 @@ def print_list(rows: list[dict], as_json: bool) -> None:
 
 
 def print_show(f: dict, as_json: bool, organ_line: str = "") -> None:
-    """``brain features show``: the feature, its organ line (brain.placement; ``f["organ"]`` in JSON), its links and
-    its props."""
+    """``brain features show``: the feature, its organ line (brain.organ_placement; ``f["organ"]`` in JSON), its
+    links and its props."""
     if as_json:
         print(json.dumps(f, ensure_ascii=False, indent=1, sort_keys=True))
         return
