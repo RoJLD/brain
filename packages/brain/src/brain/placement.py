@@ -157,35 +157,14 @@ class Placement:
 
     def canonical(self) -> str:
         """The placement as a props.place v1 value (``brain item set ID place=...``); '' when it says nothing."""
-        cl: list[str] = []
-        if self.choice:
-            cl.append("wave " + " or ".join(f"s{n}" for n in self.choice))
-        elif self.pin is not None:
-            cl.append(f"wave s{self.pin}")
-        if self.earliest is not None:
-            cl.append(f"earliest s{self.earliest}")
-        if self.latest is not None:
-            cl.append(f"latest s{self.latest}")
-        if self.before:
-            cl.append(f"before {self.before}")
-        if self.after_stage:
-            cl.append(f"after {self.after_stage}")
-        if self.after:
-            cl.append("after " + ", ".join(self.after))
-        if self.soft_after:
-            cl.append("after " + ", ".join(self.soft_after) + f" past {self.soft_stage or SOFT_STAGE}")
-        if self.together:
-            cl.append("with " + ", ".join(self.together))
-        if self.own_lot:
-            cl.append("own-lot")
-        if self.round is not None:
-            cl.append(f"round {self.round}")
-        if self.soft:
-            cl.append("proposed")
-        if self.out:
-            cl.append(f"out {self.out}" + (f": {self.why}" if self.why else ""))
-        if not cl and self.status == "free":
-            cl.append("unplaced")
+        waves_ = " or ".join(f"s{n}" for n in self.choice or ([self.pin] if self.pin is not None else []))
+        soft = f"{', '.join(self.soft_after)} past {self.soft_stage or SOFT_STAGE}" if self.soft_after else ""
+        why = f"{self.out}: {self.why}" if self.why else self.out
+        cl = [_said("wave ", waves_), _said("earliest s", self.earliest), _said("latest s", self.latest),
+              _said("before ", self.before), _said("after ", self.after_stage), _said("after ", ", ".join(self.after)),
+              _said("after ", soft), _said("with ", ", ".join(self.together)), _said("own-lot", self.own_lot),
+              _said("round ", self.round), _said("proposed", self.soft), _said("out ", why)]
+        cl = [c for c in cl if c] or (["unplaced"] if self.status == "free" else [])
         return "; ".join(cl)
 
     def constraints(self) -> list[tuple]:
@@ -241,6 +220,14 @@ def _ref(text: str) -> Ref | str:
 
 def _shift(r: Ref | str, by: int) -> Ref | str:
     return r if isinstance(r, str) else Ref(r.kind, r.value, r.offset + by)
+
+
+def _said(prefix: str, value) -> str:
+    """A clause of the canonical form: ``prefix`` and ``value``; '' without a value; a flag (bool): ``prefix``
+    alone when set."""
+    if isinstance(value, bool):
+        return prefix if value else ""
+    return "" if value is None or value == "" else f"{prefix}{value}"
 
 
 def _ids(raw: str, items: frozenset[str], rd: Reading) -> list[str]:
@@ -393,66 +380,82 @@ def _strict_ref(text: str) -> Ref | str | None:
 
 def _clause(rd: Reading, word: str, rest: str, items: frozenset[str]) -> bool:
     """One props.place clause into ``rd``; False when it is not one of v1's."""
-    if word == "wave":
-        refs = [_strict_ref(p) for p in re.split(r"\s+or\s+", rest)]
-        if not refs or any(not isinstance(r, Ref) for r in refs):
-            return False
-        (rd.pins.append(refs[0]) if len(refs) == 1 else rd.choices.append(tuple(refs)))
-        return True
-    if word in ("earliest", "latest"):
+    fn = _CLAUSES.get(word)
+    return bool(fn and fn(rd, rest.strip(), items))
+
+
+def _wave_clause(rd: Reading, rest: str, _items) -> bool:
+    refs = [_strict_ref(p) for p in re.split(r"\s+or\s+", rest)]
+    if not all(isinstance(r, Ref) for r in refs):
+        return False
+    (rd.pins.append(refs[0]) if len(refs) == 1 else rd.choices.append(tuple(refs)))
+    return True
+
+
+def _bound_clause(target: str):
+    def fn(rd: Reading, rest: str, _items) -> bool:
         r = _strict_ref(rest)
-        if not isinstance(r, Ref):
-            return False
-        (rd.earliest if word == "earliest" else rd.latest).append(r)
-        return True
-    if word == "before":
-        r = _strict_ref(rest)
-        if r is None:
-            return False
+        if isinstance(r, Ref):
+            getattr(rd, target).append(r)
+        return isinstance(r, Ref)
+    return fn
+
+
+def _before_clause(rd: Reading, rest: str, _items) -> bool:
+    r = _strict_ref(rest)
+    if r is not None:
         (rd.before.append(r) if isinstance(r, str) else rd.latest.append(_shift(r, -1)))
-        return True
-    if word == "after":
-        return _after_clause(rd, rest, items)
-    if word == "with":
-        ids = [i.strip() for i in rest.split(",") if i.strip()]
-        rd.together += _known_ids(ids, items, rd)
-        return bool(ids)
-    if word in ("own-lot", "own_lot") and not rest:
-        rd.own_lot = True
-        return True
-    if word == "round" and rest.isdigit():
-        rd.round = int(rest)
-        return True
-    if word in ("proposed", "unplaced") and not rest:
-        setattr(rd, "soft" if word == "proposed" else "free", True)
-        return True
-    if word == "out":
-        reason, _, why = rest.partition(":")
-        if reason.strip() not in OUT_REASONS:
-            return False
-        rd.out, rd.why = reason.strip(), why.strip()
-        return True
-    return False
+    return r is not None
 
 
 def _after_clause(rd: Reading, rest: str, items: frozenset[str]) -> bool:
     head, sep, stage = rest.partition(" past ")
-    if sep:
-        if not _STAGE.match(stage.strip()):
-            return False
-        ids = [i.strip() for i in head.split(",") if i.strip()]
-        rd.soft_after += _known_ids(ids, items, rd)
-        rd.soft_stage = stage.strip()
-        return bool(ids)
-    r = _strict_ref(rest)
+    r = None if sep else _strict_ref(rest)
     if r is not None:
         (rd.after_stage.append(r) if isinstance(r, str) else rd.earliest.append(_shift(r, 1)))
         return True
-    ids = [i.strip() for i in rest.split(",") if i.strip()]
-    if not ids or not all(re.fullmatch(_ID, i) or i in items for i in ids):
+    ids = [i.strip() for i in head.split(",") if i.strip()]
+    if not ids or not all(re.fullmatch(_ID, i) or i in items for i in ids) or (sep and not _STAGE.match(stage.strip())):
         return False
-    rd.after += _known_ids(ids, items, rd)
+    if sep:
+        rd.soft_after += _known_ids(ids, items, rd)
+        rd.soft_stage = stage.strip()
+    else:
+        rd.after += _known_ids(ids, items, rd)
     return True
+
+
+def _with_clause(rd: Reading, rest: str, items: frozenset[str]) -> bool:
+    ids = [i.strip() for i in rest.split(",") if i.strip()]
+    rd.together += _known_ids(ids, items, rd)
+    return bool(ids)
+
+
+def _flag_clause(name: str):
+    def fn(rd: Reading, rest: str, _items) -> bool:
+        if not rest:
+            setattr(rd, name, True)
+        return not rest
+    return fn
+
+
+def _round_clause(rd: Reading, rest: str, _items) -> bool:
+    if rest.isdigit():
+        rd.round = int(rest)
+    return rest.isdigit()
+
+
+def _out_clause(rd: Reading, rest: str, _items) -> bool:
+    reason, _, why = rest.partition(":")
+    if reason.strip() in OUT_REASONS:
+        rd.out, rd.why = reason.strip(), why.strip()
+    return reason.strip() in OUT_REASONS
+
+
+_CLAUSES = {"wave": _wave_clause, "earliest": _bound_clause("earliest"), "latest": _bound_clause("latest"),
+            "before": _before_clause, "after": _after_clause, "with": _with_clause, "own-lot": _flag_clause("own_lot"),
+            "own_lot": _flag_clause("own_lot"), "round": _round_clause, "proposed": _flag_clause("soft"),
+            "unplaced": _flag_clause("free"), "out": _out_clause}
 
 
 def _known_ids(ids: list[str], items: frozenset[str], rd: Reading) -> list[str]:
@@ -543,136 +546,158 @@ def place_of(plan: waves.Plan, nid: str, ctx: _Ctx | None = None) -> Placement:
 
 
 def _merge(ctx: _Ctx, nid: str, composed: str, readings: list[tuple[str, str, Reading]]) -> Placement:
-    """The readings of one item, in the order read, into its placement: the first source that names a wave holds the
-    pin (a later one that names another is a conflict, listed), the bounds the tightest, the lists their union."""
-    notes: list[str] = []
-    conflicts: list[str] = []
-    stale: list[str] = []
-    cpos = ctx.pos.get(composed) if composed else None
+    """The readings of one item, in the order read, into its placement."""
+    m = _Merge(ctx, nid, composed)
+    for key, _text, rd in readings:
+        m.add(key, rd)
+    return m.result(tuple((k, " ".join(t.split())) for k, t, _ in readings))
 
-    def resolve(refs, key: str, pins: bool = False) -> list[int]:
+
+class _Merge:
+    """One item's readings gathered: the first source that names a wave holds the pin (a later one that names another
+    is a conflict, listed), the bounds the tightest, the first stage and « out » read, the lists their union."""
+
+    def __init__(self, ctx: _Ctx, nid: str, composed: str):
+        self.ctx, self.nid, self.composed = ctx, nid, composed
+        self.cpos = ctx.pos.get(composed) if composed else None
+        self.notes: list[str] = []
+        self.stale: list[str] = []
+        self.pin_conflicts: list[str] = []   # dropped when the item is composed: its wave is the plan's fact
+        self.pin: int | None = None
+        self.choice: tuple[int, ...] = ()
+        self.pin_src = ""
+        self.soft = self.any_soft = self.own_lot = self.free = self.text_read = False
+        self.earliest: list[int] = []
+        self.latest: list[int] = []
+        self.first = {"before": "", "after_stage": "", "soft_stage": "", "out": "", "why": ""}
+        self.lists: dict[str, list[str]] = {"after": [], "soft_after": [], "together": [], "triggers": []}
+        self.round: int | None = None
+        self.read: list[str] = []
+
+    def resolve(self, refs, key: str, pins: bool = False) -> list[int]:
         """The places of ``refs``; a reference to no wave is a note; a pin on a wave reached or dropped is stale
         (left out), unless the item is composed in a later wave (its history)."""
         found: list[int] = []
         for r in refs:
-            n, why_ = ctx.seq(r)
+            n, why = self.ctx.seq(r)
             if n is None:
-                notes.append(f"{key}: {why_}")
-            elif pins and ctx.closed(n):
-                if cpos is None or n > cpos:
-                    stale.append(f"{key}: s{n} ({ctx.closed(n)})")
+                self.notes.append(f"{key}: {why}")
+            elif pins and self.ctx.closed(n):
+                if self.cpos is None or n > self.cpos:
+                    self.stale.append(f"{key}: s{n} ({self.ctx.closed(n)})")
             elif n not in found:
                 found.append(n)
         return found
 
-    pin: int | None = None
-    choice: tuple[int, ...] = ()
-    pin_src = ""
-    soft = False
-    earliest: list[int] = []
-    latest: list[int] = []
-    before = after_stage = soft_stage = out = why = ""
-    after: list[str] = []
-    soft_after: list[str] = []
-    together: list[str] = []
-    own_lot = free = False
-    rnd: int | None = None
-    triggers: list[str] = []
-    read: list[str] = []
-    pin_conflicts: list[str] = []   # dropped when the item is composed: its wave is the plan's fact
-    text_read = False
-    for key, _text, rd in readings:
-        notes += [f"{key}: {n}" for n in rd.notes]
+    def add(self, key: str, rd: Reading) -> None:
+        self.notes += [f"{key}: {n}" for n in rd.notes]
         if rd.empty():
-            continue
-        read.append(key)
-        if key.startswith(DECIDED) and text_read:   # an answer's waves are prose beside a placement text: its
-            pins, chs = [], []                       # bounds and its « later » are read, not its waves
-        else:
-            pins = resolve(rd.pins, key, pins=True)
-            chs = [c for c in (resolve(c, key, pins=True) for c in rd.choices) if c]
-        text_read = text_read or key in TEXT_KEYS
+            return
+        self.read.append(key)
+        self._waves(key, rd)
+        self.text_read = self.text_read or key in TEXT_KEYS
+        self.earliest += self.resolve(rd.earliest, key)
+        self.latest += self.resolve(rd.latest, key)
+        self._firsts(rd)
+        for name, values in self.lists.items():
+            values += getattr(rd, name)
+        self.own_lot, self.free, self.any_soft = self.own_lot or rd.own_lot, self.free or rd.free, \
+            self.any_soft or rd.soft
+        self.round = self.round if self.round is not None else rd.round
+
+    def _firsts(self, rd: Reading) -> None:
+        f = self.first
+        f["before"] = f["before"] or (rd.before[0] if rd.before else "")
+        f["after_stage"] = f["after_stage"] or (rd.after_stage[0] if rd.after_stage else "")
+        f["soft_stage"] = f["soft_stage"] or rd.soft_stage
+        if rd.out and not f["out"]:
+            f["out"], f["why"] = rd.out, rd.why
+
+    def _waves(self, key: str, rd: Reading) -> None:
+        """The waves a reading names: the first source's are the pin (two or more: a choice and a conflict), a later
+        source's that differ a conflict. An answer's waves are prose beside a placement text: not read once one was."""
+        if key.startswith(DECIDED) and self.text_read:
+            return
+        pins = self.resolve(rd.pins, key, pins=True)
+        chs = [c for c in (self.resolve(c, key, pins=True) for c in rd.choices) if c]
         named = sorted(set(pins) | {n for c in chs for n in c})
-        if not pin_src and named:
-            pin_src, soft = key, rd.soft
-            if len(pins) > 1 or (pins and chs):
-                choice = tuple(named)
-                pin_conflicts.append(f"{key} names several waves ({', '.join(f's{n}' for n in named)}): one wave, "
-                                     "or the item split")
-            elif pins:
-                pin = pins[0]
-            elif len(chs[0]) > 1:
-                choice = tuple(sorted(chs[0]))
-            else:
-                pin = chs[0][0]
-        elif named:
-            mine = sorted(set(choice) | ({pin} if pin is not None else set()))
-            if named != mine:
-                pin_conflicts.append(f"{key} names {', '.join(f's{n}' for n in named)}, {pin_src} "
-                                     f"{', '.join(f's{n}' for n in mine)}: {pin_src} is read")
-        earliest += resolve(rd.earliest, key)
-        latest += resolve(rd.latest, key)
-        before = before or (rd.before[0] if rd.before else "")
-        after_stage = after_stage or (rd.after_stage[0] if rd.after_stage else "")
-        after += rd.after
-        soft_after += rd.soft_after
-        soft_stage = soft_stage or rd.soft_stage
-        together += rd.together
-        own_lot = own_lot or rd.own_lot
-        rnd = rnd if rnd is not None else rd.round
-        free = free or rd.free
-        triggers += rd.triggers
-        if rd.out and not out:
-            out, why = rd.out, rd.why
-    if not pin_src:
-        soft = any(rd.soft for _, _, rd in readings)
-    if before and after_stage and _stage(before) == _stage(after_stage):
-        conflicts.append(f"both before and after {before}")
-    stage = before or after_stage
-    era = ctx.eras.get(_stage(stage), "") if stage else ""
-    e = max(earliest) if earliest else None
-    lt = min(latest) if latest else None
-    if cpos is not None:   # composed: the wave it is in, whatever its text named when it was planned
-        pin, choice = cpos, ()
-    else:
-        conflicts += pin_conflicts
-    if pin is not None and e is not None and pin < e:
-        conflicts.append(f"{'composed in' if cpos is not None else 'pinned to'} s{pin}, before its earliest wave "
-                         f"s{e}")
-    if pin is not None and lt is not None and pin > lt:
-        conflicts.append(f"{'composed in' if cpos is not None else 'pinned to'} s{pin}, after its latest wave s{lt}")
-    hard = pin is not None or bool(choice)
-    if out == "later" and hard:
-        out, why = "", ""   # a wave named beats a « later »
-    bound = e is not None or lt is not None or bool(before or after_stage or after)
-    triggers = list(dict.fromkeys(triggers))
-    if not out and triggers and not hard and not bound:
-        out, why = "trigger", "; ".join(triggers)
-    else:
-        notes += [f"not read as a constraint: {t}" for t in triggers]
-    after = [i for i in dict.fromkeys(after) if i != nid]
-    together = [i for i in dict.fromkeys(together) if i != nid]
-    soft_after = [i for i in dict.fromkeys(soft_after) if i != nid]
-    texts = tuple((k, " ".join(t.split())) for k, t, _ in readings)
-    if composed:
-        status = "composed"
-    elif not texts:
-        status = "none"
-    elif choice:
-        status = "choice"
-    elif pin is not None:
-        status = "pinned"
-    elif out:
-        status = "out"
-    elif bound or together or own_lot:
-        status = "constrained"
-    elif free or soft_after or rnd is not None or stale:
-        status = "free"
-    else:
-        status = "unparsed"
-    return Placement(nid, status, composed, pin, choice, e, lt, before, after_stage, era, tuple(after),
-                     tuple(soft_after), soft_stage, tuple(together), own_lot, rnd, soft, out, why,
-                     ", ".join(read), texts, tuple(stale), tuple(dict.fromkeys(notes)), tuple(conflicts))
+        if not named:
+            return
+        if self.pin_src:
+            self._against_first(key, named)
+            return
+        self.pin_src, self.soft = key, rd.soft
+        self._first(key, pins, chs, named)
+
+    def _against_first(self, key: str, named: list[int]) -> None:
+        mine = sorted(set(self.choice) | ({self.pin} if self.pin is not None else set()))
+        if named != mine:
+            self.pin_conflicts.append(f"{key} names {_places(named)}, {self.pin_src} {_places(mine)}: "
+                                      f"{self.pin_src} is read")
+
+    def _first(self, key: str, pins: list[int], chs: list[list[int]], named: list[int]) -> None:
+        if len(pins) > 1 or (pins and chs):
+            self.choice = tuple(named)
+            self.pin_conflicts.append(f"{key} names several waves ({_places(named)}): one wave, or the item split")
+        elif pins or len(chs[0]) == 1:
+            self.pin = (pins or chs[0])[0]
+        else:
+            self.choice = tuple(sorted(chs[0]))
+
+    def result(self, texts: tuple[tuple[str, str], ...]) -> Placement:
+        f, ls = self.first, {k: [i for i in dict.fromkeys(v) if i != self.nid] for k, v in self.lists.items()}
+        conflicts: list[str] = []
+        if self.cpos is not None:   # composed: the wave it is in, whatever its text named when it was planned
+            self.pin, self.choice = self.cpos, ()
+        else:
+            conflicts += self.pin_conflicts
+        e, lt = max(self.earliest, default=None), min(self.latest, default=None)
+        conflicts += self._bound_conflicts(e, lt)
+        stage = f["before"] or f["after_stage"]
+        era = self.ctx.eras.get(_stage(stage), "") if stage else ""
+        bound = e is not None or lt is not None or bool(f["before"] or f["after_stage"] or ls["after"])
+        out, why = self._out(bound, ls["triggers"])
+        status = self._status(texts, out, bound or bool(ls["together"]) or self.own_lot, bool(ls["soft_after"]))
+        return Placement(self.nid, status, self.composed, self.pin, self.choice, e, lt, f["before"], f["after_stage"],
+                         era, tuple(ls["after"]), tuple(ls["soft_after"]), f["soft_stage"], tuple(ls["together"]),
+                         self.own_lot, self.round, self.soft if self.pin_src else self.any_soft, out, why,
+                         ", ".join(self.read), texts, tuple(self.stale), tuple(dict.fromkeys(self.notes)),
+                         tuple(conflicts))
+
+    def _bound_conflicts(self, e: int | None, lt: int | None) -> list[str]:
+        f, out = self.first, []
+        if f["before"] and f["after_stage"] and _stage(f["before"]) == _stage(f["after_stage"]):
+            out.append(f"both before and after {f['before']}")
+        what = "composed in" if self.cpos is not None else "pinned to"
+        if self.pin is not None and e is not None and self.pin < e:
+            out.append(f"{what} s{self.pin}, before its earliest wave s{e}")
+        if self.pin is not None and lt is not None and self.pin > lt:
+            out.append(f"{what} s{self.pin}, after its latest wave s{lt}")
+        return out
+
+    def _out(self, bound: bool, triggers: list[str]) -> tuple[str, str]:
+        """Out of the waves, and why: a wave named beats a « later »; a trigger takes out an item nothing else
+        places, else it is a note."""
+        out, why = self.first["out"], self.first["why"]
+        hard = self.pin is not None or bool(self.choice)
+        if out == "later" and hard:
+            out, why = "", ""
+        if not out and triggers and not hard and not bound:
+            return "trigger", "; ".join(triggers)
+        self.notes += [f"not read as a constraint: {t}" for t in triggers]
+        return out, why
+
+    def _status(self, texts, out: str, constrained: bool, soft_after: bool) -> str:
+        if self.composed:
+            return "composed"
+        ladder = (("none", not texts), ("choice", bool(self.choice)), ("pinned", self.pin is not None),
+                  ("out", bool(out)), ("constrained", constrained),
+                  ("free", self.free or soft_after or self.round is not None or bool(self.stale)))
+        return next((s for s, met in ladder if met), "unparsed")
+
+
+def _places(ns) -> str:
+    return ", ".join(f"s{n}" for n in ns)
 
 
 def placements(plan: waves.Plan, ids=None) -> dict[str, Placement]:
@@ -709,38 +734,37 @@ def render(rep: dict, every: bool = False) -> list[str]:
     """``brain wave placements``'s text: the items by status (composed ones by wave; those with no placement text
     counted, ``every``: named), then the questions."""
     items = rep["items"]
-    with_text = sum(1 for i in items if i["status"] != "none")
-    lines = [f"placements of {len(items)} open item(s): {with_text} with a placement, {rep['counts']['none']} "
-             f"without (props.place, else {', '.join(TEXT_KEYS)}, {SOFT_AFTER_KEY}, {DECIDED}*, {TRACK_KEY}; zero "
-             "token)"]
+    lines = [f"placements of {len(items)} open item(s): {len(items) - rep['counts']['none']} with a placement, "
+             f"{rep['counts']['none']} without (props.place, else {', '.join(TEXT_KEYS)}, {SOFT_AFTER_KEY}, "
+             f"{DECIDED}*, {TRACK_KEY}; zero token)"]
     for status in STATUSES:
         group = [i for i in items if i["status"] == status]
-        if not group:
-            continue
-        lines.append(f"{status} ({len(group)}):")
-        if status == "composed":
-            by: dict[str, list[str]] = {}
-            for i in group:
-                by.setdefault(i["wave"], []).append(i["id"])
-            lines += [f"  {w}: {', '.join(ids)}" for w, ids in by.items()]
-            continue
-        if status == "none" and not every:
-            lines.append("  (--all names them)")
-            continue
-        for i in group:
-            head = f"  {i['id']}"
-            if i["canonical"]:
-                head += f": {i['canonical']}"
-            if i["source"]:
-                head += f"  ({i['source']})"
-            lines.append(head)
-            if status == "unparsed":
-                lines += [f"    {t['key']}: {t['text']}" for t in i["texts"]]
-            lines += [f"    ! {n}" for n in i["stale"] + i["notes"] + i["conflicts"]
-                      if status != "none"]
+        if group:
+            lines.append(f"{status} ({len(group)}):")
+            lines += _group_lines(status, group, every)
     if rep["questions"]:
         lines.append(f"questions ({len(rep['questions'])}):")
         lines += [f"  {q}" for q in rep["questions"]]
     lines.append("a placement is written as props.place: brain item set ID place=\"wave s11; after ID; own-lot\" "
                  "(docs/placements.md)")
+    return lines
+
+
+def _group_lines(status: str, group: list[dict], every: bool) -> list[str]:
+    """One status's lines: the composed items by wave, the items with no placement text named with ``every`` only,
+    the others one a line, their notes under them (an unparsed one's text too)."""
+    if status == "composed":
+        by: dict[str, list[str]] = {}
+        for i in group:
+            by.setdefault(i["wave"], []).append(i["id"])
+        return [f"  {w}: {', '.join(ids)}" for w, ids in by.items()]
+    if status == "none":
+        return [f"  {i['id']}" for i in group] if every else ["  (--all names them)"]
+    lines = []
+    for i in group:
+        lines.append(f"  {i['id']}" + _said(": ", i["canonical"]) + _said("  (", i["source"]) + (")" if i["source"]
+                                                                                              else ""))
+        if status == "unparsed":
+            lines += [f"    {t['key']}: {t['text']}" for t in i["texts"]]
+        lines += [f"    ! {n}" for n in i["stale"] + i["notes"] + i["conflicts"]]
     return lines
