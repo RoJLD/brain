@@ -6,9 +6,8 @@ from __future__ import annotations
 import json
 
 import pytest
-from test_waves import _write
-
 from brain import cli, placement, waves
+from test_waves import _write
 
 # Two reached waves (1.0.0, 1.1.0), two pending ones (s3, s4: computed 1.1.1 and 1.1.2) in an era whose stage is 2.0;
 # s5 and later do not exist yet: a placement names them by their place.
@@ -168,6 +167,88 @@ def test_the_canonical_form_reads_back_the_same(root):
         q = placement.placements(again, [nid])[nid]
         assert {f: getattr(q, f) for f in fields} == {f: getattr(p, f) for f in fields}, nid
         assert not [n for n in q.notes if "unknown clause" in n], nid
+
+
+def _one(root, props: dict, part_of: str = "") -> placement.Placement:
+    """The placement of one more item ``wi-x`` with ``props`` (``part_of`` a wave), beside the fixture's items."""
+    plan = _plan(root)
+    nodes = {**plan.nodes, "wi-x": {"id": "wi-x", "type": "WorkItem", "status": "todo", "title": "X", "props": props}}
+    edges = list(plan.edges) + ([{"from": "wi-x", "to": part_of, "type": "part_of"}] if part_of else [])
+    return placement.placements(waves.build(nodes, edges), ["wi-x"])["wi-x"]
+
+
+def _reads_back(root, p: placement.Placement) -> None:
+    q = _one(root, {"place": p.canonical()})
+    fields = ("pin", "choice", "earliest", "latest", "before", "after_stage", "after", "soft_after", "soft_stage",
+              "together", "own_lot", "round", "soft", "out", "why")
+    assert {f: getattr(q, f) for f in fields} == {f: getattr(p, f) for f in fields}
+    assert not q.notes, q.notes
+
+
+@pytest.mark.parametrize("props, status, canonical", [
+    # two triggers: joined by « , », so the canonical form reads back the same (not split on « ; »)
+    ({"wave_planned": "unplaced: after calibration, when a project needs it"}, "out",
+     "out trigger: after calibration, when a project needs it"),
+    # an answer's bounds beside a placement text are not read, as its waves are not
+    ({"wave_planned": "s4", "decided_2030_01_02": "Ada: its slice B after s5"}, "pinned", "wave s4"),
+    # a release in an answer is a fact: no bound from it
+    ({"decided_2030_01_02": "Ada (Q-1): agreed after 1.0.0 shipped"}, "none", ""),
+    ({"decided_2030_01_02": "Ada (Q-1): after s5"}, "constrained", "earliest s6"),
+    # « s4 or later » is a bound, « s4/s5 » a choice; « s4/s5/s6 » and a file name « s11.md » name no wave
+    ({"wave_planned": "s4 or later"}, "constrained", "earliest s4"),
+    ({"wave_planned": "s5 or earlier"}, "constrained", "latest s5"),
+    ({"wave_planned": "s4/s5"}, "choice", "wave s4 or s5"),
+    ({"wave_planned": "s4/s5/s6"}, "unparsed", ""),
+    ({"wave_planned": "see s11.md"}, "unparsed", ""),
+    # slices in capitals and a command name are no wave (no question either)
+    ({"wave_planned": "S1 or S2 first"}, "unparsed", ""),
+    ({"wave_planned": "brain wave-close then s5"}, "pinned", "wave s5"),
+    # « proposed » and « round 0 » are props.place clauses read; « proposed » alone in a text places nothing
+    ({"place": "proposed"}, "free", "proposed"),
+    ({"place": "round 0"}, "free", "round 0"),
+    ({"wave_planned": "the proposed schema"}, "unparsed", ""),
+])
+def test_edge_placements_resolve_and_read_back(root, props, status, canonical):
+    p = _one(root, props)
+    assert (p.status, p.canonical()) == (status, canonical), p
+    assert not [q for q in p.questions() if "names no wave" in q], p
+    if canonical:
+        _reads_back(root, p)
+
+
+def test_what_a_text_cannot_honour_is_a_question_or_a_note(root):
+    p = _one(root, {"wave_planned": "s4 or s5; s7 or s8"})           # a second choice is not dropped
+    assert p.choice == (4, 5, 7, 8) and "several waves (s4, s5, s7, s8)" in p.conflicts[0]
+    p = _one(root, {"place": "after s4; before s4"})                  # contradictory bounds
+    assert p.conflicts == ("earliest wave s5 after its latest wave s3",)
+    p = _one(root, {"wave_planned": "after 1.1.1, before 1.1.0"})
+    assert p.conflicts == ("earliest wave s4 after its latest wave s1",)
+    p = _one(root, {"wave_planned": "after wi-typo-id"})              # an unknown item is no trigger: said, unparsed
+    assert (p.status, p.out) == ("unparsed", "") and any("names no item: wi-typo-id" in q for q in p.questions())
+    p = _one(root, {"wave_planned": "after long-term planning"})      # a hyphenated word is a trigger, not an item
+    assert (p.status, p.why) == ("out", "after long-term planning") and not p.notes
+    for text in ("wi-gone (was a depends_on)", "the schema work"):    # after_1_0 that names no item: unparsed
+        p = _one(root, {"after_1_0": text})
+        assert p.status == "unparsed" and p.texts == (("after_1_0", text),)
+    assert any("names no item: wi-gone" in q for q in _one(root, {"after_1_0": "wi-gone"}).questions())
+    p = _one(root, {"wave_planned": "s1"})                            # a wave reached: a question, overdue
+    assert p.status == "free" and any("reached or dropped" in q and "s1 (reached)" in q for q in p.questions())
+
+
+def test_props_place_edge_clauses(root):
+    p = _one(root, {"place": "V2; wave s5"})                          # a higher v in capitals is not read either
+    assert p.status == "unparsed" and p.pin is None and "v2 is written by a newer brain" in p.notes[0]
+    p = _one(root, {"place": "v2; wave s5"}, part_of="wave-s3")       # composed: its pin is its wave's
+    assert (p.status, p.pin, p.constraints()) == ("composed", 3, [("pin", "wi-x", 3)])
+    p = _one(root, {"place": "round ²"})                          # a Unicode digit: an unknown clause, no crash
+    assert p.round is None and p.notes == ("place: unknown clause 'round ²'",)
+    p = _one(root, {"place": "out later: not now; wave s5"})          # both kept, put as a question
+    assert (p.pin, p.out, p.why) == (5, "later", "not now") and p.conflicts
+    _reads_back(root, p)
+    p = _one(root, {"place": "after wi-pin past 1.0; after wi-own past 2.0"})   # one stage: the second said
+    assert (p.soft_after, p.soft_stage) == (("wi-pin",), "1.0") and "not read" in p.notes[0]
+    p = _one(root, {"place": "after 1.0; after 2.0"})
+    assert p.after_stage == "1.0" and p.notes == ("place: 'after 2.0' not read: one stage, 'after 1.0' is read",)
 
 
 def test_read_text_ignores_provenance_and_slices():
