@@ -27,8 +27,9 @@ workflow's launch), each with its stable id, its ceiling (manual, ask or auto: t
 its default (its level today), its conditions, where it runs and its floor category (AUTO-1: :data:`FLOOR`); a level
 above the ceiling, unknown or unreadable, and any level of a floor gesture, reads manual (:func:`effective`).
 brain.automation resolves each gesture's level from its default, config.json's ``automation`` section and the machine
-file that may only lower (wi-brain-automation-config); no guard reads a level yet (``brain automation list`` and
-``explain`` print them; docs/automation.md).
+file that may only lower (wi-brain-automation-config); the guards read it (wi-brain-automation-guard:
+brain.automation.enforce, the guard hook on archive_session and set_remote_control, brain.engineclone.refresh;
+``brain automation list`` and ``explain`` print them; docs/automation.md « Enforcement »).
 """
 
 from __future__ import annotations

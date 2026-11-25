@@ -80,6 +80,7 @@ def _explain_text(data: dict) -> list[str]:
         lock = f"  locked: {g['floor']}" if g["locked"] else ""
         out.append(f"{g['id']}: {g['level']} ({g['source']})  ceiling {g['ceiling']}  runs: {g['runs']}{lock}")
         out += [f"    {i}. {s}" for i, s in enumerate(g["steps"], 1)]
+        out.append(f"    enforced: {g['enforced']}")
     out.append("Raising a level is the owner's (automation-raise): their merge of config.json's automation section; "
                "lowering one is anyone's, there or in the machine file (docs/automation.md).")
     return out

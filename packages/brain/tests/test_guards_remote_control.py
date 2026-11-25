@@ -71,9 +71,12 @@ def lab(tmp_path, monkeypatch, brain_home):
                             "home": brain_home, "cwd": tmp_path})
 
 
-def call(lab, target, enabled, caller=F, tool=RC, **extra):
+def call(lab, target, enabled, caller=F, tool=RC, perm="default", **extra):
+    """A PreToolUse payload of ``tool`` by ``caller``, in the permission mode ``perm`` (None: the payload gives none),
+    as Claude Code sends it."""
     inp = {"session_id": target, "enabled": enabled} if tool == RC else {"session_id": target, **extra}
-    return {"session_id": CLI[caller], "transcript_path": "C:/t/x.jsonl", "cwd": str(lab.cwd),
+    more = {} if perm is None else {"permission_mode": perm}
+    return {"session_id": CLI[caller], "transcript_path": "C:/t/x.jsonl", "cwd": str(lab.cwd), **more,
             "hook_event_name": "PreToolUse", "tool_name": tool, "tool_input": inp, "tool_use_id": "toolu_01"}
 
 

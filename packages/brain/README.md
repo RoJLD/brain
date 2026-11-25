@@ -2100,6 +2100,15 @@ explain [GESTURE] [--json]` says where each level comes from; `brain config --ch
 gesture set above `manual`. No guard reads a level yet: its enforcement is the next slice of
 `spec-brain-automation-levels`.
 
+**The levels enforced** (wi-brain-automation-guard,
+[docs/automation.md](docs/automation.md#enforcement-what-the-guards-make-of-a-level)): the guard reads
+`session-archive`'s and `handover-remote-control`'s level on each `archive_session` and `set_remote_control` call
+inside its conditions (`manual` refused, `ask` left to the native ask rule, `auto` allowed with no card; `ask` reads
+`manual` in a permission mode with no card, `bypassPermissions` or `dontAsk`); `brain permissions render --level
+user` writes each tool's level as its native rule (allow, ask or deny) and takes the other verdicts out; in an agent's
+session `brain refresh` and `brain release apply` pull the engine clone at `auto` only. A gesture of the owner's
+terminal stays refused to a session at every level.
+
 **The machine's token** (`brain.tokenguard`, [docs/guards.md](docs/guards.md#the-machines-token)): under config.json
 `guards.refuse_token_read: true` (off by default), the owner guard (check `token`) refuses a session's `Read`, `Grep`,
 tool edit or shell call that reaches `<BRAIN_HOME>/ipc/token` (or `$BRAIN_IPC_TOKEN_FILE`), as it refuses `brain ipc

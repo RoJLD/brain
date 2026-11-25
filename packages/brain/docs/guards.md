@@ -9,7 +9,7 @@ closed »).
 | Hook | Tools | Decides |
 |---|---|---|
 | `guard.sh tool` (`brain.guards`) | `mcp__*__set_remote_control`, `mcp__*__set_session_permission_mode`, the app's `set_setting` for a Remote Control or permission key | refuses, but Remote Control's three exceptions |
-| `guard.sh tool` (`brain.guards`) | `mcp__ccd_session_mgmt__archive_session` | passes the archive case (a finished child, a hand-over's predecessor), else asks the owner's card |
+| `guard.sh tool` (`brain.guards`) | `mcp__ccd_session_mgmt__archive_session` | the archive case (a finished child, a hand-over's predecessor) at its automation level: allowed at auto, the native rule's at ask, refused at manual; else asks the owner's card (docs/automation.md « Enforcement ») |
 | `governor.sh` (`brain.governor`) | `mcp__*__start_session`, `Agent`, `Task`, `Workflow` | asks at WARN, refuses at CRITICAL, past a cap, or on a stale reading |
 
 Both are declared in `src/brain/adapters/claude/hooks/hooks.json`. A personal brain gets them with
@@ -733,6 +733,14 @@ engine refuses the Remote Control rule): going back to an older engine is the ow
 own settings that turn the hooks off are not read here: under `guards.owner_strict` the guard refuses a session's
 `disableAllHooks` (`GUARD_OFF`) and its disabling the core plugin (`enabledPlugins` set false by an edit or a shell
 write into Claude Code's settings, `claude plugin disable` or `uninstall` of it: `brain.guards._plugin_off`).
+
+Its level (wi-brain-automation-guard; docs/automation.md « Enforcement »): inside a case, the gesture's automation
+level decides. `archive_session` and the `set_remote_control` off before it read `session-archive`'s, the hand-over's
+on and off `handover-remote-control`'s: at `manual` the call is refused (logged `denied` with its case and level), at
+`ask` (the engine's default) the guard says nothing, as above, and the native rule decides, at `auto` it prints
+`permissionDecision: allow`. Outside a case nothing changes, but at `manual` an `archive_session` is refused instead of
+asked. `ask` reads `manual` in a permission mode with no card for an ask (`bypassPermissions`, `dontAsk`, none given):
+refused. Every row of these decisions carries the `level` it read.
 
 What it does not hold against: its inputs are files a session can write. The guard reads the app's session files
 themselves, each parsed at the call, never the index's cache (`<BRAIN_HOME>/cache/sessions-app.json`, a session

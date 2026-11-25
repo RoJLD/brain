@@ -1274,7 +1274,33 @@ def wanted(model: Model, ctx: Context, scope: str, adapter: Adapter | None = Non
             for t in adapter.translate(r.text):
                 if t not in out[r.verdict]:
                     out[r.verdict].append(t)
+    if scope == "user":
+        for tool, verdict in automation_rules()[0].items():
+            if tool not in out[verdict]:
+                out[verdict].append(tool)
     return out
+
+
+def automation_rules() -> tuple[dict[str, str], dict[str, list[str]]]:
+    """The app's tools of a session's gestures as native rules of the user scope (wi-brain-automation-guard,
+    brain.automation.native_rules: each tool at the highest level of its gestures, auto an allow rule, ask an ask
+    rule, manual a deny rule), and the rules a render takes out: ({tool: verdict}, {verdict: [tool]}), the second
+    each tool's two other verdicts, so that a level changed leaves no rule of the old one (an ask or a deny wins over
+    the new level's allow; an old allow would lift the new ask). An allow rule no guard sees here is withheld
+    (:func:`withheld`): the tool then gets no rule, and its allow is taken out."""
+    from . import automation
+    want: dict[str, str] = {}
+    gone: dict[str, list[str]] = {v: [] for v in VERDICTS}
+    for tool, info in automation.native_rules().items():
+        verdict = info["verdict"]
+        if verdict == "allow" and withheld(tool):
+            verdict = ""
+        else:
+            want[tool] = verdict
+        for v in VERDICTS:
+            if v != verdict:
+                gone[v].append(tool)
+    return want, gone
 
 
 def expired_rules(model: Model, ctx: Context, scope: str, adapter: Adapter | None = None) -> dict[str, list[str]]:
@@ -1287,6 +1313,9 @@ def expired_rules(model: Model, ctx: Context, scope: str, adapter: Adapter | Non
         gone = model.expired(r) or (r.verdict == "allow" and guard_covers(r.text) and bool(withheld(r.text)))
         if r.level in adapter.scopes[scope] and ctx.applies(r) and gone:
             out[r.verdict] += [t for t in adapter.translate(r.text) if t not in want[r.verdict] and t not in out[r.verdict]]
+    if scope == "user":   # the automation levels' rules of another verdict (automation_rules)
+        for v, tools in automation_rules()[1].items():
+            out[v] += [t for t in tools if t not in want[v] and t not in out[v]]
     return out
 
 
