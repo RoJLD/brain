@@ -150,19 +150,21 @@ def span(repo: Path, version: str, since: str = "", until: str = "") -> tuple[st
 
 def merged_prs(repo: Path, name: str, start: str, end: str) -> list[MergedPR]:
     """The PRs merged on the first-parent line of ``end`` since ``start``, oldest first, with the changelog fragments
-    each added."""
-    log = _git(repo, "log", "--first-parent", "--reverse", f"--format=%H{SEP}%cs{SEP}%B{END}", f"{start}..{end}")
+    each added: one ``git log`` whose diffs are against the first parent (a merge commit's: what its PR brought), not
+    one ``git diff`` a commit (hundreds of PRs since a tag took tens of seconds; brain wave plan reads them too)."""
+    log = _git(repo, "log", "--first-parent", "--reverse", "--diff-merges=first-parent", "--no-renames",
+               "--name-status", f"--format={END}%H{SEP}%cs{SEP}%B{SEP}", f"{start}..{end}")
     out = []
     for record in log.split(END):
-        if SEP not in record:
+        if record.count(SEP) < 3:
             continue
-        sha, day, body = record.strip("\n").split(SEP, 2)
+        sha, day, body, files = record.split(SEP, 3)
         pr = _pr_of(body)
         if pr is None:
             continue
         number, title = pr
-        added = _git(repo, "diff", "--name-only", "--diff-filter=A", "--no-renames", f"{sha}^1", sha).splitlines()
-        out.append(MergedPR(name, number, title, sha, day, [f for f in added if is_fragment(f)]))
+        added = [line.split("\t", 1)[1] for line in files.splitlines() if line.startswith("A\t")]
+        out.append(MergedPR(name, number, title, sha.strip(), day, [f for f in added if is_fragment(f)]))
     return out
 
 
@@ -238,6 +240,18 @@ def plan(store: Path, repos: list[tuple[str, Path]], version: str, since: str = 
     out.waiting = [i for i in wp.items_of(wid) if wp.status(i) in waves.OPEN and i not in out.to_close]
     out.earlier = {i: str((nodes[i].get("props") or {}).get("pr") or "") for i in out.to_close
                    if (nodes[i].get("props") or {}).get("pr")}
+    return out
+
+
+def overlay(wp: waves.Plan, repos: list[tuple[str, Path]], version: str) -> Plan:
+    """The mapping alone, for a plan that counts what merged as done (brain wave plan, brain next; wi-brain-wave-plan-
+    merged): the PRs merged since the last tag before ``version`` in ``repos``, each item they deliver sorted by its
+    status (``to_close``: the open ones, merged but not closed yet). A repo that cannot be read (no tag before
+    ``version``, git missing or failing, ``version`` not a release) is in ``skipped`` and maps nothing: its items stay
+    open, as a rebase merge's do."""
+    out = Plan(version, wp.resolve(version) or "")
+    _read(out, repos, "", "")
+    _map(out, wp, {k for k, n in wp.nodes.items() if n.get("type") == "WorkItem"})
     return out
 
 

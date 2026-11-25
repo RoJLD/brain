@@ -698,8 +698,16 @@ append-only logs keep naming it; a NEW that is another wave's former id is refus
 release a value names (`0.2.9 (decided ...)` is 0.2.9) from `--from` on, the earlier releases (already tagged) listed
 and left out, the other values (letters, free text) listed for the owner to place.
 
-`brain wave plan [X.Y.Z] [--at-once N] [--hot NAME]... [--json]` composes a wave's lots at zero token (default: the
-current wave; `brain.lots`): each open item's predicted surface (`brain collisions`': its features' CodeRefs, its
+`brain wave plan [X.Y.Z] [--at-once N] [--hot NAME]... [--include-merged | --no-merged] [--json]` composes a wave's
+lots at zero token (default: the current wave; `brain.lots`). First, the items merged but not closed count as done:
+`brain wave close-merged`'s mapping (`brain.closemerged.overlay`, git only: the PRs merged in the project's repos since
+the last tag before the wave's release, each mapped to its items by the changelog fragment it adds or an item id in its
+title) takes them out of the lots, the rounds and the quick-win slot's candidates and makes them satisfied
+prerequisites, the wave's own listed in the plan's head (« Merged, to close (N) », with the `close-merged --write` that
+closes them) and the others as prerequisites satisfied; a repo that cannot be read (no tag before the release, not a
+repo, git failing) maps nothing and is said, its items open, as are those of a PR merged by rebase (no trace on the
+branch). `--include-merged` keeps them in the lots, said merged; `--no-merged` reads no PR. Then each open item's
+predicted surface (`brain collisions`': its features' CodeRefs, its
 modules, the files it names), the items that share a file in one lot, run in the order of their `depends_on`; the hot
 files every PR adds to (the READMEs, CHANGELOGs, `formats.md`, `FEATURES.md`, `config.schema.json`, the `changes/`
 fragments; `--hot` adds one) counted apart and listed, to merge origin/main before the push. A lot that holds another's
@@ -710,7 +718,8 @@ forecast say now; it refuses nothing. While `usage.guard.wave_quota` is set, a r
 lots, and the plan says how many streams fit now: this session's live streams under `max_streams`, and the first
 round's lots, each at the sum of its items' recorded estimates (`props.cost_estimate`; none: the median session's),
 under `ask_over_pct` at the week's reset (docs/guards.md, « The wave quota gate »). `brain next` shows the current
-wave's first round, and that line.
+wave's first round, and that line; it counts the merged items done too (its wave's counts, its startable and open
+groups), said in one line.
 
 ### Item sizes
 

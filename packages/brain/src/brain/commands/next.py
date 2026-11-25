@@ -25,13 +25,28 @@ USAGE = """\
                  props.size); --explain: each score's parts and the values {owner} set (brain.ranking); the
                  release forecast: whether the current wave ships as the patch it is named for or as a minor, the
                  first PR that tipped it and why (release_check --preview of the engine checkout's origin/main,
-                 brain.nextrelease; advisory)
+                 brain.nextrelease; advisory); the items merged but not closed (brain wave close-merged's mapping,
+                 git only) count done, said in one line
 """
+
+
+def _merged(pl: waves.Plan, repos: list) -> tuple[dict, dict]:
+    """The current wave's items merged but not closed (brain.lots.merged_of): counted done in brain next too."""
+    pend = waves.pending_waves(pl)
+    if not pend or not repos:
+        return {}, {}
+    try:
+        return lots.merged_of(pl, pend[0], repos)
+    except Exception:   # noqa: BLE001 - a summary: brain next prints the waves whatever git says
+        return {}, {}
 
 
 def cmd_next(args, root: Path) -> int:
     store = _store(args, root)
-    rep = waves.next_report(waves.load(store, root))
+    repos = [(r.name, r.path) for r in _repos(args, root)]
+    pl = waves.load(store, root)
+    merged = _merged(pl, repos)
+    rep = waves.next_report(lots.as_done(pl, merged[1]))
     wp = None
     if rep["current"] is not None:
         try:
@@ -39,19 +54,29 @@ def cmd_next(args, root: Path) -> int:
         except SystemExit:
             name = ""
         try:
-            wp = lots.plan(store, root, rep["current"]["id"], name)
+            wp = lots.plan(store, root, rep["current"]["id"], name, merged=merged if merged[0] else None)
         except Exception:   # noqa: BLE001 - the lots are a summary: brain next prints the waves whatever they say
             wp = None
-    fc = nextrelease.forecast([r.path for r in _repos(args, root)]) if rep["current"] is not None else None
+    fc = nextrelease.forecast([path for _, path in repos]) if rep["current"] is not None else None
     if args.json:
-        print(json.dumps(rep | {"lots": wp.as_dict() if wp else None, "forecast": fc}, indent=2, ensure_ascii=False))
+        print(json.dumps(rep | {"lots": wp.as_dict() if wp else None, "forecast": fc, "merged": merged[0] or None},
+                         indent=2, ensure_ascii=False))
     else:
         out = waves.render_next(rep, explain=args.explain)
         if rep["current"] is not None:   # under the current wave's head
-            out[1:1] = [f"  {line}" for line in nextrelease.lines(fc, rep["current"]["release"])]
+            out[1:1] = [f"  {line}" for line in nextrelease.lines(fc, rep["current"]["release"])
+                        + _merged_line(merged[0])]
         at = next((k for k, line in enumerate(out) if line.startswith("Next:")), len(out))
         print("\n".join(out[:at] + (lots.summary(wp) if wp else []) + out[at:]))   # the current wave's, before the next
     return 0
+
+
+def _merged_line(m: dict) -> list[str]:
+    items = (m or {}).get("items") or {}
+    if not items:
+        return []
+    return [f"merged, to close ({len(items)}), counted done: {', '.join(items)} "
+            f"(brain wave close-merged {m['release']} --write)"]
 
 
 def register(sub, ctx) -> None:
