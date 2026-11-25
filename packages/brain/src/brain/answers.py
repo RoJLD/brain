@@ -322,25 +322,38 @@ def settle(project: str, ddrs: list[dict], at: str = "") -> list[dict]:
     the answer's); one of another answer, captured no later than it, retired (superseded, as ``--captured`` would
     judge it stale); one captured after it (the owner answered again since) left for ``--captured``. The rows
     written."""
-    from . import defaults   # the engine, not the hook's part
     want = {d["id"]: d.get("answer") or {} for d in ddrs if d.get("id")}
     rows = []
     for c in unrecorded("", project) if want else []:
         ans = want.get(c.get("ddr"))
-        if ans is None:
-            continue
-        same = not unanswered(c.get("answer")) and sorted(c.get("choices") or []) == sorted(
-            ans.get("choices") or []) and _norm(c.get("other")) == _norm(ans.get("other"))
-        if not same and ans.get("at") and c.get("at") and defaults.before(ans["at"], c["at"]):
-            continue
-        row = {"v": 1, "id": c["id"], "at": at or _now(), "ddr": c["ddr"], "captured_at": c.get("at") or "",
-               "pr": "", "via": ans.get("via") or "cli"}
-        if not same:
-            row["retired"] = (f"answered by hand at {ans.get('at') or '?'} with another answer, after this capture: "
-                              "superseded, retired")
-        rows.append(row)
+        row = _settle_row(c, ans, at) if ans is not None else None
+        if row:
+            rows.append(row)
     _append(RECORDED, rows)
     return rows
+
+
+def _same_answer(capture: dict, ans: dict) -> bool:
+    """Whether ``capture`` holds the answer ``ans`` gave by hand: the same choices and the same other, normalised."""
+    return (not unanswered(capture.get("answer"))
+            and sorted(capture.get("choices") or []) == sorted(ans.get("choices") or [])
+            and _norm(capture.get("other")) == _norm(ans.get("other")))
+
+
+def _settle_row(capture: dict, ans: dict, at: str) -> dict | None:
+    """The recorded row that settles ``capture`` against the hand answer ``ans``: recorded when it holds the same
+    answer, retired when it holds another one captured no later than it; None when it was captured after the hand
+    answer (the owner answered again since: left for ``--captured``)."""
+    from . import defaults   # the engine, not the hook's part
+    same = _same_answer(capture, ans)
+    if not same and ans.get("at") and capture.get("at") and defaults.before(ans["at"], capture["at"]):
+        return None
+    row = {"v": 1, "id": capture["id"], "at": at or _now(), "ddr": capture["ddr"],
+           "captured_at": capture.get("at") or "", "pr": "", "via": ans.get("via") or "cli"}
+    if not same:
+        row["retired"] = (f"answered by hand at {ans.get('at') or '?'} with another answer, after this capture: "
+                          "superseded, retired")
+    return row
 
 
 def _run(cmd: list[str], cwd: Path, check: bool = True) -> subprocess.CompletedProcess:
