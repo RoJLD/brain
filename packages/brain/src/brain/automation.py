@@ -64,37 +64,54 @@ def _rank(level: str) -> int:
     return gestures.LEVELS.index(level)
 
 
+def _shape_error(data, label: str) -> str:
+    """Why ``data`` is no layer this engine reads ('' when it is): not an object, a ``v`` other than
+    :data:`SECTION_V` (absent reads 1), or ``levels`` not an object."""
+    if not isinstance(data, dict):
+        return f"{label} is a {type(data).__name__}, not an object"
+    v = data.get("v", SECTION_V)
+    if type(v) is int and v > SECTION_V:   # type(): a bool is no version
+        return f"{label}: v{v} is written by a newer brain, which this one cannot read: brain update"
+    if type(v) is not int or v != SECTION_V:
+        return f"{label}: v is {v!r}, not {SECTION_V}"
+    levels = data.get("levels", {})
+    return "" if isinstance(levels, dict) else \
+        f"{label}: levels is a {type(levels).__name__}, not an object of gesture id -> level"
+
+
+def _issue(gid: str, level) -> tuple[str, str]:
+    """(kind, what) of a level this engine does not take as written: ``('', '')`` when it does; ``floor`` a floor
+    gesture above manual; ``type`` a level that is not a string (config.json's schema refuses it); ``note`` an id the
+    catalogue does not hold (ignored), a level it does not know or one above the gesture's ceiling (read manual)."""
+    a = gestures.automation(gid)
+    if a is None:
+        kind = "a retired gesture" if gid in gestures.RETIRED else "no gesture of this engine's catalogue"
+        return "note", f"{kind}, ignored (brain automation list)"
+    if level not in gestures.LEVELS:
+        return ("note" if isinstance(level, str) else "type"), \
+            f"{level!r} is no level ({', '.join(gestures.LEVELS)}): it reads manual"
+    if gestures.effective(a, level) == level:
+        return "", ""
+    if a.floor:
+        return "floor", f"{level}, but {gid} is the floor's ({a.floor}): no config lifts it, it reads manual"
+    return "note", f"{level} is above its ceiling, {a.ceiling}: it reads manual"
+
+
 def parse(data, name: str, where: str) -> Layer:
     """A layer from ``data``, the ``automation`` section's value or the machine file's content: an object with ``v``
-    (absent reads 1) and ``levels``; another shape, or a ``v`` this engine does not know, is an error (fail closed)."""
+    (absent reads 1) and ``levels``; another shape, or a ``v`` this engine does not know, is an error (fail closed).
+    What it holds this engine ignores or reads manual is a note."""
     layer = Layer(name, where, present=True)
     label = f"{where} automation" if name != "machine" else where
-    if not isinstance(data, dict):
-        layer.error = f"{label} is a {type(data).__name__}, not an object"
+    layer.error = _shape_error(data, label)
+    if layer.error:
         return layer
-    v = data.get("v", SECTION_V)
-    if isinstance(v, bool) or not isinstance(v, int) or v != SECTION_V:
-        layer.error = (f"{label}: v{v} is written by a newer brain, which this one cannot read: brain update"
-                       if isinstance(v, int) and not isinstance(v, bool) and v > SECTION_V
-                       else f"{label}: v is {v!r}, not {SECTION_V}")
-        return layer
-    levels = data.get("levels", {})
-    if not isinstance(levels, dict):
-        layer.error = f"{label}: levels is a {type(levels).__name__}, not an object of gesture id -> level"
-        return layer
-    layer.levels = {str(k): x for k, x in levels.items()}
+    layer.levels = {str(k): x for k, x in data.get("levels", {}).items()}
     layer.notes += [f"{label}: unknown key {k!r}, ignored (a newer brain's?)" for k in data if k not in _KNOWN_KEYS]
     for gid, level in layer.levels.items():
-        a = gestures.automation(gid)
-        if a is None:
-            kind = "a retired gesture" if gid in gestures.RETIRED else "no gesture of this engine's catalogue"
-            layer.notes.append(f"{label}.levels {gid!r}: {kind}, ignored (brain automation list)")
-        elif level not in gestures.LEVELS:
-            layer.notes.append(f"{label}.levels {gid!r}: {level!r} is no level ({', '.join(gestures.LEVELS)}): "
-                               "it reads manual")
-        elif gestures.effective(a, level) != level:
-            why = f"{gid} is the floor's ({a.floor})" if a.floor else f"above its ceiling, {a.ceiling}"
-            layer.notes.append(f"{label}.levels {gid!r}: {level} is {why}: it reads manual")
+        what = _issue(gid, level)[1]
+        if what:
+            layer.notes.append(f"{label}.levels {gid!r}: {what}")
     return layer
 
 
@@ -218,31 +235,25 @@ def check(cfg) -> list[str]:
     """What config.json's ``automation`` section breaks that its schema cannot say (brain.config.check): a floor
     gesture set above manual (no config lifts the floor: an error in both modes). An id the catalogue does not hold, a
     level that is not one of the three and one above a gesture's ceiling are notes in read mode (an older engine
-    reading a newer config; they read manual or are ignored), errors in strict mode (CI: the engine there is the pin)."""
+    reading a newer config; they read manual or are ignored), errors in strict mode (CI: the engine there is the pin).
+    A section this engine cannot read is an error, every gesture then reading manual (its schema says why too)."""
     data = cfg.data if isinstance(cfg.data, dict) else {}
-    if KEY not in data or not isinstance(data[KEY], dict) or not isinstance(data[KEY].get("levels"), dict):
-        return []   # absent, or a shape the schema refuses already
+    if KEY not in data:
+        return []
     from . import config, schema
-    if schema.newer(config.FILE, data.get("v"), schema.known_v("config")) or data[KEY].get("v", SECTION_V) != SECTION_V:
-        return []   # a newer brain's file or section: refused as a whole, its other keys not judged
+    if schema.newer(config.FILE, data.get("v"), schema.known_v("config")):
+        return []   # a newer brain's file: refused as a whole, its other keys not judged
+    shape = _shape_error(data[KEY], f"{config.FILE}: {KEY}")
+    if shape:
+        return [f"{shape} (every gesture reads manual)"]
     errors: list[str] = []
     where = f"{config.FILE}: {KEY}.levels"
-    for gid, asked in data[KEY]["levels"].items():
-        a = gestures.automation(str(gid))
-        if a is not None and a.floor and asked in gestures.LEVELS and asked != "manual":
-            errors.append(f"{where} {gid!r}: {asked}, but {gid} is the floor's ({a.floor}): no config lifts it, it "
-                          "reads manual (set it to manual or remove it)")
-            continue
-        if a is None:
-            kind = "a retired gesture" if gid in gestures.RETIRED else "no gesture of this engine's catalogue"
-            errors += schema.tolerate(f"{where} {gid!r}: {kind}, ignored (brain automation list)")
-        elif not isinstance(asked, str):
-            continue   # the schema's
-        elif asked not in gestures.LEVELS:
-            errors += schema.tolerate(f"{where} {gid!r}: {asked!r} is no level ({', '.join(gestures.LEVELS)}): it "
-                                      "reads manual")
-        elif gestures.effective(a, asked) != asked:
-            errors += schema.tolerate(f"{where} {gid!r}: {asked} is above its ceiling, {a.ceiling}: it reads manual")
+    for gid, asked in data[KEY].get("levels", {}).items():
+        kind, what = _issue(str(gid), asked)
+        if kind == "floor":
+            errors.append(f"{where} {gid!r}: {what} (set it to manual or remove it)")
+        elif kind == "note":
+            errors += schema.tolerate(f"{where} {gid!r}: {what}")
     return errors
 
 

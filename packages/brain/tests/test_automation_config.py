@@ -100,6 +100,7 @@ def test_an_unknown_gesture_id_is_ignored(tmp_path, monkeypatch):
 @pytest.mark.parametrize("section", [
     {"v": 2, "levels": {"session-archive": "auto"}},   # a newer brain's section
     {"v": "1", "levels": {}},
+    {"v": True, "levels": {"session-archive": "auto"}},   # a bool is no version (True == 1 in Python)
     {"v": 1, "levels": ["session-archive"]},
     "auto",
     {"v": None},
@@ -276,6 +277,12 @@ def test_the_schema_refuses_a_malformed_section(tmp_path, monkeypatch, section, 
     write_config(tmp_path, monkeypatch, section)
     errors = config.check()
     assert errors and any(part in e for e in errors), errors
+
+
+def test_a_section_this_engine_cannot_read_is_an_error_of_the_check(tmp_path, monkeypatch):
+    """A v the schema's const lets through (true == 1) still reads every gesture manual: the check says so."""
+    write_config(tmp_path, monkeypatch, {"v": True, "levels": {}})
+    assert "config.json: automation: v is True, not 1 (every gesture reads manual)" in config.check()
 
 
 def test_brain_check_reads_the_section(tmp_path, monkeypatch):
