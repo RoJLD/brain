@@ -1128,6 +1128,13 @@ The session that asks the owner records the answers, in one PR per batch (wi-bra
    have is said and left out. A brainstorm's asks, captured answers and applied ADR thus travel in its own branch's
    PR.
 
+An answer recorded by hand (`brain decision answer ID CHOICE`, or `--batch`) settles the question tool's capture of
+the same DDR (any session's, this project's): the capture of the same answer is marked recorded (no PR), one of
+another answer captured before it is retired (superseded), so `--captured` never proposes either again, nor writes it
+from the default branch while the answer by hand waits on a branch; a capture of another answer made after it (the
+owner answered again since) is left for `--captured`. `--dry-run` there prints the DDR as it would be written (with
+`--batch`, each answer) after every check, and writes nothing: no DDR, no view, no ledger row.
+
 `--batch` is strict: a value is an option's exact label (any case, `(Recommandé)` ignored) or its number; a shortened
 label is refused with the label it shortens, and the owner's own text is marked as such, `{"other": "..."}`. Its file
 may start with a BOM (UTF-8, or UTF-16 from Windows PowerShell's `>`). In an agent's session (`CLAUDECODE`),
