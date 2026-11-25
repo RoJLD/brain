@@ -18,6 +18,7 @@ from .. import (
     nextrelease,
     placement,
     projects,
+    propose,
     waveclose,
     waveimport,
     waverename,
@@ -85,6 +86,15 @@ USAGE = """\
                  items, its own lot), free, out (owner, later, a trigger), unparsed (listed with its text), none
                  (--all names them); then the questions: a choice, a conflict, a wave or an item named that is not
                  there; each line ends with its props.place form; writes nothing
+  brain wave propose [--waves N] [--from WAVE] [--items N] [--points N] [--at-once N] [--no-merged]
+                 [--against FILE] [--all] [--json]   the wave composer, at zero token (brain.propose): the N waves
+                 (default 3) after WAVE (default the last pending one) drafted from the open items' rank, depends_on,
+                 placements (brain wave placements), sizes in points and the capacity (--items, --points, else what
+                 the last reached waves closed); the items merged but not closed counted done (--no-merged: not
+                 read); each wave's items, standing batches, lots and rounds (brain wave plan's cutter), doors, size
+                 against the capacity and what waits on {owner}; then the eras' due items, the items left out with
+                 their reason, the questions (choices, conflicts, pins over capacity or before a prerequisite), the
+                 checks and the risks; --against an earlier --json says what moved; writes nothing
 """
 
 
@@ -134,6 +144,25 @@ def _placements(args, root: Path, store: Path) -> int:
         return 1
     rep = placement.report(plan, args.ids or None)
     print(json.dumps(rep, indent=2, ensure_ascii=False) if args.json else "\n".join(placement.render(rep, args.all)))
+    return 0
+
+
+def _propose(args, root: Path, store: Path) -> int:
+    try:
+        name = _project(args, root).name
+    except SystemExit:
+        name = ""
+    try:
+        repos = [(r.name, r.path) for r in _project_repos(args, root)] if not args.no_merged else []
+        prop = propose.propose(store, root, args.waves, args.start or "", repos, args.items, args.points,
+                               args.at_once, name, read_merged=not args.no_merged)
+        if args.against:
+            prop.diff = propose.against(prop, Path(args.against))
+    except (ValueError, OSError) as exc:
+        print(f"brain wave propose: {exc}", file=sys.stderr)
+        return 1
+    print(json.dumps(prop.as_dict(), indent=2, ensure_ascii=False) if args.json
+          else "\n".join(propose.render(prop, args.all)))
     return 0
 
 
@@ -278,6 +307,8 @@ def cmd_wave(args, root: Path) -> int:
             return _close_merged(args, root, store)
         if args.wave_cmd == "check":
             return _check(args, root, store)
+        if args.wave_cmd == "propose":
+            return _propose(args, root, store)
         if args.wave_cmd == "placements":
             return _placements(args, root, store)
         return _import(args, store)
@@ -350,6 +381,20 @@ def register(sub, ctx) -> None:
     wl.add_argument("ids", nargs="*", metavar="ID", help="these work items only (default: every open one)")
     wl.add_argument("--all", action="store_true", help="name the items with no placement text too")
     wl.add_argument("--json", action="store_true", help=f"the data, as JSON (format {placement.FORMAT})")
+    wo = wv.add_parser("propose", help="the wave composer: the next waves drafted from rank, depends_on, placements, "
+                                       "sizes and capacity, cut into lots; the out list and the questions (zero "
+                                       "token, writes nothing)")
+    wo.add_argument("--waves", type=_positive, default=3, help="the waves to draft (default 3)")
+    wo.add_argument("--from", dest="start", metavar="WAVE", help="the wave after which to draft (its id or release; "
+                                                                "default: the last pending wave)")
+    wo.add_argument("--items", type=_positive, help="a wave's items at most (default: what the last reached waves "
+                                                    "closed)")
+    wo.add_argument("--points", type=_positive, help="a wave's points at most (S 1, M 2, L 4, XL 8)")
+    wo.add_argument("--at-once", type=_positive, help=f"the PRs one machine verifies at once (default {lots.AT_ONCE})")
+    wo.add_argument("--no-merged", action="store_true", help="do not read the merged PRs (their items stay open)")
+    wo.add_argument("--against", metavar="FILE", help="an earlier --json proposal: what moved since")
+    wo.add_argument("--all", action="store_true", help="every item left out, not the first 20")
+    wo.add_argument("--json", action="store_true", help=f"the data, as JSON (format {propose.FORMAT})")
 
 
 run = cmd_wave
