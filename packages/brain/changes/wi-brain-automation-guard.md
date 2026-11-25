@@ -1,4 +1,4 @@
-section: Changed
+section: Changes
 
 - The automation levels enforced (`wi-brain-automation-guard`, spec-brain-automation-levels S3; docs/automation.md
   « Enforcement »): the guard hook reads `session-archive`'s level on `archive_session` (and on the
