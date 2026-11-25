@@ -16,7 +16,7 @@ from pathlib import Path
 
 from .. import (alerts, bundles, classes, codeindex, config, crossstore, decisions, defaults, docsgraph, features,
                 gates, graph, links, lint, markers, milestones, modulemap, modules, neutral, ownerwaits, permissions,
-                pins, presets, projects, public, readme, records, reference, render, scopes, sizing, skew, specs,
+                pins, placement, presets, projects, public, readme, records, reference, render, scopes, sizing, skew, specs,
                 stacks, tidy, tiers, vault, views, waves)
 from ..inventory import AuditError
 from ._common import _now, _on_main, _project, _queue_changed, _repos, _scope, _store_label
@@ -105,7 +105,7 @@ def _plan_checks(project: projects.Project, root: Path, store: Path, stale: view
     errors = waves.problems(plan)
     for line in errors:
         print(f"error: plan: {line}")
-    for line in waves.warnings(plan):
+    for line in waves.warnings(plan) + placement.warnings(plan):
         print(f"warning: plan: {line}")
     view = _plan_view(project, root, store)
     if waves.stale(root, store, view):
