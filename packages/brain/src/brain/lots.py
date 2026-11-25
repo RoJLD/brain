@@ -549,13 +549,7 @@ def plan(store: Path, root: Path | None, wave: str = "", project: str = "", at_o
     wid = _wave_id(pl, wave, store)
     if merged is None and repos and read_merged:
         merged = merged_of(pl, wid, repos)
-    said: dict = {}
-    if merged:
-        said, found = dict(merged[0]), merged[1]
-        if include_merged:
-            said["counted"] = "open"
-        else:
-            pl = as_done(pl, found)
+    pl, said = _overlaid(pl, merged, include_merged)
     history = history_hot(repos) if repos else {}
     units = units_of(pl, resume.Store.load(store), wid, tuple(hot), tuple((history.get("files") or {})))
     for i, u in units.items():
@@ -584,6 +578,18 @@ def _history_of(history: dict, units: dict[str, Unit]) -> dict:
     touched = {h: v for h, v in (history.get("files") or {}).items()
                if any(meet(e, h) for u in units.values() for e in u.hot)}
     return {"files": touched, "read": history.get("read") or {}, "skipped": history.get("skipped") or {}}
+
+
+def _overlaid(pl: waves.Plan, merged: tuple[dict, dict] | None, include_merged: bool) -> tuple[waves.Plan, dict]:
+    """(the plan the lots are cut from, what the plan says of the merged items): them counted done, or kept open and
+    said so with ``include_merged``."""
+    if not merged:
+        return pl, {}
+    said, found = dict(merged[0]), merged[1]
+    if include_merged:
+        said["counted"] = "open"
+        return pl, said
+    return as_done(pl, found), said
 
 
 def _wave_id(pl: waves.Plan, wave: str, store: Path) -> str:
