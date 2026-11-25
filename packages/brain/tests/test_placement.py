@@ -230,6 +230,18 @@ def test_item_show_without_a_registry_has_no_organ_line(tmp_path, monkeypatch, c
     assert json.loads(capsys.readouterr().out)["organ"] is None
 
 
+def test_a_registry_that_does_not_parse_leaves_item_and_features_show_without_an_organ(tmp_path, monkeypatch,
+                                                                                         capsys):
+    root = _cli(tmp_path, monkeypatch, registry="- {id: P2, name: [unclosed\n")   # a half-written entry
+    assert cli.main(["--project", "lab", "--root", str(root), "item", "show", "doc-1"]) == 0
+    out = capsys.readouterr().out
+    assert "doc-1" in out and "organ:" not in out
+    assert cli.main(["--project", "lab", "--root", str(root), "item", "show", "doc-1", "--json"]) == 0
+    assert json.loads(capsys.readouterr().out)["organ"] is None
+    assert cli.main(["--project", "lab", "--root", str(root), "features", "show", "feat-a", "--json"]) == 0
+    assert json.loads(capsys.readouterr().out)["organ"] is None
+
+
 def test_features_show_prints_the_organ_line_and_its_json(tmp_path, monkeypatch, capsys):
     root = _cli(tmp_path, monkeypatch)
     base = ["--project", "lab", "--root", str(root), "features", "show"]
