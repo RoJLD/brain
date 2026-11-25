@@ -39,7 +39,7 @@ from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
 
-from . import collisions, governor, quota, resume, wavegate, waves
+from . import closemerged, collisions, governor, quota, resume, wavegate, waves
 
 HOT = ("README.md", "CHANGELOG.md", "FEATURES.md", "formats.md", "config.schema.json", "changes/")
 AT_ONCE = 3   # the PRs one machine verifies at once: each runs the whole suite locally, ~10 minutes on all cores
@@ -57,6 +57,7 @@ class Unit:
     after: list[str] = field(default_factory=list)      # its open prerequisites in the wave
     outside: list[str] = field(default_factory=list)    # its open prerequisites outside the wave
     usd: float | None = None                             # its recorded estimate (props.cost_estimate's usd=)
+    merged: list[str] = field(default_factory=list)      # its merged PRs, when --include-merged keeps it
 
     @property
     def known(self) -> bool:
@@ -85,9 +86,10 @@ class WavePlan:
     hot: dict[str, list[str]]
     caps: dict
     slot: dict = field(default_factory=dict)   # the wave's quick-win slot (brain.waves.quickwin_slot)
+    merged: dict = field(default_factory=dict)  # merged but not closed (:func:`merged_of`)
 
     def as_dict(self) -> dict:
-        return {"wave": self.wave, "id": self.wid, "caps": self.caps, "slot": self.slot,
+        return {"wave": self.wave, "id": self.wid, "caps": self.caps, "slot": self.slot, "merged": self.merged,
                 "rounds": [[asdict(self.lots[n - 1]) for n in r] for r in self.rounds],
                 "conflicts": self.conflicts, "hot": self.hot,
                 "unknown": sorted(u.id for u in self.units.values() if not u.known),
@@ -354,13 +356,48 @@ def quota_answer(fc: dict, now: datetime) -> tuple[str, str]:
     return level, f"{words} (the last forecast, {fc.get('now') or 'undated'})"
 
 
+def merged_of(pl: waves.Plan, wid: str, repos: list[tuple[str, Path]]) -> tuple[dict, dict[str, list[str]]]:
+    """(what the plan says of them, item -> its merged PRs): the items merged but not closed (brain.closemerged's
+    mapping, git only: the PRs merged in ``repos`` since the last tag before the wave's release, by changelog fragment
+    or an item id in the title), the wave's and the others (a prerequisite outside the wave), with the ranges read and
+    the repos not read (their items stay open); the items merged that still hold work (a standing item, a step left,
+    a gesture awaited: closemerged.kept_open) stay open, said ``kept`` (the wave's) and ``kept_outside`` (another
+    wave's: close-merged --write would close them too, so the close advice weighs both, :func:`all_kept`)."""
+    ov = closemerged.overlay(pl, repos, pl.label(wid))
+    found = {i: [p.ref for p in prs] for i, prs in ov.to_close.items()}
+    members = set(pl.items_of(wid))
+    return {"release": ov.version, "items": {i: v for i, v in found.items() if i in members},
+            "outside": {i: v for i, v in found.items() if i not in members}, "ranges": ov.ranges,
+            "skipped": ov.skipped, "kept": {i: why for i, why in ov.kept.items() if i in members},
+            "kept_outside": {i: why for i, why in ov.kept.items() if i not in members},
+            "counted": "done"}, found
+
+
+def as_done(pl: waves.Plan, ids) -> waves.Plan:
+    """The plan with ``ids`` counted done: out of the open items, the lots and the quick-win slot's candidates, and
+    satisfied as a prerequisite."""
+    ids = set(ids)
+    if not ids:
+        return pl
+    nodes = {k: ({**n, "status": "done"} if k in ids else n) for k, n in pl.nodes.items()}
+    return waves.build(nodes, pl.edges, pl.ddrs)
+
+
 def plan(store: Path, root: Path | None, wave: str = "", project: str = "", at_once: int | None = None,
-         hot: tuple[str, ...] = ()) -> WavePlan:
-    """The plan of ``wave`` (its release or id; default the current wave, brain next's) in ``store``.
+         hot: tuple[str, ...] = (), repos: list[tuple[str, Path]] | None = None,
+         include_merged: bool = False, merged: tuple[dict, dict] | None = None) -> WavePlan:
+    """The plan of ``wave`` (its release or id; default the current wave, brain next's) in ``store``. With ``repos``
+    ((name, checkout)), the items their merged PRs deliver and not closed yet count as done (:func:`merged_of`; or
+    ``merged``, that pair already read), unless ``include_merged`` keeps them in the lots, said merged.
     :class:`ValueError` when the store holds no such wave."""
     pl = waves.load(store, root)
     wid = _wave_id(pl, wave, store)
+    if merged is None and repos:
+        merged = merged_of(pl, wid, repos)
+    pl, said = _overlaid(pl, merged, include_merged)
     units = units_of(pl, resume.Store.load(store), wid, tuple(hot))
+    for i, u in units.items():
+        u.merged = (said.get("items") or {}).get(i, [])
     caps = caps_in_force(root, project, at_once)
     lots, conflicts = lots_of(units)
     rounds = rounds_of(lots, units, caps["at_once"])
@@ -373,7 +410,19 @@ def plan(store: Path, root: Path | None, wave: str = "", project: str = "", at_o
         for lot in group:
             lot.round = r
     return WavePlan(pl.label(wid), wid, units, numbered, [[lot.n for lot in g] for g in rounds], conflicts,
-                    _hot_shared(units, numbered), caps, waves.quickwin_slot(pl, wid))
+                    _hot_shared(units, numbered), caps, waves.quickwin_slot(pl, wid), said)
+
+
+def _overlaid(pl: waves.Plan, merged: tuple[dict, dict] | None, include_merged: bool) -> tuple[waves.Plan, dict]:
+    """(the plan the lots are cut from, what the plan says of the merged items): them counted done, or kept open and
+    said so with ``include_merged``."""
+    if not merged:
+        return pl, {}
+    said, found = dict(merged[0]), merged[1]
+    if include_merged:
+        said["counted"] = "open"
+        return pl, said
+    return as_done(pl, found), said
 
 
 def _wave_id(pl: waves.Plan, wave: str, store: Path) -> str:
@@ -403,6 +452,8 @@ def _item(u: Unit) -> str:
     notes = [u.priority] if u.priority else []
     if u.status != "todo":
         notes.append(u.status)
+    if u.merged:
+        notes.append(f"merged: {', '.join(u.merged)}")
     if u.after:
         notes.append(f"after {', '.join(u.after)}")
     if u.outside:
@@ -426,6 +477,60 @@ def _lot_lines(wp: WavePlan, lot: Lot) -> list[str]:
             f"    {what}{extra}"]
 
 
+def merged_lines(wp: WavePlan) -> list[str]:
+    """The plan's lines on what merged and is not closed yet: the wave's items (out of the lots, or in them with
+    --include-merged), the ones kept open for the work they still hold, the prerequisites outside the wave counted
+    satisfied, the repos not read."""
+    m = wp.merged
+    if not m:
+        return []
+    items = m.get("items") or {}
+    how = ("still in the lots (--include-merged)" if m.get("counted") == "open"
+           else "out of the lots, counted done")
+    advice = close_advice(m["release"], all_kept(m))
+    head = f"Merged, to close ({len(items)}): " + (
+        ", ".join(f"{i} ({', '.join(v)})" for i, v in items.items()) + f"; {how}; {advice}" if items else "none")
+    return [head] + _merged_tail(m)
+
+
+def _merged_tail(m: dict) -> list[str]:
+    """Under the plan's merged head: the items kept open (the wave's, then another wave's), those outside the wave,
+    the repos not read."""
+    outside = m.get("outside") or {}
+    lines = [f"  merged, work left, kept open{where} ({len(ids)}): "
+             + ", ".join(f"{i} ({why})" for i, why in ids.items()) for where, ids in _kept_groups(m)]
+    if outside:
+        what = "counted open" if m.get("counted") == "open" else "satisfied as prerequisites"
+        lines.append(f"  merged outside the wave, {what} ({len(outside)}): " + ", ".join(sorted(outside)))
+    return lines + [f"  merged PRs not read in {repo}: {why} (its items stay open)"
+                    for repo, why in (m.get("skipped") or {}).items()]
+
+
+def _kept_groups(m: dict) -> list[tuple[str, dict]]:
+    """(where said, item -> why) of the merged items kept open: the wave's, then another wave's; empty ones left out."""
+    groups = (("", m.get("kept") or {}), (" outside the wave", m.get("kept_outside") or {}))
+    return [(where, ids) for where, ids in groups if ids]
+
+
+def all_kept(m: dict) -> dict:
+    """The merged items kept open, the wave's and another wave's: close-merged --write would close them all."""
+    return (m.get("kept") or {}) | (m.get("kept_outside") or {})
+
+
+def kept_lines(m: dict) -> list[str]:
+    """brain next's short lines on the merged items kept open: the wave's, then another wave's, ids only."""
+    return [f"merged, work left, kept open{where} ({len(ids)}): {', '.join(ids)}" for where, ids in _kept_groups(m)]
+
+
+def close_advice(release: str, kept: dict) -> str:
+    """The command that closes the merged items: close-merged's --write, or, while some are kept open (it would close
+    them too), each closed by hand."""
+    if not kept:
+        return f"brain wave close-merged {release} --write"
+    return (f"brain item close each (brain wave close-merged {release} --write would close the kept ones too, with "
+            "their work left)")
+
+
 def render(wp: WavePlan) -> list[str]:
     c = wp.caps
     lines = [f"Wave {wp.wave} ({wp.wid}): {len(wp.units)} open item(s) in {len(wp.lots)} lot(s) over "
@@ -439,6 +544,7 @@ def render(wp: WavePlan) -> list[str]:
              + ("; no lot can start now" if not c["now"] else "")]
     if c.get("streams"):
         lines.append(f"Streams that fit now: {c['streams']['line']}")
+    lines += merged_lines(wp)
     line = waves.slot_line(wp.slot, wp.wid)
     if line:
         lines.append(line[:1].upper() + line[1:])
@@ -462,7 +568,10 @@ def summary(wp: WavePlan) -> list[str]:
     if not wp.rounds:
         return [f"Lots (brain wave plan {wp.wave}): nothing open"]
     first = wp.rounds[0]
-    out = [f"Lots (brain wave plan {wp.wave}): {len(wp.lots)} lot(s) over {len(wp.rounds)} round(s); round 1:"]
+    n_merged = len((wp.merged or {}).get("items") or {})
+    merged = f", {n_merged} merged to close apart" if n_merged and wp.merged.get("counted") == "done" else ""
+    out = [f"Lots (brain wave plan {wp.wave}): {len(wp.lots)} lot(s) over {len(wp.rounds)} round(s){merged}; "
+           "round 1:"]
     out += [f"  Lot {n}: {', '.join(wp.lots[n - 1].items)}" + ("" if wp.lots[n - 1].checked else " (unchecked)")
             for n in first]
     if wp.caps.get("streams"):

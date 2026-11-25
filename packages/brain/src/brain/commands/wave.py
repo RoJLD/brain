@@ -49,8 +49,12 @@ USAGE = """\
   brain wave import [--from X.Y.Z] [--write]   the items' free-text props.wave: a wave proposed per release it names
                  (X.Y.Z; --from: the first one, the earlier ones already tagged are listed and left out), the other
                  values listed to place by {owner}; --write creates the waves and their items' part_of edges
-  brain wave plan [X.Y.Z] [--at-once N] [--hot NAME]... [--json]   the wave's lots (default: the current wave), at
-                 zero token: its open items grouped by the files their predicted surface shares (brain collisions'),
+  brain wave plan [X.Y.Z] [--at-once N] [--hot NAME]... [--include-merged | --no-merged] [--json]   the wave's
+                 lots (default: the current wave), at zero token: the items merged but not closed (close-merged's
+                 mapping over the repos with a changelog fragment folder, git only) counted done and listed apart,
+                 those still holding work (standing, props.left, external_blocker) kept open (--include-merged keeps
+                 them all in the lots, --no-merged reads no PR), then the open items grouped by the files their
+                 predicted surface shares (brain collisions'),
                  hot files (READMEs, CHANGELOGs, formats.md, FEATURES.md, config.schema.json, changes/) counted apart,
                  in rounds by their depends_on, the lots that unblock the most first, at most the sessions cap less the
                  master's and N PRs verified at once (3) a round; the predicted conflicts, the hot files shared, the
@@ -141,7 +145,9 @@ def _plan(args, root: Path, store: Path) -> int:
     except SystemExit:
         name = ""
     try:
-        wp = lots.plan(store, root, args.version or "", name, args.at_once, tuple(args.hot or ()))
+        repos = [] if args.no_merged else [(r.name, r.path) for r in _project_repos(args, root)]
+        wp = lots.plan(store, root, args.version or "", name, args.at_once, tuple(args.hot or ()), repos,
+                       args.include_merged)
     except ValueError as exc:
         print(f"brain wave plan: {exc}", file=sys.stderr)
         return 1
@@ -294,6 +300,13 @@ def register(sub, ctx) -> None:
     wp.add_argument("--at-once", type=_positive, help=f"the PRs one machine verifies at once (default {lots.AT_ONCE})")
     wp.add_argument("--hot", action="append", help="a hot file more, counted apart (a name, or a folder ending in /; "
                                                    "repeatable)")
+    merged = wp.add_mutually_exclusive_group()
+    merged.add_argument("--include-merged", action="store_true",
+                        help="keep the items merged but not closed in the lots, said merged (default: counted done, "
+                             "listed apart)")
+    merged.add_argument("--no-merged", action="store_true",
+                        help="read no merged PR: every item not closed counts open (the plan before close-merged's "
+                             "mapping)")
     wp.add_argument("--json", action="store_true", help="the data, as JSON")
 
 
