@@ -151,7 +151,8 @@ def _commit(repo, files: dict, message: str) -> None:
         (repo / path).parent.mkdir(parents=True, exist_ok=True)
         (repo / path).write_text(text, encoding="utf-8")
     run_git(repo, "add", "-A")
-    subprocess.run(["git", "-C", str(repo), "commit", "-q", "-m", message], check=True, env=dict(os.environ, **GIT_ENV))
+    subprocess.run(["git", "-C", str(repo), "commit", "-q", "-m", message], check=True,
+                   env=dict(os.environ, **GIT_ENV), timeout=60)
 
 
 @pytest.fixture
