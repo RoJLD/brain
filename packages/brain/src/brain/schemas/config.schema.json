@@ -364,6 +364,14 @@
         "ids_strict": {"type": "boolean", "description": "true: brain project add takes a name of 2 to 40 characters only, never an alias another project or a container of the scope tree holds (brain.projectids, the project ids' doctrine). Optional; default false: a kebab-case name from a letter of any length, as 0.5.1 (a name already registered, the tree's root or a container's id still refused; brain check's own rules on aliases unchanged); the refusals 0.6.0 adds.", "default": false}
       }
     },
+    "automation": {
+      "type": "object", "additionalProperties": false, "required": ["v"],
+      "description": "The automation levels (brain.automation, docs/automation.md; since 0.7.0): how much of each recurring owner gesture of the automation catalogue (brain automation list) the brain does, by gesture id. Optional; without it, or for a gesture it leaves out, a gesture keeps the engine's default, today's behaviour: a new engine never raises a level by itself. Raising a level is the owner's (the floor gesture automation-raise): their merge of config.json is the raise; lowering one is anyone's, here or in the machine file <BRAIN_HOME>/automation.json (same shape), which may only lower. brain automation explain says where each level comes from. An older engine notes the section as an unknown key and keeps every default.",
+      "properties": {
+        "v": {"const": 1, "description": "The section's version (brain.automation.SECTION_V). An engine that does not know it reads every gesture as manual (fail closed); brain config --check refuses it."},
+        "levels": {"type": "object", "additionalProperties": {"type": "string"}, "description": "{gesture id: level}: manual (the owner types the commands), ask (the gesture is prepared, one confirmation runs it) or auto (it runs when its conditions hold, reported after). A level changes who confirms, never the conditions. An id this engine's catalogue does not hold (a newer engine's, or a retired one) is ignored, a note (strict, CI: an error); a level that is not one of the three, or above the gesture's ceiling, reads manual, a note likewise; a floor gesture above manual reads manual and is an error in both modes (no config lifts the floor)."}
+      }
+    },
     "guards": {
       "type": "object", "additionalProperties": false,
       "description": "The owner guard's options (brain.guards, brain.gestures: the owner's gestures, declared once).",

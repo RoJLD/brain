@@ -25,8 +25,10 @@ The automation catalogue (:data:`CATALOGUE`, wi-brain-automation-catalogue) list
 ones a session runs too (the engine clone's pull, a session's archive, Remote Control at a hand-over, the merge go, a
 workflow's launch), each with its stable id, its ceiling (manual, ask or auto: the highest level the engine allows),
 its default (its level today), its conditions, where it runs and its floor category (AUTO-1: :data:`FLOOR`); a level
-above the ceiling, unknown or unreadable, and any level of a floor gesture, reads manual (:func:`effective`). It is
-data only: no guard reads it yet (``brain automation list`` prints it; docs/automation.md).
+above the ceiling, unknown or unreadable, and any level of a floor gesture, reads manual (:func:`effective`).
+brain.automation resolves each gesture's level from its default, config.json's ``automation`` section and the machine
+file that may only lower (wi-brain-automation-config); no guard reads a level yet (``brain automation list`` and
+``explain`` print them; docs/automation.md).
 """
 
 from __future__ import annotations
@@ -213,8 +215,8 @@ CATALOGUE: tuple[Automation, ...] = (
 
 
 def automation(gesture_id: str) -> Automation | None:
-    """The catalogue's gesture ``gesture_id``, None when it has none (an unknown id: the automation config of
-    wi-brain-automation-config is to ignore it with a warning, so that an older engine reads a newer config)."""
+    """The catalogue's gesture ``gesture_id``, None when it has none (an unknown id: config.json's automation section
+    ignores it with a note, brain.automation, so that an older engine reads a newer config)."""
     return next((a for a in CATALOGUE if a.id == gesture_id), None)
 
 
@@ -231,9 +233,9 @@ def effective(a: Automation | None, level) -> str:
 
 
 def catalogue() -> dict:
-    """The catalogue as data (``brain automation list --json``): its version, the levels, where a gesture runs, the
-    floor's categories, the retired ids and each gesture with its level (the engine's default; the source of a level
-    is ``default`` until config.json's automation section, wi-brain-automation-config) and whether it is locked."""
+    """The catalogue as data: its version, the levels, where a gesture runs, the floor's categories, the retired ids
+    and each gesture with its level at the engine's default (source ``default``) and whether it is locked.
+    ``brain automation list --json`` prints brain.automation.catalogue, this with each level resolved."""
     return {"v": CATALOGUE_V, "levels": list(LEVELS), "runs": dict(RUNS), "floor": list(FLOOR),
             "retired": list(RETIRED),
             "gestures": [{"id": a.id, "label": a.label, "level": effective(a, a.default), "source": "default",

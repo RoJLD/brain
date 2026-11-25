@@ -298,7 +298,8 @@ def allowed(cfg: Config) -> dict[str, str]:
 
 def check(root: Path | None = None) -> list[str]:
     """What is wrong in config.json: unreadable, the schema (brain.schema's validator), a declared path that does not
-    exist, an owner other than its stores'. [] when there is no file (the defaults apply)."""
+    exist, an owner other than its stores', the probes, the typologies and the automation levels (brain.automation.check:
+    a floor gesture above manual). [] when there is no file (the defaults apply)."""
     cfg = load(root)
     if cfg.error:
         return [cfg.error] if cfg.file else []
@@ -326,9 +327,10 @@ def check(root: Path | None = None) -> list[str]:
             if who != ident["owner"]:
                 errors.append(f"{FILE}: identity.owner {ident['owner']!r}, but {store}/schema.yaml says owner: {who}")
     # what the schema cannot say of a probe: each kind's keys, durations, the program
-    from . import depprobes, typologies
+    from . import automation, depprobes, typologies
     errors += depprobes.check(cfg)
     errors += typologies.check(cfg)   # a brain's labels and own ids of the typology catalog
+    errors += automation.check(cfg)   # the automation levels: the floor, an id or level this engine does not know
     return errors
 
 

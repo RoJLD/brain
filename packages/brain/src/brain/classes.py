@@ -207,6 +207,8 @@ ENGINE_STORES = {
     "personal": Known("$BRAIN_HOME/personal.json", "sealed", "truth-local",
                       "the pointer to this machine's personal brain"),
     "profile": Known("$BRAIN_HOME/profile.json", "sealed", "truth-local", "this machine's frozen tier profile"),
+    "automation": Known("$BRAIN_HOME/automation.json", "sealed", "truth-local",
+                        "this machine's automation levels, which may only lower config.json's (brain.automation)"),
     "venv": Known("$BRAIN_HOME/venv", "sealed", "install", "the brain command's own Python environment"),
     "venvs": Known("$BRAIN_HOME/venvs", "sealed", "install",
                    "brain update's slots, one venv per engine version; venv links to the active one (brain.slots)"),
