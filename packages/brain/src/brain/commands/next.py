@@ -35,10 +35,21 @@ def _merged(pl: waves.Plan, repos: list) -> tuple[dict, dict]:
     pend = waves.pending_waves(pl)
     if not pend or not repos:
         return {}, {}
+    return lots.merged_of(pl, pend[0], repos)   # a repo git cannot read is skipped there, its items open
+
+
+def _lots(args, root: Path, store: Path, rep: dict, merged: tuple[dict, dict]):
+    """The current wave's plan (brain.lots), None without a current wave or when it cannot be cut."""
+    if rep["current"] is None:
+        return None
     try:
-        return lots.merged_of(pl, pend[0], repos)
-    except Exception:   # noqa: BLE001 - a summary: brain next prints the waves whatever git says
-        return {}, {}
+        name = _project(args, root).name
+    except SystemExit:
+        name = ""
+    try:
+        return lots.plan(store, root, rep["current"]["id"], name, merged=merged)
+    except Exception:   # noqa: BLE001 - the lots are a summary: brain next prints the waves whatever they say
+        return None
 
 
 def cmd_next(args, root: Path) -> int:
@@ -47,16 +58,7 @@ def cmd_next(args, root: Path) -> int:
     pl = waves.load(store, root)
     merged = _merged(pl, repos)
     rep = waves.next_report(lots.as_done(pl, merged[1]))
-    wp = None
-    if rep["current"] is not None:
-        try:
-            name = _project(args, root).name
-        except SystemExit:
-            name = ""
-        try:
-            wp = lots.plan(store, root, rep["current"]["id"], name, merged=merged if merged[0] else None)
-        except Exception:   # noqa: BLE001 - the lots are a summary: brain next prints the waves whatever they say
-            wp = None
+    wp = _lots(args, root, store, rep, merged)
     fc = nextrelease.forecast([path for _, path in repos]) if rep["current"] is not None else None
     if args.json:
         print(json.dumps(rep | {"lots": wp.as_dict() if wp else None, "forecast": fc, "merged": merged[0] or None},
