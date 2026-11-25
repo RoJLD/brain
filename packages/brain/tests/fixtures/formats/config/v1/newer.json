@@ -3,5 +3,6 @@
   "identity": {"owner": "Ada", "pronouns": "they"},
   "registry": "projects.yaml",
   "usage": {"guard": {"warn": 80, "critical": 95, "night": 50}},
+  "automation": {"v": 1, "levels": {"engine-clone-pull": "auto", "a-newer-gesture": "ask"}, "notify": true},
   "telemetry": {"enabled": false}
 }
