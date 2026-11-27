@@ -10,10 +10,14 @@ gathered without a model is gathered here, at zero token:
   to run them; with the procedure lens, the pairs of texts at or above ``overlap.warn`` that a touched file takes
   part in (brain.overlap, read from the checkout's files), so that lens sees a rule or a note restated elsewhere;
 - ``brain review stamp HEAD --findings N --fixed M [--contested K] [--note FILE]`` records that the review ran on that
-  head, with its counts (the error score's record, wi-brain-review-error-score);
+  head, with its counts (the error score's record, wi-brain-review-error-score); with ``--note FILE`` alone, the
+  counts are the note's finding lines' (:func:`counts_of`: a refuted line never open). It refuses
+  (:func:`stamp_refusal`) while the worktree holds a change HEAD lacks, and with ``--pr`` a head that is not the
+  PR's pushed one (wi-brain-review-stamp-from-note);
 - ``brain review rounds PR`` lists the review rounds of a PR from its stamps (one stamp per head reviewed) and says
   when they do not converge: the high findings not halved over ``CONVERGE`` rounds, the next step being a structural
-  decision of the owner rather than another round (wi-brain-review-convergence); it says, never refuses;
+  decision of the owner rather than another round (wi-brain-review-convergence); the same note stamped again on the
+  PR's next head is a re-stamp of its round, not a new one; it says, never refuses;
 - ``brain review check HEAD`` says whether that head was reviewed: the merge gate's question (wi-brain-merge-gate);
   with ``--pr N`` (or ``--body FILE``), it also refuses while a pinned decision the change touches is neither kept
   nor overridden in the PR body (``pins_gate``, brain.pins, wi-brain-decision-pins).
@@ -223,10 +227,11 @@ def stamp_file(head: str) -> Path:
 
 
 def stamp(head: str, findings: int, fixed: int, contested: int = 0, note: str = "", repo: Path | None = None,
-          high: int | None = None, **where: str) -> Path:
+          high: int | None = None, refuted: int = 0, **where: str) -> Path:
     """Record that the review of ``head`` ran, with its counts; a full sha only (a short one could name two).
-    ``where`` (pr, item, stream, wave, wave_id, project, repo_slug) places it for the error score; the note's finding lines
-    (:func:`parse_note`) are kept as its rows; ``high``, the confirmed high findings of the round (else its rows')."""
+    ``where`` (pr, item, stream, wave, wave_id, project, repo_slug) places it for the error score; the note's finding
+    lines (:func:`parse_note`) are kept as its rows; ``high``, the confirmed high findings of the round (else its
+    rows'); ``refuted``, the findings a skeptic refuted: recorded, outside ``findings``, never open."""
     if not re.fullmatch(r"[0-9a-f]{40}", head):
         if repo is None:
             raise ReviewError(f"{head}: a stamp is keyed by a full commit sha")
@@ -236,15 +241,68 @@ def stamp(head: str, findings: int, fixed: int, contested: int = 0, note: str = 
                           "the findings")
     if high is not None and not 0 <= high <= findings:
         raise ReviewError(f"high {high}: the high findings are among the {findings} finding(s)")
+    if refuted < 0:
+        raise ReviewError(f"refuted {refuted}: a count, 0 or more")
     f = stamp_file(head)
     f.parent.mkdir(parents=True, exist_ok=True)
     seq = 1 + max((r["seq"] for r in stamps() if _seq(r)), default=0)   # the stamping order within a second
     rec = {"v": 1, "head": head, "at": datetime.now(timezone.utc).isoformat(timespec="seconds"), "seq": seq,
            "findings": findings, "fixed": fixed, "contested": contested, "open": findings - fixed - contested,
            "note": note, **{k: str(v) for k, v in where.items() if k in PLACES and v}, "rows": parse_note(note),
-           **({"high": high} if high is not None else {})}
+           **({"high": high} if high is not None else {}), **({"refuted": refuted} if refuted else {})}
     f.write_text(json.dumps(rec, indent=2) + "\n", encoding="utf-8", newline="\n")
     return f
+
+
+def counts_of(note: str) -> dict[str, int]:
+    """The counts of the note's finding lines (:func:`parse_note`): findings (the confirmed ones: a refuted line is
+    no finding, never open), fixed, contested and refuted; a line without an outcome, or ``open``, stays open.
+    :class:`ReviewError` when the note has no finding line: a review that found nothing says so with --findings 0."""
+    rows = parse_note(note)
+    if not rows:
+        raise ReviewError("the note has no finding line (« - high correctness fixed: ... », docs/review.md): write "
+                          "them, or give --findings N --fixed M (--findings 0 --fixed 0 for a review that found "
+                          "nothing)")
+    kept = confirmed(rows)
+    return {"findings": len(kept), "fixed": sum(1 for r in kept if r.get("outcome") == "fixed"),
+            "contested": sum(1 for r in kept if r.get("outcome") == "contested"), "refuted": len(rows) - len(kept)}
+
+
+def pr_head(repo: Path, pr: str) -> str:
+    """The head GitHub reads for PR ``pr`` of the checkout's repo (gh pr view); :class:`ReviewError` when gh cannot
+    say it."""
+    try:
+        r = subprocess.run(["gh", "pr", "view", str(pr), "--json", "headRefOid"], cwd=repo, capture_output=True,
+                           text=True, encoding="utf-8", errors="replace", timeout=120)
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        raise ReviewError(f"PR {pr}'s head cannot be read: {exc}") from None
+    try:
+        head = str(json.loads(r.stdout).get("headRefOid") or "") if r.returncode == 0 else ""
+    except (ValueError, AttributeError):
+        head = ""
+    if not re.fullmatch(r"[0-9a-f]{40}", head):
+        raise ReviewError(f"PR {pr}'s head cannot be read: {(r.stderr or r.stdout).strip()[:200] or 'no head'}")
+    return head
+
+
+def stamp_refusal(repo: Path, head: str, pr: str = "", github: bool = True, read_head=None) -> str:
+    """Why ``head`` (a full sha) may not be stamped from the checkout ``repo``, '' when it may: when it is the
+    checkout's HEAD, the worktree holds no uncommitted or untracked change (a fix not yet committed is not what
+    the stamp names); with ``pr`` in a repo of a GitHub remote (``github``), it is the PR's pushed head
+    (``read_head(repo, pr)``, default :func:`pr_head`; one gh cannot read refuses too)."""
+    if _git(repo, "rev-parse", "HEAD").strip() == head:
+        dirty = [x for x in _git(repo, "status", "--porcelain", "--untracked-files=normal").splitlines() if x.strip()]
+        if dirty:
+            return (f"the worktree holds {len(dirty)} change(s) HEAD lacks ({', '.join(x[3:] for x in dirty[:3])}): "
+                    "commit and push the fix, then stamp the head it makes")
+    if pr and github:
+        try:
+            pushed = (read_head or pr_head)(repo, pr)
+        except ReviewError as exc:
+            return f"{exc}: the stamp names the PR's pushed head, run it once gh can read the PR"
+        if pushed != head:
+            return f"{head[:12]} is not PR {pr}'s pushed head ({pushed[:12]}): push it, then stamp"
+    return ""
 
 
 def _show(repo: Path, rev: str, rel: str) -> str | None:
@@ -556,16 +614,31 @@ def converging(highs: list[int | None], n: int = CONVERGE) -> dict:
             "structural decision (a DDR) instead of another round"}
 
 
+def _restamps(recs: list[dict]) -> list[tuple[dict, int]]:
+    """(the round's latest stamp, how many times it was re-stamped) of stamps in order: a stamp whose non-empty note is
+    the one before's same note re-stamps that round."""
+    out: list[tuple[dict, int]] = []
+    for r in recs:
+        note = str(r.get("note") or "").strip()
+        if out and note and note == str(out[-1][0].get("note") or "").strip():
+            out[-1] = (r, out[-1][1] + 1)
+        else:
+            out.append((r, 0))
+    return out
+
+
 def rounds(pr: str, slug: str = "", recs: list[dict] | None = None, n: int = CONVERGE) -> dict:
     """The review rounds of PR ``pr`` (of the repo ``slug``, when both the stamp and the call name one): one per head
     stamped, in the stamping order (:func:`_order`), with its counts and high findings, and :func:`converging`'s
-    verdict."""
+    verdict. A stamp whose note is the round before's same note is a re-stamp of that round on a new head (a catch-up,
+    a pushed fix), not a new round: the round takes its head and counts, ``restamped`` counts them."""
     pool = stamps() if recs is None else [x for x in map(_normal, recs) if x]
     mine = [r for r in pool if str(r.get("pr") or "") == str(pr)
             and (not slug or not r.get("repo_slug") or r["repo_slug"] == slug)]
     rows = [{"round": i + 1, "head": r["head"], "at": str(r.get("at") or ""), "findings": r["findings"],
              "fixed": r.get("fixed", 0), "contested": r.get("contested", 0), "open": r.get("open", 0),
-             "high": high_of(r)} for i, r in enumerate(sorted(mine, key=_order))]
+             "high": high_of(r), **({"restamped": n} if n else {})}
+            for i, (r, n) in enumerate(_restamps(sorted(mine, key=_order)))]
     return {"pr": str(pr), "repo": slug, "rounds": rows, "verdict": converging([r["high"] for r in rows], n)}
 
 
@@ -576,7 +649,8 @@ def rounds_lines(rep: dict) -> list[str]:
     lines = [f"review rounds of {name}: {len(rep['rounds'])} round(s)"]
     lines += [f"  {r['round']:>2}  {r['head'][:12]}  {r['at'][:16]}  findings {r['findings']} (high "
               f"{'-' if r['high'] is None else r['high']}), fixed {r['fixed']}, contested {r['contested']}, open "
-              f"{r['open']}" for r in rep["rounds"]]
+              f"{r['open']}" + (f"; re-stamped {r['restamped']} time(s), the same note" if r.get("restamped") else "")
+              for r in rep["rounds"]]
     return lines + [f"  {rep['verdict']['state']}: {rep['verdict']['why']}"]
 
 

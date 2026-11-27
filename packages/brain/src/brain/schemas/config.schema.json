@@ -451,6 +451,23 @@
       "properties": {
         "sidecars": {"type": "boolean", "description": "true: each save writes a sha256 sidecar (<name>.sha256: the hash, size and mtime) and each load checks it; a file whose size and mtime match but whose hash does not (bit rot) is set aside with a note (its copy kept, never saved over); a missing sidecar loads as before. Default false. $BRAIN_STATE_INTEGRITY=1 or 0 overrides it."}
       }
+    },
+    "merge": {
+      "type": "object", "additionalProperties": false,
+      "description": "The merge gate per repo (brain merge-ready, brain ship, brain gate: brain.mergeready). Optional: a repo it does not name has a CI and every PR of it needs a review stamp.",
+      "properties": {
+        "repos": {
+          "type": "object",
+          "description": "{owner/name: {ci, review_exempt}}, the repo named as its GitHub remote says (any case).",
+          "additionalProperties": {
+            "type": "object", "additionalProperties": false,
+            "properties": {
+              "ci": {"type": "boolean", "description": "false: the repo has no CI. A head that reports no check does not block the merge gate's ci check in brain ship: the merger's own local checks (the views regenerated or the store checked, the targeted tests, on the tree it merges) stand for it, and no CI is awaited after a catch-up. brain merge-ready alone still blocks it (it runs no local check). Default true."},
+              "review_exempt": {"type": "array", "items": {"type": "string", "minLength": 1}, "description": "Globs (** any folders, * within one name) of the files that are no code: records, docs, views. A PR every file of which one covers needs no review stamp (the review-every-pr rule asks code PRs only); a PR with one file none covers needs one. Default none: every PR needs one."}
+            }
+          }
+        }
+      }
     }
   },
   "$defs": {

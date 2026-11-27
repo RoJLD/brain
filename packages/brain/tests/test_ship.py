@@ -413,6 +413,58 @@ def test_every_block_of_the_merge_gate_refuses_the_pr(tmp_path, check):
     assert ship.entries()[0]["status"] == "refused"
 
 
+def _no_ci_gate(blocks=()):
+    """A gate for a repo that declares no CI: its ci check blocks marked local (brain.mergeready.LOCAL)."""
+    def gate(top, pr, slug, remote, view):
+        g = _gate(blocks)(top, pr, slug, remote, view)
+        ci = next(c for c in g.checks if c["check"] == "ci")
+        ci.update(ok=False, detail=mergeready.no_ci_detail(slug), local=True)
+        return g
+    return gate
+
+
+def test_a_no_ci_repos_pr_is_merged_on_the_mergers_local_checks(tmp_path):
+    """wi-brain-gate-local-checks-no-ci: the local ci block does not refuse; the targeted tests run, and the gate's
+    stamp records ci answered by them."""
+    hub, fake = _setup(tmp_path, 7)
+    rep = _merger(fake, _no_ci_gate()).run()
+    assert [d["status"] for d in rep.done] == ["merged"], rep.done
+    assert fake.ran(r"-m brain test --changed origin/main")
+    rec = json.loads(mergeready.stamp_path("acme/lab", HEAD).read_text(encoding="utf-8"))
+    assert rec["local"] == ["ci"] and "ci" in rec["checks"]   # told apart from a CI's green
+    assert "local" not in json.loads(mergeready.stamp(mergeready.Gate(8, "acme/lab", NEW, "main")).read_text(
+        encoding="utf-8"))
+
+
+def test_a_no_ci_repos_caught_up_head_awaits_no_ci_and_a_failed_local_check_refuses_the_merge(tmp_path):
+    hub, fake = _setup(tmp_path, 7, rules=[BEHIND])
+    p = hub.prs[("acme/lab", 7)]
+    p["new_checks"] = "RUNNING"   # no CI to await: a running check never holds the merge
+    lag = []
+
+    def lagging(cmd, cwd):   # GitHub reads the pushed head one poll late
+        lag.append(1)
+        if len(lag) == 1:
+            return ship.Result(0, json.dumps({"headRefOid": HEAD, "statusCheckRollup": []}))
+        return hub.view(cmd, cwd)
+    fake.rules.insert(0, (r"^gh pr view 7 .*headRefOid,statusCheckRollup", lagging))
+    slept = []
+    rep = _merger(fake, _no_ci_gate(), sleep=slept.append, ci_wait=3600).run()
+    assert rep.ok and "gated again" in rep.done[0]["reason"], rep.done
+    assert len(lag) == 2 and slept == [ship.CI_POLL] and fake.ran(f"--match-head-commit {NEW}")
+    hub, fake = _setup(tmp_path, 8, rules=[(r"test --changed", ship.Result(1, "1 failed"))])
+    rep = _merger(fake, _no_ci_gate()).run()
+    assert rep.done[-1]["status"] == "failed" and "the targeted tests" in rep.done[-1]["reason"]
+    assert not fake.ran("pr merge")
+
+
+def test_a_local_ci_block_never_waives_another_block(tmp_path):
+    hub, fake = _setup(tmp_path, 7)
+    rep = _merger(fake, _no_ci_gate(blocks=("review",))).run()
+    assert rep.done[0]["status"] == "refused" and "review: review detail" in rep.done[0]["reason"]
+    assert "ci:" not in rep.done[0]["reason"] and not fake.ran("worktree add")
+
+
 def test_fresh_alone_is_the_mergers_own_job_and_a_gate_with_no_check_refuses(tmp_path):
     hub, fake = _setup(tmp_path, 7, rules=[BEHIND])
     assert _merger(fake, _gate(blocks=("fresh",))).run().ok

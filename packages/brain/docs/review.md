@@ -61,9 +61,23 @@ the lines that concern it; a line no test holds is a finding.
 ## 3. The stamp
 
 ```bash
+brain review stamp HEAD --note <packet>/review.md --pr 123 --item ID   # the counts from the note's lines
 brain review stamp <head> --findings N --fixed M --contested K --note review.md --pr 123 --item ID
 brain review check <head>        # exit 0 once that head is reviewed
 ```
+
+With `--note` and no `--findings`/`--fixed`, the counts are the note's finding lines' (below): the findings are its
+confirmed lines (a `refuted` one is recorded as `refuted`, never a finding, never open), `fixed` and `contested` its
+lines of that outcome, and a line without an outcome (or `open`) stays open; a note with no finding line is refused
+(`--findings 0 --fixed 0` says a review found nothing). `--findings` and `--fixed` go together and win over the note.
+The stamp is refused, and nothing written, while the worktree holds a change HEAD lacks (a fix not yet committed is
+not what the stamp names) when the head stamped is the checkout's HEAD, and, with `--pr` in a repo whose origin is on
+GitHub, unless the head is the PR's pushed head as `gh pr view` reads it (gh that cannot say refuses too)
+(`wi-brain-review-stamp-from-note`). So the order is: commit the fix, `brain review stamp HEAD --note FILE` (no
+`--pr` yet: `brain gate`, before the push, asks the stamp of HEAD), `brain gate`, push, then `brain review stamp HEAD
+--note FILE --pr N` on that same head (the stamp file is the head's: it gains the PR) before `brain merge-ready` or
+`brain ship`. Keep the note outside the checkout (the packet's folder, the shared notes): an untracked note in the
+worktree counts as a change HEAD lacks.
 
 The stamp is keyed by the head's full sha, in `<BRAIN_HOME>/reviews/stamps/`: a push after the review is a new head,
 reviewed again. Its counts are the error score's record (`wi-brain-review-error-score`), and `brain review check` is
@@ -112,7 +126,10 @@ brain review rounds 123 --rounds 4 --json
 ```
 
 Each head stamped with `--pr` is one round of that PR's review, in the order stamped (the stamp's `at`, then its
-`seq` for the stamps of one second; a head stamped again moves to the last round): its findings, its **high**
+`seq` for the stamps of one second; a head stamped again moves to the last round), but a stamp whose note is the
+round before's same note is a re-stamp of that round on the PR's next head (a catch-up merge, a pushed fix): the
+round takes its head and counts and says `re-stamped N time(s)`; a stamp without a note is a round of its own: its
+findings, its **high**
 findings (`--high`, else the note's confirmed `high` lines, 0 when its finding lines hold no confirmed high; a round
 of 0 findings has 0), fixed, contested and open. The stop rule (the owner's,
 2026-11-17): over the last three rounds (`--rounds N`), the latest round's high findings are at most half the

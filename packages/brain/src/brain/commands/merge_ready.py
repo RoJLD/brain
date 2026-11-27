@@ -16,9 +16,12 @@ USAGE_ORDER = 161
 USAGE = """\
   brain merge-ready PR [--repo-dir D] [--slug OWNER/NAME] [--remote R] [--no-fetch] [--json]   the merge gate: the
                         PR open and not a draft; the base and its head fetched again, main not moved under a file the
-                        PR touches; brain merge-check on the head against that merge base; every CI check green on it;
-                        the review's stamp for the head with no finding open; for a public repo, the public check's
-                        stamp; nothing private in the PR's title and body. Exit 0, a stamp under
+                        PR touches; brain merge-check on the head against that merge base; every CI check green on it
+                        (a repo whose config.json merge.repos.<owner/name>.ci is false and whose head reports none: a
+                        local block, which only brain ship's local checks answer); the review's stamp for the head
+                        with no finding open (none for a PR whose every file merge.repos.<owner/name>.review_exempt
+                        covers); for a public repo, the public check's stamp; nothing private in the PR's title and
+                        body (a private repo's: no secret). Exit 0, a stamp under
                         <BRAIN_HOME>/merge-ready and the head to merge (gh pr merge --match-head-commit), else exit 1
                         and what blocks (2: gh or git failed)
   brain merge-ready PR --with PR... [--test] [--python P] [...]   the PRs merged together, in that order: each

@@ -21,9 +21,12 @@ USAGE = """\
                  token: the diff, the touched files at the head, brain audit --diff's output, the lenses the touched
                  surfaces call for, the invariants and failure modes to test (the item's brief section with --item)
                  and how to run them (default origin/main..HEAD, into <BRAIN_HOME>/reviews/<head>)
-  brain review stamp HEAD --findings N --fixed M [--contested K] [--note FILE] [--pr N] [--item ID] [--wave W]
-                 [--stream S] [--high H]   the review of that head ran: its counts, the note's finding lines, its
-                 place, its high findings (--high, else the note's high lines)
+  brain review stamp HEAD (--findings N --fixed M [--contested K] | --note FILE) [--note FILE] [--pr N] [--item ID]
+                 [--wave W] [--stream S] [--high H]   the review of that head ran: its counts (else the note's
+                 finding lines: findings, fixed, contested, refuted, a refuted one never open), the note's finding
+                 lines, its place, its high findings (--high, else the note's high lines). Refused while the worktree
+                 holds a change HEAD lacks, and with --pr (a GitHub remote) unless the head is the PR's pushed head;
+                 the same note stamped on the PR's next head is a re-stamp of its round, not a new round
   brain review rounds PR [--rounds N] [--json]   the review rounds of a PR from its stamps (one per head: findings,
                  high, fixed, contested, open) and the stop rule: not converging when the high findings have not halved
                  over the last N rounds (default 3): ask the owner a structural decision instead of another round; it
@@ -86,25 +89,62 @@ def _slug(repo: Path) -> str:
         return repo.name
 
 
+def _counts(args, note: str) -> dict[str, int]:
+    """The stamp's counts: --findings and --fixed (with --contested) when given, else the note's finding lines
+    (brain.review.counts_of: a refuted line is never open)."""
+    given = [x is not None for x in (args.findings, args.fixed)]
+    if all(given):
+        refuted = review.counts_of(note)["refuted"] if review.parse_note(note) else 0
+        return {"findings": args.findings, "fixed": args.fixed, "contested": args.contested or 0, "refuted": refuted}
+    if any(given) or args.contested is not None:
+        raise review.ReviewError("--findings and --fixed go together (with --contested); without them, --note FILE's "
+                                 "finding lines give the counts")
+    if not args.note:
+        raise review.ReviewError("the counts: --findings N --fixed M, or --note FILE whose finding lines give them")
+    return review.counts_of(note)
+
+
+def _github(repo: Path) -> bool:
+    """Whether the checkout's origin is a GitHub repo (its PRs are GitHub's to read)."""
+    from .. import public
+    try:
+        return bool(public.repo_slug(review._git(repo, "remote", "get-url", "origin").strip()))
+    except review.ReviewError:
+        return False
+
+
 def _stamp(args, repo: Path) -> int:
-    """brain review stamp: the counts, the note and its finding lines, and where the review stands for the score."""
+    """brain review stamp: the counts (given, or the note's finding lines), the note, and where the review stands
+    for the score; refused while the worktree holds a change HEAD lacks, or a PR's pushed head is another commit."""
     note = Path(args.note).read_text(encoding="utf-8") if args.note else ""
+    c = _counts(args, note)
+    head = review._git(repo, "rev-parse", "--verify", f"{args.head}^{{commit}}").strip()
+    why = review.stamp_refusal(repo, head, args.pr or "", github=_github(repo))
+    if why:
+        raise review.ReviewError(f"review stamp refused: {why}")
     wave, wave_id, project = (_wave_of(repo, args.item or "", args.wave or "") if args.item or args.wave
                               else ("", "", ""))
-    f = review.stamp(args.head, args.findings, args.fixed, args.contested, note, repo, pr=args.pr or "",
+    f = review.stamp(head, c["findings"], c["fixed"], c["contested"], note, repo, pr=args.pr or "",
                      item=args.item or "", stream=args.stream or "", wave=wave, wave_id=wave_id, project=project,
-                     repo_slug=_slug(repo) if args.pr else "", high=args.high)
+                     repo_slug=_slug(repo) if args.pr else "", high=args.high, refuted=c["refuted"])
+    _said(args, c, f, wave, note)
+    return 0
+
+
+def _said(args, c: dict, f: Path, wave: str, note: str) -> None:
+    """The stamp's line, and what the stamp's arguments leave unsaid (no --pr, a note that counts otherwise)."""
     rows = review.confirmed(review.parse_note(note))
-    print(f"review: {f.stem[:12]} stamped ({args.findings} finding(s), {args.fixed} fixed, {args.contested} "
-          f"contested{f', wave {wave}' if wave else ''}): {f}")
+    refuted = f", {c['refuted']} refuted" if c["refuted"] else ""
+    print(f"review: {f.stem[:12]} stamped ({c['findings']} finding(s), {c['fixed']} fixed, {c['contested']} "
+          f"contested{refuted}, {c['findings'] - c['fixed'] - c['contested']} open"
+          f"{f', wave {wave}' if wave else ''}): {f}")
     if args.item and not args.pr:
         print("review: --item without --pr: this stamp counts as one review of this head; pass --pr so that the PR "
               "counts once, by its latest stamp", file=sys.stderr)
-    if note and len(rows) != args.findings:
-        print(f"review: the note describes {len(rows)} confirmed finding line(s), --findings says {args.findings} "
+    if note and len(rows) != c["findings"]:
+        print(f"review: the note describes {len(rows)} confirmed finding line(s), --findings says {c['findings']} "
               "(docs/review.md, « The note's finding lines »: the score's lens and cause counts read the lines)",
               file=sys.stderr)
-    return 0
 
 
 def _rounds(args, repo: Path) -> int:
@@ -226,13 +266,16 @@ def register(sub, ctx) -> None:
     pr.add_argument("--item", help="the item the PR delivers: its brief's « Invariants and failure modes to test » "
                                    "join the diff's in the packet")
     pr.add_argument("--json", action="store_true")
-    st = rv.add_parser("stamp", help="the review of HEAD ran: its counts")
+    st = rv.add_parser("stamp", help="the review of HEAD ran: its counts (given, or the note's finding lines)")
     st.add_argument("head")
-    st.add_argument("--findings", type=int, required=True)
-    st.add_argument("--fixed", type=int, required=True)
-    st.add_argument("--contested", type=int, default=0)
+    st.add_argument("--findings", type=int, help="the confirmed findings (a refuted one is none); with --fixed, "
+                                                 "else the note's finding lines count them")
+    st.add_argument("--fixed", type=int, help="the findings fixed (with --findings)")
+    st.add_argument("--contested", type=int, help="the findings contested with evidence (default 0)")
     st.add_argument("--note", help="the review note (a file), kept with the stamp; its finding lines "
-                                   "(« - high correctness A.b fixed: ... ») are the error score's rows")
+                                   "(« - high correctness A.b fixed: ... ») are the error score's rows and, without "
+                                   "--findings and --fixed, the counts: findings, fixed, contested, refuted (never "
+                                   "open); the same note on the PR's next head is a re-stamp, not a new round")
     st.add_argument("--pr", help="the PR's number: a PR stamped on several heads counts once, its latest")
     st.add_argument("--item", help="the item the PR delivers: its wave (brain.waves) places the stamp")
     st.add_argument("--wave", help="the wave, when no item says it (X.Y.Z)")
