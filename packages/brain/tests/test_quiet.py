@@ -142,3 +142,32 @@ def test_the_command_refuses_a_bad_duration_and_survives_no_registry(monkeypatch
     assert cli.main(["quiet", "--for", "9d"]) == 2
     assert capsys.readouterr().err.startswith("brain: ")
     assert cli.main(["quiet", "--off"]) == 0   # no registry: nothing to send the sum-up through, no failure
+
+
+def test_the_command_leaves_the_quiet_as_it_was_when_its_state_cannot_be_written(monkeypatch, capsys):
+    from brain import cli, stateio
+    monkeypatch.setattr(projects, "load", lambda *a, **k: {})
+
+    def full(*a, **k):
+        raise OSError("No space left on device")
+    with monkeypatch.context() as m:
+        m.setattr(stateio, "write_atomic", full)
+        assert cli.main(["quiet", "--for", "2h"]) == 1
+    assert capsys.readouterr().err == "brain: quiet: No space left on device; nothing changed\n"
+    assert cli.main(["quiet"]) == 0
+    assert "not quiet" in capsys.readouterr().out   # never started
+
+
+def test_the_command_prints_each_line_of_the_sum_up(monkeypatch, capsys):
+    from brain import cli
+    reg = {"demo": object()}
+    monkeypatch.setattr(projects, "load", lambda *a, **k: reg)
+    seen = []
+
+    def release(registry, *, now=None, dry_run=False):
+        seen.append((registry, dry_run))
+        return ["demo: 3 held, summed up", "acme: 1 held, summed up"]
+    monkeypatch.setattr(quiet, "release", release)
+    assert cli.main(["quiet", "--off", "--dry-run"]) == 0
+    assert capsys.readouterr().out.splitlines()[1:] == ["demo: 3 held, summed up", "acme: 1 held, summed up"]
+    assert seen == [(reg, True)]   # the registry passed through, the dry run too

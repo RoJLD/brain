@@ -69,30 +69,54 @@ class FakeCockpit:
 OVER = (130, 48)  # under 140 columns: the detail opens over the list
 
 
-def _hold_the_timer(app):
-    """The periodic read stopped once the app is up, and again each time a key restarts it: under load a test of
-    several seconds met a tick between a key and its assertion (a read after r's probe, a probe before the first
-    assertion). A test of the tick calls app.tick() itself."""
-    app.timer.pause()
-    restart = app._restart_timer
+class HeldApp(tui.CockpitApp):
+    """The cockpit with its periodic read created paused, at mount and each time a key restarts it: a test calls
+    app.tick() itself. Stopping the timer once the app was up left a window: on a slow runner a tick came before the
+    first assertion (a probe before ``fake.calls == [False]``, RoJLD/brain #332), and under load between a key and its
+    assertion (a read after r's probe)."""
 
-    def held():
-        restart()
-        app.timer.pause()
-    app._restart_timer = held
+    def set_interval(self, interval, callback=None, **kw):
+        if callback == self.tick:
+            kw["pause"] = True
+        return super().set_interval(interval, callback, **kw)
 
 
 def _run(test, size=(160, 48), **kw):
     async def main():
         fake = FakeCockpit()
-        app = tui.CockpitApp(fake, refresh=2.0, probe=300, **kw)
+        app = HeldApp(fake, refresh=2.0, probe=300, **kw)
         async with app.run_test(size=size) as pilot:
             await pilot.pause(0.2)
             await app.workers.wait_for_complete()
-            _hold_the_timer(app)
             await pilot.pause(0.1)
             await test(app, pilot, fake)
     asyncio.run(main())
+
+
+def test_the_held_app_never_ticks_on_its_own_and_the_cockpit_does():
+    """HeldApp's guarantee, which the tests of keys lean on: no read but the first and the ones a test asks for, even
+    past several intervals and after a key restarts the timer; the real cockpit reads at each interval."""
+    async def held():
+        fake = FakeCockpit()
+        app = HeldApp(fake, refresh=0.5, probe=300)
+        async with app.run_test(size=(160, 48)) as pilot:
+            for _ in range(2):  # two intervals and more, then again once the key restarted the timer
+                await pilot.pause(1.2)
+                await app.workers.wait_for_complete()
+                await pilot.press("plus")  # 0.5 s is the shortest: the timer restarted all the same, paused again
+        return fake.calls
+
+    async def real():
+        fake = FakeCockpit()
+        app = tui.CockpitApp(fake, refresh=0.5, probe=300)
+        async with app.run_test(size=(160, 48)) as pilot:
+            for _ in range(50):  # up to 5 s: on a loaded runner a tick may come while the first read is still busy
+                if True in fake.calls:
+                    break
+                await pilot.pause(0.1)
+        return fake.calls
+    assert asyncio.run(held()) == [False]
+    assert True in asyncio.run(real())  # its first tick probes (want_probe)
 
 
 def _ids(app, name):
@@ -530,7 +554,7 @@ def test_the_title_shows_the_version_and_the_check_never_delays_the_first_paint(
     monkeypatch.setattr(tui.handover, "prepare", lambda a, steps: handed.append((a.label, steps)) or {"script": "h"})
 
     async def main():
-        app = tui.CockpitApp(FakeCockpit(), refresh=2.0, probe=300)
+        app = HeldApp(FakeCockpit(), refresh=2.0, probe=300)
         async with app.run_test(size=(160, 48)) as pilot:
             await pilot.pause(0.2)
             assert app.title == f"brain {mine}" and app.update_info is None  # drawn while the check still waits
