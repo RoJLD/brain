@@ -143,16 +143,30 @@ runs, and the answer is exit 0 or the list of what blocks (exit 1; 2 when gh or 
 - **merge-check**: `brain merge-check` (above) on that head against the merge base: nothing main brought up to it is
   lost, a head that merged an older main included; a no-op for a head that merged nothing;
 - **ci**: every check GitHub reports on the head completed green (success, neutral or skipped); one still running or
-  failed blocks, and so does a head with no check at all;
+  failed blocks, and so does a head with no check at all. A repo whose `config.json` says it has no CI
+  (`merge.repos.<owner/name>.ci: false`, below) and whose head reports no check blocks marked `local`: `brain ship`'s
+  merger answers it with its own local checks (step 2 and 3 of the merge queue), `brain merge-ready` alone never;
 - **review**: `brain review stamp` recorded the review of this very head ([review.md](review.md)), with no finding left
   open (findings minus fixed minus contested). One narrow case carries the stamp of another head: a head that only
   merges the base into a reviewed head, that is a merge commit of two parents, the first one stamped, the second one
   on the base (its tip or before it), whose tree is git's own merge of the two (`git merge-tree` with the repo's merge
-  driver: no conflict, nothing changed by hand after the merge). Any other head needs its own stamp;
+  driver: no conflict, nothing changed by hand after the merge). Any other head needs its own stamp. A PR whose
+  every file a glob of `merge.repos.<owner/name>.review_exempt` covers (records, docs, views: the review rule asks
+  code PRs only) needs none: `n/a`, with the count of its files; one file no glob covers makes it a code PR;
 - **public**: for a repo of `config.json` `public.repos`, `brain check --public --history` stamped this head and the
   stamp is still valid (the push guard's own question); n/a for another repo;
-- **body**: the PR's title and body hold nothing `brain check --public` refuses (a term of `public.deny`, a secret, an
-  e-mail address or a home folder); public rules that do not load (a bad `public.patterns`) block too.
+- **body**: for a repo of `public.repos`, the PR's title and body hold nothing `brain check --public` refuses (a term
+  of `public.deny`, a secret, an e-mail address or a home folder); public rules that do not load (a bad
+  `public.patterns`) block too. For a private repo, a secret alone blocks: its PR may name its owner, its projects and
+  its hosts.
+
+The repo's merge settings are `config.json`'s `merge.repos`, keyed by `owner/name` (any case); a repo it does not
+name has a CI and every PR of it needs a review stamp:
+
+```json
+"merge": {"repos": {"acme/notes": {"ci": false,
+                                   "review_exempt": ["notes/**", "records/**", "docs/**", "*.md"]}}}
+```
 
 The repo is `--slug OWNER/NAME`, else the remote's GitHub URL, else the PR's own URL (gh runs in the checkout). A
 green answer writes `<BRAIN_HOME>/merge-ready/<owner>/<repo>/<head sha>.json` and names the head it checked: merge
@@ -234,8 +248,10 @@ order (never a `running` one a live merger holds):
 
 1. **the merge gate**, through its own function (`brain merge-ready`'s checks, above), on the PR's head: any check it
    blocks refuses the PR (`refused`, with the blocks), except `fresh`: main moving under the PR is what the merger
-   answers itself. A PR from a fork (or one gh does not say is not), or whose branch is the base or the default
-   branch, is refused too: the merger pushes to the base repo's PR branch only, never to the base;
+   answers itself, and a no-CI repo's `ci` (marked `local`): steps 2 and 3 are its checks, and the gate's stamp
+   records `ci` answered by them once they pass. A PR from a fork (or one gh does not say is not), or whose branch is
+   the base or the default branch, is refused too: the merger pushes to the base repo's PR branch only, never to the
+   base;
 2. a scratch worktree of the head the gate checked (no checkout hook run); when the head lacks main, main merged
    into it with the repo's merge driver (a conflict it leaves fails the PR: merge it by hand, push, queue it again);
    in a repo with a graph store, the views regenerated once and the store checked (`brain refresh --offline`; `brain
@@ -245,8 +261,9 @@ order (never a `running` one a live merger holds):
 4. a head merged with main is a new head, and it is gated like any other before its merge: for a repo of
    `public.repos`, `brain check --public --history` stamps it in the scratch before its push; it is pushed to the
    PR's branch (never forced: a push made since refuses it); its CI is awaited (every check GitHub reports on it
-   green: one failed fails the PR, and so does a check still running after an hour); then the merge gate runs on it
-   with nothing waived. Its review stamp is the reviewed head's only when the new head is git's own merge of main
+   green: one failed fails the PR, and so does a check still running after an hour; none for a repo that declares no
+   CI, whose local checks ran on this very tree); then the merge gate runs on it with nothing waived but a no-CI
+   repo's local `ci`. Its review stamp is the reviewed head's only when the new head is git's own merge of main
    into it (the gate's narrow rule above): regenerated views, or a conflict resolved, need a new stamp (`brain
    review stamp`), and the PR fails asking for it;
 5. the gate's stamp written for the head merged, then `gh pr merge N --match-head-commit <head>` with the merge

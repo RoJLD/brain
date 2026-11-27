@@ -17,8 +17,9 @@ twice or more).
 
   1. the merge gate (brain.mergeready.gate, the gate's own function, gh read through this module's runner): every
      check it blocks refuses the PR, but ``fresh`` (main moved under the PR's files): catching main up is the
-     merger's job. A PR from a fork, or whose branch is the base or the default branch, is refused: the merger
-     pushes to the base repo's PR branch only;
+     merger's job, and ``ci`` on a repo that declares no CI (config.json ``merge.repos.<owner/name>.ci: false``,
+     brain.mergeready.LOCAL): steps 2 and 3, the merger's own local checks, stand for it. A PR from a fork, or whose
+     branch is the base or the default branch, is refused: the merger pushes to the base repo's PR branch only;
   2. a scratch worktree of the PR's head (no checkout hook run); main merged into it when the head lacks it, with
      the repo's merge driver (a conflict it leaves fails the PR); in a repo with a graph store the views regenerated
      once and the store checked (``brain refresh --offline``, else ``brain check`` when nothing was merged); after a
@@ -27,10 +28,11 @@ twice or more).
      runs the whole suite);
   4. after a catch-up, the new head is gated like any head: for a public repo the public check stamps it before the
      push (``brain check --public --history``), it is pushed to the PR's branch, its CI is awaited (green, or the PR
-     fails), and the merge gate runs on it with no check waived (its review stamp carried only when it is git's own
-     merge of the base into the reviewed head, brain.mergeready.carried_review); then the gate's stamp is written
-     and ``gh pr merge N --match-head-commit <head>`` runs with the repo's allowed merge method, and the PR is read
-     back: merged at that head, or failed while still open; any other answer stops the run.
+     fails; none for a repo that declares no CI), and the merge gate runs on it with no check waived but a no-CI
+     repo's ``ci``, which the local checks on that same tree answered (its review stamp carried only when it is
+     git's own merge of the base into the reviewed head, brain.mergeready.carried_review); then the gate's stamp is
+     written and ``gh pr merge N --match-head-commit <head>`` runs with the repo's allowed merge method, and the PR
+     is read back: merged at that head, or failed while still open; any other answer stops the run.
 
   A PR that fails a step, or whose step raises, is marked failed with its reason and the merger goes on with the
   next. Every ``--batch`` PRs merged in a repo onto one base (5 by default), the full suite runs once on that base
@@ -468,6 +470,16 @@ def default_public(repo: str) -> bool:
     return public.is_public(repo, config.load())
 
 
+def _answer_local(g, head: str) -> None:
+    """The gate's checks marked local (brain.mergeready.LOCAL: a repo that declares no CI) answered by the merger's
+    own checks, which passed on ``head`` before this is called: each becomes ok, saying so."""
+    from . import mergeready
+    for c in g.checks:
+        if c.get(mergeready.LOCAL) and not c["ok"]:
+            c.update(ok=True, detail=f"no CI declared: the merger's local checks passed on {head[:8]} (the views or "
+                                     "the store checked, the targeted tests)")
+
+
 class Merger:
     """The merger's run over the queue. ``runner``, ``gate``, ``suite``, ``is_public`` and ``sleep`` are injectable
     (the tests fake git, gh and pytest); ``say`` takes each progress line."""
@@ -619,7 +631,7 @@ class Merger:
             g = self.gate(top, int(e["pr"]), str(e["repo"]), remote, self.view)
         except (mergeready.GateError, AuditError, OSError, ValueError) as exc:
             return self._done(e, "failed", f"the merge gate could not run: {exc}")
-        blocks = [c for c in g.blocks if c["check"] not in WAIVED]
+        blocks = [c for c in g.blocks if c["check"] not in WAIVED and not c.get(mergeready.LOCAL)]
         if blocks or not g.checks:
             why = "; ".join(f"{c['check']}: {c['detail']}" for c in blocks) or "the gate ran no check"
             return self._done(e, "refused", f"the merge gate: {why}")
@@ -679,6 +691,7 @@ class Merger:
             raise StepFailed(f"the merge gate on the caught-up head could not run: {exc}") from None
         if g.head != head:
             raise StepFailed(f"the PR's head moved to {g.head[:8]} after the catch-up {head[:8]} was pushed")
+        _answer_local(g, head)   # the local checks ran on the scratch tree this head is
         if not g.ready:
             why = "; ".join(f"{c['check']}: {c['detail']}" for c in g.blocks) or "the gate ran no check"
             hint = f" (a new review stamp for {head}: brain review stamp)" if any(
@@ -726,6 +739,7 @@ class Merger:
         merged = self._catch_up(scratch, base_ref, branch)
         self._checks(scratch, base_ref, merged)
         head = self._sha(scratch, "HEAD") if merged else g.head
+        no_ci = any(c.get(mergeready.LOCAL) for c in g.checks)   # the repo declares no CI: nothing to await
         if merged:
             if not head:
                 raise StepFailed("the catch-up's head is unknown: nothing pushed")
@@ -733,8 +747,11 @@ class Merger:
                 self._must("brain check --public --history (the caught-up head, before its push)", self.runner(
                     self._brain("check", "--public", "--history"), scratch, CHECK_TIMEOUT))
             self._must("git push (the catch-up)", self._git(scratch, "push", remote, f"HEAD:refs/heads/{branch}"))
-            self._wait_ci(pr, repo, head)
+            if not no_ci:
+                self._wait_ci(pr, repo, head)
             g = self._regate(e, top, remote, head)
+        else:
+            _answer_local(g, head)
         if g.ready:
             with contextlib.suppress(OSError):
                 mergeready.stamp(g)

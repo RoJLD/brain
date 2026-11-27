@@ -20,10 +20,10 @@ USAGE = """\
   brain ship --list [--json]   the queue as a Markdown table (or JSON), the red bases, the merger's lock when held
   brain ship --run [--batch N] [--force] [--dry-run] [--json]   the merger: the lock <BRAIN_HOME>/locks/ship.lock
                         (exit 1 and its holder when another merger holds it; a stale one broken), then each queued PR
-                        in order: the merge gate (its fresh check answered by the catch-up; a fork PR or a branch
-                        that is the base refused), main merged in, the views regenerated once and brain check,
+                        in order: the merge gate (its fresh check answered by the catch-up, a no-CI repo's ci by the
+                        local checks below; a fork PR or a branch that is the base refused), main merged in, the views regenerated once and brain check,
                         merge-check, the targeted tests (--strict); a caught-up head gets the public check before its
-                        push, its CI awaited and the gate again with nothing waived; gh pr merge
+                        push, its CI awaited (none for a no-CI repo) and the gate again with nothing waived; gh pr merge
                         --match-head-commit, the PR read back. A PR that fails is marked and the next goes on; every N
                         merged per repo and base (5), the full suite once, a confirmed bisection naming the culprit
                         when it fails, the base marked red (its PRs wait; --force ships them) and the run stops.

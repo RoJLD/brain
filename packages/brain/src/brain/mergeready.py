@@ -8,12 +8,18 @@ the lesson les-brain-stale-base-ci). Every check runs, and the answer is exit 0 
 - **merge-check**: ``brain merge-check`` on the head against the merge base: nothing the base brought up to it is lost
   (its lines in the journals, decision logs, edge files and CHANGELOGs, its nodes), a head that merged an older base
   included; a no-op for a head that merged nothing;
-- **ci**: every check of the head completed green (success, neutral or skipped); one running or failed blocks;
-- **review**: ``brain review stamp`` recorded the review of this head, with no finding left open;
+- **ci**: every check of the head completed green (success, neutral or skipped); one running or failed blocks. A
+  repo whose config.json says it has no CI (``merge.repos.<owner/name>.ci: false``) and whose head reports no check
+  blocks here with a check marked :data:`LOCAL`: the merger's own local checks (brain ship: the views regenerated or
+  the store checked, the targeted tests) answer it, never ``brain merge-ready`` alone;
+- **review**: ``brain review stamp`` recorded the review of this head, with no finding left open; a PR whose every
+  file a glob of ``merge.repos.<owner/name>.review_exempt`` covers (records, docs, views: the review-every-pr rule
+  asks code PRs only) passes without one (:func:`review_exempt`);
 - **public**: for a public repo (config.json ``public.repos``), ``brain check --public --history`` stamped this head
   and the stamp is valid now (the push guard's question);
 - **body**: the PR's title and body hold nothing ``brain check --public`` refuses (a private term, a secret, an
-  address); public rules that do not load block too;
+  address); public rules that do not load block too. For a private repo only a secret blocks: its PR may name its
+  owner, projects and hosts;
 - **pins**: each pinned decision the change touches (brain.pins) is kept or overridden in the PR body: ``Keeps <id or
   alias>`` for one in force, ``Overrides <id or alias>: <why>`` for one a later ADR supersedes (in a public repo's PR,
   its alias: ``brain adr pin --alias``, else ``pin-<8 hex>``).
@@ -41,6 +47,7 @@ FOLDER = "merge-ready"
 FIELDS = "number,state,isDraft,mergeable,headRefName,headRefOid,baseRefName,title,body,statusCheckRollup,url"
 GH_TIMEOUT = 120
 GREEN = {"SUCCESS", "NEUTRAL", "SKIPPED"}
+LOCAL = "local"   # a check's key: a block the merger's own local checks answer (brain ship), not this gate
 
 
 class GateError(Exception):
@@ -55,8 +62,8 @@ class Gate:
     base: str = ""
     checks: list[dict] = field(default_factory=list)   # {"check", "ok", "detail"}
 
-    def add(self, check: str, ok: bool, detail: str) -> None:
-        self.checks.append({"check": check, "ok": ok, "detail": detail})
+    def add(self, check: str, ok: bool, detail: str, local: bool = False) -> None:
+        self.checks.append({"check": check, "ok": ok, "detail": detail, **({LOCAL: True} if local else {})})
 
     @property
     def ready(self) -> bool:
@@ -147,6 +154,41 @@ def ci(rollup: list[dict]) -> tuple[bool, str]:
     return True, f"{len(rollup)} check(s) green"
 
 
+def repo_settings(slug: str, cfg: config.Config) -> dict:
+    """config.json ``merge.repos``'s entry for the repo ``slug`` (owner/name, any case); {} when it has none."""
+    merge = cfg.data.get("merge") if isinstance(cfg.data.get("merge"), dict) else {}
+    repos = merge.get("repos") if isinstance(merge.get("repos"), dict) else {}
+    want = (slug or "").lower()
+    return next((v for k, v in repos.items() if str(k).lower() == want and isinstance(v, dict)), {})
+
+
+def has_ci(slug: str, cfg: config.Config) -> bool:
+    """False only when config.json says so (``merge.repos.<slug>.ci: false``): a repo has a CI unless told."""
+    return repo_settings(slug, cfg).get("ci") is not False
+
+
+def no_ci_detail(slug: str) -> str:
+    return (f"no CI: config.json merge.repos.{slug}.ci is false; the merger's local checks stand for it (brain ship: "
+            "brain refresh or brain check, the targeted tests)")
+
+
+def review_exempt(slug: str, cfg: config.Config, files) -> str:
+    """Why the PR of ``files`` needs no review stamp: every file matches a glob of config.json
+    ``merge.repos.<slug>.review_exempt`` (records, docs, views: the review-every-pr rule asks code PRs only); '' when
+    it needs one (no glob, no file, or a file no glob covers: a code PR, fail closed)."""
+    globs = repo_settings(slug, cfg).get("review_exempt")
+    globs = [x for x in globs if isinstance(x, str) and x] if isinstance(globs, list) else []
+    files = sorted(files)
+    if not globs or not files:
+        return ""
+    from .boundary import glob_regex
+    rx = [glob_regex(x) for x in globs]
+    if any(not any(r.match(f) for r in rx) for f in files):
+        return ""
+    return (f"n/a: {len(files)} file(s), each under merge.repos.{slug}.review_exempt (records, docs or views): the "
+            "review is asked of code PRs only")
+
+
 def stamp_path(slug: str, head: str) -> Path:
     owner, _, name = slug.partition("/")
     return paths.brain_home() / FOLDER / owner.lower() / name.lower() / f"{head}.json"
@@ -228,7 +270,10 @@ def carried_review(repo: Path, head: str, base_sha: str) -> tuple[dict | None, s
     return st, f"carried from {ours[:8]}: the head only merges the base into it, as git merges it"
 
 
-def _review(g: Gate, repo: Path | None = None, base_sha: str = "") -> None:
+def _review(g: Gate, repo: Path | None = None, base_sha: str = "", exempt: str = "") -> None:
+    if exempt:   # a records, docs or views PR: no stamp asked (review_exempt)
+        g.add("review", True, exempt)
+        return
     st, how = review.check(g.head), ""
     if not st and repo is not None and base_sha:
         st, how = carried_review(repo, g.head, base_sha)
@@ -254,7 +299,8 @@ def _pins(g: Gate, repo: Path, data: dict, remote: str = "origin") -> None:
 
 
 def _public(g: Gate, data: dict, cfg: config.Config) -> None:
-    if public.is_public(g.slug, cfg):
+    pub = public.is_public(g.slug, cfg)
+    if pub:
         why = public.stamp_refusal(g.slug, g.head, cfg)
         g.add("public", not why, f"the head {why} (brain check --public --history)" if why else "the head is stamped")
     else:
@@ -262,11 +308,14 @@ def _public(g: Gate, data: dict, cfg: config.Config) -> None:
     rules = public.rules(cfg)
     text = [str(data.get("title") or ""), *str(data.get("body") or "").splitlines()]
     found = public.scan_lines("PR title and body", enumerate(text), rules)   # line 0: the title
-    if rules.errors:
+    if not pub:   # a private repo's PR may name its owner, projects and hosts: a secret alone blocks
+        found = [f for f in found if f.check == "secret"]
+    if rules.errors and pub:
         g.add("body", False, "the public rules do not load: " + "; ".join(rules.errors[:3]))
     else:
         g.add("body", not found, "; ".join(f"{'title' if f.line == 0 else f'body line {f.line}'}: {f.what}"
-                                           for f in found[:5]) if found else "nothing private")
+                                           for f in found[:5]) if found else
+              "nothing private" if pub else "no secret (a private repo: names allowed)")
 
 
 def _fetched(repo: Path, remote: str, g: Gate, branch: str, fetch: bool) -> None:
@@ -294,9 +343,15 @@ def gate(repo: Path, pr: str, slug: str = "", remote: str = "", fetch: bool = Tr
              str(data.get("baseRefName") or ""))
     _open(g, data)
     _fetched(repo, remote, g, str(data.get("headRefName") or ""), fetch)
-    _merge_check(g, repo, _fresh(g, repo, f"{remote}/{g.base}"))
-    g.add("ci", *ci(data.get("statusCheckRollup") or []))
-    _review(g, repo, git(repo, "rev-parse", "--verify", f"{remote}/{g.base}^{{commit}}", allow=(0, 128)).strip())
+    mb = _fresh(g, repo, f"{remote}/{g.base}")
+    _merge_check(g, repo, mb)
+    rollup = data.get("statusCheckRollup") or []
+    if not rollup and not has_ci(slug, cfg):   # no CI declared: the merger's local checks answer it (LOCAL)
+        g.add("ci", False, no_ci_detail(slug), local=True)
+    else:
+        g.add("ci", *ci(rollup))
+    _review(g, repo, git(repo, "rev-parse", "--verify", f"{remote}/{g.base}^{{commit}}", allow=(0, 128)).strip(),
+            review_exempt(slug, cfg, _names(repo, mb, g.head)))
     _public(g, data, cfg)
     _pins(g, repo, data, remote)
     return g

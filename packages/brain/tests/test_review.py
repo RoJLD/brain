@@ -431,3 +431,82 @@ def test_a_clean_round_and_an_all_refuted_note_have_no_high():
     assert rep["verdict"] == {"state": "converging", "why": "high findings 6 > 2 > 0: halved over 3 rounds"}
     assert "findings 0 (high 0)" in "\n".join(review.rounds_lines(rep))
     assert "does not say its high findings" in review.converging([6, None, 0])["why"]
+
+
+# --- the stamp from the note (wi-brain-review-stamp-from-note) ---
+
+ROUND_NOTE = """Round 1, three lenses.
+- high correctness fixed: the lock is taken after the read
+- medium docs contested: the runbook already says it
+- low tests: the fixture reads the network
+- medium scope refuted: the rename is the item's own
+- low docs refuted: a claim nobody upheld
+"""
+
+
+def test_the_notes_finding_lines_give_the_counts_and_a_refuted_line_is_never_open():
+    assert review.counts_of(ROUND_NOTE) == {"findings": 3, "fixed": 1, "contested": 1, "refuted": 2}
+    with pytest.raises(review.ReviewError, match="no finding line"):
+        review.counts_of("Three lenses, nothing found.\n")
+
+
+def test_stamp_from_the_note_alone_through_the_cli(pr, brain_home, tmp_path, capsys):
+    repo, base, head = pr
+    note = tmp_path / "review.md"
+    note.write_text(ROUND_NOTE, encoding="utf-8")
+    assert cli.main(["review", "stamp", "HEAD", "--note", str(note), "--repo", str(repo)]) == 0
+    assert "(3 finding(s), 1 fixed, 1 contested, 2 refuted, 1 open)" in capsys.readouterr().out
+    rec = review.check(head)
+    assert (rec["findings"], rec["fixed"], rec["contested"], rec["open"], rec["refuted"]) == (3, 1, 1, 1, 2)
+    # the counts given win over the note's (and the note's refuted lines are still recorded)
+    assert cli.main(["review", "stamp", "HEAD", "--findings", "3", "--fixed", "2", "--contested", "1", "--note",
+                     str(note), "--repo", str(repo)]) == 0
+    assert (review.check(head)["open"], review.check(head)["refuted"]) == (0, 2)
+    # half the counts, or neither counts nor a note, or a note of no finding line: refused, nothing stamped
+    for argv in (["--findings", "3"], ["--contested", "1", "--note", str(note)], []):
+        assert cli.main(["review", "stamp", base, *argv, "--repo", str(repo)]) == 1
+    note.write_text("nothing found\n", encoding="utf-8")
+    assert cli.main(["review", "stamp", base, "--note", str(note), "--repo", str(repo)]) == 1
+    assert "no finding line" in capsys.readouterr().err and review.check(base) is None
+
+
+def test_stamp_refuses_head_with_a_dirty_worktree_or_a_head_the_pr_has_not(pr, brain_home, tmp_path, capsys,
+                                                                            monkeypatch):
+    repo, base, head = pr
+    note = tmp_path / "review.md"
+    note.write_text(ROUND_NOTE, encoding="utf-8")
+    (repo / "fix.py").write_text("x = 1\n", encoding="utf-8")   # the fix, not committed
+    assert cli.main(["review", "stamp", "HEAD", "--note", str(note), "--repo", str(repo)]) == 1
+    assert "the worktree holds 1 change(s) HEAD lacks (fix.py)" in capsys.readouterr().err
+    assert review.check(head) is None
+    assert cli.main(["review", "stamp", base, "--note", str(note), "--repo", str(repo)]) == 0   # not HEAD: allowed
+    (repo / "fix.py").unlink()
+    # with --pr in a GitHub repo: the PR's pushed head only
+    import subprocess
+    subprocess.run(["git", "remote", "add", "origin", "https://github.com/acme/eng.git"], cwd=repo, check=True)
+    pushed = {"7": base}
+    monkeypatch.setattr(review, "pr_head", lambda r, n: pushed[n])
+    assert cli.main(["review", "stamp", "HEAD", "--note", str(note), "--pr", "7", "--repo", str(repo)]) == 1
+    assert f"is not PR 7's pushed head ({base[:12]}): push it" in capsys.readouterr().err
+    pushed["7"] = head
+    assert cli.main(["review", "stamp", "HEAD", "--note", str(note), "--pr", "7", "--repo", str(repo)]) == 0
+
+    def down(r, n):
+        raise review.ReviewError(f"PR {n}'s head cannot be read: gh: offline")
+    monkeypatch.setattr(review, "pr_head", down)
+    assert cli.main(["review", "stamp", "HEAD", "--note", str(note), "--pr", "7", "--repo", str(repo)]) == 1
+    assert "run it once gh can read the PR" in capsys.readouterr().err
+    assert review.stamp_refusal(repo, head, "7", github=False) == ""   # no GitHub remote: no PR to read
+
+
+def test_the_same_note_on_the_prs_next_head_is_a_re_stamp_not_a_new_round():
+    first = review.parse_note(ROUND_NOTE)
+    recs = [{**_round("a" * 40, 3, at="2026-11-17T10:00:00+00:00", rows=first), "note": ROUND_NOTE},
+            {**_round("b" * 40, 3, at="2026-11-17T11:00:00+00:00", rows=first), "note": ROUND_NOTE + "\n"},
+            {**_round("c" * 40, 1, high=0, at="2026-11-17T12:00:00+00:00"), "note": "Round 2.\n- low docs fixed: x\n"},
+            {**_round("d" * 40, 0, at="2026-11-17T13:00:00+00:00"), "note": ""},
+            {**_round("e" * 40, 0, at="2026-11-17T14:00:00+00:00"), "note": ""}]   # no note: each its own round
+    rep = review.rounds("7", "acme/eng", recs=recs)
+    assert [(r["round"], r["head"][0], r.get("restamped", 0)) for r in rep["rounds"]] == [
+        (1, "b", 1), (2, "c", 0), (3, "d", 0), (4, "e", 0)]
+    assert "re-stamped 1 time(s), the same note" in "\n".join(review.rounds_lines(rep))

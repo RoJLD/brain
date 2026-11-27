@@ -15,7 +15,8 @@ USAGE = """\
              [--logs DIR] [--store DIR] [--json]
                         the pre-push checks in one call, on the checkout here (or --repo-dir): clean (nothing left
                         out of HEAD, untracked files included), merge-check (a fresh base merged in, nothing of it
-                        lost), review (HEAD's review stamp, no finding open), views (a graph store's
+                        lost), review (HEAD's review stamp, no finding open; none for a change whose every file
+                        config.json merge.repos.<owner/name>.review_exempt covers), views (a graph store's
                         views regenerated and checked: brain refresh --offline), audit (brain audit --diff: 0 NEW, 0
                         LEFT; --store: a worktree's code store), public (a public repo's HEAD stamped by brain check
                         --public --history), tests (brain test --changed; --strict runs the whole suite when the

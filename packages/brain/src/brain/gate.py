@@ -9,7 +9,9 @@ The steps, in order (the cheap ones first; each runs even when one before it fai
 2. **merge-check**: ``brain merge-check`` against the base, a remote one (``origin/main``) fetched again first: the
    branch holds a fresh main (behind: merge it) and lost nothing main brought;
 3. **review**: ``brain review stamp`` recorded the review of HEAD with no finding open (or HEAD is only git's own
-   merge of the base into a reviewed head: brain.mergeready.carried_review);
+   merge of the base into a reviewed head: brain.mergeready.carried_review); a change whose every file config.json
+   ``merge.repos.<owner/name>.review_exempt`` covers (records, docs, views) needs none
+   (brain.mergeready.review_exempt);
 4. **views**: in a repo with a graph store (``notes/graph/schema.yaml``), ``brain refresh --offline``: the views
    regenerated and the store checked (``brain check``); a view it rewrote is a change to commit;
 5. **audit**: ``brain audit --diff BASE``, the scout on the change: 0 NEW, 0 LEFT (``--store DIR``: the code store
@@ -108,20 +110,27 @@ def _is_public(top: Path) -> tuple[bool, str]:
     return public.is_public(slug, cfg), slug
 
 
+def _review_exempt(top: Path, files: list[str]) -> str:
+    from . import config, mergeready, public
+    cfg = config.load()
+    return mergeready.review_exempt(public.remote_of(top, cfg)[1], cfg, files)
+
+
 def _stamp_valid(slug: str, head: str) -> bool:
     from . import config, public
     return public.stamped(slug, head) and not public.stamp_refusal(slug, head, config.load())
 
 
 class Gate:
-    """One gate's run over the checkout ``top``. ``runner`` (brain.ship.Runner), ``is_public`` and ``stamp_valid``
-    are injectable."""
+    """One gate's run over the checkout ``top``. ``runner`` (brain.ship.Runner), ``is_public``, ``stamp_valid`` and
+    ``review_exempt`` are injectable."""
 
     def __init__(self, top: Path, base: str = "", *, skip: tuple[str, ...] = (), strict: bool = False,
                  fail_fast: bool = False, python: str = "", workers: str = "", logs: Path | None = None,
                  store: str = "", runner=None,
                  is_public: Callable[[Path], tuple[bool, str]] | None = None,
-                 stamp_valid: Callable[[str, str], bool] | None = None, say: Callable[[str], None] | None = None):
+                 stamp_valid: Callable[[str, str], bool] | None = None, say: Callable[[str], None] | None = None,
+                 review_exempt: Callable[[Path, list[str]], str] | None = None):
         unknown = sorted(set(skip) - set(STEPS))
         if unknown:
             raise GateError(f"--skip {', '.join(unknown)}: not a step (the steps: {', '.join(STEPS)})")
@@ -132,6 +141,7 @@ class Gate:
         self.workers = workers                    # the tests' pytest-xdist workers (brain test -n)
         self.runner = runner or _default_runner()
         self.is_public, self.stamp_valid = is_public or _is_public, stamp_valid or _stamp_valid
+        self.review_exempt = review_exempt or _review_exempt
         self.say = say or (lambda line: None)
         try:
             self.head = git(top, "rev-parse", "HEAD").strip()
@@ -210,11 +220,15 @@ class Gate:
 
     def review(self) -> Step:
         from . import mergeready, review
+        base_sha = self._base_sha()
+        if base_sha:   # a records, docs or views change needs no stamp (brain.mergeready.review_exempt)
+            mb = git(self.top, "merge-base", base_sha, self.head, allow=(0, 1)).strip()
+            exempt = self.review_exempt(self.top, sorted(mergeready._names(self.top, mb, self.head))) if mb else ""
+            if exempt:
+                return Step("review", True, exempt)
         st, how = review.check(self.head), ""
-        if st is None:
-            base_sha = self._base_sha()
-            if base_sha:
-                st, how = mergeready.carried_review(self.top, self.head, base_sha)
+        if st is None and base_sha:
+            st, how = mergeready.carried_review(self.top, self.head, base_sha)
         log = verdict.write_log(self._log_path("review"), f"brain review check {self.head}", 0,
                                 json.dumps(st, indent=1) if st else "no stamp", how).as_posix()
         if st is None:

@@ -181,6 +181,24 @@ def test_any_step_that_fails_fails_the_gate_with_its_reason_and_next_command(rep
     assert Path(failed[0].log).is_file()
 
 
+def test_a_change_the_review_scope_exempts_needs_no_stamp_and_a_code_change_still_does(repo):
+    """wi-brain-gate-review-scope: the change's files (merge base..HEAD) all under review_exempt pass the review step
+    with no stamp; a code file outside: no stamp, the step fails."""
+    from brain import config, mergeready
+    cfg = config.Config(None, Path("."), {"merge": {"repos": {"acme/lab": {"review_exempt": ["*.py"]}}}})
+    seen = []
+
+    def exempt(top, files):
+        seen.append(files)
+        return mergeready.review_exempt("acme/lab", cfg, files)
+    r = make(repo, review_exempt=exempt).run()   # no stamp: the change is a.py alone
+    step = by_name(r)["review"]
+    assert r.ok and step.ok and step.detail.startswith("n/a: 1 file(s), each under merge.repos.acme/lab")
+    assert seen == [["a.py"]]
+    r = make(repo, review_exempt=lambda top, files: "").run()
+    assert not r.ok and "no review stamp for HEAD" in by_name(r)["review"].detail
+
+
 def test_views_regenerated_and_checked_in_a_graph_repo_and_a_rewritten_view_fails(repo):
     (repo / gate.GRAPH).parent.mkdir(parents=True)
     (repo / gate.GRAPH).write_text("v: 1\n", encoding="utf-8")

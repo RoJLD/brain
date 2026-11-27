@@ -12,6 +12,7 @@ from conftest import git_init, run_git
 GREEN = [{"__typename": "CheckRun", "name": "tests", "status": "COMPLETED", "conclusion": "SUCCESS"},
          {"__typename": "CheckRun", "name": "release-tag", "status": "COMPLETED", "conclusion": "SKIPPED"}]
 CFG = config.Config(None, Path("."), {"public": {"deny": {"people": ["Zebulon"]}}})
+PUBLIC = config.Config(None, Path("."), {"public": {"repos": ["owner/lab"], "deny": {"people": ["Zebulon"]}}})
 
 
 @pytest.fixture
@@ -94,7 +95,7 @@ def test_no_review_stamp_or_findings_left_open_block(pr):
     assert _blocks(g) == {"review"} and "1 finding(s) left open" in g.checks[4]["detail"]
 
 
-def test_a_draft_a_conflict_or_a_private_name_blocks(pr):
+def test_a_draft_a_conflict_or_a_private_name_in_a_public_repos_pr_blocks(pr, monkeypatch):
     review.stamp(pr.data["headRefOid"], 0, 0)
     pr.data.update(isDraft=True)
     g = _gate(pr)
@@ -103,10 +104,74 @@ def test_a_draft_a_conflict_or_a_private_name_blocks(pr):
     g = _gate(pr)
     assert _blocks(g) == {"open"} and "a conflict" in g.checks[0]["detail"]
     pr.data.update(mergeable="MERGEABLE", body="Asked by Zebulon on his laptop.")
-    g = _gate(pr)
+    monkeypatch.setattr(mergeready.public, "stamp_refusal", lambda slug, sha, c: "")   # the head stamped
+    g = mergeready.gate(pr.repo, "7", "owner/lab", view=pr.view, cfg=PUBLIC)
     assert _blocks(g) == {"body"} and "body line 1: people term" in g.checks[6]["detail"]
     pr.data.update(body="Fine.", title="For Zebulon")
-    assert "title: people term" in _gate(pr).checks[6]["detail"]
+    assert "title: people term" in mergeready.gate(pr.repo, "7", "owner/lab", view=pr.view, cfg=PUBLIC).checks[6][
+        "detail"]
+
+
+def test_a_private_repos_pr_body_may_name_its_owner_but_never_holds_a_secret(pr):
+    """wi-brain-gate-body-terms-public-only: the public terms are checked in a public repo's PR body only; a secret
+    blocks in any repo's."""
+    review.stamp(pr.data["headRefOid"], 0, 0)
+    pr.data.update(title="For Zebulon", body="Asked by Zebulon on his laptop.")
+    g = _gate(pr)   # owner/lab is not in public.repos
+    assert g.ready, g.checks
+    assert g.checks[6]["detail"] == "no secret (a private repo: names allowed)"
+    pr.data.update(body="token ghp_" + "a1B2c3D4e5" * 4)
+    g = _gate(pr)
+    assert _blocks(g) == {"body"} and "looks like a secret" in g.checks[6]["detail"]
+
+
+def test_a_repo_that_declares_no_ci_blocks_as_local_and_one_that_does_not_stays_blocked(pr):
+    """wi-brain-gate-local-checks-no-ci: no check on the head of a repo whose config says it has no CI is a block the
+    merger's local checks answer (marked local); a repo that has a CI, or says nothing, still needs a reported check,
+    and a no-CI repo's head that reports checks is judged by them."""
+    review.stamp(pr.data["headRefOid"], 0, 0)
+    pr.data["statusCheckRollup"] = []
+    g = _gate(pr)
+    assert _blocks(g) == {"ci"} and g.checks[3]["detail"] == "no check reported on the head"
+    assert not g.checks[3].get(mergeready.LOCAL)
+    cfg = config.Config(None, Path("."), {"merge": {"repos": {"Owner/Lab": {"ci": False}}}})
+    g = mergeready.gate(pr.repo, "7", "owner/lab", view=pr.view, cfg=cfg)
+    assert _blocks(g) == {"ci"} and g.checks[3][mergeready.LOCAL] is True
+    assert "merge.repos.owner/lab.ci is false" in g.checks[3]["detail"] and not g.ready   # merge-ready alone: blocked
+    pr.data["statusCheckRollup"] = [{"__typename": "CheckRun", "name": "lint", "status": "COMPLETED",
+                                     "conclusion": "FAILURE"}]
+    g = mergeready.gate(pr.repo, "7", "owner/lab", view=pr.view, cfg=cfg)
+    assert _blocks(g) == {"ci"} and "lint (failure)" in g.checks[3]["detail"] and not g.checks[3].get("local")
+    cfg = config.Config(None, Path("."), {"merge": {"repos": {"owner/lab": {"ci": True}}}})
+    pr.data["statusCheckRollup"] = []
+    assert not mergeready.gate(pr.repo, "7", "owner/lab", view=pr.view, cfg=cfg).checks[3].get("local")
+
+
+def test_a_records_or_docs_pr_needs_no_review_stamp_and_a_code_pr_still_does(pr, make_repo):
+    """wi-brain-gate-review-scope: every file under merge.repos.<repo>.review_exempt: no stamp asked; one file
+    outside: a code PR, the stamp asked (fail closed); no glob: every PR."""
+    cfg = config.Config(None, Path("."), {"merge": {"repos": {"owner/lab": {"review_exempt": ["*.txt", "notes/**"]}}}})
+    g = mergeready.gate(pr.repo, "7", "owner/lab", view=pr.view, cfg=cfg)   # the PR changes a.txt alone
+    assert g.ready, g.checks
+    assert g.checks[4]["detail"].startswith("n/a: 1 file(s), each under merge.repos.owner/lab.review_exempt")
+    assert _blocks(_gate(pr)) == {"review"}   # the same PR, no exemption configured
+    head = make_repo.commit(pr.repo, {"notes/graph/nodes/work.yaml": "x: 1\n", "src/tool.py": "x = 1\n"})
+    run_git(pr.repo, "push", "-q", "origin", "feat")
+    pr.data["headRefOid"] = head
+    g = mergeready.gate(pr.repo, "7", "owner/lab", view=pr.view, cfg=cfg)
+    assert _blocks(g) == {"review"} and "no review stamp" in g.checks[4]["detail"]
+
+
+def test_review_exempt_and_has_ci_read_the_config_fail_closed():
+    cfg = config.Config(None, Path("."), {"merge": {"repos": {"a/b": {"review_exempt": ["docs/**", "", 3],
+                                                                       "ci": "no"}}}})
+    assert mergeready.review_exempt("A/B", cfg, {"docs/x.md", "docs/y/z.md"}).startswith("n/a: 2 file(s)")
+    assert mergeready.review_exempt("a/b", cfg, ["docs/x.md", "README.md"]) == ""
+    assert mergeready.review_exempt("a/b", cfg, []) == ""   # no file: nothing proves it is no code
+    assert mergeready.review_exempt("c/d", cfg, ["docs/x.md"]) == ""
+    assert mergeready.has_ci("a/b", cfg) and mergeready.has_ci("c/d", CFG)   # only false says no CI
+    bad = config.Config(None, Path("."), {"merge": {"repos": ["a/b"]}})
+    assert mergeready.repo_settings("a/b", bad) == {} and mergeready.has_ci("a/b", bad)
 
 
 def test_a_public_repo_needs_the_public_checks_stamp(pr, monkeypatch):
