@@ -17,8 +17,13 @@ event="${1:-SessionStart}"
 root="${CLAUDE_PLUGIN_ROOT:-${BASH_SOURCE[0]%[!A-Za-z0-9._-]*}/..}"
 home="${BRAIN_HOME:-${USERPROFILE:-$HOME}/.brain}"
 
-# slurp FILE: the file's whole text into $slurped (read -d '' stops at the end: its status 1 is no failure).
-slurp() { slurped=; IFS= read -r -d '' slurped < "$1" || :; }
+# slurp FILE: the file's whole text into $slurped, its NUL bytes dropped as $(...) dropped them (a UTF-16 file);
+# read -d '' stops at each NUL and at the end, where its status 1 is no failure. A file it cannot open leaves ''.
+slurp() {
+  local part=
+  slurped=
+  { while IFS= read -r -d '' part; do slurped+=$part; done; slurped+=$part; } < "$1" 2>/dev/null || :
+}
 # folder_of PATH: the folder of a file's path into $folder, / or \ separated, '.' for a bare name.
 folder_of() { folder=${1%[/\\]*}; [ "$folder" != "$1" ] || folder=.; }
 
@@ -103,8 +108,9 @@ text=${text//\"/\\\"}
 text=${text//$'\n'/\\n}
 
 printf '{"hookSpecificOutput":{"hookEventName":"%s","additionalContext":"%s"}}\n' "$event" "$text"
-# The session's mark: its id from the event's JSON, read from a pipe or a file (never a terminal), 2 s at most.
-if [ ! -t 0 ]; then
+# The session's mark: its id from the event's JSON, read from a pipe or a file (never a terminal), 2 s at most; none
+# when no rule was read (no rules file: budget.sh then says the rules are missing).
+if [ -n "$text" ] && [ ! -t 0 ]; then
   payload=
   IFS= read -r -d '' -t 2 payload || :
   re_sid='"session_id"[[:space:]]*:[[:space:]]*"([A-Za-z0-9._-]+)"'

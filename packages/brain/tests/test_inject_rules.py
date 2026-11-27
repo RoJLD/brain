@@ -99,6 +99,20 @@ def test_a_printed_injection_marks_its_session(tmp_path, brain_home):
     subprocess.run([bash, SCRIPT.as_posix(), "SessionStart"], input='{"session_id": "../x"}', capture_output=True,
                    text=True, env=env, check=True, encoding="utf-8", timeout=60)
     assert sorted(p.name for p in (brain_home / "session-rules").iterdir()) == ["s-1.ok"]  # no path from the JSON
+    (tmp_path / "r.md").unlink()   # no rule read: no mark, so the budget watch says the rules are missing
+    plugin = tmp_path / "bare"
+    (plugin / "hooks").mkdir(parents=True)
+    env.update(CLAUDE_PLUGIN_ROOT=plugin.as_posix(), BRAIN_CONFIG=str(tmp_path / "none.json"))
+    subprocess.run([bash, SCRIPT.as_posix(), "SessionStart"], input='{"session_id": "s-2"}', capture_output=True,
+                   text=True, env=env, encoding="utf-8", timeout=60)
+    assert not (brain_home / "session-rules" / "s-2.ok").exists()
+
+
+def test_a_utf16_rules_file_loses_its_nul_bytes_only(tmp_path):
+    """A file PowerShell 5.1 wrote (UTF-16 LE): its NUL bytes dropped, as $(...) dropped them, not cut at the first."""
+    (tmp_path / "r.md").write_bytes("Rule one\nRule two\n".encode("utf-16-le"))
+    (tmp_path / "config.json").write_text('{"v": 1, "rules": ["r.md"]}', encoding="utf-8")
+    assert _run({"BRAIN_CONFIG": str(tmp_path / "config.json")})["additionalContext"] == "Rule one\nRule two\n"
 
 
 def _budget(sid: str, brain_home, **env) -> str:

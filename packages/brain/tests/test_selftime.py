@@ -396,6 +396,23 @@ def test_a_hook_killed_at_its_timeout_raises_an_alert(on, tmp_path):
     assert "hook-timeout:readhint" in [a.key for a in alerts.of_project(_project(tmp_path))]   # carried by brain
 
 
+def test_a_hook_in_exec_form_killed_at_its_timeout_raises_an_alert(on, tmp_path):
+    """The locked floor's hooks run in exec form (brain.floorlock): the transcript names them ``command hook <n>``."""
+    from brain import paths
+
+    now = datetime.now(timezone.utc)
+    f = paths.projects_dir() / "E--work" / "s-1.jsonl"
+    f.parent.mkdir(parents=True)
+    lines = [json.loads(_cancelled(now - timedelta(minutes=m), "command hook 1", limit=lim)) for m, lim in
+             ((9, 10000), (2, 30000), (1, 5000))]
+    for ev in lines:
+        ev["attachment"]["hookName"] = "PreToolUse:Bash"
+    f.write_text("\n".join(json.dumps(ev, separators=(",", ":")) for ev in lines) + "\n", encoding="utf-8")
+    found = {a.key: a.level for a in alerts.hook_timeout_alerts(alerts.config(_project(tmp_path)), now)}
+    assert found == {"hook-timeout:exec-PreToolUse-Bash-30s": "error", "hook-timeout:exec-PreToolUse-Bash-10s": "warn",
+                     "hook-timeout:exec-PreToolUse-Bash-5s": "warn"}
+
+
 def test_capture_main_keeps_going_and_reports(on, monkeypatch):
     def boom(payload):
         raise RuntimeError("no")

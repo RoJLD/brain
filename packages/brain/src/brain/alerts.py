@@ -697,6 +697,8 @@ HOOK_SCRIPT = re.compile(r'/hooks/([a-z][a-z-]*)\.sh"?(?:\s+([A-Za-z][A-Za-z-]*)
 # What a hook killed at its timeout costs: a guard lets the call through unchecked, inject-rules starts a session
 # without the owner's rules; the others lose a hint, a notice or a capture.
 TIMEOUT_ERROR = ("guard", "governor", "tokenguard", "inject-rules")
+EXEC_FORM = re.compile(r"^command hook \d+$")   # how Claude Code names a hook in exec form (command + args)
+TIMEOUT_EXEC_ERROR_S = 30                        # an exec-form hook with this timeout: a guard or the rules
 
 
 def _engine_hooks() -> set[str]:
@@ -709,14 +711,23 @@ def hook_timeout_alerts(cfg: Config, now: datetime) -> list[Alert]:
     ``hook_cancelled`` attachment with ``timedOut``, the command, its duration and the timeout. Read at zero token
     from the transcripts (brain.paths.projects_dir(), the subagents' included) written in the window, only the lines
     that hold that attachment parsed. Key ``hook-timeout:<script>[-<argument>]``, at level error for a guard and for
-    inject-rules (an unchecked call, a session without the rules), warn otherwise; ``levels: engine:`` sets both."""
+    inject-rules (an unchecked call, a session without the rules), warn otherwise; ``levels: engine:`` sets both.
+    A hook in exec form (the locked floor's managed settings, brain.floorlock) is recorded as ``command hook <n>``,
+    without its script: key ``hook-timeout:exec-<event>-<tool>-<timeout>s``, at level error for a 30 s timeout
+    (every guard's and the rules', TIMEOUT_EXEC_ERROR_S), warn otherwise."""
     since = now - timedelta(hours=ERROR_HOURS)
     root, mine = paths.projects_dir(), _engine_hooks()
     seen: dict[tuple[str, str], list] = {}
+    files = []
     try:
-        files = [f for f in root.rglob("*.jsonl") if f.stat().st_mtime >= since.timestamp()]
+        for f in root.rglob("*.jsonl"):
+            try:
+                if f.stat().st_mtime >= since.timestamp():
+                    files.append(f)
+            except OSError:   # gone since the listing
+                continue
     except OSError:
-        files = []
+        pass
     for f in files:
         try:
             data = f.read_bytes()
@@ -733,18 +744,28 @@ def hook_timeout_alerts(cfg: Config, now: datetime) -> list[Alert]:
                 continue
             att = line.get("attachment") if isinstance(line, dict) else None
             when = _ts(line.get("timestamp")) if isinstance(att, dict) and att.get("timedOut") is True else None
-            m = HOOK_SCRIPT.search(str(att.get("command") or "")) if when and since <= when <= now else None
-            if not m or m.group(1) not in mine:
+            if not when or not since <= when <= now:
                 continue
-            row = seen.setdefault((m.group(1), m.group(2) or ""), [0, when, when, 0.0, 0])
+            command, limit = str(att.get("command") or ""), int(att.get("timeoutMs") or 0) // 1000
+            m = HOOK_SCRIPT.search(command)
+            if m and m.group(1) in mine:
+                key = (m.group(1), m.group(2) or "")
+            elif EXEC_FORM.match(command):
+                hook = re.sub(r"[^A-Za-z0-9]+", "-", str(att.get("hookName") or att.get("hookEvent") or "")).strip("-")
+                key = ("exec", f"{hook}-{limit}s")
+            else:
+                continue
+            row = seen.setdefault(key, [0, when, when, 0.0, limit])
             row[0] += 1
-            row[1], row[2] = min(row[1], when), max(row[2], when)
+            row[1] = min(row[1], when)
+            if when >= row[2]:   # the limit of the latest kill
+                row[2], row[4] = when, limit or row[4]
             row[3] = max(row[3], float(att.get("durationMs") or 0) / 1000)
-            row[4] = int(att.get("timeoutMs") or 0) // 1000 or row[4]
     out = []
     for (script, arg), (n, first, last, longest, limit) in sorted(seen.items()):
         name = f"{script} {arg}".strip()
-        level = cfg.levels.get("engine") or ("error" if script in TIMEOUT_ERROR else "warn")
+        bad = limit >= TIMEOUT_EXEC_ERROR_S if script == "exec" else script in TIMEOUT_ERROR
+        level = cfg.levels.get("engine") or ("error" if bad else "warn")
         out.append(Alert(cfg.project, f"hook-timeout:{name.replace(' ', '-')}", level, "engine", f"hook {name}",
                          f"hook {name} killed at its {limit} s timeout {n} time(s) in {ERROR_HOURS} h (last "
                          f"{_short(last)}, {longest:.1f} s); the transcripts' hook_cancelled entries, brain perf "
