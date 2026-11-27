@@ -470,16 +470,6 @@ def default_public(repo: str) -> bool:
     return public.is_public(repo, config.load())
 
 
-def _answer_local(g, head: str) -> None:
-    """The gate's checks marked local (brain.mergeready.LOCAL: a repo that declares no CI) answered by the merger's
-    own checks, which passed on ``head`` before this is called: each becomes ok, saying so."""
-    from . import mergeready
-    for c in g.checks:
-        if c.get(mergeready.LOCAL) and not c["ok"]:
-            c.update(ok=True, detail=f"no CI declared: the merger's local checks passed on {head[:8]} (the views or "
-                                     "the store checked, the targeted tests)")
-
-
 class Merger:
     """The merger's run over the queue. ``runner``, ``gate``, ``suite``, ``is_public`` and ``sleep`` are injectable
     (the tests fake git, gh and pytest); ``say`` takes each progress line."""
@@ -691,7 +681,7 @@ class Merger:
             raise StepFailed(f"the merge gate on the caught-up head could not run: {exc}") from None
         if g.head != head:
             raise StepFailed(f"the PR's head moved to {g.head[:8]} after the catch-up {head[:8]} was pushed")
-        _answer_local(g, head)   # the local checks ran on the scratch tree this head is
+        mergeready.answer_local(g, head)   # the local checks ran on the scratch tree this head is
         if not g.ready:
             why = "; ".join(f"{c['check']}: {c['detail']}" for c in g.blocks) or "the gate ran no check"
             hint = f" (a new review stamp for {head}: brain review stamp)" if any(
@@ -751,7 +741,7 @@ class Merger:
                 self._wait_ci(pr, repo, head)
             g = self._regate(e, top, remote, head)
         else:
-            _answer_local(g, head)
+            mergeready.answer_local(g, head)
         if g.ready:
             with contextlib.suppress(OSError):
                 mergeready.stamp(g)

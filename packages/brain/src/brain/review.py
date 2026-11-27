@@ -614,6 +614,19 @@ def converging(highs: list[int | None], n: int = CONVERGE) -> dict:
             "structural decision (a DDR) instead of another round"}
 
 
+def _restamps(recs: list[dict]) -> list[tuple[dict, int]]:
+    """(the round's latest stamp, how many times it was re-stamped) of stamps in order: a stamp whose non-empty note is
+    the one before's same note re-stamps that round."""
+    out: list[tuple[dict, int]] = []
+    for r in recs:
+        note = str(r.get("note") or "").strip()
+        if out and note and note == str(out[-1][0].get("note") or "").strip():
+            out[-1] = (r, out[-1][1] + 1)
+        else:
+            out.append((r, 0))
+    return out
+
+
 def rounds(pr: str, slug: str = "", recs: list[dict] | None = None, n: int = CONVERGE) -> dict:
     """The review rounds of PR ``pr`` (of the repo ``slug``, when both the stamp and the call name one): one per head
     stamped, in the stamping order (:func:`_order`), with its counts and high findings, and :func:`converging`'s
@@ -622,16 +635,10 @@ def rounds(pr: str, slug: str = "", recs: list[dict] | None = None, n: int = CON
     pool = stamps() if recs is None else [x for x in map(_normal, recs) if x]
     mine = [r for r in pool if str(r.get("pr") or "") == str(pr)
             and (not slug or not r.get("repo_slug") or r["repo_slug"] == slug)]
-    merged: list[tuple[dict, int]] = []
-    for r in sorted(mine, key=_order):
-        note = str(r.get("note") or "").strip()
-        if merged and note and note == str(merged[-1][0].get("note") or "").strip():
-            merged[-1] = (r, merged[-1][1] + 1)
-        else:
-            merged.append((r, 0))
     rows = [{"round": i + 1, "head": r["head"], "at": str(r.get("at") or ""), "findings": r["findings"],
              "fixed": r.get("fixed", 0), "contested": r.get("contested", 0), "open": r.get("open", 0),
-             "high": high_of(r), **({"restamped": n} if n else {})} for i, (r, n) in enumerate(merged)]
+             "high": high_of(r), **({"restamped": n} if n else {})}
+            for i, (r, n) in enumerate(_restamps(sorted(mine, key=_order)))]
     return {"pr": str(pr), "repo": slug, "rounds": rows, "verdict": converging([r["high"] for r in rows], n)}
 
 

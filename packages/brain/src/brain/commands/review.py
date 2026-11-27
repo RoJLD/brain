@@ -127,6 +127,12 @@ def _stamp(args, repo: Path) -> int:
     f = review.stamp(head, c["findings"], c["fixed"], c["contested"], note, repo, pr=args.pr or "",
                      item=args.item or "", stream=args.stream or "", wave=wave, wave_id=wave_id, project=project,
                      repo_slug=_slug(repo) if args.pr else "", high=args.high, refuted=c["refuted"])
+    _said(args, c, f, wave, note)
+    return 0
+
+
+def _said(args, c: dict, f: Path, wave: str, note: str) -> None:
+    """The stamp's line, and what the stamp's arguments leave unsaid (no --pr, a note that counts otherwise)."""
     rows = review.confirmed(review.parse_note(note))
     refuted = f", {c['refuted']} refuted" if c["refuted"] else ""
     print(f"review: {f.stem[:12]} stamped ({c['findings']} finding(s), {c['fixed']} fixed, {c['contested']} "
@@ -139,7 +145,6 @@ def _stamp(args, repo: Path) -> int:
         print(f"review: the note describes {len(rows)} confirmed finding line(s), --findings says {c['findings']} "
               "(docs/review.md, « The note's finding lines »: the score's lens and cause counts read the lines)",
               file=sys.stderr)
-    return 0
 
 
 def _rounds(args, repo: Path) -> int:

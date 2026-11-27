@@ -483,7 +483,8 @@ def test_stamp_refuses_head_with_a_dirty_worktree_or_a_head_the_pr_has_not(pr, b
     (repo / "fix.py").unlink()
     # with --pr in a GitHub repo: the PR's pushed head only
     import subprocess
-    subprocess.run(["git", "remote", "add", "origin", "https://github.com/acme/eng.git"], cwd=repo, check=True)
+    subprocess.run(["git", "remote", "add", "origin", "https://github.com/acme/eng.git"], cwd=repo, check=True,
+                   timeout=60)
     pushed = {"7": base}
     monkeypatch.setattr(review, "pr_head", lambda r, n: pushed[n])
     assert cli.main(["review", "stamp", "HEAD", "--note", str(note), "--pr", "7", "--repo", str(repo)]) == 1

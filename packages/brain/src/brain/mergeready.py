@@ -172,6 +172,15 @@ def no_ci_detail(slug: str) -> str:
             "brain refresh or brain check, the targeted tests)")
 
 
+def answer_local(g: Gate, head: str) -> None:
+    """The checks of ``g`` marked :data:`LOCAL` (a repo that declares no CI) answered by the merger's own local
+    checks, which passed on ``head`` before it calls this (brain.ship): each becomes ok, saying so."""
+    for c in g.checks:
+        if c.get(LOCAL) and not c["ok"]:
+            c.update(ok=True, detail=f"no CI declared: the merger's local checks passed on {head[:8]} (the views or "
+                                     "the store checked, the targeted tests)")
+
+
 def review_exempt(slug: str, cfg: config.Config, files) -> str:
     """Why the PR of ``files`` needs no review stamp: every file matches a glob of config.json
     ``merge.repos.<slug>.review_exempt`` (records, docs, views: the review-every-pr rule asks code PRs only); '' when
