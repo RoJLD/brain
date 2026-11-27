@@ -221,23 +221,25 @@ class Gate:
     def review(self) -> Step:
         from . import mergeready, review
         base_sha = self._base_sha()
-        if base_sha:   # a records, docs or views change needs no stamp (brain.mergeready.review_exempt)
+        st, how = review.check(self.head), ""
+        if st is None and base_sha:
+            st, how = mergeready.carried_review(self.top, self.head, base_sha)
+        if st is None and base_sha:   # a records, docs or views change needs no stamp (mergeready.review_exempt)
             mb = git(self.top, "merge-base", base_sha, self.head, allow=(0, 1)).strip()
             exempt = self.review_exempt(self.top, sorted(mergeready._names(self.top, mb, self.head))) if mb else ""
             if exempt:
                 return Step("review", True, exempt)
-        st, how = review.check(self.head), ""
-        if st is None and base_sha:
-            st, how = mergeready.carried_review(self.top, self.head, base_sha)
         log = verdict.write_log(self._log_path("review"), f"brain review check {self.head}", 0,
                                 json.dumps(st, indent=1) if st else "no stamp", how).as_posix()
-        if st is None:
+        if st is None:   # brain gate runs before the push: the stamp of HEAD, without --pr (it needs the pushed head)
             return Step("review", False, f"no review stamp for HEAD {self.head[:12]}",
-                        f"review the branch, then brain review stamp {self.head} --findings N --fixed M", log)
+                        f"review the branch, then brain review stamp HEAD --note FILE (or --findings N --fixed M; "
+                        f"--pr N once pushed)", log)
         left = int(st.get("open", 0) or 0)
         if left:
             return Step("review", False, f"{left} finding(s) left open on {self.head[:12]}",
-                        "fix them, commit, review the fix, then brain review stamp HEAD --findings N --fixed M", log)
+                        "fix them, commit, review the fix, then brain review stamp HEAD --note FILE (--pr N once "
+                        "pushed)", log)
         return Step("review", True, f"reviewed: {st.get('findings', 0)} finding(s), {st.get('fixed', 0)} fixed"
                                     + (f" ({how})" if how else ""), log=log)
 

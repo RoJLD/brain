@@ -125,6 +125,20 @@ def test_a_private_repos_pr_body_may_name_its_owner_but_never_holds_a_secret(pr)
     assert _blocks(g) == {"body"} and "looks like a secret" in g.checks[6]["detail"]
 
 
+def test_public_rules_that_do_not_load_block_a_public_repos_body_only_and_secrets_are_still_scanned(pr, monkeypatch):
+    review.stamp(pr.data["headRefOid"], 0, 0)
+    monkeypatch.setattr(mergeready.public, "stamp_refusal", lambda slug, sha, c: "")
+    bad = {"deny": {"people": ["Zebulon"]}, "patterns": {"broken": "(unclosed"}}
+    pub = config.Config(None, Path("."), {"public": {**bad, "repos": ["owner/lab"]}})
+    g = mergeready.gate(pr.repo, "7", "owner/lab", view=pr.view, cfg=pub)
+    assert _blocks(g) == {"body"} and "the public rules do not load" in g.checks[6]["detail"]
+    private = config.Config(None, Path("."), {"public": bad})
+    assert mergeready.gate(pr.repo, "7", "owner/lab", view=pr.view, cfg=private).ready
+    pr.data.update(body="token ghp_" + "a1B2c3D4e5" * 4)
+    g = mergeready.gate(pr.repo, "7", "owner/lab", view=pr.view, cfg=private)
+    assert _blocks(g) == {"body"} and "looks like a secret" in g.checks[6]["detail"]
+
+
 def test_a_repo_that_declares_no_ci_blocks_as_local_and_one_that_does_not_stays_blocked(pr):
     """wi-brain-gate-local-checks-no-ci: no check on the head of a repo whose config says it has no CI is a block the
     merger's local checks answer (marked local); a repo that has a CI, or says nothing, still needs a reported check,
@@ -155,6 +169,9 @@ def test_a_records_or_docs_pr_needs_no_review_stamp_and_a_code_pr_still_does(pr,
     assert g.ready, g.checks
     assert g.checks[4]["detail"].startswith("n/a: 1 file(s), each under merge.repos.owner/lab.review_exempt")
     assert _blocks(_gate(pr)) == {"review"}   # the same PR, no exemption configured
+    review.stamp(pr.data["headRefOid"], 2, 1)   # a stamp given anyway is judged: its open finding blocks
+    g = mergeready.gate(pr.repo, "7", "owner/lab", view=pr.view, cfg=cfg)
+    assert _blocks(g) == {"review"} and "1 finding(s) left open" in g.checks[4]["detail"]
     head = make_repo.commit(pr.repo, {"notes/graph/nodes/work.yaml": "x: 1\n", "src/tool.py": "x = 1\n"})
     run_git(pr.repo, "push", "-q", "origin", "feat")
     pr.data["headRefOid"] = head

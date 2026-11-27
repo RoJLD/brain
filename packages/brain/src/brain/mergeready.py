@@ -209,6 +209,9 @@ def stamp(g: Gate, together: dict | None = None) -> Path:
     f.parent.mkdir(parents=True, exist_ok=True)
     rec = {"v": 1, "pr": g.pr, "repo": g.slug, "head": g.head, "base": g.base,
            "at": datetime.now(timezone.utc).isoformat(timespec="seconds"), "checks": [c["check"] for c in g.checks]}
+    local = [c["check"] for c in g.checks if c.get(LOCAL)]
+    if local:   # answered by the merger's local checks, not a CI (a repo that declares none)
+        rec["local"] = local
     if together:
         rec["together"] = together
     f.write_text(json.dumps(rec, indent=2) + "\n", encoding="utf-8", newline="\n")
@@ -280,14 +283,13 @@ def carried_review(repo: Path, head: str, base_sha: str) -> tuple[dict | None, s
 
 
 def _review(g: Gate, repo: Path | None = None, base_sha: str = "", exempt: str = "") -> None:
-    if exempt:   # a records, docs or views PR: no stamp asked (review_exempt)
-        g.add("review", True, exempt)
-        return
     st, how = review.check(g.head), ""
     if not st and repo is not None and base_sha:
         st, how = carried_review(repo, g.head, base_sha)
     left = int((st or {}).get("open") or 0)
-    if not st:
+    if not st and exempt:   # a records, docs or views PR: no stamp asked (review_exempt); one given is judged
+        g.add("review", True, exempt)
+    elif not st:
         g.add("review", False, "no review stamp for the head (brain review stamp)")
     else:
         g.add("review", not left, f"{left} finding(s) left open" if left else

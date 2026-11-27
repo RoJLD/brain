@@ -1238,7 +1238,8 @@ Zero-token commands for many sessions on one brain ([`docs/merge-driver.md`](doc
 - **`brain gate`** (brain.gate): the pre-push checks of a branch in one call, before `git push`: clean (nothing left
   out of HEAD, untracked files included), `brain merge-check` against the base (`--base`, origin's default branch
   by default; a remote one fetched again), the review's stamp for HEAD with no finding open (none for a change whose
-  every file config.json `merge.repos.<owner/name>.review_exempt` covers), a graph store's views regenerated and checked (`brain refresh --offline`; a view it
+  every file config.json `merge.repos.<owner/name>.review_exempt` covers), a graph store's views regenerated and checked
+  (`brain refresh --offline`; a view it
   rewrote fails: commit it), `brain audit --diff` (0 NEW, 0 LEFT), the public check's stamp for a public repo's HEAD
   (`brain check --public --history` when it has none) and the targeted tests (`brain test --changed`, `--strict`).
   Each step runs even when one before it failed (`--fail-fast` stops; `--skip STEP` skips one: INCOMPLETE, exit 1);
@@ -1251,7 +1252,8 @@ Zero-token commands for many sessions on one brain ([`docs/merge-driver.md`](doc
   the head (a repo whose config.json `merge.repos.<owner/name>.ci` is false and whose head reports none: a `local`
   block only `brain ship`'s local checks answer), the review's stamp for the head with no finding open (none for a PR
   whose every file `merge.repos.<owner/name>.review_exempt` covers: records, docs, views), the public check's stamp
-  for a public repo, nothing private in the PR's title and body (a private repo's: no secret, names allowed); exit 0, a stamp and the head to merge (`gh pr merge --match-head-commit`),
+  for a public repo, nothing private in the PR's title and body (a private repo's: no secret, names allowed); exit 0, a
+  stamp and the head to merge (`gh pr merge --match-head-commit`),
   else the list of what blocks
   ([`docs/merge-driver.md`](docs/merge-driver.md)). `--with PR...` checks PRs merged together: each through the gate,
   then all merged on the base by `git merge-tree` with the repo's merge driver, the merge order and the PR GitHub
@@ -1265,7 +1267,8 @@ Zero-token commands for many sessions on one brain ([`docs/merge-driver.md`](doc
   the base, refused), main merged into the PR's head in a
   scratch worktree with the merge driver, the views regenerated once and `brain check`, `brain merge-check`, the
   targeted tests (`--strict`). A caught-up head is a new head, gated like any other: the public check's stamp before
-  its push for a public repo, its CI awaited (none for a no-CI repo), the merge gate again with nothing waived (its review carried only when
+  its push for a public repo, its CI awaited (none for a no-CI repo), the merge gate again with nothing waived (its
+  review carried only when
   it is git's own merge of main into the reviewed head). Then `gh pr merge --match-head-commit` and the PR read back.
   A PR that fails is marked with its reason and the next goes on; every `--batch N` PRs merged per repo and base (5),
   the full suite runs once, a confirmed bisection names the culprit when it fails, and the base's PRs wait until
@@ -1304,7 +1307,8 @@ Zero-token commands for many sessions on one brain ([`docs/merge-driver.md`](doc
   gathered at zero token; the lens agents and two skeptics per distinct finding read it; the stamp, keyed by the
   head's full sha, keeps the counts (given, or with `--note` alone the note's finding lines': a refuted one never
   open), the note's finding lines and the PR, item and wave, and answers the merge gate; it is refused while the
-  worktree holds a change HEAD lacks, and with `--pr` (a GitHub remote) unless the head is the PR's pushed head; the error score counts each PR's confirmed findings by severity, lens and root cause, per wave, and says
+  worktree holds a change HEAD lacks, and with `--pr` (a GitHub remote) unless the head is the PR's pushed head; the
+  error score counts each PR's confirmed findings by severity, lens and root cause, per wave, and says
   whether the reviews may lighten (the findings per PR fallen over two waves in a row). **`brain review rounds PR`**
   lists a PR's review rounds (one per head stamped with `--pr`, the same note on the next head a re-stamp of its
   round, its high findings from `--high` or the note) and

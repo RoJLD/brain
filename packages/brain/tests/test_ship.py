@@ -430,14 +430,28 @@ def test_a_no_ci_repos_pr_is_merged_on_the_mergers_local_checks(tmp_path):
     rep = _merger(fake, _no_ci_gate()).run()
     assert [d["status"] for d in rep.done] == ["merged"], rep.done
     assert fake.ran(r"-m brain test --changed origin/main")
-    assert json.loads(mergeready.stamp_path("acme/lab", HEAD).read_text(encoding="utf-8"))["checks"][3] == "ci"
+    rec = json.loads(mergeready.stamp_path("acme/lab", HEAD).read_text(encoding="utf-8"))
+    assert rec["local"] == ["ci"] and "ci" in rec["checks"]   # told apart from a CI's green
+    assert "local" not in json.loads(mergeready.stamp(mergeready.Gate(8, "acme/lab", NEW, "main")).read_text(
+        encoding="utf-8"))
 
 
 def test_a_no_ci_repos_caught_up_head_awaits_no_ci_and_a_failed_local_check_refuses_the_merge(tmp_path):
     hub, fake = _setup(tmp_path, 7, rules=[BEHIND])
-    rep = _merger(fake, _no_ci_gate()).run()
+    p = hub.prs[("acme/lab", 7)]
+    p["new_checks"] = "RUNNING"   # no CI to await: a running check never holds the merge
+    lag = []
+
+    def lagging(cmd, cwd):   # GitHub reads the pushed head one poll late
+        lag.append(1)
+        if len(lag) == 1:
+            return ship.Result(0, json.dumps({"headRefOid": HEAD, "statusCheckRollup": []}))
+        return hub.view(cmd, cwd)
+    fake.rules.insert(0, (r"^gh pr view 7 .*headRefOid,statusCheckRollup", lagging))
+    slept = []
+    rep = _merger(fake, _no_ci_gate(), sleep=slept.append, ci_wait=3600).run()
     assert rep.ok and "gated again" in rep.done[0]["reason"], rep.done
-    assert not fake.ran("headRefOid,statusCheckRollup") and fake.ran(f"--match-head-commit {NEW}")
+    assert len(lag) == 2 and slept == [ship.CI_POLL] and fake.ran(f"--match-head-commit {NEW}")
     hub, fake = _setup(tmp_path, 8, rules=[(r"test --changed", ship.Result(1, "1 failed"))])
     rep = _merger(fake, _no_ci_gate()).run()
     assert rep.done[-1]["status"] == "failed" and "the targeted tests" in rep.done[-1]["reason"]

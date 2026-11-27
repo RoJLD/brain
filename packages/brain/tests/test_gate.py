@@ -197,6 +197,23 @@ def test_a_change_the_review_scope_exempts_needs_no_stamp_and_a_code_change_stil
     assert seen == [["a.py"]]
     r = make(repo, review_exempt=lambda top, files: "").run()
     assert not r.ok and "no review stamp for HEAD" in by_name(r)["review"].detail
+    stamp(repo, findings=2, fixed=1)   # a stamp given anyway is judged: its open finding fails the step
+    r = make(repo, review_exempt=exempt).run()
+    assert not r.ok and "1 finding(s) left open" in by_name(r)["review"].detail
+
+
+def test_the_review_scope_is_read_from_config_json_by_the_origins_slug(repo, tmp_path, monkeypatch):
+    """The default reader: config.json merge.repos keyed by the origin remote's owner/name."""
+    cfg = tmp_path / "config.json"
+    cfg.write_text(json.dumps({"v": 1, "identity": {"owner": "ada"},
+                               "merge": {"repos": {"Acme/Lab": {"review_exempt": ["**/*.py"]}}}}), encoding="utf-8")
+    monkeypatch.setenv("BRAIN_CONFIG", str(cfg))
+    run_git(repo, "remote", "set-url", "origin", "https://github.com/acme/lab.git")
+    r = gate.Gate(repo, runner=Fake(), is_public=lambda top: (False, ""), stamp_valid=lambda s, h: False).run()
+    assert by_name(r)["review"].ok and "merge.repos.acme/lab.review_exempt" in by_name(r)["review"].detail
+    run_git(repo, "remote", "set-url", "origin", "https://github.com/acme/other.git")
+    r = gate.Gate(repo, runner=Fake(), is_public=lambda top: (False, ""), stamp_valid=lambda s, h: False).run()
+    assert by_name(r)["review"].ok is False
 
 
 def test_views_regenerated_and_checked_in_a_graph_repo_and_a_rewritten_view_fails(repo):

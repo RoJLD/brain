@@ -642,9 +642,10 @@ class Merger:
             return f"its branch {branch or '(unknown)'} is the base or the default branch: the merger never pushes there"
         return ""
 
-    def _wait_ci(self, pr: int, repo: str, head: str) -> None:
+    def _wait_ci(self, pr: int, repo: str, head: str, checks: bool = True) -> None:
         """The checks GitHub reports on ``head`` awaited: all green, else :class:`StepFailed` (one failed, or still
-        running or not started at the deadline)."""
+        running or not started at the deadline). ``checks`` off (a repo that declares no CI): only until GitHub reads
+        ``head`` as the PR's head."""
         from . import mergeready
         deadline = time.monotonic() + self.ci_wait
         last = "no answer yet"
@@ -657,6 +658,8 @@ class Merger:
                 rollup = data.get("statusCheckRollup") or []
                 if data.get("headRefOid") != head:
                     last = f"GitHub reads the head {str(data.get('headRefOid'))[:8]} still"
+                elif not checks:
+                    return
                 elif not isinstance(rollup, list) or not all(isinstance(c, dict) for c in rollup):
                     raise StepFailed(f"the caught-up head's checks cannot be read: {str(rollup)[:120]}")
                 else:
@@ -729,7 +732,7 @@ class Merger:
         merged = self._catch_up(scratch, base_ref, branch)
         self._checks(scratch, base_ref, merged)
         head = self._sha(scratch, "HEAD") if merged else g.head
-        no_ci = any(c.get(mergeready.LOCAL) for c in g.checks)   # the repo declares no CI: nothing to await
+        no_ci = any(c.get(mergeready.LOCAL) for c in g.checks)   # the repo declares no CI: no check to await
         if merged:
             if not head:
                 raise StepFailed("the catch-up's head is unknown: nothing pushed")
@@ -737,8 +740,7 @@ class Merger:
                 self._must("brain check --public --history (the caught-up head, before its push)", self.runner(
                     self._brain("check", "--public", "--history"), scratch, CHECK_TIMEOUT))
             self._must("git push (the catch-up)", self._git(scratch, "push", remote, f"HEAD:refs/heads/{branch}"))
-            if not no_ci:
-                self._wait_ci(pr, repo, head)
+            self._wait_ci(pr, repo, head, checks=not no_ci)   # no CI: until GitHub reads the pushed head
             g = self._regate(e, top, remote, head)
         else:
             mergeready.answer_local(g, head)
