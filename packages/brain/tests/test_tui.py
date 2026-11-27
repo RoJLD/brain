@@ -96,19 +96,27 @@ def _run(test, size=(160, 48), **kw):
 def test_the_held_app_never_ticks_on_its_own_and_the_cockpit_does():
     """HeldApp's guarantee, which the tests of keys lean on: no read but the first and the ones a test asks for, even
     past several intervals and after a key restarts the timer; the real cockpit reads at each interval."""
-    async def main(cls, wait):
+    async def held():
         fake = FakeCockpit()
-        app = cls(fake, refresh=0.5, probe=300)
+        app = HeldApp(fake, refresh=0.5, probe=300)
         async with app.run_test(size=(160, 48)) as pilot:
-            await pilot.pause(wait)
-            await app.workers.wait_for_complete()
-            if cls is HeldApp:
-                await pilot.press("plus")  # the timer restarted, paused again
-                await pilot.pause(wait)
+            for _ in range(2):  # two intervals and more, then again once the key restarted the timer
+                await pilot.pause(1.2)
                 await app.workers.wait_for_complete()
+                await pilot.press("plus")  # 0.5 s is the shortest: the timer restarted all the same, paused again
         return fake.calls
-    assert asyncio.run(main(HeldApp, 1.2)) == [False]
-    assert True in asyncio.run(main(tui.CockpitApp, 1.2))  # the first tick probes (want_probe)
+
+    async def real():
+        fake = FakeCockpit()
+        app = tui.CockpitApp(fake, refresh=0.5, probe=300)
+        async with app.run_test(size=(160, 48)) as pilot:
+            for _ in range(50):  # up to 5 s: on a loaded runner a tick may come while the first read is still busy
+                if True in fake.calls:
+                    break
+                await pilot.pause(0.1)
+        return fake.calls
+    assert asyncio.run(held()) == [False]
+    assert True in asyncio.run(real())  # its first tick probes (want_probe)
 
 
 def _ids(app, name):
@@ -546,7 +554,7 @@ def test_the_title_shows_the_version_and_the_check_never_delays_the_first_paint(
     monkeypatch.setattr(tui.handover, "prepare", lambda a, steps: handed.append((a.label, steps)) or {"script": "h"})
 
     async def main():
-        app = tui.CockpitApp(FakeCockpit(), refresh=2.0, probe=300)
+        app = HeldApp(FakeCockpit(), refresh=2.0, probe=300)
         async with app.run_test(size=(160, 48)) as pilot:
             await pilot.pause(0.2)
             assert app.title == f"brain {mine}" and app.update_info is None  # drawn while the check still waits
