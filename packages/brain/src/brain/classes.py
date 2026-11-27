@@ -135,6 +135,8 @@ ENGINE_STORES = {
                    "months), the session starts (starts.jsonl, 2 months), the usage audits and their weekly records "
                    "(<project>/audits.jsonl, kept)"),
     "budget": Known("$BRAIN_HOME/budget", "sealed", "truth-local", "the context budget watch's marks per session"),
+    "session-rules": Known("$BRAIN_HOME/session-rules", "sealed", "truth-local",
+                           "the rules injection's marks per session (inject-rules.sh, budget.sh)"),
     "forecast": Known("$BRAIN_HOME/forecast", "sealed", "derived", "the forecasts, one folder per project"),
     "announce": Known("$BRAIN_HOME/announce", "sealed", "truth-local",
                       "the mid-session marks: the decisions already announced to a session"),
