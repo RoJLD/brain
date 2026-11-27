@@ -5,7 +5,7 @@ test_planviews)."""
 import asyncio
 
 from test_planviews import EDGES, FC, NODES  # the fixture graph and forecast
-from test_tui import PANELS, FakeCockpit, _hold_the_timer  # skipped with it, without Textual
+from test_tui import PANELS, FakeCockpit, HeldApp  # skipped with it, without Textual
 
 from brain import cockpit, planviews, resume, tui
 from brain.tui_plan import PlanTree, opened
@@ -13,11 +13,10 @@ from brain.tui_plan import PlanTree, opened
 
 def _run(test, fake, size=(160, 48), **kw):
     async def main():
-        app = tui.CockpitApp(fake, refresh=2.0, probe=300, **kw)
+        app = HeldApp(fake, refresh=2.0, probe=300, **kw)
         async with app.run_test(size=size) as pilot:
             await pilot.pause(0.2)
             await app.workers.wait_for_complete()
-            _hold_the_timer(app)
             await pilot.pause(0.1)
             await test(app, pilot, fake)
     asyncio.run(main())
