@@ -284,8 +284,9 @@ def test_the_managed_settings_block_other_hooks_and_declare_the_plugin_s_in_exec
     assert {h["command"] for h in hooks} == {str(interp)} and not [h for h in hooks if "shell" in h]
     assert {tuple(h["args"][:4]) for h in hooks} == {("-X", "utf8", "-I", str(gdir / "hook.py"))}
     judged = {" ".join(h["args"][4:]): h.get("onFailure") for h in hooks}   # what runs: whether its failure blocks
-    assert judged["--deadline=18 guard shell"] == judged["--deadline=6 guard edit"] == "block"
-    assert judged["--deadline=6 governor"] == "block"
+    # every guard's timeout is 30 s since wi-brain-hook-timeout-trace: its deadline 0.6 of it
+    assert judged["--deadline=18 guard shell"] == judged["--deadline=18 guard edit"] == "block"
+    assert judged["--deadline=18 governor"] == "block"
     assert judged["waithint"] is None                                       # a hint never judges
     assert not [k for k in judged if "readhint" in k]                       # opt-in, off
 
@@ -296,7 +297,7 @@ def test_the_managed_settings_run_other_events_with_the_administrators_bash(tmp_
     s = floorlock.hooks_settings(interp, gdir, bash="C:/Program Files/Git/bin/bash.exe", data={"hints": {"read": True}})
     assert any("readhint" in h["args"] for g in s["hooks"]["PreToolUse"] for h in g["hooks"])
     start = [h for g in s["hooks"]["SessionStart"] for h in g["hooks"]]
-    assert start[0] == {"type": "command", "timeout": 10, "command": "C:/Program Files/Git/bin/bash.exe",
+    assert start[0] == {"type": "command", "timeout": 30, "command": "C:/Program Files/Git/bin/bash.exe",
                         "args": [(gdir / "plugin" / "hooks" / "inject-rules.sh").as_posix(), "SessionStart"]}
     assert {"Stop", "SessionEnd", "PostToolUse", "UserPromptSubmit", "SubagentStart"} <= set(s["hooks"])
 

@@ -51,7 +51,7 @@ def test_brain_python_skips_the_store_stubs(tmp_path):
 def test_the_launchers_do_not_fork_before_python():
     """No $(cat), no $(command -v), no printf | python, no $(cd ...) for the plugin root when Claude Code gives it."""
     for sh in HOOKS.glob("*.sh"):
-        if sh.name in ("common.sh", "inject-rules.sh"):   # inject-rules runs once per session, with tr, sed and awk
+        if sh.name == "common.sh":   # inject-rules too since wi-brain-hook-timeout-trace (tests/test_inject_rules.py)
             continue
         code = "\n".join(line for line in sh.read_text(encoding="utf-8").splitlines() if not line.lstrip().startswith("#"))
         code = re.sub(r"#.*", "", code)

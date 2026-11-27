@@ -241,7 +241,7 @@ over. Each class keeps (`stateio.LOG_RETENTION`, this month counted):
 | Class | Files | Kept |
 |---|---|---|
 | errors | `ledger/errors.log`, `ledger/errors-YYYY-MM[-n].log` | 6 months |
-| timing | `ledger/engine/*-YYYY-MM.jsonl` (brain.selftime, the hooks' `exec-bash-`) | 3 months |
+| timing | `ledger/engine/exec-[bash-]YYYY-MM-DD.jsonl` (brain.selftime, the hooks' `exec-bash-`; one a day since 0.7.1, the months' `exec-[bash-]YYYY-MM.jsonl` before still read), `ledger/engine/error-YYYY-MM.jsonl` | 3 months |
 | ledger | `ledger/<name>-YYYY-MM.jsonl` (actions, decisions, events, guard decisions, the queue) | kept: records nothing else holds |
 | starts | `usage/starts.jsonl`, `usage/starts-YYYY-MM[-n].jsonl` (the governor's brainstorm starts, read for 10 minutes; and its stream starts, let through or asked about, while `usage.guard.wave_quota` is on: `"stream": true`, `name`, `asked`, read for a minute) | 2 months |
 | quota | `usage/quota.jsonl`, `usage/quota-YYYY-MM[-n].jsonl` (`brain usage quota --observe`'s readings) | 12 months |
@@ -296,6 +296,12 @@ a file without a format line (an older engine's) or with its own; another format
 | `<BRAIN_HOME>/announce/<session>.mark` | `brain.midsession` | the session's folder, the queue, the pending DDRs | last, `#brain.announce-mark/v1` (bash before 0.3.2 reads it as a DDR that does not exist) |
 | `<BRAIN_HOME>/cache/node-clis.txt` | `brain.guards.node_tools` | the node CLIs as one alternation, which `guard.sh`'s pre-filter matches | last, `#brain.node-clis/v1` |
 | `plugins/<plugin>/hooks/contract.txt` | `brain render` (`brain sync`) | `version <the engine that rendered it>`, then one `rule <path>` per file of config.json `rules`, relative to its folder | first, `#brain.hook-contract/v1` (a new file: no older reader) |
+
+Two marks are written and read by bash alone, empty files whose presence is the fact (wi-brain-hook-timeout-trace):
+`<BRAIN_HOME>/session-rules/<session>.ok`, written by `inject-rules.sh` once it printed the rules, and
+`<session>.seen`, written by `budget.sh` at the session's first tool call, when it checks the first and says a missing
+one to the session. Nothing reads them later; a folder without them (a machine whose inject-rules predates 0.7.1) is
+not checked.
 
 `inject-rules.sh` reads the contract's `rule` lines instead of the first `"rules"` array in config.json's text (which
 may be another section's), for the config the plugin was rendered from as it was then: no `BRAIN_CONFIG` or

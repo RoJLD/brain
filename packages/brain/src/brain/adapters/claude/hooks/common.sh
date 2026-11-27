@@ -2,8 +2,11 @@
 #
 # The self-timing (brain/selftime.py, wi-brain-self-timing): brain_t0 is the hook's start; a hook that runs Python
 # passes it as BRAIN_HOOK_T0, so its one exec event, written by Python, counts the interpreter's start; a hook that
-# ends in bash calls selftime_bash TASK, which appends the event to <BRAIN_HOME>/ledger/engine/exec-bash-<yyyy-mm>.jsonl:
-# one printf >> per event, which bash opens O_APPEND (whole lines with several writers at once, on Windows too).
+# ends in bash calls selftime_bash TASK, which appends the event to
+# <BRAIN_HOME>/ledger/engine/exec-bash-<yyyy-mm-dd>.jsonl: one printf >> per event, which bash opens O_APPEND (whole lines with several writers at once, on Windows too). One
+# file a day, not a month (wi-brain-hook-timeout-trace): on Windows an append to a file of 5 MB or more cost ~0.29 s
+# (the scan of the whole file on its close, measured 2026-11-27: 1 MB 0.04 s, 43 MB 0.29 s) and seconds under load;
+# a day's file stays near 1.5 MB.
 # BRAIN_SELFTIME=0 turns it off; it never fails the hook. brain_version is the engine's (tests/test_selftime.py checks
 # it against brain.__version__).
 #
@@ -30,7 +33,7 @@ selftime_bash() {
   [ -d "$dir" ] || mkdir -p "$dir" 2>/dev/null || return 0
   printf '{"v":1,"kind":"exec","at":"%s","host":"%s","project":"brain","task":"%s","version":"%s","start":"%s","end":"%s","duration_s":%d.%03d,"exit":%d,"pid":%d}\n' \
     "$at1" "${BRAIN_HOST:-${HOSTNAME:-unknown}}" "$task" "$brain_version" "$at0" "$at1" $((d / 1000000)) \
-    $((d % 1000000 / 1000)) "${2:-0}" "$$" >> "$dir/exec-bash-${at1:0:7}.jsonl" 2>/dev/null
+    $((d % 1000000 / 1000)) "${2:-0}" "$$" >> "$dir/exec-bash-${at1:0:10}.jsonl" 2>/dev/null
   return 0
 }
 

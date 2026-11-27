@@ -19,8 +19,11 @@ through the notification channels (brain.notify) per level. Every source is read
              block is open, for FILE_DAYS);
   engine     the engine's own errors (brain.selftime, ``ledger/engine/error-<yyyy-mm>.jsonl``): a hook or a command
              that caught the same exception ENGINE_FAILS (3) times in the last 24 hours, at level error for a hook
-             (a guard that fails lets the call through) and warn for a command; carried by the brain's own project
-             (the one named brain, or whose root is the personal brain).
+             (a guard that fails lets the call through) and warn for a command; and a hook Claude Code killed at its
+             timeout in the last 24 hours, read from the transcripts' hook_cancelled entries (key
+             ``hook-timeout:<script>[-<argument>]``, error for a guard and inject-rules, warn otherwise:
+             :func:`hook_timeout_alerts`); carried by the brain's own project (the one named brain, or whose root
+             is the personal brain).
   session    a master past 80 % of its budget that still has live children (the budget watch's master state,
              brain.budget; ST-4): warn, error from 90 %; carried as engine is.
   probe      this machine's dependency probes (brain.depprobes, config.json ``probes``) that are not OK: key
@@ -689,6 +692,66 @@ def engine_alerts(cfg: Config, now: datetime) -> list[Alert]:
     return out
 
 
+CANCELLED = b'"type":"hook_cancelled"'
+HOOK_SCRIPT = re.compile(r'/hooks/([a-z][a-z-]*)\.sh"?(?:\s+([A-Za-z][A-Za-z-]*))?')
+# What a hook killed at its timeout costs: a guard lets the call through unchecked, inject-rules starts a session
+# without the owner's rules; the others lose a hint, a notice or a capture.
+TIMEOUT_ERROR = ("guard", "governor", "tokenguard", "inject-rules")
+
+
+def _engine_hooks() -> set[str]:
+    return {p.stem for p in (Path(__file__).resolve().parent / "adapters" / "claude" / "hooks").glob("*.sh")}
+
+
+def hook_timeout_alerts(cfg: Config, now: datetime) -> list[Alert]:
+    """The engine's hooks Claude Code killed at their timeout in the last ERROR_HOURS (wi-brain-hook-timeout-trace):
+    a killed hook writes no exec event, but the harness records each kill in the session's transcript, a
+    ``hook_cancelled`` attachment with ``timedOut``, the command, its duration and the timeout. Read at zero token
+    from the transcripts (brain.paths.projects_dir(), the subagents' included) written in the window, only the lines
+    that hold that attachment parsed. Key ``hook-timeout:<script>[-<argument>]``, at level error for a guard and for
+    inject-rules (an unchecked call, a session without the rules), warn otherwise; ``levels: engine:`` sets both."""
+    since = now - timedelta(hours=ERROR_HOURS)
+    root, mine = paths.projects_dir(), _engine_hooks()
+    seen: dict[tuple[str, str], list] = {}
+    try:
+        files = [f for f in root.rglob("*.jsonl") if f.stat().st_mtime >= since.timestamp()]
+    except OSError:
+        files = []
+    for f in files:
+        try:
+            data = f.read_bytes()
+        except OSError:
+            continue
+        at = data.find(CANCELLED)
+        while at >= 0:
+            start, end = data.rfind(b"\n", 0, at) + 1, data.find(b"\n", at)
+            end = len(data) if end < 0 else end
+            at = data.find(CANCELLED, end)
+            try:
+                line = json.loads(data[start:end])
+            except ValueError:
+                continue
+            att = line.get("attachment") if isinstance(line, dict) else None
+            when = _ts(line.get("timestamp")) if isinstance(att, dict) and att.get("timedOut") is True else None
+            m = HOOK_SCRIPT.search(str(att.get("command") or "")) if when and since <= when <= now else None
+            if not m or m.group(1) not in mine:
+                continue
+            row = seen.setdefault((m.group(1), m.group(2) or ""), [0, when, when, 0.0, 0])
+            row[0] += 1
+            row[1], row[2] = min(row[1], when), max(row[2], when)
+            row[3] = max(row[3], float(att.get("durationMs") or 0) / 1000)
+            row[4] = int(att.get("timeoutMs") or 0) // 1000 or row[4]
+    out = []
+    for (script, arg), (n, first, last, longest, limit) in sorted(seen.items()):
+        name = f"{script} {arg}".strip()
+        level = cfg.levels.get("engine") or ("error" if script in TIMEOUT_ERROR else "warn")
+        out.append(Alert(cfg.project, f"hook-timeout:{name.replace(' ', '-')}", level, "engine", f"hook {name}",
+                         f"hook {name} killed at its {limit} s timeout {n} time(s) in {ERROR_HOURS} h (last "
+                         f"{_short(last)}, {longest:.1f} s); the transcripts' hook_cancelled entries, brain perf "
+                         "--engine", _iso(first), "timeout"))
+    return out
+
+
 def _live_now(tree, session: str, m: dict, mtime: float, floor: float) -> int:
     """The live children of the master ``session`` now: read from the session tree when it knows the master (0 once
     the master itself is archived or ended, whatever its state file's age, and 0 for the state of a transcript the
@@ -984,6 +1047,7 @@ def of_project(p: projects.Project, *, stacks_rows=None, index_rows=None, audit=
     out += checkout_alerts(cfg, checkout_rows, last_open=last_open)
     if carries_engine(p):
         out += engine_alerts(cfg, now)
+        out += hook_timeout_alerts(cfg, now)
         out += master_alerts(cfg, now)
         if probe_rows is None:
             from . import depprobes

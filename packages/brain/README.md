@@ -2347,12 +2347,23 @@ to it): [docs/formats.md](docs/formats.md) gives each file's policy and each log
 **The engine times itself** (`brain.selftime`, local only, zero token). Every `brain` command and every hook writes
 one exec event (task `brain <command> [<subcommand>]` or `hook <name>`, a bash-only run marked `[bash]`, the engine's
 version, its duration from the engine's import or the hook's first line, its exit) to
-`<BRAIN_HOME>/ledger/engine/exec-<yyyy-mm>.jsonl` (`exec-bash-...` for the bash fast paths); every error a hook or a
-command catches becomes an error event there (its exception class and the engine's `module:function`, never its
-message, whose text stays in `ledger/errors.log`). The last three months are kept. `brain perf --engine` lists the
-slowest commands and hooks, the regressions from one engine version to the next, the hooks' blocking time per week
-and the errors caught; `brain alerts` raises a hook or a command that caught the same exception 3 times in 24 hours,
-on the brain's own project. `BRAIN_SELFTIME=0` turns it off.
+`<BRAIN_HOME>/ledger/engine/exec-<yyyy-mm-dd>.jsonl` (`exec-bash-...` for the bash fast paths; one file a day since
+0.7.1: on Windows an append to a file of 5 MB or more cost every hook ~0.3 s, seconds under load); every error a hook
+or a command catches becomes an error event in `error-<yyyy-mm>.jsonl` (its exception class and the engine's
+`module:function`, never its message, whose text stays in `ledger/errors.log`). The last three months are kept.
+`brain perf --engine` lists the slowest commands and hooks, the regressions from one engine version to the next, the
+hooks' blocking time per week and the errors caught; `brain alerts` raises a hook or a command that caught the same
+exception 3 times in 24 hours, and a hook Claude Code killed at its timeout in 24 hours (`hook-timeout:<script>`,
+from the transcripts' `hook_cancelled` entries: a killed hook writes no event; error for a guard and inject-rules,
+warn otherwise), on the brain's own project. `BRAIN_SELFTIME=0` turns it off.
+
+**Hook timeouts** are sized for a loaded machine (`hooks.json`, measured 2026-11-27: 308 kills in the transcripts, the
+SessionStart hooks killed together when a start ran beside `brain check` and `brain tidy`): 30 s for every guard
+(the guard, the governor, the token guard: a guard killed lets its call through, so the limit is generous and the
+work kept fast) and for the rules (`inject-rules.sh`, which starts no process); 15 to 20 s for the hints and the
+start notices; 10 s for the hooks that hold every prompt or call (midsession, budget). A session whose start left no
+trace of the rules injection (`<BRAIN_HOME>/session-rules/<session>.ok`, written by inject-rules once the rules are
+out) is told so at its first tool call by the budget watch, with where to read them.
 
 ```
 brain perf --engine [--since 7d] [--task guard] [--json]

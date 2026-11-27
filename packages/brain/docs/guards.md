@@ -166,7 +166,8 @@ each in a folder whose parents only an administrator writes:
   arguments: no shell, no PATH lookup). The PreToolUse ones (the guard, the governor, the read and wait hints) run the
   copy's interpreter on `hook.py` with `-X utf8 -I`; the judging ones, the guard and the governor, carry `"onFailure":
   "block"` (a hook that fails or times out then blocks the call; Claude Code v2.1.295 or later) and a deadline at 60 %
-  of their timeout past which they refuse the call themselves. A hint never judges: a failing one lets the call
+  of their timeout past which they refuse the call themselves (every guard's timeout is 30 s since 0.7.1: an 18 s
+  deadline). A hint never judges: a failing one lets the call
   through. The other events' hooks (the rules, the announcements, health, resume, memory, capture, budget) run the
   copy's scripts with the administrators' bash (Git for Windows under Program Files, `/bin/bash`). On Windows those
   scripts run the copy's interpreter and engine (`plugin/hooks/locked-python`, read first by `common.sh`, and a `.pth`

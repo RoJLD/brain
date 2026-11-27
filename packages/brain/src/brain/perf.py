@@ -87,9 +87,12 @@ def parse_since(text: str | None, now: datetime) -> datetime:
 
 
 def _months(d: Path, kind: str, since: datetime) -> list[Path]:
-    """``<d>/<kind>-[bash-]<yyyy-mm>.jsonl`` from ``since``'s month on."""
+    """``<d>/<kind>-[bash-]<yyyy-mm>[-<dd>].jsonl`` (a month's file, or a day's: brain.selftime) from ``since``'s
+    month on."""
+    from .stateio import month_of
+
     month = since.astimezone(timezone.utc).strftime("%Y-%m")
-    return sorted(f for f in d.glob(f"{kind}-*.jsonl") if f.stem[-7:] >= month)
+    return sorted(f for f in d.glob(f"{kind}-*.jsonl") if month_of(f.name) >= month)
 
 
 def files(sources: list[str] | None, since: datetime, engine: bool = False) -> list[Path]:

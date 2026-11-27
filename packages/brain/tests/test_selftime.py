@@ -140,11 +140,15 @@ def test_a_new_month_prunes_the_old_ones(on):
     now = datetime.now(timezone.utc)
     old = (now.replace(day=1) - timedelta(days=100)).strftime("%Y-%m")
     keep = (now.replace(day=1) - timedelta(days=1)).strftime("%Y-%m")
-    for name in (f"exec-{old}.jsonl", f"exec-bash-{old}.jsonl", f"error-{old}.jsonl", f"exec-{keep}.jsonl"):
+    for name in (f"exec-{old}.jsonl", f"exec-bash-{old}.jsonl", f"error-{old}.jsonl", f"exec-{keep}.jsonl",
+                 f"exec-{old}-03.jsonl", f"exec-bash-{old}-28.jsonl", f"exec-bash-{keep}-02.jsonl"):
         (on / name).write_text("{}\n", encoding="utf-8")
     with selftime.run("brain status", from_import=False):
         pass
-    assert sorted(f.name for f in on.glob("*.jsonl")) == sorted([f"exec-{keep}.jsonl", f"exec-{now:%Y-%m}.jsonl"])
+    # the exec events go to a day's file (an append to a large file cost ~0.3 s on Windows); a day's or a month's
+    # file of a month out of KEEP_MONTHS goes
+    assert sorted(f.name for f in on.glob("*.jsonl")) == sorted(
+        [f"exec-{keep}.jsonl", f"exec-bash-{keep}-02.jsonl", f"exec-{now:%Y-%m-%d}.jsonl"])
 
 
 def test_the_command_line_writes_one_event_per_command(on, monkeypatch, capsys):
@@ -206,6 +210,7 @@ def test_a_bash_fast_path_appends_its_event(on, tmp_path):
                 "shell", BRAIN_PYTHON=str(tmp_path / "no-python"))
     assert out.returncode == 0 and out.stdout == ""
     (ev,) = _lines(on, "exec-bash-*.jsonl")
+    assert [f.name for f in on.glob("exec-bash-*.jsonl")] == [f"exec-bash-{ev['at'][:10]}.jsonl"]  # a day's file
     assert _valid(ev)["task"] == "hook guard shell [bash]" and ev["version"] == brain.__version__
     assert ev["exit"] == 0 and 0 <= ev["duration_s"] < 30 and ev["start"] <= ev["end"]
     assert re.fullmatch(r"\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d\.\d{3}Z", ev["at"])
@@ -231,9 +236,10 @@ def test_the_budget_watch_fast_path_and_off(on, monkeypatch):
 
 # --- brain perf --engine ---
 
-def _write(d: Path, kind: str, events: list[dict]) -> None:
+def _write(d: Path, kind: str, events: list[dict], day: bool = False) -> None:
+    """A month's file of events, or a day's (``day``: the exec files since 0.7.1)."""
     d.mkdir(parents=True, exist_ok=True)
-    with open(d / f"{kind}-{events[0]['at'][:7]}.jsonl", "a", encoding="utf-8") as fh:
+    with open(d / f"{kind}-{events[0]['at'][:10 if day else 7]}.jsonl", "a", encoding="utf-8") as fh:
         fh.writelines(json.dumps(e) + "\n" for e in events)
 
 
@@ -269,7 +275,7 @@ def test_perf_engine_reads_the_engine_folder_only(on, brain_home, capsys):
     now = _in_one_week(datetime.now(timezone.utc), timedelta(minutes=4))   # one week of runs: (week,) below
     _write(on, "exec", [_exec("hook guard shell", now - timedelta(minutes=i), 0.7, error="TypeError" if i < 2 else "")
                         for i in range(5)] + [_exec("hook capture stop", now, 2.0)])
-    _write(on, "exec-bash", [_exec("hook budget [bash]", now, 0.1)])
+    _write(on, "exec-bash", [_exec("hook budget [bash]", now, 0.1)], day=True)  # a day's file beside a month's
     _write(on, "error", [_err("hook guard shell", now - timedelta(minutes=i)) for i in range(2)])
     _write(brain_home / "ledger", "exec", [{**_exec("cycle L4", now, 9.0), "project": "acme"}])
     assert perf.main(engine=True, as_json=True) == 0
@@ -349,6 +355,45 @@ def test_the_sink_feeds_the_alert_end_to_end(on, tmp_path):
                 capture._log_error("guard", exc)
     (a,) = [a for a in alerts.of_project(_project(tmp_path)) if a.source == "engine"]
     assert a.key == "engine:hook-guard-shell:TypeError" and a.level == "error"
+
+
+def _cancelled(at: datetime, command: str, timed_out: bool = True, ms: int = 11800, limit: int = 10000) -> str:
+    """A transcript line as Claude Code writes it for a hook it stopped (2.1.330)."""
+    att = {"type": "hook_cancelled", "hookName": "SessionStart:startup", "hookEvent": "SessionStart",
+           "command": command, "durationMs": ms, "timedOut": timed_out, "timeoutMs": limit}
+    return json.dumps({"attachment": att, "type": "attachment", "sessionId": "s-1",
+                       "timestamp": at.isoformat().replace("+00:00", "Z")}, separators=(",", ":"))
+
+
+def test_a_hook_killed_at_its_timeout_raises_an_alert(on, tmp_path):
+    """wi-brain-hook-timeout-trace: a killed hook writes no exec event; the transcript's hook_cancelled entry does."""
+    from brain import paths
+
+    now = datetime.now(timezone.utc)
+    rules, guard = 'bash "${CLAUDE_PLUGIN_ROOT}/hooks/inject-rules.sh" SessionStart', \
+        'bash -p "${CLAUDE_PLUGIN_ROOT}/hooks/guard.sh" shell'
+    main = paths.projects_dir() / "E--work" / "s-1.jsonl"
+    sub = paths.projects_dir() / "E--work" / "s-1" / "subagents" / "agent-a1.jsonl"
+    for f in (main, sub):
+        f.parent.mkdir(parents=True, exist_ok=True)
+    main.write_text("\n".join([
+        '{"type":"user","message":"a hook_cancelled in a prompt is no kill"}',
+        _cancelled(now - timedelta(hours=1), rules),
+        _cancelled(now - timedelta(minutes=5), rules, ms=12400),
+        _cancelled(now - timedelta(hours=30), guard, limit=30000),                # yesterday's
+        _cancelled(now - timedelta(minutes=3), guard, timed_out=False),           # stopped, not timed out
+        _cancelled(now - timedelta(minutes=2), 'bash "/x/hooks/other-plugin.sh"'),  # not the engine's
+    ]) + "\n", encoding="utf-8")
+    sub.write_text(_cancelled(now - timedelta(minutes=1), 'bash "${CLAUDE_PLUGIN_ROOT}/hooks/readhint.sh"',
+                              limit=5000), encoding="utf-8")   # no last newline
+    found = {a.key: a for a in alerts.hook_timeout_alerts(alerts.config(_project(tmp_path)), now)}
+    assert set(found) == {"hook-timeout:inject-rules-SessionStart", "hook-timeout:readhint"}
+    rules_alert = found["hook-timeout:inject-rules-SessionStart"]
+    assert rules_alert.level == "error" and rules_alert.source == "engine" and rules_alert.code == "timeout"
+    assert "killed at its 10 s timeout 2 time(s) in 24 h" in rules_alert.message and "12.4 s" in rules_alert.message
+    hint = found["hook-timeout:readhint"]
+    assert hint.level == "warn" and "5 s timeout 1 time(s)" in hint.message
+    assert "hook-timeout:readhint" in [a.key for a in alerts.of_project(_project(tmp_path))]   # carried by brain
 
 
 def test_capture_main_keeps_going_and_reports(on, monkeypatch):

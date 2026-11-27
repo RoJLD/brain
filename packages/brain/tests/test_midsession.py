@@ -202,4 +202,5 @@ def test_hook_script_fast_path_and_announce(tmp_path, brain_home):
 def test_hooks_json_runs_midsession_at_each_prompt():
     hooks = json.loads((PLUGIN / "hooks" / "hooks.json").read_text(encoding="utf-8"))["hooks"]
     (entry,) = [h for m in hooks["UserPromptSubmit"] for h in m["hooks"]]
-    assert entry["command"].endswith('hooks/midsession.sh"') and not entry.get("async") and entry["timeout"] <= 5
+    # 10 s at most: it holds each prompt; 5 s killed it 8 times under load (wi-brain-hook-timeout-trace)
+    assert entry["command"].endswith('hooks/midsession.sh"') and not entry.get("async") and entry["timeout"] <= 10

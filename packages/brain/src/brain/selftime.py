@@ -16,12 +16,16 @@ The events go to ``$BRAIN_HOME/ledger/engine/``, apart from the projects' own (`
 the alerts): at the owner's pace a hook runs about 7,500 times a day, ~1.7 MB of lines that every reader of the
 projects' ledger (brain alerts, brain status) would otherwise parse.
 
-  exec-<yyyy-mm>.jsonl       the Python writers, under the ledger's lock (brain.timing.append)
-  exec-bash-<yyyy-mm>.jsonl  the hooks' bash fast paths (hooks/common.sh): one append each, which bash opens
+  exec-<yyyy-mm-dd>.jsonl       the Python writers, under the ledger's lock (brain.timing.append)
+  exec-bash-<yyyy-mm-dd>.jsonl  the hooks' bash fast paths (hooks/common.sh): one append each, which bash opens
                              O_APPEND and Windows makes atomic (2,400 lines of 8 writers whole, measured); never the
                              locked writers' file, since there the C runtime's O_APPEND is a seek then a write that a
                              bash append can slip between
-  error-<yyyy-mm>.jsonl      the error events
+  error-<yyyy-mm>.jsonl         the error events
+
+The exec files are one a day (before 0.7.1 one a month, still read: brain.perf and the pruning take the month from the
+name): on Windows an append to a file of 5 MB or more cost ~0.29 s, the scan of the whole file on its close (measured
+2026-11-27: 1 MB 0.04 s, 43 MB 0.29 s), seconds under load, and every hook paid it (wi-brain-hook-timeout-trace).
 
 When a month's first event starts a new file, the files older than KEEP_MONTHS months go. A hook's duration runs from
 its bash script's first line (``$EPOCHREALTIME``, passed in ``BRAIN_HOOK_T0``) to the end of its Python, so the
@@ -89,7 +93,7 @@ def _write(kind: str, event: dict, now: datetime) -> None:
     _writing = True
     try:
         d = engine_dir()
-        f = d / f"{kind}-{now:%Y-%m}.jsonl"
+        f = d / f"{kind}-{now:%Y-%m-%d}.jsonl" if kind == "exec" else d / f"{kind}-{now:%Y-%m}.jsonl"
         if not f.exists():
             prune(d, now)
         timing.append(f, event)
@@ -100,7 +104,8 @@ def _write(kind: str, event: dict, now: datetime) -> None:
 
 
 def prune(d: Path, now: datetime) -> list[Path]:
-    """Remove the engine's event files of the months before the last KEEP_MONTHS (this one counted); the removed."""
+    """Remove the engine's event files (a month's or a day's) of the months before the last KEEP_MONTHS (this one
+    counted); the removed."""
     from . import stateio  # only when a month's first event starts a file: the import stays light
 
     return stateio.prune_months(d.glob("*.jsonl") if d.is_dir() else (), KEEP_MONTHS, now)
